@@ -45,13 +45,18 @@ impl<H: Host> Vm<H> {
     /// (`iterator_lacks_property`), proving that for the next close; `false` for any other,
     /// whose close takes the general step.
     pub(super) fn iterator_close_absent(&mut self, iterator: Value) -> bool {
-        let Some(IteratorRecord { kind, .. }) = self.heap.iterator(iterator) else {
+        let Some(IteratorRecord { kind, object, .. }) = self.heap.iterator(iterator) else {
             return false;
         };
         if matches!(kind, IteratorKind::Protocol | IteratorKind::AsyncFromSync) {
             return false;
         }
         let key = PropertyKey::string(self.runtime_atoms.iterator_return);
+        // An iterator with no own property (the empty shape, no side table) above a proved
+        // prototype: the proof alone answers, without the lookup of `key` in its shape.
+        if object.shape() == 0 && !object.has_side_descriptors() && self.iterator_absence_proved(object.proto(), key) {
+            return true;
+        }
         self.iterator_lacks_property_proving(iterator, key)
     }
 

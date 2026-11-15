@@ -66,6 +66,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// A function body parsed, then released from the arena and kept as its directives,
     /// unless its parse left state that outlives it (`LazyBodyCheckpoint`).
     fn parse_lazy_function_body(&mut self, function: LazyFunction<'_, 'a>) -> ArenaBox<'a, FunctionBody<'a>> {
+        if let Some(skip) = self.options.lazy_body_skip
+            && !self.recognizing
+            && self.lazy_depth == 0
+            && let Some(body) = self.skip_lazy_body(skip, &function)
+        {
+            return body;
+        }
         // A function its consumer compiles at load needs its tree (`LazyBody::stub`).
         if self.options.lazy_recognize
             && self.options.lazy_body_check.is_some()
@@ -80,6 +87,43 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let body = self.parse_lazy_function_body_whole(&function);
         self.recognizing = recognizing;
         body
+    }
+
+    /// The body at the opening brace skipped unread to the end `skip` gives for it, and
+    /// released (`ParseOptions::lazy_body_skip`), or `None` where it is read.
+    fn skip_lazy_body(&mut self, skip: crate::LazyBodySkip, function: &LazyFunction<'_, 'a>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
+        let start = self.cur_start();
+        if !self.at(Kind::LCurly) {
+            return None;
+        }
+        // SAFETY: `ParseOptions::lazy_body_skip` outlives the parse.
+        let end = unsafe { skip.call(function.start) }?;
+        let bytes = self.source_text.as_bytes();
+        if end <= start + 1 || end as usize > bytes.len() || bytes[end as usize - 1] != b'}' {
+            return None;
+        }
+        // A directive prologue (or a comment before one) is read.
+        let first = bytes[start as usize + 1..end as usize - 1].iter().find(|byte| !byte.is_ascii_whitespace());
+        if matches!(first, Some(b'"' | b'\'' | b'/')) {
+            return None;
+        }
+        if !self.lexer.seek(end - 1) {
+            return None;
+        }
+        let brace = self.token;
+        self.token = self.lexer.next_token();
+        if !self.at(Kind::RCurly) || self.cur_start() != end - 1 {
+            // Not the body's end after all: it is read from its opening brace.
+            if !self.lexer.seek(brace.end()) {
+                self.set_fatal_error(diagnostics::expect_function_body(Span::new(start, end)));
+            }
+            self.token = brace;
+            return None;
+        }
+        self.bump_any();
+        self.early.end_body();
+        self.release_inside(Span::new(start, end), function.method);
+        Some(FunctionBody::boxed(Span::new(start, end), ArenaVec::new_in(self), ArenaVec::new_in(self), self))
     }
 
     /// A lazily parsed body recognized (`js::recognize`), checked as a stand-in and released,
@@ -99,7 +143,17 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if budget {
             self.rc_budget = Some(quench_stack::StackBudget::here());
         }
+        let functions_before = self.rc_functions;
+        let flat = budget && self.options.lazy_recognize_flat;
+        if flat {
+            self.rc_flat_from = Some(functions_before);
+        }
         let body = self.parse_function_body();
+        if flat {
+            self.rc_flat_from = None;
+        }
+        // The body's own recognition counts once.
+        let functions_inside = self.rc_functions - functions_before > 1;
         if budget {
             self.rc_budget = None;
         }
@@ -129,6 +183,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 eprintln!("recognize-stat: whole {} {} p{} f{} c{} d{} e{} u{}", span.start, span.end - span.start, private, self.fatal_error.is_some(), LazyBodyCheckpoint { arena_capacity: before.arena_capacity, ..after } == before, directives_in_source, escaped_after, self.early.body_unsure());
             }
             self.recognizer_rewind(rewind);
+            self.release_recognition(marker, &before);
             return None;
         }
         let verdict = self.early.end_body()?;
@@ -140,9 +195,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return None;
         }
         let check = self.options.lazy_body_check?;
-        if !self.check_lazy_body(check, function, &body, inherited_strict, false, Some(&verdict), true) {
+        if !self.check_lazy_body(check, function, &body, inherited_strict, false, Some(&verdict), true, functions_inside) {
             self.early.restore_body(snapshot);
             self.recognizer_rewind(rewind);
+            self.release_recognition(marker, &before);
             return None;
         }
         let inside = |start: &u32| (span.start..span.end).contains(start);
@@ -163,6 +219,24 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         self.release_inside(span, function.method);
         Some(body)
+    }
+
+    /// Releases from the arena what a recognition rewound to the body's opening brace
+    /// allocated, where the parser state is as it was before it (`LazyBodyCheckpoint`): the
+    /// body is then parsed whole, which allocates its own (a body stopped at its first
+    /// function inside, `ParseOptions::lazy_recognize_flat`, kept its partial reads before).
+    fn release_recognition(&mut self, marker: std::ptr::NonNull<u8>, before: &LazyBodyCheckpoint) {
+        if LazyBodyCheckpoint::of(self) != *before {
+            return;
+        }
+        let start = self.cur_token().start();
+        self.lexer.escaped_strings.retain(|key, _| *key < start);
+        self.lexer.escaped_templates.retain(|key, _| *key < start);
+        // SAFETY: the arena has the chunk it had at `marker` (its capacity is unchanged) and its
+        // alignment is one byte. Nothing allocated after the marker is referenced: the parser is
+        // rewound to the opening brace, its state that can hold arena data is as it was before
+        // the recognition, and the escaped strings and templates read since are removed.
+        unsafe { self.allocator().set_cursor_ptr(marker) };
     }
 
     /// Lists the body at `span` as released (a method's in `lazy_methods`), and drops the
@@ -236,7 +310,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         if let Some(check) = self.options.lazy_body_check {
             let targets = self.call_assignment_targets != call_assignment_targets;
-            self.check_lazy_body(check, function, &body, inherited_strict, targets, verdict.as_ref(), false);
+            self.check_lazy_body(check, function, &body, inherited_strict, targets, verdict.as_ref(), false, true);
             // The check's nodes lie past the marker unless they took a new arena chunk; then
             // the body stays whole and the program's own checks see it as well.
             if allocator.capacity() != checkpoint.arena_capacity {
@@ -274,6 +348,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         call_assignment_targets: bool,
         verdict: Option<&crate::early::EarlyVerdict<'a>>,
         stub: bool,
+        functions_inside: bool,
     ) -> bool {
         let end = body.span.end;
         let span = Span::new(function.start, end);
@@ -310,7 +385,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let in_function = self.ctx.has_return();
         // SAFETY: `ParseOptions::lazy_body_check` outlives the parse.
         let early = verdict.filter(|verdict| !verdict.unsure).map(|verdict| verdict.free.as_slice());
-        let accepted = unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function, early, stub }) };
+        let accepted = unsafe { check.call(crate::LazyBody { program: &program, call_assignment_targets, in_function, early, stub, functions_inside }) };
         std::mem::forget(program);
         accepted
     }
@@ -942,7 +1017,7 @@ struct LazyFunction<'f, 'a> {
 /// The parser state a function body's parse can extend with data that outlives the body.
 /// A lazily parsed body releases the arena it used only when this is unchanged.
 #[derive(PartialEq, Eq)]
-struct LazyBodyCheckpoint {
+pub(crate) struct LazyBodyCheckpoint {
     /// Arena chunks only grow: the same capacity means the same current chunk.
     arena_capacity: usize,
     errors: usize,
@@ -956,7 +1031,7 @@ struct LazyBodyCheckpoint {
 }
 
 impl LazyBodyCheckpoint {
-    fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
+    pub(crate) fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
         Self {
             arena_capacity: parser.allocator().capacity(),
             errors: parser.errors.len(),

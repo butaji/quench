@@ -12,7 +12,7 @@ pub(crate) mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
 mod store_gate;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, LENGTH_FROM_VALUES, NARROW_LEN, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, NARROW_LEN, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
 mod cell;
@@ -613,6 +613,10 @@ use mark_bits;
 
 /// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
 pub(crate) const ASCII_UNITS: usize = 0x80;
+/// The Latin-1 code units, one past the last: `Heap::ascii_unit_strings` holds a string for
+/// each, the ASCII ones first (the table's readers index it by ASCII unit), then the rest
+/// that a byte decode (`String.fromCharCode(byte)`) makes.
+pub(crate) const UNIT_STRINGS: usize = 0x100;
 
 /// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
 /// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
@@ -691,7 +695,7 @@ pub(crate) struct Heap {
     /// The string each one-unit ASCII text made since the last collection got
     /// (`alloc_string`): strings have no identity, so one record serves every such text, as
     /// V8's single-character string table does. A collection empties it.
-    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
+    ascii_unit_strings: Option<Box<[Value; UNIT_STRINGS]>>,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
     /// What the full collection that last traced closure environments through their reads
@@ -795,13 +799,23 @@ pub(crate) struct Heap {
     /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
     rc_zero: Vec<Value>,
     rc_candidates: Vec<Value>,
+    /// Whether the running mark is a minor collection's under counts: the aged object and
+    /// array records it marks count their children as it pushes them (`Heap::mark_value`),
+    /// and are counted in `rc_counted`.
+    rc_marking: bool,
+    rc_counted: usize,
+    /// The records old as the running full collection started, per family
+    /// (`Heap::rc_full_start`).
+    rc_old: Vec<Vec<u64>>,
     /// Under `QUENCH_DEV=rc-verify`, the candidates counts would have freed, kept instead
     /// until a full collection's trace checks that none is reachable.
     rc_suspects: Vec<Value>,
     /// The last minor collection's counting (`QUENCH_TRACE=gc`): the microseconds before
     /// and after its mark, its candidates, the zero-count records it carried, its young
     /// survivors, and the candidates it freed.
-    rc_trace: [u64; 6],
+    rc_trace: [u64; 9],
+    /// Bumped when counts restart (`set_rc`), which drops every pin (`rc_pin`).
+    rc_pin_epoch: u64,
     /// Marks on the parallel pool whatever the heap's size (`Heap::parallel_mark`), so unit
     /// tests reach the parallel path with small heaps.
     #[cfg(test)]
@@ -1107,8 +1121,8 @@ impl Heap {
         &self,
         object_roots: Option<&'a ParallelObjectRootTrace<'a>>,
     ) -> Option<parallel_mark::ParallelMark<'a>> {
-        let traces_records_in_parallel =
-            self.collection_state == CollectionState::FullMarking || !self.has_direct_records();
+        let traces_records_in_parallel = !self.rc_marking
+            && (self.collection_state == CollectionState::FullMarking || !self.has_direct_records());
         let forced = self.parallel_mark_forced();
         if !traces_records_in_parallel || !forced && self.live_slots() < PARALLEL_MARK_MINIMUM_CELLS {
             return None;
@@ -2654,6 +2668,9 @@ impl Heap {
         let premarked = self.complete_cycle_marking();
         debug_assert!(!premarked || full);
         self.last_collection_premarked = premarked;
+        if full && self.rc_active {
+            self.rc_full_start();
+        }
         if full {
             if !premarked {
                 Self::clear_marks(&self.marks);
@@ -2727,6 +2744,7 @@ impl Heap {
             }
             if self.rc_active {
                 let started = std::time::Instant::now();
+                self.rc_marking = true;
                 self.rc_pre_mark(&mut work);
                 self.rc_trace[0] = started.elapsed().as_micros() as u64;
             }
@@ -2801,6 +2819,8 @@ impl Heap {
         }
         #[cfg(debug_assertions)]
         {
+            // The verifying marks count nothing.
+            let rc_marking = std::mem::replace(&mut self.rc_marking, false);
             if full {
                 self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads, environment_reads);
             } else {
@@ -2808,6 +2828,7 @@ impl Heap {
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
+            self.rc_marking = rc_marking;
         }
         if self.rc_active && crate::trace::Dev::RcVerify.on() {
             if full {
@@ -2822,12 +2843,13 @@ impl Heap {
                 self.mark_work(&mut work, &mut object_roots, None, &mut ephemerons, GcTraceKind::Collection, &mut environments);
             }
         }
+        self.rc_marking = false;
         self.clear_unread_environment_slots(environments);
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
-        if self.rc_active && !full {
+        if self.rc_active {
             let started = std::time::Instant::now();
-            self.rc_epoch();
+            if full { self.rc_full_end() } else { self.rc_epoch() }
             self.rc_trace[1] = started.elapsed().as_micros() as u64;
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
@@ -3261,9 +3283,6 @@ impl Heap {
                 since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
-        if self.rc_active && full {
-            self.rc_recount();
-        }
         if full {
             let pause_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
             self.judge_cycles(premarked, full_mark_micros, pause_micros);
@@ -3804,15 +3823,27 @@ impl Heap {
             }
             // SAFETY: the direct handle is live and its mark bit was newly set.
             let object = unsafe { self.object_records.get_live(record_id) };
-            Self::object_children(
-                value,
-                object,
-                &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            if self.rc_marking && self.object_records.is_aged(record_id) {
+                // A survivor (or a re-marked candidate) counts what its snapshot names
+                // (`SatbSnapshot`), pushed here. Its shape's edges are pinned or this
+                // collection's roots, and its owned roots are roots (`Vm::collect_inner`).
+                let first = work.len();
+                Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+                for &child in &work[first..] {
+                    self.rc_increment(child);
+                }
+                self.rc_counted += 1;
+            } else {
+                Self::object_children(
+                    value,
+                    object,
+                    &self.properties,
+                    work,
+                    object_roots,
+                    trace_kind,
+                    last_proto,
+                );
+            }
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(
                 value,
@@ -3831,17 +3862,27 @@ impl Heap {
             }
             // SAFETY: a direct Array Value names an initialized record.
             let array = unsafe { self.array_records.get_live(record_id) };
-            let string_records = &mut self.string_records;
-            Self::array_children(
-                value,
-                array,
-                &self.properties,
-                |string| string_parts::mark_flat(string_records, string),
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            if self.rc_marking && self.array_records.is_aged(record_id) {
+                // As for an object: the snapshot's values are counted as they are pushed.
+                let first = work.len();
+                Self::array_children(value, array, &self.properties, |_| false, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+                for &child in &work[first..] {
+                    self.rc_increment(child);
+                }
+                self.rc_counted += 1;
+            } else {
+                let string_records = &mut self.string_records;
+                Self::array_children(
+                    value,
+                    array,
+                    &self.properties,
+                    |string| string_parts::mark_flat(string_records, string),
+                    work,
+                    object_roots,
+                    trace_kind,
+                    last_proto,
+                );
+            }
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && let Some(elements) = arrays.get(&value)
             {
@@ -3904,6 +3945,13 @@ impl Heap {
             if let Some(local) = small_strings::small_string_local(record_id) {
                 if self.small_strings.mark(local) {
                     small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
+                    if self.rc_marking && self.small_strings.is_aged(local) {
+                        // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
+                        // SAFETY: just marked, so occupied.
+                        unsafe { self.small_strings.get_live(local) }
+                            .for_each_text(|part| self.rc_increment(Value::direct_string(part)));
+                        self.rc_counted += 1;
+                    }
                     #[cfg(feature = "profile-aggregate")]
                     {
                         self.gc_profile.marked += 1;
@@ -3915,6 +3963,15 @@ impl Heap {
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
                 string_parts::trace_parts(&mut self.string_records, record_id, work);
+                if self.rc_marking && self.string_records.is_aged(record_id) {
+                    // As for a small string; a flat one, marked in place wherever its holder
+                    // is traced, has no parts to count.
+                    // SAFETY: just marked, so occupied.
+                    if let Some(parts) = unsafe { self.string_records.get_live(record_id) }.parts() {
+                        parts.for_each_text(|part| self.rc_increment(Value::direct_string(part)));
+                    }
+                    self.rc_counted += 1;
+                }
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked += 1;
@@ -4931,7 +4988,7 @@ impl Heap {
             last_proto,
         );
         // The count of non-int32 values is kept per backing: none means no element to scan.
-        if array.elements().holds_only_int32() { return; }
+        if array.elements().holds_only_int32() || array.elements().double_values().is_some() { return; }
         match array.elements().wide_values() {
             Some(values) => work.extend(
                 values.iter().copied().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),

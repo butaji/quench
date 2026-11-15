@@ -18,7 +18,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
+    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -38,8 +38,8 @@ pub(in crate::vm) struct Priors {
     /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
     /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
     pub(in crate::vm) body_share: u64,
-    /// Nanoseconds the code generator takes to compile one IR instruction, until the process's
-    /// own compiles replace it (`tier_model::CompileCost`).
+    /// Nanoseconds the code generator takes to compile one IR instruction: a fixed price on the
+    /// compile's work (the running ratio it replaced settled at 1.3-2.2 us on JS3 rows).
     pub(in crate::vm) compile_ns_per_ir: u64,
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
@@ -51,10 +51,10 @@ pub(in crate::vm) struct Priors {
     /// The divisor of the entries so far that gives the credible lower bound of the entries to
     /// come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
-    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
-    /// weight of its prior in IR instructions (eight compiles of a hundred).
-    pub(in crate::vm) compile_forgetting_permille: u64,
-    pub(in crate::vm) compile_prior_ir: u64,
+    /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
+    /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
+    /// work, none of which overlaps the program as a compile on the code generator's thread does.
+    pub(in crate::vm) plan_ns_per_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -254,7 +254,7 @@ const MEASURED: Tiers = Tiers {
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, plan_ns_per_ir: 1500 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

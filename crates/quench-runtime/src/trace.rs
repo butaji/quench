@@ -115,6 +115,9 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
+        /// Array backings take the double element kind (`heap::array_elements::DOUBLE_LEN`):
+        /// for the readers that consume it while compiled tiers do not guard its flag yet.
+        DoubleElements = "double-elements",
         /// The lane prologue specializes declined functions into frameless lane bodies.
         JsLaneMethods = "js-lane-methods",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:

@@ -81,6 +81,16 @@ pub(crate) struct IndexFreeChainProof {
     pub(crate) first: Value,
     /// `first`'s prototype, whose chain the proof covers as well: a watched `first` keeps it.
     pub(crate) next: Value,
+    /// `first` and `next` as prototype links (`ProtoLink::bits`), which a holder's header
+    /// matches without decoding its link.
+    pub(crate) links: [u32; 2],
+}
+
+impl IndexFreeChainProof {
+    pub(crate) fn new(first: Value, next: Value) -> Self {
+        let links = [first, next].map(|proto| super::cell::ProtoLink::of(proto).bits());
+        Self { first, next, links }
+    }
 }
 
 /// The proofs the table holds, each cleared when a subject it read changes.
@@ -179,6 +189,7 @@ impl Dependencies {
     }
 
     /// The held index-free chain proof, if any (`ProofKind::IndexFreeChain`).
+    #[inline(always)]
     pub(crate) fn index_free_chain(&self) -> Option<IndexFreeChainProof> {
         self.table().proofs.index_free_chain
     }

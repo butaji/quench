@@ -143,8 +143,10 @@ fn ascii_table(ascii: u128) -> AsciiTable {
 struct MatchSet {
     table: AsciiTable,
     /// A byte per unit of an ASCII subject, for the scan of a repeat (`run_end`): a load
-    /// and a compare a unit, where the bit table takes a shift, a load and a bit test.
-    bytes: [bool; 256],
+    /// and a compare a unit, where the bit table takes a shift, a load and a bit test. Only
+    /// a set a `UnitRepeat` scans has one (`Program::compile`): inline in every set it made
+    /// prismjs's ~2,600 sets 0.5 -> 3.7 MB (+1.2 MB max RSS).
+    bytes: Option<Box<[bool; 256]>>,
     beyond: Beyond,
 }
 
@@ -152,7 +154,7 @@ impl From<UnitSet> for MatchSet {
     fn from(set: UnitSet) -> Self {
         Self {
             table: ascii_table(set.ascii),
-            bytes: std::array::from_fn(|unit| unit < ASCII_UNITS as usize && set.ascii >> unit & 1 != 0),
+            bytes: None,
             beyond: set.beyond,
         }
     }
@@ -1533,10 +1535,20 @@ impl Program {
         });
         Some(Self {
             class_run: class_run_of(&compiler.instructions, &compiler.sets, capture_count),
+            sets: {
+                let mut sets = std::mem::take(&mut compiler.sets);
+                for instruction in &compiler.instructions {
+                    if let Inst::UnitRepeat { test: UnitTest::Set(set), .. } = *instruction {
+                        let set = &mut sets[set as usize];
+                        let ascii = set.table;
+                        set.bytes.get_or_insert_with(|| Box::new(std::array::from_fn(|unit| unit < ASCII_UNITS as usize && ascii.contains(unit as u8))));
+                    }
+                }
+                sets.into_boxed_slice()
+            },
             anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             native: NativeSlot::default(),
             instructions: compiler.instructions.into_boxed_slice(),
-            sets: compiler.sets.into_boxed_slice(),
             lists: compiler.lists.into_boxed_slice(),
             guards: compiler.guards.into_boxed_slice(),
             dispatches: compiler.dispatches.into_boxed_slice(),
@@ -1606,13 +1618,17 @@ impl Program {
 
     /// The end of the run of units from `from` to at most `to` that pass `test`. An ASCII
     /// subject tests each byte by the set's table, resolved once for the run.
+    #[inline(always)]
     fn run_end<T: Text + ?Sized>(&self, test: UnitTest, text: &T, from: usize, to: usize) -> usize {
         let taken = match (test, text.bytes()) {
             (UnitTest::Set(set), Some(bytes)) => {
-                let table = &self.sets[set as usize].bytes;
-                bytes[from..to]
-                    .iter()
-                    .position(|unit| !table[usize::from(*unit)])
+                // Every set a run scans is a `UnitRepeat`'s (its own, a class run's or an
+                // anchored run's), which `Program::compile` gave a byte table.
+                let table = self.sets[set as usize].bytes.as_deref();
+                debug_assert!(table.is_some());
+                // SAFETY: as above, a scanned set has its table.
+                let table = unsafe { table.unwrap_unchecked() };
+                bytes[from..to].iter().position(|unit| !table[usize::from(*unit)])
             }
             (UnitTest::Exact(expected), Some(bytes)) => {
                 bytes[from..to].iter().position(|unit| u32::from(*unit) != expected)
@@ -1695,6 +1711,17 @@ impl Program {
     }
 
     /// The first position from `from` through `last` where a match can start.
+    /// Whether no match can start at `at` of an ASCII subject's `bytes`, by the start set's
+    /// table alone: a sticky search's one start, refused before the search machinery (a
+    /// tokenizer tries each token pattern at the same position, and most refuse it).
+    #[inline(always)]
+    pub(crate) fn refuses_start(&self, bytes: &[u8], at: usize) -> bool {
+        match &self.starts {
+            Some(starts) if !starts.at_start && !starts.at_end => bytes.get(at).is_none_or(|unit| !starts.units.table.contains(*unit)),
+            _ => false,
+        }
+    }
+
     #[inline(always)]
     fn next_start<T: Text + ?Sized>(&self, text: &T, from: usize, last: usize) -> Option<usize> {
         if from > last {

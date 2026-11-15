@@ -219,9 +219,10 @@ pub(super) fn parse<'a>(
     check: Option<oxc_parser::LazyBodyCheck>,
     inherited_strict: bool,
     nested: bool,
-    recognize: bool,
+    recognize: super::annex_b_targets::Recognize,
+    skip: Option<oxc_parser::LazyBodySkip>,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested, recognize);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, inherited_strict, nested, recognize, skip);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);
@@ -294,6 +295,11 @@ pub(super) struct BodyFacts {
     pub(super) free_names: super::first_call::FreeNames,
     /// The bodies checked whose free names do not bound what they reach by name.
     unbounded: FxHashSet<u32>,
+    /// The functions whose bodies compile as a stream of statement runs (`statement_stream`).
+    pub(super) streamed: FxHashSet<u32>,
+    /// The functions checked without their tree whose bodies may stream, which their
+    /// compilation finds by reading their statements first (`statement_stream`).
+    pub(super) stream_candidates: FxHashSet<u32>,
     #[cfg(feature = "aot")]
     pub(super) native_source_requests: Option<(bool, Vec<super::NativeSourceKey>)>,
 }
@@ -310,19 +316,20 @@ impl BodyFacts {
     /// generation: an analysis per function between the records code generation keeps left
     /// the heap their holes (JetStream +2-3% max RSS).
     /// False where `stub` and the check needs the body's tree (`LazyBody::stub`).
-    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> bool {
+    pub(super) fn check(&mut self, oxc_parser::LazyBody { program, call_assignment_targets, in_function, early, stub, functions_inside }: oxc_parser::LazyBody<'_, '_>, #[cfg(feature = "aot")] global_script_calls: &[(String, String)]) -> bool {
         if self.failed {
             return true;
         }
         if stub {
-            return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early));
+            return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
         }
+        self.streamed.extend(super::statement_stream::streamable_start(program));
         if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
             eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, super::call_only::compiles_at_load(program, false, false));
         }
         if let Some(early) = early
             && !verify_early()
-            && self.checked_by_parse(program, call_assignment_targets, in_function, early)
+            && self.checked_by_parse(program, call_assignment_targets, in_function, early, true)
         {
             return true;
         }
@@ -363,19 +370,20 @@ impl BodyFacts {
 
     /// Takes the parse's verdict on a body it found no early error could lie in
     /// (`LazyBody::early`) where its facts need no analysis: no private name, and call-only
-    /// facts waiting for its compilation. Then its free names are the parse's, and no
-    /// semantic analysis runs. False where the full check must run.
-    fn checked_by_parse(&mut self, program: &Program<'_>, call_assignment_targets: bool, in_function: bool, early: &[&str]) -> bool {
+    /// facts waiting for its compilation or none to find, no function lying inside
+    /// (`LazyBody::functions_inside`). Then its free names are the parse's, and no semantic
+    /// analysis runs. False where the full check must run.
+    fn checked_by_parse(&mut self, program: &Program<'_>, call_assignment_targets: bool, in_function: bool, early: &[&str], functions_inside: bool) -> bool {
         #[cfg(feature = "aot")]
         if self.native_source_requests.is_some() {
             return false;
         }
         // A private name makes the parse unsure: its facts need the analysis.
-        if !self.call_only_deferred {
+        if !self.call_only_deferred && functions_inside {
             return false;
         }
         let free_names = parse_free_names(program, early);
-        if super::call_only::compiles_at_load(program, in_function && free_names.is_none(), false) {
+        if functions_inside && super::call_only::compiles_at_load(program, in_function && free_names.is_none(), false) {
             return false;
         }
         // No walk over the body runs here but the call assignment target check, so only that
@@ -387,9 +395,14 @@ impl BodyFacts {
             self.failed = true;
             return true;
         }
+        if !functions_inside {
+            // No function inside: no call-only facts to find, at load or where it compiles.
+            self.call_only_found.push((program.span.start, program.span.end));
+            self.stream_candidates.extend(super::statement_stream::streaming_function(program).map(|function| function.span.start));
+        }
         match free_names {
             Some((start, names)) => {
-                self.free_names.insert(start, names);
+                self.free_names.insert(start, names, super::first_call::alone_body_end(program));
             }
             None => {
                 if let Some(start) = super::first_call::alone_start(program) {
@@ -443,7 +456,9 @@ impl BodyFacts {
             }
             self.call_only_found.push((program.span.start, program.span.end));
         }
-        self.free_names.extend(free_names);
+        if let Some((start, names)) = free_names {
+            self.free_names.insert(start, names, super::first_call::alone_body_end(program));
+        }
     }
 }
 

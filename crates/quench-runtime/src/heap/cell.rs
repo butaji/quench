@@ -47,6 +47,26 @@ pub(crate) fn advance_prototype_layout_epoch() {
     prototype_values::reset();
 }
 
+/// Changes whenever a builtin a fast path assumes may no longer be the intrinsic: an intact
+/// fuse pops or must be proved again (`code_dependencies::Fuses`), or a heap forgets its
+/// proofs. A memo that found a native intrinsic under one value keeps the answer while the
+/// value holds: one compare instead of re-proving the builtin's identity. One counter for the
+/// process, like `PROTOTYPE_LAYOUT_EPOCH`; a change another heap made only sends memos back
+/// to the proof.
+static INTRINSIC_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// The current `INTRINSIC_EPOCH`.
+#[inline(always)]
+pub(crate) fn intrinsic_epoch() -> u64 {
+    INTRINSIC_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Retires every memo made under the current `INTRINSIC_EPOCH`.
+#[cold]
+pub(crate) fn note_intrinsic_change() {
+    INTRINSIC_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod cell_layout_tests {
     use super::*;
@@ -887,7 +907,7 @@ impl Native {
     /// frames (`Vm::call_wasm_exported_function`); its trap becomes an error object where the
     /// general path raises it (JetStream richards-wasm calls an export 2.1 million times an
     /// iteration from a frameless activation). A keyed collection's or array's iterator
-    /// creation, `%IteratorPrototype%[@@iterator]`, `concat` and `Object.isExtensible` belong
+    /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
     pub(crate) fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
@@ -920,7 +940,10 @@ impl Native {
                 | Self::SetEntries
                 | Self::IteratorSelf
                 | Self::ArrayConcat
+                | Self::ArrayFrom
                 | Self::ObjectIsExtensible
+                | Self::ArrayReverse
+                | Self::MathRandom
                 | Self::ArraySlice
                 | Self::ArrayMap
                 | Self::ArrayForEach
@@ -1264,6 +1287,7 @@ pub(crate) enum IteratorKind {
     AsyncGenerator,
 }
 impl IteratorKind {
+    #[inline]
     pub(crate) fn is_array_iterator(self) -> bool {
         matches!(
             self,
@@ -1271,6 +1295,7 @@ impl IteratorKind {
         )
     }
 
+    #[inline]
     pub(crate) fn is_collection_iterator(self) -> bool {
         matches!(
             self,
@@ -1790,7 +1815,7 @@ impl ArrayObject {
     /// narrow backing proves no index (`ArrayStorageProofs::prove`), so none reads it.
     #[inline]
     pub(crate) fn widen_elements(&mut self) {
-        if self.elements().is_narrow() {
+        if self.elements().is_encoded() {
             self.elements_raw_mut().widen();
         }
     }
@@ -3986,11 +4011,13 @@ pub(crate) struct IteratorExt {
 
 impl IteratorExt {
     /// The full position whose low half is the cell's `index`.
+    #[inline]
     pub(crate) fn position(&self, low: u32) -> usize {
         ((u64::from(self.position_high) << u32::BITS) | u64::from(low)) as usize
     }
 
     /// Splits `position` between the cell's `index` and this box.
+    #[inline]
     pub(crate) fn store_position(&mut self, low: &mut u32, position: usize) {
         let position = position as u64;
         *low = position as u32;

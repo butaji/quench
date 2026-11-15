@@ -150,7 +150,7 @@ pub(crate) fn unreferenced<S: Stage>(stage: &mut S, value: S::Word, miss: S::Mis
 #[inline(always)]
 pub(crate) fn pop_last<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, miss: S::Miss) -> Option<S::Word> {
     let empty = stage.eq_imm(length, 0u32);
-    stage.choose_leaving(empty, |stage| Some(stage.constant(Value::UNDEFINED.to_bits())), |stage| {
+    stage.choose_leaving(empty, #[inline(always)] |stage| Some(stage.constant(Value::UNDEFINED.to_bits())), #[inline(always)] |stage| {
         let one = stage.constant(1);
         let last = stage.sub(length, one);
         let offset = stage.mul_imm(last, size_of::<Value>() as u64);

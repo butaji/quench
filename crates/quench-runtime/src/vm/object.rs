@@ -732,7 +732,7 @@ impl<H: Host> Vm<H> {
     /// so a change to any of them retires it.
     #[cold]
     #[inline(never)]
-    fn prove_index_free_chain(&self, first: Value) -> bool {
+    pub(super) fn prove_index_free_chain(&self, first: Value) -> bool {
         let mut subjects = Vec::new();
         let mut array_holder = false;
         let mut current = first;
@@ -757,7 +757,7 @@ impl<H: Host> Vm<H> {
         if let Some(subjects) = subjects.into_iter().collect::<Option<Vec<u32>>>() {
             let next = self.object_data(first).map_or(Value::NULL, |data| data.proto());
             self.heap.dependencies().prove(crate::heap::ProofKind::IndexFreeChain, &subjects, |proofs| {
-                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof { first, next });
+                proofs.index_free_chain = Some(crate::heap::IndexFreeChainProof::new(first, next));
             });
         }
         true
@@ -1039,6 +1039,7 @@ impl<H: Host> Vm<H> {
         self.symbol_write_proofs.clear();
         self.symbol_load_proofs.clear();
         self.array_iteration_shape = None;
+        self.collection_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
@@ -2348,18 +2349,16 @@ impl<H: Host> Vm<H> {
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
-        if let Some(record_id) = object.direct_object_index() {
-            return Some(self.heap.object_record_by_id(record_id));
-        }
+        if let Some(record_id) = object.direct_object_index() { return Some(self.heap.object_record_by_id(record_id)); }
+        if let Some(array) = self.heap.record_array(object) { return Some(array); }
         self.hinted_other_receiver(object)
     }
 
-    /// `hinted_receiver` of anything but a direct object, out of line: the hint tests a plain
-    /// object first, with no compare of the other families before it.
+    /// `hinted_receiver` of anything but a direct object or array (as hot: `a.push`), out of
+    /// line: the hint tests those first, with no compare of the other families before them.
     #[cold]
     #[inline(never)]
     fn hinted_other_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
-        if let Some(array) = self.heap.record_array(object) { return Some(array); }
         let function = object.direct_function_index().and_then(|_| self.heap.function(object));
         function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
     }
@@ -3089,6 +3088,7 @@ impl<H: Host> Vm<H> {
                 && !receiver.has_side_descriptors()
                 && self.slot_holds_accessor_part(receiver, slot, setter);
             if own_getter {
+                self.record_accessor_fact(object, atom, receiver_layout, epoch, 0, slot, Value::UNDEFINED);
                 self.record_accessor_entry(
                     site,
                     AccessorFieldCache {
@@ -3143,6 +3143,7 @@ impl<H: Host> Vm<H> {
         if crate::heap::prototype_layout_epoch() != epoch {
             return;
         }
+        self.record_accessor_fact(object, atom, receiver_layout, epoch, depth, slot, holder);
         self.record_accessor_entry(
             site,
             AccessorFieldCache {
@@ -3160,8 +3161,82 @@ impl<H: Host> Vm<H> {
         );
     }
 
+    /// Records in the fact table the accessor an entry of `record_accessor_cache` proved:
+    /// `hops` links above `object` (0: its own), at `slot` of `holder` (`object` itself for an
+    /// own one). Only receivers proved reads start from and shapes outside dictionary mode,
+    /// whose layout fixes where each name is.
+    fn record_accessor_fact(&self, object: Value, atom: Atom, layout: u32, epoch: u64, hops: u8, slot: usize, holder: Value) {
+        use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
+        let key = PropertyKey::string(atom);
+        let Some(receiver) = self.proved_read_receiver(object, key) else {
+            return;
+        };
+        let holder_object = if hops == 0 { Some(receiver) } else { self.heap.object_record(holder) };
+        let (Some(key32), Some(holder_object), Ok(slot32)) = (key.key32(), holder_object, u32::try_from(slot)) else {
+            return;
+        };
+        if self.shape_is_dictionary(receiver.shape()) || self.shape_is_dictionary(holder_object.shape()) {
+            return;
+        }
+        let kind = match self.slot_accessor(holder_object.shape(), slot) {
+            super::SlotAccessor::Getter => KIND_GETTER_SLOT,
+            super::SlotAccessor::Pair => KIND_GETTER_PAIR,
+            super::SlotAccessor::Attributes => KIND_GETTER,
+        };
+        let holder_id = if hops == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
+        self.symbol_load_proofs.record_accessor(layout, key32, epoch, hops, slot32, kind, holder_id);
+    }
+
+    /// The getter (`setter` false) or setter the fact table gives `atom` on the record
+    /// `receiver` (`record_accessor_fact`): `Some` with the part, or `Some(None)` for an
+    /// accessor without it, wherever the table holds an accessor answer; `None` otherwise.
+    #[inline(always)]
+    fn fact_accessor(&self, receiver: &Object, atom: Atom, setter: bool) -> Option<Option<Value>> {
+        use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
+        let key32 = PropertyKey::string(atom).key32()?;
+        let layout = receiver.layout_id();
+        let word = self.symbol_load_proofs.word(layout, key32)?;
+        let kind = word.kind();
+        if !(KIND_GETTER..=KIND_GETTER_PAIR).contains(&kind) || receiver.has_side_descriptors() {
+            return None;
+        }
+        let holder = if word.hops() == 0 {
+            receiver
+        } else {
+            if !word.current(crate::heap::prototype_layout_epoch()) {
+                return None;
+            }
+            match self.symbol_load_proofs.holder(layout, key32) {
+                Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                _ => self.proof_holder(receiver, word.hops())?,
+            }
+        };
+        let slot = word.slot();
+        // SAFETY: the fact names `slot` of the holder's shape: the layout fixes an own holder's,
+        // and the chain epoch an inherited one's.
+        let stored = || unsafe { self.heap.property_get_shaped(holder, slot) };
+        Some(match kind {
+            KIND_GETTER_SLOT => {
+                if setter {
+                    None
+                } else {
+                    Some(stored()?)
+                }
+            }
+            KIND_GETTER_PAIR => match self.heap.get(stored()?) {
+                Some(Cell::AccessorPair { setter: found, .. }) if setter => Some(*found).filter(|found| !found.is_undefined()),
+                Some(Cell::AccessorPair { getter, .. }) => Some(*getter),
+                _ => return None,
+            },
+            _ => {
+                let attributes = self.slot_attributes(holder, slot)?;
+                if setter { attributes.setter } else { attributes.getter }
+            }
+        })
+    }
+
     /// Where `shape` keeps the getter of the accessor at `slot` (`SlotAccessor`).
-    fn slot_accessor(&self, shape: u32, slot: usize) -> super::SlotAccessor {
+    pub(super) fn slot_accessor(&self, shape: u32, slot: usize) -> super::SlotAccessor {
         match self.shape_slot_attributes(shape, slot) {
             _ if self.shape_is_dictionary(shape) => super::SlotAccessor::Attributes,
             Some(attributes) if attributes.slot_getter() => super::SlotAccessor::Getter,
@@ -3204,6 +3279,11 @@ impl<H: Host> Vm<H> {
         // prototype: a recorded layout is of a shaped receiver outside dictionary mode, so a
         // match proves what `shape_property_lookup` would.
         let (receiver, cache) = if let Some(receiver) = self.heap.object_record(object) {
+            // The fact table first: one probe for the receiver's layout, whatever entries
+            // the site rotates through.
+            if let Some(part) = self.fact_accessor(receiver, atom, setter) {
+                return part;
+            }
             let layout = receiver.layout_id();
             let cache = loop {
                 let cache = self.accessor_fields.get(index as usize)?;

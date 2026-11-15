@@ -84,6 +84,24 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `spread_into_array` of a `source` whose iteration runs no guest code
+    /// (`intact_iteration_kind`), which then neither throws nor calls out: `true` once its
+    /// values are appended to the dense literal `array`, `false` (nothing done) for any other.
+    pub(super) fn spread_intact_in_place(&mut self, array: Value, source: Value) -> bool {
+        if self.share_spread_elements(array, source) {
+            return true;
+        }
+        let Some(values) = self.intact_iteration_values(source) else {
+            return false;
+        };
+        if self.append_literal_elements(array, &values) {
+            return true;
+        }
+        // Not a dense literal after all: the general step appends what it iterates again,
+        // which an intact source yields the same.
+        false
+    }
+
     pub(super) fn iterable_to_rooted_list(
         &mut self,
         p: &ResidualProgram,
@@ -162,9 +180,15 @@ impl<H: Host> Vm<H> {
             }
             _ => return None,
         };
-        let symbol = self.iterator_symbol_key()?;
-        if self.property_shape_slot(self.object_data(source)?.shape(), symbol).is_some() {
-            return None;
+        let shape = self.object_data(source)?.shape();
+        if self.collection_iteration_shape != Some(shape) {
+            let symbol = self.iterator_symbol_key()?;
+            if self.property_shape_slot(shape, symbol).is_some() {
+                return None;
+            }
+            if !self.shape_is_dictionary(shape) {
+                self.collection_iteration_shape = Some(shape);
+            }
         }
         (self.fuse_intact(iterator) && self.fuse_intact(next)).then_some(kind)
     }

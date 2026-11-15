@@ -154,6 +154,20 @@ pub(super) struct SavedProgram {
 pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
+    /// A cursor that names only `function` of `program` and its lane view `lane`, for a
+    /// caller that compares activations with it (`Vm::peek_chained_job`) and runs none from it.
+    pub(super) fn of_lane(program: ProgramId, function: u32, lane: *const dispatch_fast::LaneView) -> Self {
+        Self {
+            program,
+            function,
+            code: std::ptr::null(),
+            wide: std::ptr::null(),
+            decoded: std::ptr::null(),
+            lane,
+            back_edges: None,
+        }
+    }
+
     #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
@@ -1616,6 +1630,11 @@ impl<H: Host> Vm<H> {
                 if let Some(error) = self.lane_chain_error.take() {
                     return Err(error);
                 }
+                // A reaction the lane chained in place (`lane_chain_reaction_return`) ended the
+                // chain in the slot: its empty frame completes, as `chain_lane_complete`'s does.
+                if std::mem::take(&mut self.lane_chain_ended) {
+                    return Ok(FrameOutcome::Complete(Value::UNDEFINED));
+                }
                 if running == frame && self.frames[frame].function != function {
                     function = self.frames[frame].function;
                     cursor = self.general_cursor(program, p, function, true);
@@ -1908,6 +1927,7 @@ impl<H: Host> Vm<H> {
             if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
+                crate::clock::note_lane_run();
                 after_lane_exit = self.heap.should_collect();
                 // The lane may leave in a frame of another program, its activations' calls
                 // having set the loop's executing program aside as the loop's pushes do.

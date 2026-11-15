@@ -218,7 +218,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     #[expect(clippy::type_complexity)]
-    fn parse_class_heritage_clause(
+    pub(super) fn parse_class_heritage_clause(
         &mut self,
     ) -> (
         Option<
@@ -288,7 +288,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         ClassBody::boxed(self.end_span(start), class_elements, self)
     }
 
-    fn parse_class_element(&mut self) -> ClassElement<'a> {
+    pub(super) fn parse_class_element(&mut self) -> ClassElement<'a> {
         let elem = self.parse_class_element_impl();
         if let ClassElement::MethodDefinition(def) = &elem
             && def.value.body.is_none()

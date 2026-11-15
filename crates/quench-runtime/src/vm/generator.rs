@@ -22,6 +22,18 @@ pub(super) enum GeneratorStep {
 /// the step's native activation, which keeps it alive while its frame runs.
 pub(crate) struct GeneratorResume {
     reuses_result: bool,
+    /// The registers a for-of step's `done` and `value` reads write and the pc past them,
+    /// when the step is one (`lane_for_of_step`): a yield the lane makes writes them and
+    /// resumes the caller there, with no result object (`Vm::suspend_in_loop_generator_yield`).
+    pub(super) reads: Option<StepReads>,
+}
+
+/// Where a for-of step resumed in place takes a yield's value (`GeneratorResume::reads`).
+#[derive(Clone, Copy)]
+pub(crate) struct StepReads {
+    pub(crate) done: crate::bytecode::Register,
+    pub(crate) value: crate::bytecode::Register,
+    pub(crate) resume_pc: usize,
 }
 
 /// How a generator resumed in place stopped running its frame: a `yield` of a value, which
@@ -80,7 +92,7 @@ impl<H: Host> Vm<H> {
         });
         self.activate_frame(&mut frame);
         self.frames.push(frame);
-        Some(Ok((call_guard, GeneratorResume { reuses_result })))
+        Some(Ok((call_guard, GeneratorResume { reuses_result, reads: None })))
     }
 
     /// The result of a generator step `resume` made in place, whose popped `frame` stopped
@@ -120,6 +132,17 @@ impl<H: Host> Vm<H> {
             self.reused_iterator_result(value, done)
         } else {
             self.iterator_result(value, done).expect("an iterator result allocates")
+        }
+    }
+
+    /// The yield of a generator step made in place for a for-of step's reads
+    /// (`GeneratorResume::reads`): the popped `frame` suspends at `destination` as
+    /// `finish_in_loop_generator_step` suspends it, and no result object is made.
+    pub(super) fn suspend_in_loop_generator_yield(&mut self, mut frame: Box<Frame>, value: Value, destination: crate::bytecode::Register) {
+        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        frame.with_objects = self.with_stack.split_off(frame.with_base);
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.suspend(Continuation::suspend(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED));
         }
     }
 
@@ -1753,7 +1776,7 @@ mod call_completion_tests {
     #[test]
     fn generator_completion_moves_resume_state_once() {
         for reuses_result in [false, true] {
-            let mut completion = CallCompletion::Generator(GeneratorResume { reuses_result });
+            let mut completion = CallCompletion::Generator(GeneratorResume { reuses_result, reads: None });
             assert!(completion.take_promise().is_none());
             assert!(completion.is_generator());
             let resume = completion.take_generator().expect("generator completion");

@@ -1698,8 +1698,7 @@ impl<H: Host> Vm<H> {
             Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
             Op::Throw => {
                 let value = self.read(f, i.register_a());
-                let message = self.detail_string(value);
-                return Err(JsError::thrown(value, message));
+                return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_wasm(p, f, i, pc),

@@ -691,6 +691,36 @@ impl<H: Host> Vm<H> {
         Some(self.continue_chain(p, program, frame, chain.roots, current))
     }
 
+    /// `chain_lane_complete` made by the lane itself at the return of reaction handler
+    /// activation `frame`, the chain's slot, with nothing above it: the reaction settles and
+    /// the queue continues (`continue_chain`). `Some(Ok(true))` where the next job's activation
+    /// took the slot, for the lane to enter at its PC; `Some(Ok(false))` where the chain ended
+    /// in the slot. `None` changes nothing and leaves the return to the lane's exit.
+    pub(super) fn lane_chain_reaction_complete(
+        &mut self,
+        p: &ResidualProgram,
+        program: ProgramId,
+        frame: usize,
+        lane: *const super::dispatch_fast::LaneView,
+        value: Value,
+    ) -> Option<Result<bool, JsError>> {
+        let chain = self.await_chain.filter(|chain| chain.frame == frame && frame + 1 == self.frames.len())?;
+        if !matches!(chain.task, ChainTask::Reaction { .. }) || !self.chain_gates_open() {
+            return None;
+        }
+        // The returning activation's view, which a next reaction of the same handler shares.
+        let current = super::dispatch_frame::GeneralCodeCursor::of_lane(program, self.frames[frame].function, lane);
+        self.active_call_roots[chain.roots + 2] = value;
+        let mut finished = self.frames.pop().expect("chained frame exists");
+        self.deactivate_frame(&mut finished, &Ok(FrameOutcome::Complete(value)));
+        self.await_chain = None;
+        if let Err(error) = self.finish_chain_task(p, chain.task, finished, Ok(FrameOutcome::Complete(value))) {
+            self.end_chain_in_slot(frame, chain.roots, false);
+            return Some(Err(error));
+        }
+        Some(self.continue_chain(p, program, frame, chain.roots, &current).map(|next| next.is_some()))
+    }
+
     /// The cursor, function and PC the queue's front job's activation starts at, when the lane
     /// runs it there and `take_chained_job` may take it: an async function's await resumption
     /// in this program, or a reaction whose handler is a plain script function of it.
@@ -759,6 +789,20 @@ impl<H: Host> Vm<H> {
         };
         self.realm.jobs.pop_front();
         Some(job)
+    }
+
+    /// `take_chained_job` of the reaction `peek_chained_job` admitted with handler function
+    /// `id`: the handler is a plain script function of the running program, so neither its
+    /// await state nor its body is looked up again.
+    #[inline(always)]
+    fn take_chained_reaction(&mut self, id: u32) -> Option<ChainedJob> {
+        let Some(PendingJob::Reaction(job)) = self.realm.jobs.front() else {
+            return None;
+        };
+        let (handler, value, next) = (job.handler, job.value, job.next);
+        let env = self.heap.function(handler)?.env;
+        self.realm.jobs.pop_front();
+        Some(ChainedJob::Reaction { handler, id, env, value, next })
     }
 
     /// Starts taken job `job`'s activation in frame slot `frame`, the top of the frame stack,
@@ -943,7 +987,9 @@ impl<H: Host> Vm<H> {
             self.end_chain_in_slot(frame, roots, true);
             return Ok(None);
         };
-        let Some(next) = self.take_chained_job() else {
+        // A started PC of 0 is a reaction's handler entry, which `peek_chained_job` admitted.
+        let next = if started.2 == 0 { self.take_chained_reaction(started.1) } else { self.take_chained_job() };
+        let Some(next) = next else {
             self.end_chain_in_slot(frame, roots, true);
             return Ok(None);
         };

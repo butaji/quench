@@ -8,8 +8,51 @@ use super::*;
 use capture_scope::{CaptureScope, ScopeChain};
 use std::rc::Rc;
 
-/// The names a lazily parsed function's subtree reads from outside it, by the function's start.
-pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
+/// The names a lazily parsed function's subtree reads from outside it, by the function's
+/// start, and where its body ends.
+#[derive(Default, Debug)]
+pub(in crate::compile) struct FreeNames {
+    names: FxHashMap<u32, Box<[Box<str>]>>,
+    /// Each body's end, by its function's start, where it is known.
+    ends: std::collections::BTreeMap<u32, u32>,
+}
+
+impl FreeNames {
+    /// Notes the free names of the function at `start`, whose body ends at `end`.
+    pub(in crate::compile) fn insert(&mut self, start: u32, names: Box<[Box<str>]>, end: Option<u32>) {
+        self.names.insert(start, names);
+        match end {
+            Some(end) => self.ends.insert(start, end),
+            None => self.ends.remove(&start),
+        };
+    }
+
+    pub(in crate::compile) fn get(&self, start: &u32) -> Option<&Box<[Box<str>]>> {
+        self.names.get(start)
+    }
+
+    pub(in crate::compile) fn contains_key(&self, start: &u32) -> bool {
+        self.names.contains_key(start)
+    }
+
+    /// The functions starting in `range` whose free names are known, with their bodies' ends.
+    pub(in crate::compile) fn ends_in(&self, range: std::ops::Range<u32>) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.ends.range(range).map(|(start, end)| (*start, *end))
+    }
+}
+
+/// Where the body of the function `program` holds alone (`alone_start`) ends.
+pub(in crate::compile) fn alone_body_end(program: &Program<'_>) -> Option<u32> {
+    let function = match program.body.first()? {
+        Statement::FunctionDeclaration(function) => function,
+        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
+            Expression::FunctionExpression(function) => function,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    function.body.as_ref().map(|body| body.span.end)
+}
 
 /// One scope level a stub's function closes over: its bindings by name and slot, the names
 /// packed into one text so a level costs three allocations however many names it binds.
@@ -125,7 +168,8 @@ impl<'f> FreeNameCheck<'f> {
             }
         };
         if let Some((start, names)) = found {
-            self.found.insert(start.wrapping_add(self.delta), names);
+            let end = alone_body_end(body.program).map(|end| end.wrapping_add(self.delta));
+            self.found.insert(start.wrapping_add(self.delta), names, end);
         }
     }
 }

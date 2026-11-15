@@ -159,6 +159,7 @@ fn release_read_only_pages_weighed(weighed: bool) {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
+    LAST_RELEASE_WORK.store(quench_runtime::clock::now_work(), std::sync::atomic::Ordering::Relaxed);
     NEW_HIGH.collections_since_release.store(0, std::sync::atomic::Ordering::Relaxed);
     if weighed && !file_pages_weigh() {
         return;
@@ -204,7 +205,7 @@ pub fn release_at_collection(returns_pages: bool) {
         return;
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    if NEW_HIGH.release_due() | !released_within(RUN_CODE_RELEASE_INTERVAL) {
+    if NEW_HIGH.release_due() | !released_within_pace() {
         release_read_only_pages_weighed(false);
     }
 }
@@ -217,7 +218,7 @@ pub fn release_at_collection(returns_pages: bool) {
 /// last release (read at the second collection after it) by `NEW_HIGH_FILE_MARGIN_BYTES`: a
 /// run whose heap stays below its high, or whose code is all working set, releases nothing
 /// more. Collections are the run's own work clock, so the release follows allocation, not the
-/// wall clock (`RUN_CODE_RELEASE_INTERVAL`), which a run that peaks within its first 250 ms
+/// work-clock pace (`RUN_CODE_RELEASE_WORK`), which a run that peaks within its first 250 ms
 /// of collections never reaches: JetStream 3's small tests peaked with their start-up code
 /// resident (no-JIT, x86_64, 5 runs each, 2026-11-15, max RSS MB: Air 20.3 -> 18.3,
 /// validatorjs 21.1 -> 18.8, Sunspider 29.0 -> 26.3, bigint-noble 19.3 -> 17.1, proxy-mobx
@@ -318,7 +319,14 @@ pub fn release_before_first_collection() {
 /// noise). A 250 ms clock thread releasing between collections peaked higher: the refaulted
 /// working set came back within the interval.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const RUN_CODE_RELEASE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+///
+/// The pace is engine work (`quench_runtime::clock::now_work`, typical-host nanoseconds),
+/// not wall time, since the clock charges native calls and lane runs between collections:
+/// 100 ms of work against the former 250 ms wall pace, JS3 no-JIT max RSS equal or lower
+/// (median of 3: regexp-octane 13.0 -> 12.8, bigint-noble 16.7 -> 16.5, validatorjs 19.9 ->
+/// 19.8, gbemu/proxy-mobx/Air equal), V8-v7 equal or lower (crypto 5.8 -> 5.5, splay 44.9 ->
+/// 44.6, richards 4.5 -> 4.4), scores within this host's noise.
+const RUN_CODE_RELEASE_WORK: u64 = 100_000_000;
 
 /// Read-only file mappings the host made after start-up (compile-cache entries), released with
 /// the segments above. They are mapped side by side in one reserved span (`Arena`), which a
@@ -791,6 +799,18 @@ impl EntryCompile {
 /// (`release_before_entry_compile`).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static ENTRY_COMPILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(EntryCompile::Done as u8);
+
+/// The work clock (`quench_runtime::clock::now_work`) at the last release of the read-only pages.
+static LAST_RELEASE_WORK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the read-only pages left, by any release, less than `RUN_CODE_RELEASE_WORK` of
+/// engine work ago: the collection pace follows work done, not wall time, so a run releases
+/// at the same collections on every host and under callgrind.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn released_within_pace() -> bool {
+    let last = LAST_RELEASE_WORK.load(std::sync::atomic::Ordering::Relaxed);
+    quench_runtime::clock::now_work().saturating_sub(last) < RUN_CODE_RELEASE_WORK
+}
 
 /// Whether the read-only pages left, by any release, less than `interval` ago.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

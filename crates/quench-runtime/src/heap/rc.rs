@@ -15,8 +15,11 @@ use records::SatbSnapshot;
 
 /// The record family of a counted value and its id there: the index into
 /// `Heap::record_families`, and the id.
+#[inline(always)]
 fn locate(value: Value) -> Option<(usize, RecordId)> {
-    if let Some(id) = value.direct_object_index() {
+    if !value.is_heap() {
+        None
+    } else if let Some(id) = value.direct_object_index() {
         Some((0, id))
     } else if let Some(id) = value.direct_array_index() {
         Some((1, id))
@@ -76,6 +79,9 @@ macro_rules! with_space_mut {
 /// carries to the next one.
 const RC_FREE_BUDGET: usize = 1 << 20;
 
+/// Records the cascade prefetches together (`Heap::rc_pre_mark`).
+const RC_CASCADE_BATCH: usize = 16;
+
 /// Live records past this multiple of the last full collection's survivors (at least
 /// `RC_FULL_FLOOR`) make the next collection the backup trace, for cycles and stuck counts.
 const RC_FULL_GROWTH: usize = 4;
@@ -107,7 +113,28 @@ impl Heap {
         self.rc_active = on;
         for_each_space_mut!(self, |space, _handle| space.set_rc(on));
         if on {
+            self.rc_pin_epoch += 1;
             self.rc_recount();
+        }
+    }
+
+    /// Bumped when counts restart, which drops every pin.
+    pub(crate) fn rc_pin_epoch(&self) -> u64 {
+        self.rc_pin_epoch
+    }
+
+    /// Pins the records among `values`, edges the VM keeps outside the heap and writes once:
+    /// their counts stick, so no epoch makes them candidates, and they are no roots of later
+    /// minor collections. A full collection frees them once nothing names them.
+    pub(crate) fn rc_pin(&mut self, values: &[Value]) {
+        if values.is_empty() {
+            return;
+        }
+        for_each_space_mut!(self, |space, _handle| space.rc_ensure());
+        for &value in values {
+            if let Some((family, id)) = locate(value) {
+                with_space!(self, family, |space| space.rc_pin(id));
+            }
         }
     }
 
@@ -144,7 +171,8 @@ impl Heap {
     }
 
     /// Increments the count of `value` if it is a record.
-    fn rc_increment(&self, value: Value) {
+    #[inline(always)]
+    pub(super) fn rc_increment(&self, value: Value) {
         if let Some((family, id)) = locate(value) {
             with_space!(self, family, |space| space.rc_increment(id));
         }
@@ -194,8 +222,10 @@ impl Heap {
             decrements.extend(copied);
             logged.extend(written.into_iter().map(handle));
         });
+        let started = std::time::Instant::now();
         let mut children = Vec::new();
         self.rc_increment_children(logged, &mut children);
+        self.rc_trace[6] = started.elapsed().as_micros() as u64;
         let mut zero = std::mem::take(&mut self.rc_zero);
         for value in decrements {
             if self.rc_decrement(value) {
@@ -204,28 +234,45 @@ impl Heap {
         }
         let mut carried = Vec::new();
         let mut candidates = Vec::new();
-        while let Some(value) = zero.pop() {
-            if candidates.len() >= RC_FREE_BUDGET {
-                carried.push(value);
-                carried.append(&mut zero);
+        // The cascade reads dead records, long out of cache: it takes them from the stack
+        // `RC_CASCADE_BATCH` at a time, all prefetched before the first is read.
+        let mut batch: Vec<Value> = Vec::with_capacity(RC_CASCADE_BATCH);
+        'cascade: loop {
+            let take = zero.len().saturating_sub(RC_CASCADE_BATCH);
+            batch.extend(zero.drain(take..).rev());
+            if batch.is_empty() {
                 break;
             }
-            let Some((family, id)) = locate(value) else { continue };
-            if !with_space!(self, family, |space| space.is_live(id) && space.rc_count(id) == 0) {
-                continue;
-            }
-            if !with_space_mut!(self, family, |space| space.rc_unmark(id)) {
-                // Logged this epoch, young, or a candidate already: tried again next epoch.
-                carried.push(value);
-                continue;
-            }
-            candidates.push(value);
-            self.rc_children(value, &mut children);
-            for child in children.drain(..) {
-                if self.rc_decrement(child) {
-                    zero.push(child);
+            for &value in &batch {
+                if let Some((family, id)) = locate(value) {
+                    with_space!(self, family, |space| space.prefetch(id));
                 }
             }
+            for index in 0..batch.len() {
+                let value = batch[index];
+                if candidates.len() >= RC_FREE_BUDGET {
+                    carried.extend_from_slice(&batch[index..]);
+                    carried.append(&mut zero);
+                    break 'cascade;
+                }
+                let Some((family, id)) = locate(value) else { continue };
+                if !with_space!(self, family, |space| space.is_live(id) && space.rc_count(id) == 0) {
+                    continue;
+                }
+                if !with_space_mut!(self, family, |space| space.rc_unmark(id)) {
+                    // Logged this epoch, young, or a candidate already: tried again next epoch.
+                    carried.push(value);
+                    continue;
+                }
+                candidates.push(value);
+                self.rc_children(value, &mut children);
+                for child in children.drain(..) {
+                    if self.rc_decrement(child) {
+                        zero.push(child);
+                    }
+                }
+            }
+            batch.clear();
         }
         if carried.len() > 1024 {
             carried.sort_unstable_by_key(|value| value.to_bits());
@@ -233,18 +280,25 @@ impl Heap {
         }
         self.rc_trace[2] = candidates.len() as u64;
         self.rc_trace[3] = carried.len() as u64;
+        self.rc_trace[7] = started.elapsed().as_micros() as u64 - self.rc_trace[6];
         self.rc_zero = carried;
+        let started = std::time::Instant::now();
         if !candidates.is_empty() {
-            self.rc_pin_cell_references(&candidates, work);
+            self.rc_pin_cell_references(work);
         }
+        self.rc_trace[8] = started.elapsed().as_micros() as u64;
         self.rc_candidates = candidates;
     }
 
-    /// Adds to `work` each of `candidates` a live legacy cell names, weakly or not, or a
+    /// Adds to `work` each candidate a live legacy cell names, weakly or not, or a
     /// sparse array holds: their references are not counted, and a minor collection traces
     /// old cells only where the cell barrier logged them.
-    fn rc_pin_cell_references(&self, candidates: &[Value], work: &mut Vec<Value>) {
-        let candidates: rustc_hash::FxHashSet<Value> = candidates.iter().copied().collect();
+    ///
+    /// An unmarked record a cell names is a candidate: a newborn could be named only by a
+    /// young cell or one the barrier logged, which the mark traces anyway. So each record
+    /// child left unmarked is pushed, with no set of the candidates to test.
+    fn rc_pin_cell_references(&self, work: &mut Vec<Value>) {
+        let unmarked = |value: &Value| locate(*value).is_some() && !self.rc_is_old(*value);
         let mut held = Vec::new();
         let mut last_proto = PushedProtos::default();
         for (index, slot) in self.slots.iter().enumerate() {
@@ -264,11 +318,11 @@ impl Heap {
                 Cell::WeakRef { target: Some(target), .. } => held.push(target.value),
                 _ => {}
             }
-            work.extend(held.drain(..).filter(|value| candidates.contains(value)));
+            work.extend(held.drain(..).filter(unmarked));
         }
         if let Some(arrays) = &self.sparse_arrays {
             for elements in arrays.values() {
-                work.extend(elements.values.values().copied().filter(|value| candidates.contains(value)));
+                work.extend(elements.values.values().copied().filter(unmarked));
             }
         }
     }
@@ -278,32 +332,88 @@ impl Heap {
     /// whose cascade decremented them. Survivors and re-marked candidates left at 0 are tried
     /// at the next minor collection.
     pub(super) fn rc_epoch(&mut self) {
-        let mut survivors: Vec<Value> = Vec::new();
+        // The object, array and string survivors counted their children in the mark
+        // (`rc_counted`); functions, promises, awaits and iterators (with the candidates the
+        // mark re-marked, aged) count theirs here, and vectors hold none.
+        let counted = std::mem::take(&mut self.rc_counted);
+        let mut survivors = Vec::new();
+        let mut family = 0..;
         for_each_space_mut!(self, |space, handle| {
             space.rc_ensure();
-            space.for_each_young_survivor(|id| survivors.push(handle(id)));
+            if family.next().is_some_and(|family| (2..6).contains(&family)) {
+                space.for_each_young_survivor(|id| survivors.push(handle(id)));
+            }
         });
         let mut children = Vec::new();
         self.rc_increment_children(survivors.iter().copied(), &mut children);
         let candidates = std::mem::take(&mut self.rc_candidates);
-        self.rc_trace[4] = survivors.len() as u64;
+        self.rc_trace[4] = (counted + survivors.len()) as u64;
         if crate::trace::Channel::Gc.on() {
             self.rc_trace[5] = candidates.iter().filter(|&&value| !self.rc_is_old(value)).count() as u64;
         }
-        for &candidate in &candidates {
-            let Some((family, id)) = locate(candidate) else { continue };
-            if with_space!(self, family, |space| space.is_marked(id)) {
-                self.rc_increment_children([candidate], &mut children);
-            }
-        }
+        // Every survivor has counted its children now; those left at 0, re-marked candidates
+        // among them (aged), are found a word of counts at a time.
         let mut zero = std::mem::take(&mut self.rc_zero);
-        for value in candidates.into_iter().chain(survivors) {
-            let Some((family, id)) = locate(value) else { continue };
-            if with_space!(self, family, |space| space.is_marked(id) && space.rc_count(id) == 0) {
-                zero.push(value);
+        for_each_space_mut!(self, |space, handle| space.rc_zero_survivors(|id| zero.push(handle(id))));
+        self.rc_zero = zero;
+    }
+
+    /// A full collection's start under counts, before its marks are cleared: the epoch's
+    /// counts change as at a minor collection (no record is unmarked), and the records old
+    /// now are noted (`rc_old`) for `rc_full_end`.
+    pub(super) fn rc_full_start(&mut self) {
+        let mut decrements: Vec<Value> = Vec::new();
+        let mut logged: Vec<Value> = Vec::new();
+        let mut old = Vec::new();
+        for_each_space_mut!(self, |space, handle| {
+            let (copied, written) = space.take_rc_epoch();
+            old.push(space.rc_old_bits(&written));
+            decrements.extend(copied);
+            logged.extend(written.into_iter().map(handle));
+        });
+        let mut children = Vec::new();
+        self.rc_increment_children(logged, &mut children);
+        for value in decrements {
+            if self.rc_decrement(value) {
+                self.rc_zero.push(value);
             }
         }
+        self.rc_old = old;
+    }
+
+    /// A full collection's end under counts, after its mark and before its sweep, in place of
+    /// a recount: the old records it frees drop their references, and the young records it
+    /// keeps count theirs, as the survivors of a minor collection do. A record's count then
+    /// stands for its holders among the survivors, as a recount would make it, at the cost of
+    /// the records that changed age, not of every live one.
+    pub(super) fn rc_full_end(&mut self) {
+        let old = std::mem::take(&mut self.rc_old);
+        let mut survivors = Vec::new();
+        let mut dead = Vec::new();
+        let mut olds = old.iter();
+        for_each_space_mut!(self, |space, handle| {
+            space.rc_ensure();
+            if let Some(bits) = olds.next() {
+                space.rc_full_changes(bits, |id, survived| if survived { survivors.push(handle(id)) } else { dead.push(handle(id)) });
+            }
+        });
+        let mut children = Vec::new();
+        self.rc_increment_children(survivors.iter().copied(), &mut children);
+        let mut zero = std::mem::take(&mut self.rc_zero);
+        for owner in dead {
+            self.rc_children(owner, &mut children);
+            for child in children.drain(..) {
+                if self.rc_decrement(child) {
+                    zero.push(child);
+                }
+            }
+        }
+        zero.extend(survivors);
+        zero.retain(|&value| self.rc_is_old(value) && self.rc_count_of(value) == Some(0));
+        zero.sort_unstable_by_key(|value| value.to_bits());
+        zero.dedup();
         self.rc_zero = zero;
+        self.rc_candidates.clear();
     }
 
     /// The candidates the minor mark left unmarked: what the sweep would free.
@@ -371,8 +481,8 @@ impl Heap {
         }
     }
 
-    /// Recounts every live record's references from scratch, after a full collection's sweep:
-    /// the backup trace resets stuck counts and forgets the epoch's buffers.
+    /// Recounts every live record's references from scratch, as counting starts, and
+    /// forgets the epoch's buffers.
     pub(super) fn rc_recount(&mut self) {
         for_each_space_mut!(self, |space, _handle| {
             space.rc_clear();

@@ -98,7 +98,7 @@ pub(crate) enum Class {
     DefinePropertyRecord,
     Delete,
     InitializeTdz,
-    GetIterator, IteratorClose,
+    GetIterator, IteratorClose, AppendArray,
     IteratorCleanupPop,
     IteratorCleanupPush,
     LoadCallee,
@@ -227,7 +227,7 @@ macro_rules! class_of {
     (Delete) => { Class::Delete };
     (InitializeTdz) => { Class::InitializeTdz };
     (GetIterator) => { Class::GetIterator };
-    (IteratorClose) => { Class::IteratorClose };
+    (IteratorClose) => { Class::IteratorClose }; (AppendArray) => { Class::AppendArray };
     (IteratorCleanupPop) => { Class::IteratorCleanupPop };
     (IteratorCleanupPush) => { Class::IteratorCleanupPush };
     (LoadCallee) => { Class::LoadCallee };

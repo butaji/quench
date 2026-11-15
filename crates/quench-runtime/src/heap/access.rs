@@ -286,6 +286,7 @@ impl Heap {
     }
 
     /// `iterator`, mutably, past the write barrier.
+    #[inline]
     pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
@@ -652,10 +653,35 @@ impl Heap {
         Some(result)
     }
 
+    /// Appends the Number `value` to the direct array `array` where its backing is or becomes
+    /// double (`ArrayElements::push_double`); `false` changes nothing. A Number is no heap
+    /// reference, so the store needs no barrier.
+    #[inline(always)]
+    pub(crate) fn push_double_element(&mut self, array: Value, value: Value) -> bool {
+        let Some(record_id) = array.direct_array_index() else { return false };
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive; a Number
+        // writes no reference.
+        let object = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        if !object.elements().is_double() && (value.is_tagged() || object.elements().capacity() != 0 && !object.elements().holds_only_int32()) {
+            return false;
+        }
+        let mut grown = 0;
+        if !object.elements_mut().push_double(value, &mut grown) {
+            return false;
+        }
+        if grown != 0 {
+            self.charge_payload_growth(grown * size_of::<Value>());
+        }
+        true
+    }
+
     /// Appends `value` to the direct array `array`'s elements, as `grow_array_elements` grows
     /// them, through the write barrier of that one store (`record_array_store_mut`).
     #[inline(always)]
     pub(crate) fn push_array_element(&mut self, array: Value, value: Value) -> Option<()> {
+        if self.push_double_element(array, value) {
+            return Some(());
+        }
         let elements = self.record_array_store_mut(array, value)?.elements_mut().make_mut();
         let capacity = elements.capacity();
         elements.push(value);

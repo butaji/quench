@@ -39,7 +39,7 @@ struct Link {
 
 /// A link's operator with its operand order: `v op x`, or `x op v` for the reversed forms.
 #[derive(Clone, Copy)]
-enum Code {
+pub(super) enum Code {
     Add,
     Multiply,
     Subtract,
@@ -50,7 +50,7 @@ enum Code {
 }
 
 impl Code {
-    fn of(op: NodeOp, left: bool) -> Self {
+    pub(super) fn of(op: NodeOp, left: bool) -> Self {
         match (op, left) {
             (NodeOp::Arith(NumberArithmetic::Add), _) => Self::Add,
             (NodeOp::Arith(NumberArithmetic::Multiply), _) => Self::Multiply,
@@ -64,7 +64,7 @@ impl Code {
     }
 
     #[inline(always)]
-    fn apply(self, v: f64, x: f64) -> f64 {
+    pub(super) fn apply(self, v: f64, x: f64) -> f64 {
         match self {
             Self::Add => v + x,
             Self::Multiply => v * x,
@@ -91,6 +91,7 @@ enum Pass {
     None,
     Fold(Fold),
     Chain(Chain),
+    Machine(super::machine::Machine),
 }
 
 /// A kernel's recurrence pass, and the nodes that read the recurrence without feeding it
@@ -109,7 +110,7 @@ fn read_as_column(shape: &Shape, side: &[u16], id: u16) -> bool {
 
 /// Whether node `id`'s column is read by a store, a side node or a written register's final
 /// value.
-fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
+pub(super) fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
     read_as_column(shape, side, id) || shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id))
 }
 
@@ -127,6 +128,12 @@ impl Recurrence {
         if shape.phis.is_empty() {
             return Some(Self { pass: Pass::None, side: Vec::new() });
         }
+        Self::single(shape).or_else(|| Some(Self { pass: Pass::Machine(super::machine::Machine::of(shape)?), side: Vec::new() }))
+    }
+
+    /// The pass of a single recurrence whose cycle is a chain (`cycle`), whose other nodes
+    /// read columns only.
+    fn single(shape: &Shape) -> Option<Self> {
         let cycle = cycle(shape)?;
         let side: Vec<u16> = shape.seq.iter().copied().filter(|id| !cycle.contains(id)).collect();
         // A side node reads columns only: the recurrence's value before an iteration has none.
@@ -158,7 +165,12 @@ impl Recurrence {
 
     /// The scratch columns a run needs.
     pub(super) fn columns(&self, shape: &Shape) -> usize {
-        shape.nodes.len() + match &self.pass { Pass::Chain(chain) => chain.columns(), _ => 0 }
+        shape.nodes.len()
+            + match &self.pass {
+                Pass::Chain(chain) => chain.columns(),
+                Pass::Machine(machine) => machine.columns(),
+                _ => 0,
+            }
     }
 
     /// Side nodes, in body order.
@@ -172,6 +184,7 @@ impl Recurrence {
             Pass::None => {}
             Pass::Fold(fold) => fold.run(phis, scalars, scratch, len),
             Pass::Chain(chain) => chain.run(phis, scalars, scratch, len),
+            Pass::Machine(machine) => machine.run(phis, scalars, scratch, len),
         }
     }
 }

@@ -18,7 +18,10 @@ impl Lowering<'_> {
         for affine in &mut self.affines {
             affine.step = inductions.iter().find(|(register, _)| *register == affine.register).map_or(0, |&(_, step)| step);
         }
-        let seq = sequential(&mut nodes);
+        if !disjoint_stores(&stores, &self.affines) {
+            return None;
+        }
+        let seq = sequential(&mut nodes, &phis);
         Some(Shape {
             counter,
             relation,
@@ -36,16 +39,15 @@ impl Lowering<'_> {
         })
     }
 
-    /// The body's stores, one per array.
+    /// The body's stores.
     fn stores(&mut self, graph: &Graph) -> Option<Vec<Store>> {
-        let stores = graph
+        graph
             .stores
             .iter()
             .map(|&(base, index, value, order)| {
                 Some(Store { base: self.base(base)?, index: self.affine(index)?, value: self.arg(value)?, order })
             })
-            .collect::<Option<Vec<Store>>>()?;
-        distinct_stores(&stores).then_some(stores)
+            .collect()
     }
 
     fn inductions(&self, file: &[Sym]) -> Option<Vec<(u16, i32)>> {
@@ -84,22 +86,47 @@ impl Lowering<'_> {
     }
 }
 
-/// One store per base register: a second store to the same array would need its order.
-fn distinct_stores(stores: &[Store]) -> bool {
-    stores.iter().enumerate().all(|(i, store)| stores[..i].iter().all(|other| other.base != store.base))
+/// Whether no two stores through one base register can write one element: their indices
+/// step together and their offsets differ modulo the step (`line[i]`, `line[i + 1]` with
+/// `i += 2`), so the order the chunk commits them in never shows.
+fn disjoint_stores(stores: &[Store], affines: &[Affine]) -> bool {
+    let apart = |a: &Store, b: &Store| {
+        let (a, b) = (affines[usize::from(a.index)], affines[usize::from(b.index)]);
+        a.register == b.register && a.step == b.step && a.step != 0 && (a.offset - b.offset).rem_euclid(a.step) != 0
+    };
+    stores.iter().enumerate().all(|(i, store)| stores[..i].iter().all(|other| other.base != store.base || apart(other, store)))
 }
 
-/// The nodes that read a recurrence, directly or through another node, in body order.
-fn sequential(nodes: &mut [Node]) -> Vec<u16> {
-    for id in 0..nodes.len() {
-        let node = nodes[id];
-        let reads = |arg: Arg| match arg {
-            Arg::Phi(_) => true,
-            Arg::Col(n) => nodes[usize::from(n)].seq,
-            _ => false,
-        };
-        let seq = matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && (reads(node.a) || reads(node.b));
-        nodes[id].seq = seq;
+/// The nodes that read a recurrence, directly or through another node, in body order. A
+/// recurrence whose value at an iteration's end is a column no recurrence feeds (`p = c`)
+/// is that column one iteration late, so a node reading it is a column too (`lagged`),
+/// where the column is ready first: a load (loads run first), or a node before the reader.
+fn sequential(nodes: &mut [Node], phis: &[(u16, Arg)]) -> Vec<u16> {
+    let mut lagged = vec![false; phis.len()];
+    loop {
+        for id in 0..nodes.len() {
+            let node = nodes[id];
+            let reads = |arg: Arg| match arg {
+                Arg::Phi(p) => !(lagged[usize::from(p)] && lag_ready(nodes, phis[usize::from(p)].1, id)),
+                Arg::Col(n) => nodes[usize::from(n)].seq,
+                _ => false,
+            };
+            let seq = matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && (reads(node.a) || reads(node.b));
+            nodes[id].seq = seq;
+        }
+        let next: Vec<bool> = phis.iter().map(|&(_, last)| matches!(last, Arg::Col(n) if !nodes[usize::from(n)].seq)).collect();
+        if next == lagged {
+            break;
+        }
+        lagged = next;
     }
     (0..nodes.len() as u16).filter(|&id| nodes[usize::from(id)].seq).collect()
+}
+
+/// Whether column `last` is computed before node `reader`'s column (`Runner::columns`).
+pub(super) fn lag_ready(nodes: &[Node], last: Arg, reader: usize) -> bool {
+    match last {
+        Arg::Col(n) => usize::from(n) < reader || matches!(nodes[usize::from(n)].op, NodeOp::Load { .. } | NodeOp::Iota { .. }),
+        _ => false,
+    }
 }

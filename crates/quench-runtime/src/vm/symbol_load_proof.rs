@@ -50,7 +50,13 @@ pub(super) const KIND_INHERITED: u64 = 2;
 pub(super) const KIND_ABSENT: u64 = 3;
 /// The receiver's own shape lacks the key; nothing said of its chain, so no read answers by it.
 pub(super) const KIND_ABSENT_OWN: u64 = 4;
+/// An accessor `hops` links up (0: the receiver's own), whose getter and setter the holder's
+/// slot attributes give; an own one holds under any chain epoch, as an own data slot does.
 pub(super) const KIND_GETTER: u64 = 5;
+/// `KIND_GETTER` whose slot holds the getter itself (an accessor without a setter).
+pub(super) const KIND_GETTER_SLOT: u64 = 6;
+/// `KIND_GETTER` whose slot holds an accessor pair cell.
+pub(super) const KIND_GETTER_PAIR: u64 = 7;
 
 /// The parts of an answer word (`FactEntry`): its kind, slot and hops, and whether it holds
 /// under the chain epoch `epoch` (an own answer holds under any).
@@ -107,7 +113,9 @@ impl FactEntry {
             KIND_OWN => Some(SymbolLoadAnswer::Own(slot)),
             KIND_INHERITED if current => Some(SymbolLoadAnswer::Inherited { hops, slot }),
             KIND_ABSENT if current => Some(SymbolLoadAnswer::Absent),
-            KIND_GETTER if current => Some(SymbolLoadAnswer::Getter { hops, slot }),
+            KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if current || hops == 0 => {
+                Some(SymbolLoadAnswer::Getter { hops, slot })
+            }
             _ => None,
         }
     }
@@ -230,6 +238,20 @@ impl SymbolLoadProofs {
         let (Some(key32), Some(word)) = (key.key32(), FactEntry::encode(answer, epoch)) else {
             return;
         };
+        self.store(layout, key32, epoch, word, holder);
+    }
+
+    /// Records an accessor `hops` links up at `slot`, of the accessor kind `kind`
+    /// (`KIND_GETTER`, `KIND_GETTER_SLOT` or `KIND_GETTER_PAIR`), with its holder's record id
+    /// plus one (0 for none).
+    pub(super) fn record_accessor(&self, layout: u32, key32: u32, epoch: u64, hops: u8, slot: u32, kind: u64, holder: u32) {
+        if slot < SLOT_LIMIT && hops < HOPS_LIMIT {
+            let word = u64::from(slot) | u64::from(hops) << 24 | kind << 28 | (epoch & 0xffff_ffff) << 32;
+            self.store(layout, key32, epoch, word, holder);
+        }
+    }
+
+    fn store(&self, layout: u32, key32: u32, epoch: u64, word: u64, holder: u32) {
         let high = (epoch >> 32) as u32;
         if high != self.epoch_high.get() {
             self.clear_entries();

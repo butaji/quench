@@ -25,7 +25,7 @@ impl Engine {
     ) -> Option<ChunkDelta> {
         let source = program.source.as_ref().filter(|source| source.base == 0)?;
         let replay = program.replay.as_deref()?;
-        let header = *program.functions.get(function as usize)?.header();
+        let header = program.functions.get(function as usize)?.header();
         let span = header.source_span?;
         let chunk = ChunkText::of(source, span)?;
         let (line_starts, utf16_excess) = replay.views.layout(&source.text);
@@ -33,7 +33,7 @@ impl Engine {
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
-        let mut parsed = lazy_bodies::parse(&allocator, &chunk.text, SourceType::script(), None, None, false, false, false);
+        let mut parsed = lazy_bodies::parse(&allocator, &chunk.text, SourceType::script(), None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None);
         let name = program.source_name.as_str();
         let mut prototype_unobservable = chunk_analysis(&parsed, name)?;
         let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);

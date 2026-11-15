@@ -125,6 +125,13 @@ impl Stage for Concrete {
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }
     }
+    /// The branch `cond` takes, with its leaving kept as its `None`: the default's
+    /// `Cell` flag and closure frame cost each staged `pop()` a call.
+    #[inline(always)]
+    fn choose_leaving(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>,
+        otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {
+        if cond { then(self) } else { otherwise(self) }
+    }
     #[inline(always)]
     fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]

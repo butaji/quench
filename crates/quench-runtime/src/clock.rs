@@ -95,10 +95,62 @@ static WORK: AtomicU64 = AtomicU64::new(0);
 /// The engine work clock: a monotone count of work done, in typical-host nanoseconds, that
 /// any policy may read in place of wall time (GC pacing, RC epochs, allocator release, code
 /// aging). It advances at each collection by the mutator work since the previous one
-/// (weight allocated) and the collection's own work (weight it traced), so it is coarse
-/// between collections but identical on every run of the same program. One relaxed load.
+/// (weight allocated) and the collection's own work (weight it traced), and between
+/// collections by native calls (`note_step`), lane runs (`note_lane_run`) and lane loop
+/// iterations (`note_backedges`, once per fuel batch of backward jumps), so code that
+/// allocates little still moves it; identical on every run of the same program.
+/// One relaxed load.
 pub fn now_work() -> u64 {
     WORK.load(Ordering::Relaxed)
+}
+
+/// Slow-path steps (`note_step`) between charges to the work clock.
+const STEP_BATCH: u32 = 1024;
+/// Work, in typical-host nanoseconds, of one native library call (~100-400 instructions).
+const WORK_PER_STEP: u64 = 60;
+/// Work of one interpreter lane run, charged when it leaves (`note_lane_run`).
+const WORK_PER_LANE_RUN: u64 = 400;
+
+#[thread_local]
+static STEPS_LEFT: std::cell::Cell<u32> = std::cell::Cell::new(STEP_BATCH);
+
+/// One native library call (`Vm::call_native`): with lane runs (`note_lane_run`) the
+/// mutator term of the work clock, charged only where execution already pays a call, so the
+/// lane's hot loops and the general loop's steps pay nothing. A thread-local decrement;
+/// every `STEP_BATCH` calls charge their work at once.
+#[inline(always)]
+pub fn note_step() {
+    let left = STEPS_LEFT.get();
+    if left > 1 {
+        STEPS_LEFT.set(left - 1);
+    } else {
+        STEPS_LEFT.set(STEP_BATCH);
+        charge_work(u64::from(STEP_BATCH) * WORK_PER_STEP);
+    }
+}
+
+#[thread_local]
+static LANE_RUNS_LEFT: std::cell::Cell<u32> = std::cell::Cell::new(LANE_RUN_BATCH);
+/// Lane runs between charges to the work clock.
+const LANE_RUN_BATCH: u32 = 256;
+/// Work, in typical-host nanoseconds, of one loop iteration in the lane.
+const WORK_PER_BACKEDGE: u64 = 10;
+/// Credit `count` backward jumps a lane run took (its safepoint, once per fuel batch).
+#[inline]
+pub fn note_backedges(count: u32) {
+    charge_work(u64::from(count) * WORK_PER_BACKEDGE);
+}
+
+/// One interpreter lane run that has left to the general loop (batched like `note_step`).
+#[inline(always)]
+pub fn note_lane_run() {
+    let left = LANE_RUNS_LEFT.get();
+    if left > 1 {
+        LANE_RUNS_LEFT.set(left - 1);
+    } else {
+        LANE_RUNS_LEFT.set(LANE_RUN_BATCH);
+        charge_work(u64::from(LANE_RUN_BATCH) * WORK_PER_LANE_RUN);
+    }
 }
 
 /// Adds `units` of work to the work clock (`now_work`); heaps call it once per collection.

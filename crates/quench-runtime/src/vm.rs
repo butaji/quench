@@ -1870,6 +1870,9 @@ pub(crate) struct Vm<H> {
     /// The failure of an await the lane chained in place (`Vm::lane_chain_await`), which
     /// the lane run's frame loop raises.
     lane_chain_error: Option<JsError>,
+    /// Whether a reaction the lane chained in place ended the chain in its slot
+    /// (`Vm::lane_chain_reaction_complete`), which the lane run's frame loop completes.
+    lane_chain_ended: bool,
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
@@ -2047,6 +2050,8 @@ pub(crate) struct Vm<H> {
     private_site_homes: private_site_home::PrivateSiteHomes,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
+    /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
+    collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
@@ -2131,6 +2136,10 @@ pub(crate) struct Vm<H> {
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
     holder_hints: Vec<HolderHint>,
+    /// Under reference counts: the shapes whose edges are pinned (`Heap::rc_pin`), and the
+    /// heap's pin epoch they were pinned in.
+    rc_pinned_shapes: usize,
+    rc_pin_epoch: u64,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
@@ -3090,6 +3099,7 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_shape = None;
+        self.collection_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);

@@ -18,6 +18,22 @@ impl<'a> Reparsed<'a> {
         Self::function_of(&self.program)
     }
 
+    /// The function parsed again, to change.
+    pub(in crate::compile) fn function_mut(&mut self) -> Option<&mut Function<'a>> {
+        match self.program.body.first_mut()? {
+            Statement::FunctionDeclaration(function) => Some(function),
+            Statement::ExpressionStatement(statement) => match &mut statement.expression {
+                Expression::FunctionExpression(function) => Some(function),
+                Expression::ParenthesizedExpression(parenthesized) => match &mut parenthesized.expression {
+                    Expression::FunctionExpression(function) => Some(function),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn function_of<'p>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
         match program.body.first()? {
             Statement::FunctionDeclaration(function) => Some(function),
@@ -51,10 +67,20 @@ pub(in crate::compile) fn reparse<'a>(
     source_type: SourceType,
     nesting: Nesting<'_>,
 ) -> Result<Reparsed<'a>, ReparseFailure> {
+    // The bodies inside whose free names and ends a parse before found are skipped unread: a
+    // body nested deep is otherwise read again by each function around it that compiles.
+    let mut known = rustc_hash::FxHashMap::default();
     let (mut names, recorded) = match nesting {
-        Nesting::Parse(found) => (Some(FreeNameCheck::new(found, delta)), None),
+        Nesting::Parse(found) => {
+            let from = delta.wrapping_add(offset + 1);
+            if let Some(to) = from.checked_add((text.len() as u32).saturating_sub(offset + 1)) {
+                known.extend(found.ends_in(from..to).map(|(start, end)| (start.wrapping_sub(delta), end.wrapping_sub(delta))));
+            }
+            (Some(FreeNameCheck::new(found, delta)), None)
+        }
         Nesting::Recorded(starts) => (None, Some(starts)),
     };
+    let skip = |start: u32| known.get(&start).copied();
     let lazy_from = names.is_some().then_some(offset + 1);
     let mut check = |body: oxc_parser::LazyBody<'_, '_>| {
         if let Some(names) = &mut names {
@@ -62,8 +88,11 @@ pub(in crate::compile) fn reparse<'a>(
         }
         true
     };
+    let skips = (lazy_from.is_some() && !known.is_empty() && crate::trace::Dev::Recognize.value() != Some("noskip"))
+        // SAFETY: `skip` lives through the parse, which alone calls it.
+        .then(|| unsafe { oxc_parser::LazyBodySkip::new(&skip) });
     // SAFETY: `check` lives through the parse, which alone calls it.
-    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false, false, true);
+    let mut parsed = parse(allocator, text, source_type, lazy_from, lazy_from.map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) }), false, false, crate::compile::annex_b_targets::Recognize::All, skips);
     if let Some(starts) = recorded {
         // The function's own body compiles from this parse.
         let own = Reparsed::function_of(&parsed.program).and_then(|function| function.body.as_ref()).map(|body| body.span.start);

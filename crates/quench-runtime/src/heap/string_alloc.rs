@@ -26,10 +26,47 @@ impl Heap {
         self.alloc_string(JsString::from_unit_run(units))
     }
 
+    /// `alloc_unit_run` of the ASCII run `bytes`: a short run of two units or more is written
+    /// inline into its record, charged as `alloc_string_record` charges it, with none of the
+    /// general string's representation dispatch (an exec's captures: ~230 Ir each before).
+    #[inline]
+    pub(crate) fn alloc_ascii_run(&mut self, bytes: &[u8]) -> Value {
+        if bytes.len() == 1 || bytes.len() > crate::vm::wtf16::SHORT_ASCII_CAPACITY || cfg!(feature = "profile-aggregate") {
+            return self.alloc_unit_run(crate::vm::wtf16::Units::Ascii(bytes));
+        }
+        self.charge_materialized_text();
+        // A short string's payload is its length (`JsString::flat_unit_bytes`), as its sweep
+        // releases it.
+        let payload = bytes.len();
+        self.payload_bytes = self.payload_bytes.saturating_add(payload);
+        self.allocated += 1 + payload / payload_unit();
+        match self.string_records.try_insert(JsString::short_ascii(bytes)) {
+            Ok(record_id) => Value::direct_string(record_id),
+            Err(_) => panic!("string record space exhausted"),
+        }
+    }
+
+    /// The string of the one Latin-1 code unit `unit` past ASCII, one record per unit while
+    /// no collection empties the table (`ascii_unit_strings`); `None` for any other unit.
+    pub(crate) fn latin1_unit_string(&mut self, unit: u16) -> Option<Value> {
+        let index = usize::from(unit);
+        if !(ASCII_UNITS..UNIT_STRINGS).contains(&index) {
+            return None;
+        }
+        if let Some(strings) = &self.ascii_unit_strings
+            && !strings[index].is_undefined()
+        {
+            return Some(strings[index]);
+        }
+        let value = self.alloc_string_record(JsString::from_units(&[unit]));
+        self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; UNIT_STRINGS]))[index] = value;
+        Some(value)
+    }
+
     /// `alloc_string` of a one-unit ASCII string: the one record of that unit.
     #[inline(never)]
     fn alloc_ascii_unit_string(&mut self, string: JsString, unit: u8) -> Value {
-        let strings = self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; ASCII_UNITS]));
+        let strings = self.ascii_unit_strings.get_or_insert_with(|| Box::new([Value::UNDEFINED; UNIT_STRINGS]));
         let cached = strings[usize::from(unit)];
         if !cached.is_undefined() {
             return cached;

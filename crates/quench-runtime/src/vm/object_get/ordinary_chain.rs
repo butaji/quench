@@ -107,6 +107,19 @@ impl<H: Host> Vm<H> {
             Some(SymbolLoadAnswer::Absent) if inherits => {
                 return Some(ChainRead::Absent);
             }
+            // An inherited accessor (a class getter, as reactive state's computed reads are):
+            // its getter from the holder's slot, without the walk.
+            Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits => {
+                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
+                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    _ => self.proof_holder(data, hops)?,
+                };
+                if let Some(attributes) = self.slot_attributes(holder, slot as usize)
+                    && attributes.accessor
+                {
+                    return Some(ChainRead::Getter(attributes.getter));
+                }
+            }
             _ => {}
         }
         match self.prove_load(object, key, epoch) {

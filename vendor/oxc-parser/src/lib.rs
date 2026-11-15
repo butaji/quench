@@ -98,6 +98,7 @@ use oxc_span::{SourceType, Span};
 use oxc_syntax::module_record::ModuleRecord;
 
 pub use crate::lexer::{Kind, Token};
+pub use crate::js::stream::{StatementStream, StreamStep};
 use crate::{
     config::{
         LexerConfig, NoTokensParserConfig, ParserConfig, RuntimeParserConfig, TokensParserConfig,
@@ -339,6 +340,43 @@ pub struct ParseOptions {
     ///
     /// Default: `false`
     pub lazy_recognize_verify: bool,
+    /// With `lazy_recognize`, a body is recognized only while no function, arrow or class lies
+    /// inside it: the first stops the recognition, and the body is parsed whole, where its
+    /// check needs the tree for any function inside (`LazyBody::functions_inside`).
+    pub lazy_recognize_flat: bool,
+
+    /// With `lazy_function_bodies`, a body this gives an end for (by its function's start) is
+    /// skipped unread to that end and released: a parse again of a body an earlier parse
+    /// released and checked. A body that may begin with a directive is read as usual.
+    ///
+    /// Default: `None`
+    pub lazy_body_skip: Option<LazyBodySkip>,
+}
+
+/// A borrowed map from a function's start to its body's end (`ParseOptions::lazy_body_skip`).
+#[derive(Clone, Copy)]
+pub struct LazyBodySkip(std::ptr::NonNull<dyn Fn(u32) -> Option<u32>>);
+
+impl LazyBodySkip {
+    /// # Safety
+    /// `skip` must outlive every parse given these options.
+    pub unsafe fn new<'c>(skip: &'c (dyn Fn(u32) -> Option<u32> + 'c)) -> Self {
+        // SAFETY: the caller keeps `skip` alive while it is called.
+        Self(unsafe { std::mem::transmute::<std::ptr::NonNull<dyn Fn(u32) -> Option<u32> + 'c>, std::ptr::NonNull<dyn Fn(u32) -> Option<u32>>>(std::ptr::NonNull::from(skip)) })
+    }
+
+    /// # Safety
+    /// The map given to `new` is alive.
+    pub(crate) unsafe fn call(self, start: u32) -> Option<u32> {
+        // SAFETY: the caller's contract.
+        unsafe { (*self.0.as_ptr())(start) }
+    }
+}
+
+impl std::fmt::Debug for LazyBodySkip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LazyBodySkip")
+    }
 }
 
 /// A borrowed check of each lazily parsed function (`ParseOptions::lazy_body_check`).
@@ -362,6 +400,8 @@ pub struct LazyBody<'p, 'a> {
     /// its directives only. The check returns false where it needs the tree; the body is then
     /// parsed whole and checked again.
     pub stub: bool,
+    /// Where `stub`, a function, arrow or class lies inside the body; true otherwise.
+    pub functions_inside: bool,
 }
 
 impl LazyBodyCheck {
@@ -402,6 +442,8 @@ impl Default for ParseOptions {
             inherited_strict: false,
             lazy_recognize: false,
             lazy_recognize_verify: false,
+            lazy_recognize_flat: false,
+            lazy_body_skip: None,
         }
     }
 }
@@ -490,6 +532,22 @@ mod parser_parse {
         #[cfg(any(test, feature = "benchmarking"))]
         pub fn new_for_tests_and_benchmarks() -> Self {
             Self(())
+        }
+    }
+
+    impl<'a> Parser<'a, NoTokensParserConfig> {
+        /// The statements of a function body's text, parsed a run at a time and released
+        /// after each run is read (`StatementStream`). The stream holds this thread's one
+        /// parser while it lives: nothing else parses until it is dropped.
+        pub fn statement_stream(self) -> StatementStream<'a> {
+            StatementStream::new(ParserImpl::new(
+                self.allocator,
+                self.source_text,
+                self.source_type,
+                self.options,
+                self.config,
+                UniquePromise::new(),
+            ))
         }
     }
 
@@ -839,6 +897,12 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// The stack the outermost recognized body may still use (`js::recognize`).
     rc_budget: Option<quench_stack::StackBudget>,
+    /// The function bodies, expression-bodied arrows and classes recognized so far
+    /// (`LazyBody::functions_inside`).
+    rc_functions: u32,
+    /// `rc_functions` where the outermost body being recognized began, under
+    /// `ParseOptions::lazy_recognize_flat`.
+    rc_flat_from: Option<u32>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -889,6 +953,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             recognized_verdicts: Vec::new(),
             rc_ident: oxc_str::Ident::new_unhashed(""),
             rc_budget: None,
+            rc_functions: 0,
+            rc_flat_from: None,
         }
     }
 

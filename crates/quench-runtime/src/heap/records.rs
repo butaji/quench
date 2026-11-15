@@ -753,6 +753,19 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     }
 
 
+    /// Starts loading record `id`'s first cache line, for a read soon after.
+    #[inline(always)]
+    pub(super) fn prefetch(&self, id: RecordId) {
+        // SAFETY: a prefetch reads nothing; the address is within the space's reservation.
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            _mm_prefetch::<_MM_HINT_T0>(self.base.as_ptr().add(id as usize).cast::<i8>());
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = id;
+    }
+
     /// # Safety
     /// `id` must come from a live direct Value of this record family. Sweep removes the
     /// record only after all weak owners have been pruned.
@@ -1019,6 +1032,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.blocks
             .get_mut(block_index)
             .is_some_and(|block| block.is_occupied(record_index) && block.mark(record_index))
+    }
+
+    /// Whether record `id` is aged: a newborn a minor collection under
+    /// `PromotionAge::First` names (`age_newborns`), or a candidate counts unmarked
+    /// (`rc_unmark`).
+    #[inline(always)]
+    pub(super) fn is_aged(&self, id: RecordId) -> bool {
+        let (block_index, record_index) = Self::split_id(id);
+        self.blocks[block_index].aged[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
     }
 
     pub(super) fn is_marked(&self, id: RecordId) -> bool {
@@ -1540,43 +1562,56 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         (hi << 1 | lo) as u8
     }
 
-    #[inline(always)]
-    fn rc_store(&self, id: RecordId, count: u8) {
-        let (block_index, record_index) = Self::split_id(id);
-        let block = &self.rc_blocks[block_index];
-        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        let set = |bits: &AtomicU64, on: bool| {
-            let value = bits.load(Ordering::Relaxed);
-            bits.store(if on { value | mask } else { value & !mask }, Ordering::Relaxed);
-        };
-        set(&block.lo[word], count & 1 != 0);
-        set(&block.hi[word], count & 2 != 0);
-    }
-
-    /// The exact count of `id`, with its overflow entry.
+    /// The exact count of `id`, with its overflow entry; `u32::MAX` when stuck.
     #[cfg(test)]
     pub(super) fn rc_exact_count(&self, id: RecordId) -> u32 {
-        let count = self.rc_count(id) as u32;
-        let overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
         if self.rc_stuck(id) {
             return u32::MAX;
         }
+        let count = self.rc_count(id) as u32;
+        let overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
         count + if count == RC_STUCK as u32 { overflow.get(&id).copied().unwrap_or(0) } else { 0 }
     }
 
-    /// Adds a reference to live record `id`; past `RC_STUCK`, in the overflow table.
+    /// Adds a reference to live record `id`; past `RC_STUCK`, in the overflow table. The
+    /// count's low bit is set first: 0 -> 1 and 2 -> 3 set it, 1 -> 2 carries into the high bit.
     #[inline(always)]
     pub(super) fn rc_increment(&self, id: RecordId) {
-        let count = self.rc_count(id);
-        if count < RC_STUCK {
-            self.rc_store(id, count + 1);
-        } else if !self.rc_stuck(id) {
+        let (block_index, record_index) = Self::split_id(id);
+        let block = &self.rc_blocks[block_index];
+        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        let lo = block.lo[word].load(Ordering::Relaxed);
+        if lo & mask == 0 {
+            block.lo[word].store(lo | mask, Ordering::Relaxed);
+            return;
+        }
+        let hi = block.hi[word].load(Ordering::Relaxed);
+        if hi & mask == 0 {
+            block.lo[word].store(lo & !mask, Ordering::Relaxed);
+            block.hi[word].store(hi | mask, Ordering::Relaxed);
+        } else if block.stuck[word].load(Ordering::Relaxed) & mask == 0 {
             self.rc_overflow_add(id);
         }
     }
 
+    /// Makes `id`'s count stuck (`Heap::rc_pin`), dropping its overflow entry.
+    pub(super) fn rc_pin(&self, id: RecordId) {
+        let (block_index, record_index) = Self::split_id(id);
+        let block = &self.rc_blocks[block_index];
+        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        if block.stuck[word].load(Ordering::Relaxed) & mask != 0 {
+            return;
+        }
+        if block.lo[word].load(Ordering::Relaxed) & block.hi[word].load(Ordering::Relaxed) & mask != 0 {
+            self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner()).remove(&id);
+        }
+        block.lo[word].fetch_or(mask, Ordering::Relaxed);
+        block.hi[word].fetch_or(mask, Ordering::Relaxed);
+        block.stuck[word].fetch_or(mask, Ordering::Relaxed);
+    }
+
     /// Whether `id`'s count is stuck: past the overflow table's limit.
-    #[inline(always)]
+    #[cfg(test)]
     fn rc_stuck(&self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         let word = &self.rc_blocks[block_index].stuck[record_index / OCCUPANCY_WORD_BITS];
@@ -1602,12 +1637,29 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// over-count) stays 0.
     #[inline(always)]
     pub(super) fn rc_decrement(&self, id: RecordId) -> bool {
-        let count = self.rc_count(id);
-        if count == 0 || count == RC_STUCK && (self.rc_stuck(id) || self.rc_overflow_take(id)) {
-            return false;
+        let (block_index, record_index) = Self::split_id(id);
+        let block = &self.rc_blocks[block_index];
+        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
+        let lo = block.lo[word].load(Ordering::Relaxed);
+        let hi = block.hi[word].load(Ordering::Relaxed);
+        match (lo & mask != 0, hi & mask != 0) {
+            (false, false) => false,
+            (true, false) => {
+                block.lo[word].store(lo & !mask, Ordering::Relaxed);
+                true
+            }
+            (false, true) => {
+                block.lo[word].store(lo | mask, Ordering::Relaxed);
+                block.hi[word].store(hi & !mask, Ordering::Relaxed);
+                false
+            }
+            (true, true) => {
+                if block.stuck[word].load(Ordering::Relaxed) & mask == 0 && !self.rc_overflow_take(id) {
+                    block.lo[word].store(lo & !mask, Ordering::Relaxed);
+                }
+                false
+            }
         }
-        self.rc_store(id, count - 1);
-        count == 1
     }
 
     /// Takes one reference from `id`'s overflow entry; `false` when it has none.
@@ -1639,7 +1691,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             return false;
         }
         *word &= !mask;
-        self.aged_words.push(id - (record_index % OCCUPANCY_WORD_BITS) as RecordId);
+        // Aged, as a newborn is: if the mark re-marks it, it counts its children there. A
+        // word aged already is listed already, among the young words or `aged_words`.
+        let aged = &mut self.blocks[block_index].aged[word_index];
+        if *aged == 0 {
+            self.aged_words.push(id - (record_index % OCCUPANCY_WORD_BITS) as RecordId);
+        }
+        *aged |= mask;
         true
     }
 
@@ -1674,6 +1732,39 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         }
     }
 
+    /// The records old as a full collection starts, one bit per id, `BLOCK_WORDS` words per
+    /// block: the marked ones and the barrier's `logged` (old, though it unmarked them).
+    pub(super) fn rc_old_bits(&self, logged: &[RecordId]) -> Vec<u64> {
+        let mut bits = Vec::with_capacity(self.blocks.len() * BLOCK_WORDS);
+        for block in &self.blocks {
+            bits.extend_from_slice(&block.marked);
+        }
+        for &id in logged {
+            let (block_index, record_index) = Self::split_id(id);
+            bits[block_index * BLOCK_WORDS + record_index / OCCUPANCY_WORD_BITS] |= 1 << (record_index % OCCUPANCY_WORD_BITS);
+        }
+        bits
+    }
+
+    /// After a full collection's mark, before its sweep: shows `visit` each record old at its
+    /// start (`old`, from `rc_old_bits`) the mark left (`false`), and each record young then
+    /// the mark kept (`true`).
+    pub(super) fn rc_full_changes(&self, old: &[u64], mut visit: impl FnMut(RecordId, bool)) {
+        for (block_index, block) in self.blocks.iter().enumerate() {
+            for word_index in 0..BLOCK_WORDS {
+                let was = old.get(block_index * BLOCK_WORDS + word_index).copied().unwrap_or(0);
+                let (occupied, marked) = (block.occupied[word_index], block.marked[word_index]);
+                let base = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
+                let mut changed = occupied & (was ^ marked);
+                while changed != 0 {
+                    let bit = changed.trailing_zeros();
+                    visit(base + bit, marked & (1 << bit) != 0);
+                    changed &= changed - 1;
+                }
+            }
+        }
+    }
+
     /// The children the barrier copied and the records it logged this epoch, emptied.
     pub(super) fn take_rc_epoch(&mut self) -> (Vec<Value>, Vec<RecordId>) {
         self.rc_ensure();
@@ -1684,23 +1775,50 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// young records the mark reached (the marked aged ones of the young words), which the
     /// sweep makes old.
     pub(super) fn for_each_young_survivor(&self, mut visit: impl FnMut(RecordId)) {
-        // A word reloaded for allocation is listed once per load.
+        self.for_each_young_survivor_word(|base, _block_index, _word_index, mut survivors| {
+            while survivors != 0 {
+                visit(base + survivors.trailing_zeros());
+                survivors &= survivors - 1;
+            }
+        });
+    }
+
+    /// `for_each_young_survivor` a word at a time: each word's first id, block and word
+    /// position, and its survivors' bits.
+    fn for_each_young_survivor_word(&self, mut visit: impl FnMut(RecordId, usize, usize, u64)) {
+        // A word reloaded for allocation is listed once per load; a candidate's word is in
+        // `aged_words`.
         let mut bases: Vec<RecordId> = Self::young_word_bases(&self.young_words, self.young_floor, self.next_id).collect();
+        bases.extend_from_slice(&self.aged_words);
         bases.sort_unstable();
         bases.dedup();
         for base in bases {
             let (block_index, word_index) = Self::word_position(base);
             let block = &self.blocks[block_index];
-            let mut survivors = block.aged[word_index] & block.marked[word_index];
-            while survivors != 0 {
-                visit(base + survivors.trailing_zeros());
-                survivors &= survivors - 1;
+            let survivors = block.aged[word_index] & block.marked[word_index];
+            if survivors != 0 {
+                visit(base, block_index, word_index, survivors);
             }
         }
+    }
+
+    /// The young survivors (`for_each_young_survivor`) whose count is 0, a word of counts at
+    /// a time; the counts cover every block (`rc_ensure`).
+    pub(super) fn rc_zero_survivors(&self, mut visit: impl FnMut(RecordId)) {
+        self.for_each_young_survivor_word(|base, block_index, word_index, survivors| {
+            let counts = &self.rc_blocks[block_index];
+            let mut zero = survivors
+                & !(counts.lo[word_index].load(Ordering::Relaxed) | counts.hi[word_index].load(Ordering::Relaxed));
+            while zero != 0 {
+                visit(base + zero.trailing_zeros());
+                zero &= zero - 1;
+            }
+        });
     }
 }
 
 /// The largest count the bits hold: references past it are counted in the overflow table.
+#[cfg(test)]
 pub(super) const RC_STUCK: u8 = 3;
 /// The references past `RC_STUCK` the overflow table counts before the record's count sticks.
 const RC_OVERFLOW_LIMIT: u32 = 64;

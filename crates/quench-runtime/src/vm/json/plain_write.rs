@@ -83,7 +83,22 @@ impl JsonPlainWrite {
     }
 }
 
+/// `JSON.stringify(value, replacer, space)`'s argument positions.
+const JSON_REPLACER_ARGUMENT: usize = 1;
+const JSON_SPACE_ARGUMENT: usize = 2;
+
 impl<H: Host> Vm<H> {
+    /// `JSON.stringify(value)`'s call by the plain writer (`json_stringify_plain`), when it
+    /// passes no replacer and no gap (arguments past those two are not read); `None` otherwise.
+    #[inline]
+    pub(in crate::vm) fn json_stringify_plain_call(&mut self, args: &[Value]) -> Option<Value> {
+        let unset = |index: usize| args.get(index).is_none_or(|value| value.is_undefined());
+        if !(unset(JSON_REPLACER_ARGUMENT) && unset(JSON_SPACE_ARGUMENT)) {
+            return None;
+        }
+        self.json_stringify_plain(args.first().copied().unwrap_or(Value::UNDEFINED))
+    }
+
     /// JSON.stringify(value) by the plain writer: the string, or `undefined` for an omitted
     /// value; `None` when the value needs the general steps, having observed nothing.
     pub(super) fn json_stringify_plain(&mut self, value: Value) -> Option<Value> {

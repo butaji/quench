@@ -4649,10 +4649,17 @@ impl<H: Host> Vm<H> {
         // A Number store logs nothing.
         let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
         if elements.owner_count() != 1 { return None; }
-        let elements = super::index::mutable_array_elements(elements);
-        let before = elements.capacity();
-        elements.reserve(1);
-        let room = elements.capacity();
+        // A double backing keeps its kind (`ArrayElements::reserve_double`).
+        let (before, room) = if elements.is_double() {
+            let before = elements.capacity();
+            elements.reserve_double(1);
+            (before, elements.capacity())
+        } else {
+            let elements = super::index::mutable_array_elements(elements);
+            let before = elements.capacity();
+            elements.reserve(1);
+            (before, elements.capacity())
+        };
         self.heap.charge_payload_growth((room - before) * size_of::<Value>());
         (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
     }

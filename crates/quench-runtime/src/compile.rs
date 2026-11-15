@@ -83,6 +83,7 @@ mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIEL
 mod rewrite;
 mod sequence;
 pub(crate) mod stack;
+mod statement_stream;
 mod string;
 mod template;
 mod typescript;
@@ -1120,14 +1121,15 @@ impl Engine {
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
         let mut facts = lazy_bodies::BodyFacts::deferring(expected_shape.stubs_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names)));
-        // A recognized body's check needs its call-only facts deferred (`BodyFacts::check`).
-        let recognize = facts.call_only_deferred;
+        // A recognized body's check needs its call-only facts deferred, or none to find
+        // (`BodyFacts::check`): only bodies with no function inside are recognized then.
+        let recognize = if facts.call_only_deferred { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
         #[cfg(feature = "aot")]
         { facts.native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
         let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.check(body, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         // SAFETY: `check` lives through the parse, which alone calls it.
         let check = lazy.then(|| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
-        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict, true, recognize);
+        let mut parsed = lazy_bodies::parse(&allocator, parsed_text, source_type, lazy.then_some(0), check, inherited_strict, true, recognize, None);
         lazy_bodies::release_parsed_free_pages(&allocator);
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
@@ -1364,6 +1366,8 @@ impl Engine {
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
         compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
+        compiler.streamed = std::mem::take(&mut facts.streamed);
+        compiler.stream_candidates = std::mem::take(&mut facts.stream_candidates);
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -1868,6 +1872,11 @@ struct Compiler<'a> {
     /// functions, each reset and reused: an arena per function interleaved its blocks with
     /// the program's long-lived records, and the heap kept the holes between them.
     lazy_arenas: Vec<Allocator>,
+    /// The starts of the lazily parsed functions whose bodies compile as a stream of statement
+    /// runs (`statement_stream`), and the body the next function compiled streams.
+    streamed: FxHashSet<u32>,
+    stream_candidates: FxHashSet<u32>,
+    body_stream: Option<statement_stream::StreamedBody>,
     /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
     /// against what the function's compilation captured.
     #[cfg(feature = "verify-replay")]
@@ -2437,6 +2446,9 @@ impl<'a> Compiler<'a> {
             lazy_bodies: FxHashSet::default(),
             lazy_compiled: Vec::new(),
             lazy_arenas: Vec::new(),
+            streamed: FxHashSet::default(),
+            stream_candidates: FxHashSet::default(),
+            body_stream: None,
             #[cfg(feature = "verify-replay")]
             free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
@@ -2725,6 +2737,12 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         context: replay::PlainFunctionContext,
     ) -> u32 {
+        if self.replay_target.is_none()
+            && (self.streamed.contains(&function.span.start) || self.stream_candidates.contains(&function.span.start) && self.body_streams(function, &context))
+            && let Some(id) = self.compile_streamed_function(function, &context)
+        {
+            return id;
+        }
         let snippet = &self.text[function.span.start as usize..function.span.end as usize];
         let (text, offset) = lazy_bodies::text_alone(
             snippet,
@@ -2737,6 +2755,38 @@ impl<'a> Compiler<'a> {
         lazy_bodies::release_after(&mut allocator);
         self.lazy_arenas.push(allocator);
         id
+    }
+
+    /// `compile_lazy_function` of a function whose body streams (`statement_stream`): its
+    /// text with an empty body parsed again, and its body compiled from its text a run of
+    /// statements at a time; None where the text with an empty body does not parse alone.
+    /// Whether the body of `function`, a stream candidate checked without its tree, streams.
+    fn body_streams(&self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> bool {
+        let Some(body) = function.body.as_ref().map(|body| body.span) else { return false };
+        statement_stream::body_streams(self.text, self.source_type, statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict: context.inherited_strict })
+    }
+
+    fn compile_streamed_function(&mut self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> Option<u32> {
+        let body = function.body.as_ref()?.span;
+        let strict = context.inherited_strict;
+        let header = format!("{}{{}}", &self.text[function.span.start as usize..body.start as usize]);
+        let (text, offset) = lazy_bodies::text_alone(&header, replay::plain_function_wrapper(context), strict, self.source_type);
+        let allocator = Allocator::default();
+        let mut reparsed = lazy_bodies::reparse(
+            &allocator,
+            &text,
+            offset,
+            function.span.start.wrapping_sub(offset),
+            self.source_type,
+            lazy_bodies::Nesting::Recorded(&FxHashSet::default()),
+        )
+        .ok()?;
+        let again = reparsed.function_mut().filter(|again| again.span.start == function.span.start)?;
+        again.span.end = function.span.end;
+        again.body.as_mut()?.span = body;
+        self.body_stream = Some(statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict });
+        let again = reparsed.function().expect("checked above");
+        Some(self.compile_plain_function(again, context.clone()))
     }
 
     /// `compile_lazy_function`, with `text` (the function's source at `offset`, wrapped)
@@ -3904,6 +3954,7 @@ impl<'a> Compiler<'a> {
             FunctionBody::Statements(body) => (body, None),
             FunctionBody::Expression(expression) => (&[][..], Some(expression)),
         };
+        let streamed = self.body_stream.take();
         if let Some(id) = self.skip_replayed_child() {
             return id;
         }
@@ -4116,7 +4167,14 @@ impl<'a> Compiler<'a> {
         if let Some(body) = options.implicit_body {
             function.emit_implicit_body(body);
         }
-        function.function_body_statements(body);
+        match streamed {
+            Some(streamed) => {
+                if !function.streamed_body(streamed) {
+                    function.owner.reject(Span::new(streamed.start, streamed.end), "SyntaxError: a streamed function body does not parse as checked");
+                }
+            }
+            None => function.function_body_statements(body),
+        }
         let result = if let Some(expression) = expression_body {
             function.expression(expression)
         } else {

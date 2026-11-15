@@ -2925,7 +2925,6 @@ function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_native_value 
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_passed_frame_call 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_promise_native 52
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_push_frame_call 138
-function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_read_capture_value 42
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_resume_generator_frame 44
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_from 47
 function-lines crates/quench-runtime/src/vm/dispatch_fast.rs::lane_return_script_frame 68
@@ -4751,7 +4750,6 @@ magic crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,
 magic crates/quench-runtime/src/compile/ast/destructure.rs::FunctionCompiler<'_,'_>::require_object_coercible 2
 magic crates/quench-runtime/src/compile/ast/expression.rs::FunctionCompiler<'_,'_>::expression_at_current_position 1
 magic crates/quench-runtime/src/compile/ast/object.rs::FunctionCompiler<'_,'_>::object_literal_prototype 1
-magic crates/quench-runtime/src/compile/ast/optional.rs::FunctionCompiler<'_,'_>::emit_optional_prefix 2
 magic crates/quench-runtime/src/compile/ast/super_ops.rs::FunctionCompiler<'_,'_>::super_get 1
 magic crates/quench-runtime/src/compile/ast/super_ops.rs::FunctionCompiler<'_,'_>::super_set 1
 magic crates/quench-runtime/src/compile/class.rs::Compiler<'_>::compile_auto_accessor_methods 2

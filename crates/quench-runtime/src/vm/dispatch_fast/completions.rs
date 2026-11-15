@@ -28,12 +28,37 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
         Some(Completion::SettlesPromise) => lane_return_from::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         Some(Completion::Constructs) => lane_return_from::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::ReadsTrapped) => lane_complete_trapped_read(cx, ip, value),
         _ => None,
     };
     if common.is_some() {
         return common;
     }
     lane_complete_activation(cx, ip, value)
+}
+
+/// `lane_complete_returning` of a proxy `get` trap's activation (`Completion::ReadsTrapped`)
+/// whose read keeps its result: the read's register takes the trap's result, in the
+/// caller's program, which a trap of another program's library leaves for. A result the
+/// target's invariants may refuse returns from the trap's frame, whose pending call checks
+/// it; a read that returns its value (`RETURN_REGISTER`) takes `lane_complete_activation`.
+#[inline(always)]
+fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let top = vm.lane_stack.activations.last();
+    if proxy_traps::trap_result_needs_general_path(vm, top, value) {
+        return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+    }
+    // SAFETY: the call record belongs to the caller's live view.
+    if unsafe { (*top?.call).a } & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let activation = vm.lane_stack.pop_activation()?;
+    let (caller_memory, _) = lane_restore_caller(cx, &activation);
+    if activation.caller_program != unsafe { (*cx).program } {
+        lane_enter_program(cx, activation.caller_program);
+    }
+    Some(lane_resume_after_call(&activation, caller_memory, value))
 }
 
 /// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
