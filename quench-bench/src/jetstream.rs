@@ -185,15 +185,45 @@ pub(crate) fn arguments(file: &Path, prelude: &Path) -> Vec<OsString> {
         .collect()
 }
 
-/// The test's JetStream Score: `<name> Score <value> pts`.
-pub(crate) fn score(file: &Path, stdout: &str) -> Option<f64> {
+/// The labels JetStream prints for a test's score and its three components.
+const TOTAL: &str = "Score";
+const FIRST: &str = "First-Score";
+const WORST: &str = "Worst-Score";
+const AVERAGE: &str = "Average-Score";
+
+/// A test's component scores. JetStream's Score is their geometric mean, and each names a
+/// different cost: First the cold first iteration (load, compile, first runs), Worst the slowest
+/// later iterations (pauses, state grown across iterations), Average the steady state.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct SubScores {
+    pub(crate) first: f64,
+    pub(crate) worst: f64,
+    pub(crate) average: f64,
+}
+
+/// The value of `<name> <label> <value> pts`.
+fn labelled(file: &Path, stdout: &str, label: &str) -> Option<f64> {
     let name = test_name(file);
     stdout.lines().find_map(|line| {
         let printed_name = line.get(..name.len())?;
         printed_name.eq_ignore_ascii_case(&name).then_some(())?;
         let mut fields = line[name.len()..].split_whitespace();
-        (fields.next()? == "Score").then_some(())?;
+        (fields.next()? == label).then_some(())?;
         fields.next()?.parse().ok()
+    })
+}
+
+/// The test's JetStream Score: `<name> Score <value> pts`.
+pub(crate) fn score(file: &Path, stdout: &str) -> Option<f64> {
+    labelled(file, stdout, TOTAL)
+}
+
+/// The test's First, Worst and Average scores, when it printed all three.
+pub(crate) fn sub_scores(file: &Path, stdout: &str) -> Option<SubScores> {
+    Some(SubScores {
+        first: labelled(file, stdout, FIRST)?,
+        worst: labelled(file, stdout, WORST)?,
+        average: labelled(file, stdout, AVERAGE)?,
     })
 }
 
@@ -250,6 +280,16 @@ mod tests {
     fn reads_stock_jetstream_lowercased_names() {
         let stdout = "Running crypto:\ncrypto First-Score 1.0 pts\ncrypto Score 2.5 pts\n";
         assert_eq!(score(&fixture_path("Crypto"), stdout), Some(2.5));
+        assert_eq!(sub_scores(&fixture_path("Crypto"), stdout), None);
+    }
+
+    #[test]
+    fn reads_the_three_component_scores() {
+        let stdout = "crypto First-Score 1.5 pts\ncrypto Worst-Score 2.0 pts\ncrypto Average-Score 3.0 pts\ncrypto Score 2.1 pts\n";
+        assert_eq!(
+            sub_scores(&fixture_path("crypto"), stdout),
+            Some(SubScores { first: 1.5, worst: 2.0, average: 3.0 })
+        );
     }
 
     #[test]

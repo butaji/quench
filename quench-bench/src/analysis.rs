@@ -257,7 +257,21 @@ struct RawSample {
     timed_out: bool,
     wall_ns: u128,
     score: f64,
+    sub_scores: Option<crate::jetstream::SubScores>,
     peak_rss_bytes: u64,
+}
+
+impl RawSample {
+    fn of(path: &str, sample: &SampleInput, score: f64, peak_rss_bytes: u64) -> Self {
+        Self {
+            status: sample.status,
+            timed_out: sample.timed_out,
+            wall_ns: sample.wall_ns,
+            score,
+            sub_scores: crate::jetstream::sub_scores(Path::new(path), &sample.stdout),
+            peak_rss_bytes,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -850,13 +864,7 @@ fn analyze_diagnostic_ab_fixture(
             engine_samples.rss_bytes.push(rss as f64);
             raw_samples.insert(
                 (*engine).to_string(),
-                RawSample {
-                    status: sample.status,
-                    timed_out: sample.timed_out,
-                    wall_ns: sample.wall_ns,
-                    score,
-                    peak_rss_bytes: rss,
-                },
+                RawSample::of(path, sample, score, rss),
             );
         }
         raw_rounds.push(RoundEvidence {
@@ -1216,13 +1224,7 @@ fn analyze_fixture(
             engine_samples.rss_bytes.push(rss as f64);
             raw_samples.insert(
                 (*engine).to_string(),
-                RawSample {
-                    status: sample.status,
-                    timed_out: sample.timed_out,
-                    wall_ns: sample.wall_ns,
-                    score,
-                    peak_rss_bytes: rss,
-                },
+                RawSample::of(path, sample, score, rss),
             );
         }
         raw_rounds.push(RoundEvidence {

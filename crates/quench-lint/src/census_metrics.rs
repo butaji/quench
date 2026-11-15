@@ -21,6 +21,10 @@ const FRAME_NAMES: &[&str] = &["Frame", "Activation", "ShadowFrame"];
 const FRAME_SUFFIX: &str = "Frame";
 const COMMENT_PREFIX: &str = "#";
 const UNTAGGED_FLAGS: [&str; 2] = ["MemFlagsData", "trusted"];
+const FACT_HOME_SUFFIXES: &[&str] = &["Memo", "Memos", "Cache", "Hint", "Hints", "Proof", "Proofs"];
+const EPOCH_SUFFIX: &str = "epoch";
+const GUEST_REENTRY: &str = "call_value";
+const WALL_CLOCK: [&str; 2] = ["Instant", "now"];
 
 /// The items of a module tree, nested inline modules flattened, test modules left out.
 pub fn module_items(items: &[Item]) -> Vec<&Item> {
@@ -230,6 +234,71 @@ pub fn untagged_memory_accesses(file: &syn::File) -> usize {
     found.0
 }
 
+/// Types whose name says they hold a private copy of a fact (memo, cache, hint, proof): each one
+/// is a home the one fact store replaces (principle P1).
+pub fn fact_homes(file: &syn::File) -> usize {
+    module_items(&file.items)
+        .into_iter()
+        .filter(|item| matches!(item, Item::Struct(found) if {
+            let name = found.ident.to_string();
+            FACT_HOME_SUFFIXES.iter().any(|suffix| name.ends_with(suffix))
+        }))
+        .count()
+}
+
+/// Struct fields named `*epoch`: each is a validity counter a reader compares per use, which a
+/// code dependency replaces for stable facts (P1).
+pub fn epoch_fields(file: &syn::File) -> usize {
+    module_items(&file.items)
+        .into_iter()
+        .map(|item| match item {
+            Item::Struct(found) => found
+                .fields
+                .iter()
+                .filter(|field| field.ident.as_ref().is_some_and(|name| name.to_string().ends_with(EPOCH_SUFFIX)))
+                .count(),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Calls that match a predicate, outside test modules.
+struct Calls<F>(F, usize);
+
+impl<'ast, F: FnMut(&'ast syn::Expr) -> bool> Visit<'ast> for Calls<F> {
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        self.1 += usize::from((self.0)(expr));
+        syn::visit::visit_expr(self, expr);
+    }
+
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !is_test(&module.attrs) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+}
+
+fn count_calls<'ast>(file: &'ast syn::File, matches: impl FnMut(&'ast syn::Expr) -> bool) -> usize {
+    let mut calls = Calls(matches, 0);
+    calls.visit_file(file);
+    calls.1
+}
+
+/// `.call_value(..)` calls: Rust re-entering guest code through a nested run instead of
+/// returning a continuation to the lane (P2).
+pub fn guest_reentries(file: &syn::File) -> usize {
+    count_calls(file, |expr| matches!(expr, syn::Expr::MethodCall(call) if call.method == GUEST_REENTRY))
+}
+
+/// `Instant::now()` calls: policy read from wall time instead of the work clock (P7).
+pub fn wall_clock_reads(file: &syn::File) -> usize {
+    count_calls(file, |expr| {
+        matches!(expr, syn::Expr::Call(call) if matches!(&*call.func, syn::Expr::Path(callee)
+            if callee.path.segments.iter().rev().take(WALL_CLOCK.len()).map(|segment| segment.ident.to_string())
+                .eq(WALL_CLOCK.iter().rev().map(|name| name.to_string()))))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,5 +378,27 @@ mod tests {
              #[cfg(test)] mod tests { fn g() { MemFlagsData::trusted(); } }",
         );
         assert_eq!(untagged_memory_accesses(&file), 2);
+    }
+
+    #[test]
+    fn fact_homes_count_memo_cache_hint_and_proof_types() {
+        let file = parse("struct ConcatMemo; struct FieldCache; struct HolderHint; struct LocalProofs; struct Cached; mod m { struct ReadMemo; }");
+        assert_eq!(fact_homes(&file), 5);
+    }
+
+    #[test]
+    fn epoch_fields_count_named_fields() {
+        let file = parse("struct A { layout_epoch: u32, epoch: u32, epochs: u8 } struct B(u32);");
+        assert_eq!(epoch_fields(&file), 2);
+    }
+
+    #[test]
+    fn guest_reentries_and_wall_clock_reads_skip_tests() {
+        let file = parse(
+            "fn f() { vm.call_value(a); x.call_values(); let t = Instant::now(); let u = std::time::Instant::now(); now(); }
+             #[cfg(test)] mod tests { fn g() { vm.call_value(a); Instant::now(); } }",
+        );
+        assert_eq!(guest_reentries(&file), 1);
+        assert_eq!(wall_clock_reads(&file), 2);
     }
 }

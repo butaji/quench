@@ -51,6 +51,8 @@ struct Metric {
 
 const COMPILED: &str = "crates/quench-runtime/src/vm/compiled";
 const LOWERING_FRAGMENTS: &[&str] = &["lower", "region"];
+const RUNTIME: &str = "crates/quench-runtime/src";
+const LANE_DISPATCH: &str = "crates/quench-runtime/src/vm/dispatch_fast";
 
 const METRICS: &[Metric] = &[
     Metric {
@@ -119,6 +121,36 @@ const METRICS: &[Metric] = &[
         direction: Direction::Up,
         sources: &[Source::File("crates/quench-runtime/src/vm/compiled/base_region/decode.rs")],
         extract: Extract::Syntax(extract::decoder_classes),
+    },
+    Metric {
+        name: "fact_homes",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::fact_homes),
+    },
+    Metric {
+        name: "epoch_fields",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::epoch_fields),
+    },
+    Metric {
+        name: "guest_reentries",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::guest_reentries),
+    },
+    Metric {
+        name: "wall_clock_reads",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::wall_clock_reads),
+    },
+    Metric {
+        name: "lane_dispatch_lines",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/vm/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
+        extract: Extract::Text(extract::text_lines),
     },
 ];
 

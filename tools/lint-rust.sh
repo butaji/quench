@@ -18,6 +18,9 @@ fi
 
 tools/check-boundaries.sh
 cargo run --quiet -p quench-lint
+# Census metrics only move toward done: fact homes, guest re-entries, wall-clock reads and the
+# rest shrink as one mechanism replaces many (principle P9).
+cargo run --quiet -p quench-lint -- --census >/dev/null
 
 cargo fmt --all -- --check
 # The host implementation is covered by its dedicated Node oracle; the
