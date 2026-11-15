@@ -3297,7 +3297,8 @@ impl<H: Host> Vm<H> {
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
-        self.iteration_step(iterator, method) == IterationStep::Array
+        self.heap.iterator(iterator).is_some_and(|record| record.kind.is_array_iterator())
+            && self.is_current_realm_native(method, Native::ArrayIteratorNext)
     }
 
     /// What a step calling `method` of `iterator` is, from one read of the iterator's record:
@@ -3310,7 +3311,9 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord { kind, .. })
                 if kind.is_array_iterator() && self.is_current_realm_native(method, Native::ArrayIteratorNext) =>
             {
-                IterationStep::Array
+                // A keys or entries step makes its value (`Vm::step_array_entry`), as a
+                // collection's step does.
+                if matches!(kind, IteratorKind::Array | IteratorKind::ArrayValues) { IterationStep::Array } else { IterationStep::Collection }
             }
             Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
                 if ext.generator.as_ref().is_some_and(|record| !record.is_executing())
