@@ -1038,7 +1038,7 @@ impl ValueArena {
         let mut narrow = vector;
         narrow.auxiliary |= NARROW_FORM;
         let capacity = Self::ordered_capacity(narrow, length);
-        let target = self.free[Self::bucket(capacity)].pop()? as usize;
+        let target = self.pop_free(Self::bucket(capacity))? as usize;
         self.released_values -= capacity;
         let words = self.narrow_words_of(vector.start(), length);
         self.values[target..target + words.len()].copy_from_slice(&words);
