@@ -4,6 +4,7 @@
 
 use super::narrow::{NOT_NARROW, UPPER_WORD};
 use super::object::{inline_storage, HALF_BYTES};
+use super::object::Rep;
 use super::slot_store::{admitted_payload, gate_open, gated_payload, store_flat};
 use super::Stage;
 use super::region::Region;
@@ -123,7 +124,7 @@ fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S:
         stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
         stage.constant(0)
     }, |stage| {
-        store_flat(stage, payload, slot, value);
+        store_flat(stage, payload, slot, (value, Rep::Tagged));
         stage.constant(0)
     });
     Some(())

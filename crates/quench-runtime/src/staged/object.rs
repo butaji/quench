@@ -3,7 +3,6 @@
 //! specializer emits them.
 
 use super::{Concrete, Stage, Table};
-use super::narrow::packed_form;
 use super::region::Region;
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
 use crate::value::{NarrowLayout, ValueLayout};
@@ -35,6 +34,20 @@ impl Form {
             None => Self::Arena,
         }
     }
+}
+
+/// How the word of an arena slot encodes its value: a static projection of the slot owner's
+/// type (`SlotType::rep`), not a fact stored apart from it. A specializer that proved the owner's
+/// type under a dependency reads and writes the word in this representation with no tag test.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Rep {
+    /// A `Value` whose tag the owner proved int32; the bits are the tagged word's.
+    Int32,
+    /// The Number as its IEEE double, which every Number is stored as (NaN canonical): a raw
+    /// double is already a valid `Value` word, so the collector reads it as a non-reference.
+    Float64,
+    /// Any `Value`, as the interpreter holds it.
+    Tagged,
 }
 
 /// Whether packed values are read once, for a caller no store reaches, or at each read.
@@ -371,29 +384,38 @@ fn plain_slots<S: Stage>(stage: &mut S, payload: S::Word, packed: Packed<S::Word
     Some(if flat { Slots::Flat(arena_run(stage, payload)) } else { Slots::Packed(packed) })
 }
 
-/// Value `slot` of an object of `layout`, which holds it.
+/// Value `slot` of an object of `layout`, which holds it, as the word its owner's `rep` encodes
+/// (a `Value`'s bits for `Rep::Tagged` and `Rep::Int32`, the IEEE double for `Rep::Float64`,
+/// which only an arena slot takes: a packed slot is narrow).
 #[inline(always)]
-pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16) -> S::Word {
+pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Rep) -> S::Word {
     debug_assert!(usize::from(slot) < layout.storage_len);
     match layout.slots {
-        Slots::Flat(base) => flat_read(stage, base, slot),
-        Slots::Packed(packed) => packed_read(stage, packed, slot),
+        Slots::Flat(base) => flat_read(stage, base, slot, rep),
+        Slots::Packed(packed) => packed_read(stage, packed, slot, rep),
         Slots::Either { packed, inline, flat } => stage.choose(inline,
-            |stage| packed_read(stage, packed, slot), |stage| flat_read(stage, flat, slot)),
+            |stage| packed_read(stage, packed, slot, rep), |stage| flat_read(stage, flat, slot, rep)),
     }
 }
 
 /// Flat value `slot`: the slot is a per-site operand, so its byte offset is a hole.
 #[inline(always)]
-fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16) -> S::Word {
+fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, rep: Rep) -> S::Word {
     let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
-    stage.load_site(Region::ObjectSlots.mutable(), base, offset)
+    match rep {
+        Rep::Float64 => {
+            let address = stage.add_imm(base, offset);
+            stage.load_f64(Region::ObjectSlots.mutable(), address, 0)
+        }
+        Rep::Int32 | Rep::Tagged => stage.load_site(Region::ObjectSlots.mutable(), base, offset),
+    }
 }
 
 /// Packed value `slot`: its half of the payload word, decoded.
 #[inline(always)]
-fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16) -> S::Word {
+fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16, rep: Rep) -> S::Word {
     debug_assert!(usize::from(slot) < OBJECT.inline_property_count);
+    debug_assert!(rep != Rep::Float64, "a packed slot holds a narrow value, never a raw double");
     let payload = match packed {
         Packed::Snapshot(payload) => payload,
         Packed::Record(record) => stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32),
@@ -433,40 +455,6 @@ pub(crate) fn decode_narrow_through<S: Stage>(stage: &mut S, narrow: S::Word, up
     })
 }
 
-/// `value` written at `slot`, a word (the shapes' storage length or a cache entry's slot), of the plain
-/// object at `record` whose `payload` word the caller read and proved plain, with its values in `form`:
-/// a half of the payload word for a packed object, which needs the value's narrow form, or the arena
-/// run's slot. A form the site proved is guarded, not decoded; `None` (leaving at `miss`, nothing
-/// written) where the object is in the other form or a packed slot cannot hold the value.
-#[inline(always)]
-pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::Word, slot: S::Word, form: Form, value: S::Word,
-    miss: S::Miss) -> Option<()> {
-    let inline = inline_storage(stage, record);
-    match form {
-        Form::Packed => stage.guard(inline, miss)?,
-        Form::Arena => {
-            let flat = stage.not(inline);
-            stage.guard(flat, miss)?;
-        }
-        Form::Either => {}
-    }
-    // A packed slot needs the value's narrow form; a flat one takes any value.
-    let narrow = if form == Form::Arena { stage.constant(0) } else { packed_form(stage, inline, value, miss)? };
-    stage.choose(inline, |stage| {
-        let half = stage.mul_imm(slot, HALF_BYTES);
-        let address = stage.add(record, half);
-        stage.store_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32, narrow);
-        stage.constant(0)
-    }, |stage| {
-        let run = arena_run(stage, payload);
-        let offset = stage.mul_imm(slot, OBJECT.property_value_size as u64);
-        let address = stage.add(run, offset);
-        stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
-        stage.constant(0)
-    });
-    Some(())
-}
-
 /// The value at `slot` of the live object `object`, whose exact shape (no dictionary) holds
 /// it, through the arena whose values start at `property_values`: the interpreter's reading
 /// of `own_layout` and `read_slot`.
@@ -481,5 +469,5 @@ pub(crate) unsafe fn concrete_own_read(object: &crate::heap::Object, property_va
     let inline = inline_storage(&mut stage, record);
     let layout = own_layout(&mut stage, record, inline, Form::Either, slot + 1, PackedAccess::Reload, ())
         .expect("the interpreter knows every storage form");
-    crate::Value::from_bits(read_slot(&mut stage, layout, slot as u16))
+    crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot as u16, Rep::Tagged))
 }

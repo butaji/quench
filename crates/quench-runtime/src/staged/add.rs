@@ -13,7 +13,8 @@
 
 use super::region::Region;
 use super::entry::direct_record;
-use super::object::{Form, plain_payload, proto_link, store_slot};
+use super::object::{Form, Rep, plain_payload, proto_link};
+use super::slot_store::store_slot;
 use super::{RecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -60,7 +61,7 @@ pub(super) fn admitted<S: Stage>(stage: &mut S, space: RecordSpace, record: S::W
 pub(crate) fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted(stage, RecordSpace::Object, record, record_id, edge.before, value, miss)?;
-    store_slot(stage, record, payload, edge.slot, form, value, miss)?;
+    store_slot(stage, record, payload, edge.slot, form, (value, Rep::Tagged), miss)?;
     stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset as i32, edge.after);
     Some(())
 }

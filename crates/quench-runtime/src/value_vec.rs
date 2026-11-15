@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::staged::object::Rep;
 use crate::typed_ir::SlotType;
 use rustc_hash::FxHashMap;
 
@@ -6,6 +7,41 @@ mod buffer; mod plan_values;
 mod subscribe;
 use buffer::PropertyBuffer;
 pub(crate) use buffer::NATIVE_PROPERTY_BUFFER_LAYOUT;
+
+/// The word of an arena slot that holds `value`, where the slot's owner has type `owner`: the one
+/// place a stored word is encoded. A slot of `Rep::Float64` holds its Number as the IEEE double (an
+/// integer as the integral double; NaN is already canonical, so the word is a valid `Value` the
+/// collector reads as a non-reference); any other slot holds the `Value` as it is.
+#[inline(always)]
+pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
+    match owner.rep() {
+        Rep::Float64 => value.as_int().map_or(value, |int| Value::from_bits(f64::from(int).to_bits())),
+        Rep::Int32 | Rep::Tagged => value,
+    }
+}
+
+/// The `Value` that the arena word `word` holds, where the slot's owner has type `owner`: the one
+/// place a stored word is decoded, `encode_slot`'s inverse. A double word is a Number as
+/// `Value::number` makes it (an integral double in int32 range is an int32, `-0` stays a double);
+/// a word that is no Number (the deleted marker a removed property leaves) is itself.
+#[inline(always)]
+pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
+    match owner.rep() {
+        Rep::Float64 => word.as_number().map_or(word, Value::number),
+        Rep::Int32 | Rep::Tagged => word,
+    }
+}
+
+/// The `Value` of a word a staged read took from an arena run, whose owner the reader does not know
+/// (`decode_slot` of the type every word has, `ARENA_WORDS`).
+#[inline(always)]
+pub(crate) fn decode_staged_word(word: u64) -> Value {
+    decode_slot(ARENA_WORDS, Value::from_bits(word))
+}
+
+/// The type whose encoding every arena word has until a slot's owner type chooses its own
+/// (`encode_slot`): words are `Value`s as the interpreter holds them.
+const ARENA_WORDS: SlotType = SlotType::Tagged;
 
 pub(crate) const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
@@ -541,7 +577,7 @@ impl ValueArena {
                 .and_then(|values| values.get(&(index as u32)))
                 .copied();
         }
-        Some(self.values[vector.start() + index])
+        Some(decode_slot(ARENA_WORDS, self.values[vector.start() + index]))
     }
 
     /// # Safety
@@ -555,7 +591,7 @@ impl ValueArena {
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked(vector.start() + index) }
+        unsafe { self.get_flat_at(vector.start(), index) }
     }
 
     /// `get_flat` of the vector whose storage starts at `start` (`ValueVec::start`).
@@ -565,7 +601,7 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) unsafe fn get_flat_at(&self, start: usize, index: usize) -> Value {
         // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked(start + index) }
+        decode_slot(ARENA_WORDS, unsafe { *self.values.get_unchecked(start + index) })
     }
 
     /// `get_unchecked` of a vector outside dictionary mode; `None` for a dictionary, whose
@@ -581,7 +617,7 @@ impl ValueArena {
         }
         debug_assert!(index < self.len(vector));
         // SAFETY: as for `get_unchecked`.
-        Some(unsafe { *self.values.get_unchecked(vector.start() + index) })
+        Some(unsafe { self.get_flat_at(vector.start(), index) })
     }
 
     #[cold]
@@ -609,7 +645,7 @@ impl ValueArena {
                 .insert(index as u32, value);
             return;
         }
-        self.values[vector.start() + index] = value;
+        self.values[vector.start() + index] = encode_slot(ARENA_WORDS, value);
     }
 
     /// # Safety
@@ -649,7 +685,7 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) unsafe fn set_flat_at(&mut self, start: usize, index: usize, value: Value) {
         // SAFETY: the caller's vector range was allocated from `values` and remains reserved.
-        unsafe { *self.values.get_unchecked_mut(start + index) = value }
+        unsafe { *self.values.get_unchecked_mut(start + index) = encode_slot(ARENA_WORDS, value) }
     }
 
     /// The address of an initialized flat slot, for a native no-allocation region that holds
@@ -689,7 +725,7 @@ impl ValueArena {
                 return;
             }
         }
-        self.values[vector.start() + len] = value;
+        self.values[vector.start() + len] = encode_slot(ARENA_WORDS, value);
     }
 
     pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
@@ -1126,7 +1162,7 @@ impl ValueArena {
         debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
         debug_assert!(len == self.len(vector) && Self::appends_in_place(vector, len));
         // SAFETY: the range from `start` holds its capacity, past `len`, reserved in `values`.
-        unsafe { *self.values.get_unchecked_mut(vector.start() + len) = value };
+        unsafe { self.set_flat_at(vector.start(), len, value) };
     }
 
     /// A range of `capacity`: a released one of its size class, else, out of line, one past

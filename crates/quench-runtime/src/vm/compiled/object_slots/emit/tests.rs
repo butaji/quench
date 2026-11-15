@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::heap::{Cell, Heap, Object, PlainPropertyStorage};
-use crate::staged::object::{own_layout, read_slot, Form, PackedAccess};
+use crate::staged::object::{own_layout, read_slot, Form, PackedAccess, Rep};
 use crate::staged::Region;
 
 /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
@@ -45,7 +45,7 @@ fn compiled_own_read(isa: &dyn cranelift_codegen::isa::TargetIsa, form: Form, sl
     let inline = crate::staged::object::inline_storage(&mut stage, record);
     let layout = own_layout(&mut stage, record, inline, form,
         usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
-    let value = read_slot(&mut stage, layout, slot);
+    let value = read_slot(&mut stage, layout, slot, Rep::Tagged);
     builder.ins().return_(&[value]);
     builder.switch_to_block(miss);
     let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);

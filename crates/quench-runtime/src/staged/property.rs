@@ -10,7 +10,7 @@
 //! the proof of is not emitted twice.
 
 use super::ic::{self, IcOp, Reached};
-use super::object::{object_record_at, read_slot, Form, Layout};
+use super::object::{object_record_at, read_slot, Form, Layout, Rep};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::typed_ir::Type;
@@ -401,7 +401,7 @@ fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
             layout
         }
     };
-    Some(read_slot(stage, layout, slot))
+    Some(read_slot(stage, layout, slot, Rep::Tagged))
 }
 
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is

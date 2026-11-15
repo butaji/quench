@@ -99,6 +99,10 @@ pub(crate) mod units {
 
 pub(crate) mod value_vec {
     pub(crate) use crate::layout::INLINE_PROPERTIES as INLINE_PROPERTY_COUNT;
+    /// What the shared rows' interpreter-side readers ask of an arena word; no stencil row calls it.
+    pub(crate) const fn decode_staged_word(word: u64) -> super::Value {
+        super::Value::from_bits(word)
+    }
 }
 
 pub(crate) mod heap {
