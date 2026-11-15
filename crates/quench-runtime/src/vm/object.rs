@@ -1500,7 +1500,9 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
-        if receiver.is_module_namespace() {
+        // A namespace answers by its bindings and a proxy by its handler: no tier below
+        // records either, so neither walks them.
+        if receiver.has_exotic_access() && (receiver.is_module_namespace() || self.proxy_parts(object).is_some()) {
             return FieldCacheProbe::Ineligible;
         }
         if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
