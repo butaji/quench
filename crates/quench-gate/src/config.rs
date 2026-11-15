@@ -14,6 +14,7 @@ pub const PROFILE: &str = "experiment";
 const TARGET_VARIABLE: &str = "CARGO_TARGET_DIR";
 const DEFAULT_TARGET: &str = "target";
 const QUICK_FLAG: &str = "--quick";
+const RECORD_FLAG: &str = "--record";
 const JOBS_FLAG: &str = "--jobs";
 /// How many directories above this crate's manifest the workspace root lies (`crates/quench-gate`).
 const ROOT_DEPTH: usize = 2;
@@ -24,6 +25,8 @@ pub struct Config {
     pub jobs: usize,
     /// Only the lint, census and C-parity steps.
     pub quick: bool,
+    /// Write ratchet entries that have no value yet (a recorded value is never changed).
+    pub record: bool,
     pub root: PathBuf,
     /// Cargo's target directory.
     pub target: PathBuf,
@@ -34,13 +37,14 @@ impl Config {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(ROOT_DEPTH).map(Path::to_path_buf).ok_or("the gate crate lies outside its workspace")?;
         let target = root.join(env::var_os(TARGET_VARIABLE).unwrap_or_else(|| DEFAULT_TARGET.into()));
         let jobs = thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        let mut config = Self { jobs, quick: false, root, target };
+        let mut config = Self { jobs, quick: false, record: false, root, target };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 QUICK_FLAG => config.quick = true,
+                RECORD_FLAG => config.record = true,
                 JOBS_FLAG => config.jobs = args.next().and_then(|jobs| jobs.parse().ok()).filter(|jobs| *jobs > 0).ok_or_else(|| format!("{JOBS_FLAG} needs a positive number"))?,
-                other => return Err(format!("unknown argument `{other}`; usage: quench-gate [{QUICK_FLAG}] [{JOBS_FLAG} N]")),
+                other => return Err(format!("unknown argument `{other}`; usage: quench-gate [{QUICK_FLAG}] [{JOBS_FLAG} N] [{RECORD_FLAG}]")),
             }
         }
         Ok(config)

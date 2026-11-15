@@ -2,8 +2,11 @@
 
 use crate::{config::Config, lint::LINT, process, step::Verdict};
 
+/// The JavaScript host the kernels run on.
+pub const NODE: &str = "quench-node";
+
 /// The binaries the gate runs: the linter, the JavaScript host, and the conformance runners.
-pub const BINARIES: [&str; 4] = [LINT, "quench-node", "run-test", "run"];
+pub const BINARIES: [&str; 4] = [LINT, NODE, "run-test", "run"];
 
 pub fn run(config: &Config) -> Verdict {
     let mut command = config.cargo("build");

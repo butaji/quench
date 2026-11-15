@@ -1613,6 +1613,9 @@ dependencies = [
 [[package]]
 name = "quench-gate"
 version = "0.1.0"
+dependencies = [
+ "quench-tier-corpus",
+]
 
 [[package]]
 name = "quench-intl"

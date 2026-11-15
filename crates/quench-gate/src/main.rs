@@ -2,12 +2,14 @@
 //! ratchets, the census, the oracle tests, the C-parity gate and the conformance smoke, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
-//! usage: quench-gate [--quick] [--jobs N]
-//! `--quick` runs only the lint, census and C-parity steps.
+//! usage: quench-gate [--quick] [--jobs N] [--record]
+//! `--quick` runs only the lint, census and C-parity steps; `--record` writes the C-parity
+//! ceilings that have no value yet.
 
 mod build;
 mod census;
 mod config;
+mod cparity;
 mod lint;
 mod oracle;
 mod process;
@@ -22,11 +24,12 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 4] = [
+const STEPS: [Step; 5] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
     Step { name: "oracle", quick: false, blocking: false, run: oracle::run },
+    Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
