@@ -4407,3 +4407,38 @@ pub use flow_view::{FlowFunction, FlowInstruction};
 #[cfg(test)]
 mod tests;
 mod validate;
+
+/// Whether closures of function `id` of `code` read nothing of the activation that makes
+/// them (`reads_no_enclosing_scope`), to a depth of eight nested functions.
+pub(crate) fn closure_reads_no_enclosing_scope(code: &ResidualProgram, id: u32) -> bool {
+    reads_no_enclosing_scope(code, id, true, 8)
+}
+
+/// Whether closures of function `id` of `code` read nothing of the activation that makes
+/// them, nor do the closures they make in turn: no captured slot and no by-name resolution
+/// at any depth, no dynamic scope, and, for an arrow (`lexical`, down a chain of arrows),
+/// no `this`, `arguments` or implicit binding, which it would read from its maker. Such a
+/// closure may take the maker's own parent environment, from which it reads as little.
+/// Bounded at `depth` nested functions, past which it answers `false`.
+fn reads_no_enclosing_scope(code: &ResidualProgram, id: u32, lexical: bool, depth: u8) -> bool {
+    let Some(depth) = depth.checked_sub(1) else { return false };
+    let Some(function) = code.function_get(id as usize) else { return false };
+    if function.has_dynamic_scope_access() || function.inherited_with_scope {
+        return false;
+    }
+    let lexical = lexical && function.is_arrow;
+    function.instructions().all(|instruction| {
+        let op = instruction.op();
+        if op.immediate_role() == ImmediateRole::SuperinstructionIndex || op.reads_arguments() && lexical {
+            return false;
+        }
+        match op {
+            Op::LoadCapture | Op::StoreCapture | Op::StoreVarBinding => false,
+            Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName
+            | Op::DeleteName | Op::StoreName | Op::StoreResolvedName => false,
+            Op::LoadThis | Op::InitializeThis | Op::SuperCallCheck | Op::LoadCallee => !lexical,
+            Op::MakeClosure => reads_no_enclosing_scope(code, instruction.closure_function_index(), lexical, depth),
+            _ => true,
+        }
+    })
+}

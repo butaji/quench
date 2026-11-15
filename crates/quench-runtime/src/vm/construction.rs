@@ -34,7 +34,13 @@ pub(super) struct ClosureTemplate {
     kind: FunctionKind,
     /// The prototype object's header: its parent, under the shape `constructor` gives it.
     prototype: Option<crate::heap::InlineObjectHeader>,
+    /// Whether the closures read nothing of the scope that makes them
+    /// (`bytecode::closure_reads_no_enclosing_scope`): an environment activation makes them over its own
+    /// parent's environment and needs none of its own for them
+    /// (`Vm::scope_free_closure`).
+    scope_free: bool,
 }
+
 
 /// The closure template slot of a program's function: functions of different programs share
 /// ids, so the program is mixed in by a multiplicative hash (the 32-bit golden ratio).
@@ -330,6 +336,18 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// A closure of the active program's function `id` in the running realm whose recorded
+    /// template reads nothing of its maker's scope (`ClosureTemplate::scope_free`), made over
+    /// `env`, the maker's own parent environment; `None` for any other.
+    #[inline(always)]
+    pub(super) fn scope_free_closure(&mut self, id: u32, env: Value) -> Option<Value> {
+        if self.with_scope_entered {
+            return None;
+        }
+        let template = self.recorded_closure_template(id, self.realm.globals).filter(|template| template.scope_free)?;
+        Some(self.closure_of_template(template, env))
+    }
+
     /// The template recorded for closures of the active program's function `id` in `realm`.
     #[inline(always)]
     fn recorded_closure_template(&self, id: u32, realm: Value) -> Option<ClosureTemplate> {
@@ -551,6 +569,8 @@ impl<H: Host> Vm<H> {
                     prototype: constructor.map(|constructor| {
                         crate::heap::InlineObjectHeader::of(self.realm_object_prototype(realm), constructor)
                     }),
+                    // A call-only closure (`Value::known_closure`) names its maker's activation.
+                    scope_free: !function_plan.prototype_unobservable && crate::bytecode::closure_reads_no_enclosing_scope(p, id),
                 });
             }
             return Ok(function);

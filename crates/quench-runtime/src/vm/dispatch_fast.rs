@@ -3348,6 +3348,12 @@ fn lane_window_closure_value<H: Host>(
     registers: u16,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
+    // A closure reading nothing of this activation's scope takes its parent environment,
+    // and the activation needs no environment of its own for it.
+    if let Some(value) = vm.scope_free_closure(function, unsafe { (*cx).registers }.env()) {
+        note_allocation(vm);
+        return Some(value);
+    }
     let owner = vm.lane_stack.activations.last().map(|activation| activation.function);
     // SAFETY: the running environment activation's window, whose function is the
     // innermost activation's and whose environment's parent is the context's.
