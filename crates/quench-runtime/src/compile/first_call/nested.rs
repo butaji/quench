@@ -35,6 +35,11 @@ impl FreeNames {
         self.names.contains_key(start)
     }
 
+    #[cfg(test)]
+    pub(in crate::compile) fn iter(&self) -> impl Iterator<Item = (&u32, &Box<[Box<str>]>)> {
+        self.names.iter()
+    }
+
     /// The functions starting in `range` whose free names are known, with their bodies' ends.
     pub(in crate::compile) fn ends_in(&self, range: std::ops::Range<u32>) -> impl Iterator<Item = (u32, u32)> + '_ {
         self.ends.range(range).map(|(start, end)| (*start, *end))
