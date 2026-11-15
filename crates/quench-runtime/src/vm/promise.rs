@@ -25,6 +25,18 @@ pub(super) struct PromiseSpeciesProof {
     _watches: [crate::heap::PrototypeValueWatch; 2],
 }
 
+/// That promises of one layout read `then` as plain data inherited from their prototype,
+/// holding `then`: the receiver's layout fixes its own keys and prototype link, the chain epoch
+/// every prototype's layout, and the intrinsic epoch the prototype's values, which a write to
+/// them advances while the prototype's values are watched (`heap::watch_prototype_values`).
+#[derive(Clone, Copy)]
+pub(super) struct PromiseThenMemo {
+    layout: u32,
+    epochs: (u64, u64),
+    realm: Value,
+    then: Value,
+}
+
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
     format!("{}:{module_type}", crate::module_identity::normalized_text(name))
 }
@@ -4828,9 +4840,15 @@ impl<H: Host> Vm<H> {
         let then_atom = self.runtime_atoms.then;
         // A `then` that reads as plain data (`plain_named_load`), as an intrinsic promise's
         // does, is the value [[Get]] would answer, without its general lookup.
-        let read = match self.plain_named_load(value, then_atom) {
+        let read = match self.memoized_resolution_then(value) {
             Some(then) => Ok(then),
-            None => self.get_property(p, value, then_atom),
+            None => match self.plain_named_load(value, then_atom) {
+                Some(then) => {
+                    self.remember_resolution_then(value, then);
+                    Ok(then)
+                }
+                None => self.get_property(p, value, then_atom),
+            },
         };
         let then = match read {
             Ok(then) => then,
@@ -4925,8 +4943,55 @@ impl<H: Host> Vm<H> {
         if self.object_data(value).is_none() {
             return Some(Value::UNDEFINED);
         }
+        if let Some(then) = self.memoized_resolution_then(value) {
+            return Some(then);
+        }
         let then_atom = self.runtime_atoms.then;
-        self.plain_named_load(value, then_atom)
+        let then = self.plain_named_load(value, then_atom)?;
+        self.remember_resolution_then(value, then);
+        Some(then)
+    }
+
+    /// The `then` a resolution reads from promise `value` (`PromiseThenMemo`), where the memo
+    /// holds for it: one layout compare and two epoch compares instead of the read.
+    #[inline(always)]
+    fn memoized_resolution_then(&self, value: Value) -> Option<Value> {
+        let memo = self.promise_then_memo.get()?;
+        let object = &self.heap.promise(value)?.object;
+        (object.layout_id() == memo.layout
+            && memo.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && memo.realm == self.realm.globals)
+            .then_some(memo.then)
+    }
+
+    /// Remembers `then`, which a plain read of promise `value` found inherited as data
+    /// (`plain_named_load`): its prototype becomes a watched prototype whose value writes
+    /// advance the intrinsic epoch. Any other value, an own `then` or no prototype records
+    /// nothing.
+    #[cold]
+    #[inline(never)]
+    fn remember_resolution_then(&mut self, value: Value, then: Value) {
+        let key = PropertyKey::string(self.runtime_atoms.then);
+        let Some(record) = self.heap.promise(value) else { return };
+        let (layout, shape, prototype) = (record.object.layout_id(), record.object.shape(), record.object.proto());
+        // The read found `then` on the prototype itself: the receiver has none of its own.
+        if record.object.has_side_descriptors() || !self.is_function(then) || self.property_shape_slot(shape, key).is_some() {
+            return;
+        }
+        self.heap.mark_prototype(prototype);
+        let Some(holder) = self.heap.object(prototype) else { return };
+        if holder.has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
+            return;
+        }
+        if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {
+            return;
+        }
+        self.promise_then_memo.set(Some(PromiseThenMemo {
+            layout,
+            epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+            realm: self.realm.globals,
+            then,
+        }));
     }
 
     /// `promise_resolve_value` of a promise no one has observed yet, with the `then`

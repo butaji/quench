@@ -352,6 +352,7 @@ impl<H: Host> Vm<H> {
             species_slot_proof: _,
             iterator_absence_proof: _,
             promise_species_proof: _,
+            promise_then_memo: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,

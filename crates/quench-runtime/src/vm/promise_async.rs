@@ -733,16 +733,20 @@ impl<H: Host> Vm<H> {
     ) -> Option<(super::dispatch_frame::GeneralCodeCursor, u32, usize)> {
         let (handler, _, next) = self.chain_gates()?;
         let realm = self.realm.globals;
-        let (function, pc) = match self.heap.await_state_mut(handler) {
-            Some(AwaitState::Pending {
-                kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
-                realm: resumes,
-                ..
-            }) if *resumes == realm && continuation.frame.program == program && next.is_undefined() => {
-                (continuation.frame.function, continuation.frame.pc)
+        // A function is never an await state: a reaction's handler is tested first.
+        let (function, pc) = if let Some(record) = self.heap.function(handler) {
+            (Self::plain_handler_function(p, record, program, realm)?, 0)
+        } else {
+            match self.heap.await_state_mut(handler) {
+                Some(AwaitState::Pending {
+                    kind: AwaitKind::AsyncFunction(continuation) | AwaitKind::AsyncGeneratorAwait { continuation, .. },
+                    realm: resumes,
+                    ..
+                }) if *resumes == realm && continuation.frame.program == program && next.is_undefined() => {
+                    (continuation.frame.function, continuation.frame.pc)
+                }
+                _ => return None,
             }
-            Some(_) => return None,
-            None => (self.reaction_handler_function(handler, program)?, 0),
         };
         // Consecutive activations of one function share its cursor.
         let cursor = if current.function == function {
@@ -762,11 +766,19 @@ impl<H: Host> Vm<H> {
         Some((cursor, function, pc))
     }
 
-    /// The function of reaction handler `handler`, a plain script function of `program`.
-    #[inline(never)]
-    fn reaction_handler_function(&self, handler: Value, program: ProgramId) -> Option<u32> {
-        let (handler_program, id, _) = self.plain_reaction_handler(handler)?;
-        (handler_program == program).then_some(id)
+    /// The function of reaction handler `handler`, a plain script function of `program`, whose
+    /// code `p` is, in realm `running_realm`.
+    #[inline(always)]
+    fn plain_handler_function(p: &ResidualProgram, handler: &FunctionRecord, program: ProgramId, running_realm: Value) -> Option<u32> {
+        // As `plain_reaction_handler`, with the body read from `p`, the running program's.
+        let FunctionRecord { kind: FunctionKind::User(handler_program, id), realm, .. } = handler else {
+            return None;
+        };
+        if *handler_program != program || *realm != running_realm {
+            return None;
+        }
+        let body = p.function_get(*id as usize)?;
+        (!body.is_async && !body.is_generator && !body.is_class_constructor).then_some(*id)
     }
 
     /// Takes the queue's front job, which `peek_chained_job` admitted.

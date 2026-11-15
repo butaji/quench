@@ -1044,6 +1044,7 @@ impl<H: Host> Vm<H> {
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
+        self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear();
         self.field_add_sets.clear();

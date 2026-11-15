@@ -2068,6 +2068,8 @@ pub(crate) struct Vm<H> {
     iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
+    /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
+    promise_then_memo: std::cell::Cell<Option<promise::PromiseThenMemo>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -3110,6 +3112,7 @@ impl<H: Host> Vm<H> {
         self.species_slot_proof.set(None);
         self.iterator_absence_proof.set(None);
         self.promise_species_proof.take();
+        self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
         self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
