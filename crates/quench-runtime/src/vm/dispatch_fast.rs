@@ -17666,6 +17666,12 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     (callee_registers, start)
 }
 
+/// The frameless target of another program's function `callee` a native calls from the
+/// lane (`Vm::lane_native_callback`), as a trap's (`proxy_traps::lane_trap_target`).
+fn lane_cross_callback_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<(ScriptCallTarget, bool)> {
+    proxy_traps::lane_trap_target(cx, callee).filter(|&(_, crosses)| crosses)
+}
+
 /// The activation of a native's call of `target` with `args` from the lane's running
 /// function (`Vm::lane_native_callback`), as the lane's own call would make it from the call
 /// record `call`, completing to the native (`Completion::ReturnsToNative`): by its shape
@@ -17679,17 +17685,24 @@ fn lane_push_callback<H: Host>(
     target: &ScriptCallTarget,
     args: &[Value],
     this: Value,
+    crosses: bool,
 ) -> Option<Ip> {
-    debug_assert!(!lane_crosses::<H, true>(cx, target), "a native's lane callee is of the running program");
-    // SAFETY: the running lane's context, which nothing else accesses.
-    let shape = PreparedShape::of(unsafe { &*cx }, call, target, args.len());
-    if let Some(shape) = &shape
-        && let Some(start) = lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(target, this), args)
-    {
-        return Some(start);
+    debug_assert_eq!(crosses, lane_crosses::<H, true>(cx, target), "a native's lane callee crosses where its program is another");
+    if !crosses {
+        // SAFETY: the running lane's context, which nothing else accesses.
+        let shape = PreparedShape::of(unsafe { &*cx }, call, target, args.len());
+        if let Some(shape) = &shape
+            && let Some(start) = lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(target, this), args)
+        {
+            return Some(start);
+        }
     }
     let (r, arguments) = (unsafe { (*cx).registers }, ActivationArguments::Kept(args.as_ptr(), args.len()));
-    let (_, start) = lane_activate_keeping::<H, false>(cx, r, call, target, arguments, this, false, None).ok()?;
+    let (_, start) = if crosses {
+        lane_activate_keeping::<H, true>(cx, r, call, target, arguments, this, false, None).ok()?
+    } else {
+        lane_activate_keeping::<H, false>(cx, r, call, target, arguments, this, false, None).ok()?
+    };
     let vm = unsafe { vm(cx) };
     if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
         script.completion = Completion::ReturnsToNative;
@@ -23730,7 +23743,12 @@ impl<H: Host> Vm<H> {
         let _stack = crate::stack::StackGuard::enter().ok()?;
         // A collection since the lane entered retires the targets it resolved.
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
-        let target = lane_script_target(cx, callee)?;
+        // Another program's callee (a library's function a benchmark's native call reaches)
+        // runs as that program's activation, whose completion leaves the program to re-enter.
+        let (target, crosses) = match lane_script_target(cx, callee) {
+            Some(target) => (target, false),
+            None => lane_cross_callback_target(cx, callee)?,
+        };
         let this = lane_call_this(self, &target, receiver)?;
         let registers = self.active_registers;
         // SAFETY: as above; the context holds no drop glue. A completion to the native restores
@@ -23744,7 +23762,7 @@ impl<H: Host> Vm<H> {
             (*cx).pending = &mut pending;
             (*cx).executing = &mut executing;
         }
-        let Some(start) = lane_push_callback(cx, site.call, &target, args, this) else {
+        let Some(start) = lane_push_callback(cx, site.call, &target, args, this, crosses) else {
             unsafe {
                 (*cx).pending = saved.pending;
                 (*cx).executing = saved.executing;
@@ -23760,11 +23778,21 @@ impl<H: Host> Vm<H> {
                     (*cx).pending = saved.pending;
                     (*cx).executing = saved.executing;
                 }
+                if crosses {
+                    lane_enter_program(cx, program);
+                }
                 Ok(value)
             }
             None => {
                 // SAFETY: handlers only return records of the active view.
                 let pc = unsafe { exit.offset_from((*cx).base) } as usize;
+                // The callback's frame runs in its own program, which the general loop
+                // finishes it in.
+                let code = if crosses {
+                    self.programs.residual(target.program()).map_or(code, std::ptr::from_ref)
+                } else {
+                    code
+                };
                 self.materialize_lane_exit(cx);
                 let frame = unsafe { (*cx).frame };
                 debug_assert!(frame >= site.frames, "the callback's activation became a frame");
@@ -23835,7 +23863,7 @@ impl<H: Host> Vm<H> {
         // SAFETY: the deferred call's record lies in the caller activation's view.
         let call = unsafe { saved.base.add(deferred.call_pc) };
         let lower = self.lane_stack.activations.len();
-        let Some(start) = lane_push_callback(cx, call, &target, args, this) else {
+        let Some(start) = lane_push_callback(cx, call, &target, args, this, false) else {
             // A push that found no room made the activations frames, as the native's
             // observation of the frame stack would have.
             if self.frames.len() != deferred.frames {
@@ -24322,7 +24350,7 @@ impl<H: Host> Vm<H> {
             None => None,
         };
         let Some(start) = pushed.or_else(|| {
-            lane_push_callback(cx, site.call, &prepared.target, args, prepared.this)
+            lane_push_callback(cx, site.call, &prepared.target, args, prepared.this, false)
         }) else {
             restore_pending(cx, &prepared.caller);
             return None;

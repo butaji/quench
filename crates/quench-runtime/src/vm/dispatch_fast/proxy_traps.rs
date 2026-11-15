@@ -100,7 +100,7 @@ pub(super) fn lane_read_get_trap<H: Host>(
 /// which its activation enters and its return leaves (`lane_complete_activation`): a trap of
 /// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
 /// the running program's does. `None` for a trap the lane does not activate.
-fn lane_trap_target<H: Host>(cx: *mut LaneContext<H>, trap: Value) -> Option<(ScriptCallTarget, bool)> {
+pub(super) fn lane_trap_target<H: Host>(cx: *mut LaneContext<H>, trap: Value) -> Option<(ScriptCallTarget, bool)> {
     if let Some(target) = lane_script_target(cx, trap) {
         return (!target.forwards()).then_some((target, false));
     }
