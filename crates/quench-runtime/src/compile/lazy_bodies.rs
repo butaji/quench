@@ -450,7 +450,7 @@ fn verify_early() -> bool {
 /// A body's free names from the parse's (`LazyBody::early`), as `first_call::free_names`
 /// gives them: with a declaration's own name, None where the body may reach its scopes by
 /// name.
-fn parse_free_names(program: &Program<'_>, early: &[&str]) -> Option<(u32, Box<[Box<str>]>)> {
+pub(in crate::compile) fn parse_free_names(program: &Program<'_>, early: &[&str]) -> Option<(u32, Box<[Box<str>]>)> {
     let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
     if text.contains("eval") || text.contains("with") {
         return None;

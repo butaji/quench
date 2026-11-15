@@ -239,7 +239,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) -> Expression<'a> {
         self.early.unreference(ident.name.as_str());
         self.early.enter_function(None);
-        self.early.declare(ident.name.as_str(), crate::early::DeclKind::Param);
+        self.early.declare(ident.name, crate::early::DeclKind::Param);
         let pattern = BindingPattern::new_binding_identifier(ident.span, ident.name, self);
         let formal_parameter = FormalParameter::new_plain(ident.span, pattern, self);
         let params = FormalParameters::boxed(

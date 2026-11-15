@@ -129,7 +129,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     );
                     self.state.cover_initialized_name.insert(start, expr);
                 }
-                self.early.reference(identifier_name.name.as_str());
+                self.early.reference(identifier_name.name);
                 let value =
                     Expression::new_identifier(identifier_name.span, identifier_name.name, self);
                 ObjectProperty::boxed(
