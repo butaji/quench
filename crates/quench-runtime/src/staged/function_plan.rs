@@ -26,7 +26,7 @@ pub(crate) enum Exit {
 }
 
 /// What the plan holds for one PC.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) enum PlanOp {
     /// The instruction does nothing but continue (its denotation is `JsDenotation::Noop`).
     Continue,

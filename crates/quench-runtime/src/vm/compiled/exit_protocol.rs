@@ -112,7 +112,7 @@ pub(in crate::vm) struct RegionRun {
 
 impl RegionRun {
     /// A run that ended in the region's own activation.
-    pub(super) const fn own(exit: LaneExit) -> Self {
+    pub(in crate::vm) const fn own(exit: LaneExit) -> Self {
         Self { exit, nested: false }
     }
 
