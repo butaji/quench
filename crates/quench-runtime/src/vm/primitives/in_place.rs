@@ -3,6 +3,9 @@
 use super::*;
 use crate::vm::wtf16::Units;
 
+/// The longest ASCII text `split` scans unit by unit; a longer one is searched with `memchr`.
+const SPLIT_SCAN_MAX_LEN: usize = 32;
+
 impl<H: Host> Vm<H> {
     /// `indexOf`, `includes` or `startsWith` of a flat string receiver searching for a flat
     /// string, from a position left out or passed as an integer: every conversion the
@@ -62,10 +65,6 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    /// `split` of a flat string receiver at a flat string separator, with the limit left
-    /// out: no conversion runs guest code and nothing collects while the parts are made, so
-    /// the receiver is cut in place without the general path's roots and copies. `None`
-    /// leaves any other call to `call_primitive_native`.
     pub(super) fn split_in_place(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         if native != Native::StringSplit {
             return None;
@@ -81,27 +80,7 @@ impl<H: Host> Vm<H> {
         let separator = separator.clone();
         let mut parts = crate::vm::wtf16::split::SplitParts::<Value>::new();
         match (input.units(), separator.units()) {
-            // An ASCII text cut at one byte: a plain scan, each piece's bytes made a string
-            // (a one-byte piece is that byte's string) without a units view per piece.
-            (Units::Ascii(text), Units::Ascii(&[byte])) => {
-                let mut start = 0;
-                let mut cut = |end: usize, parts: &mut crate::vm::wtf16::split::SplitParts<Value>| {
-                    parts.push(self.heap.alloc_unit_run(Units::Ascii(&text[start..end])));
-                    start = end + 1;
-                };
-                if text.len() <= 32 {
-                    for (offset, &unit) in text.iter().enumerate() {
-                        if unit == byte {
-                            cut(offset, &mut parts);
-                        }
-                    }
-                } else {
-                    for offset in memchr::memchr_iter(byte, text) {
-                        cut(offset, &mut parts);
-                    }
-                }
-                cut(text.len(), &mut parts);
-            }
+            (Units::Ascii(text), Units::Ascii(&[byte])) => self.split_ascii_at_byte(text, byte, &mut parts),
             // An ASCII text cut into its units: each byte's string.
             (Units::Ascii(text), Units::Ascii(&[])) => {
                 parts.extend(text.iter().map(|unit| self.heap.alloc_unit_run(Units::Ascii(std::slice::from_ref(unit)))));
@@ -112,6 +91,28 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), values),
         }))
+    }
+
+    /// Splits ASCII `text` at each `byte`, each piece made a string of its bytes: a plain scan,
+    /// a one-byte piece being that byte's string, without a units view per piece.
+    fn split_ascii_at_byte(&mut self, text: &[u8], byte: u8, parts: &mut crate::vm::wtf16::split::SplitParts<Value>) {
+        let mut start = 0;
+        let mut cut = |end: usize, parts: &mut crate::vm::wtf16::split::SplitParts<Value>| {
+            parts.push(self.heap.alloc_unit_run(Units::Ascii(&text[start..end])));
+            start = end + 1;
+        };
+        if text.len() <= SPLIT_SCAN_MAX_LEN {
+            for (offset, &unit) in text.iter().enumerate() {
+                if unit == byte {
+                    cut(offset, parts);
+                }
+            }
+        } else {
+            for offset in memchr::memchr_iter(byte, text) {
+                cut(offset, parts);
+            }
+        }
+        cut(text.len(), parts);
     }
 }
 

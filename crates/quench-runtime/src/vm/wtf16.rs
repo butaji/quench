@@ -6,12 +6,14 @@ use std::ops::Range;
 use std::rc::Rc;
 
 mod append_buffer;
+mod units;
 mod short_ascii;
 pub(crate) mod native_string;
 mod concat_all;
 mod parts;
 mod payload;
 pub(crate) use parts::{Part, Parts, MAX_PARTS, MIN_PARTS};
+pub(crate) use units::{Units, UnitsIter};
 mod search;
 pub(super) use concat_all::JsStringBuilder;
 pub(crate) mod split;
@@ -352,207 +354,6 @@ impl FlatUnits {
         }
     }
 }
-
-/// A borrowed run of a string's code units.
-#[derive(Clone, Copy)]
-pub(crate) enum Units<'a> {
-    Ascii(&'a [u8]),
-    Wide(&'a [u16]),
-}
-
-impl<'a> Units<'a> {
-    pub(crate) fn len(self) -> usize {
-        match self {
-            Self::Ascii(bytes) => bytes.len(),
-            Self::Wide(units) => units.len(),
-        }
-    }
-
-    pub(crate) fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
-    pub(crate) fn get(self, index: usize) -> Option<u16> {
-        match self {
-            Self::Ascii(bytes) => bytes.get(index).map(|byte| u16::from(*byte)),
-            Self::Wide(units) => units.get(index).copied(),
-        }
-    }
-
-    /// The unit at `index`; panics past the end, as slice indexing does.
-    pub(crate) fn at(self, index: usize) -> u16 {
-        match self {
-            Self::Ascii(bytes) => u16::from(bytes[index]),
-            Self::Wide(units) => units[index],
-        }
-    }
-
-    pub(crate) fn iter(self) -> UnitsIter<'a> {
-        match self {
-            Self::Ascii(bytes) => UnitsIter::Ascii(bytes.iter()),
-            Self::Wide(units) => UnitsIter::Wide(units.iter()),
-        }
-    }
-
-    /// The units in `range`; panics on an out-of-bounds range, as slice indexing does.
-    pub(crate) fn slice(self, range: Range<usize>) -> Self {
-        match self {
-            Self::Ascii(bytes) => Self::Ascii(&bytes[range]),
-            Self::Wide(units) => Self::Wide(&units[range]),
-        }
-    }
-
-    pub(crate) fn get_range(self, range: Range<usize>) -> Option<Self> {
-        match self {
-            Self::Ascii(bytes) => bytes.get(range).map(Self::Ascii),
-            Self::Wide(units) => units.get(range).map(Self::Wide),
-        }
-    }
-
-    pub(crate) fn to_vec(self) -> Vec<u16> {
-        self.iter().collect()
-    }
-
-    /// These units' UTF-8 encoding, each lone surrogate encoded as the replacement character
-    /// (`utf8_len` counts it): an ASCII run's bytes as they are stored.
-    pub(crate) fn to_utf8(self) -> Vec<u8> {
-        match self {
-            Self::Ascii(bytes) => bytes.to_vec(),
-            Self::Wide(units) => utf16_lossy(units).into_bytes(),
-        }
-    }
-
-    /// The length of these units' UTF-8 encoding, each lone surrogate encoded as the
-    /// replacement character, as V8's `String::Utf8Length` counts it: an ASCII run's length,
-    /// or a wide run's code points summed without copying the units.
-    pub(crate) fn utf8_len(self) -> usize {
-        match self {
-            Self::Ascii(bytes) => bytes.len(),
-            Self::Wide(units) => char::decode_utf16(units.iter().copied())
-                .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
-                .sum(),
-        }
-    }
-
-    /// The units as UTF-16, borrowed when they already are.
-    pub(crate) fn wide(self) -> Cow<'a, [u16]> {
-        match self {
-            Self::Ascii(bytes) => Cow::Owned(bytes.iter().map(|byte| u16::from(*byte)).collect()),
-            Self::Wide(units) => Cow::Borrowed(units),
-        }
-    }
-
-    pub(crate) fn extend_into(self, output: &mut Vec<u16>) {
-        match self {
-            Self::Ascii(bytes) => output.extend(bytes.iter().map(|byte| u16::from(*byte))),
-            Self::Wide(units) => output.extend_from_slice(units),
-        }
-    }
-
-    pub(crate) fn starts_with(self, prefix: Units<'_>) -> bool {
-        prefix.len() <= self.len() && self.slice(0..prefix.len()) == prefix
-    }
-
-}
-
-impl PartialEq for Units<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        match (*self, *other) {
-            (Self::Ascii(left), Self::Ascii(right)) => left == right,
-            (Self::Wide(left), Self::Wide(right)) => left == right,
-            (left, right) => left.len() == right.len() && left.iter().eq(right.iter()),
-        }
-    }
-}
-
-impl Eq for Units<'_> {}
-
-impl PartialEq<[u16]> for Units<'_> {
-    fn eq(&self, other: &[u16]) -> bool {
-        self.len() == other.len() && self.iter().eq(other.iter().copied())
-    }
-}
-
-impl<const N: usize> PartialEq<[u16; N]> for Units<'_> {
-    fn eq(&self, other: &[u16; N]) -> bool {
-        *self == other[..]
-    }
-}
-
-impl PartialEq<&[u16]> for Units<'_> {
-    fn eq(&self, other: &&[u16]) -> bool {
-        *self == **other
-    }
-}
-
-impl<const N: usize> PartialEq<&[u16; N]> for Units<'_> {
-    fn eq(&self, other: &&[u16; N]) -> bool {
-        *self == other[..]
-    }
-}
-
-impl PartialEq<Vec<u16>> for Units<'_> {
-    fn eq(&self, other: &Vec<u16>) -> bool {
-        *self == other[..]
-    }
-}
-
-impl Ord for Units<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (*self, *other) {
-            (Self::Ascii(left), Self::Ascii(right)) => left.cmp(right),
-            (Self::Wide(left), Self::Wide(right)) => left.cmp(right),
-            (left, right) => left.iter().cmp(right.iter()),
-        }
-    }
-}
-
-impl PartialOrd for Units<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl std::fmt::Debug for Units<'_> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_list().entries(self.iter()).finish()
-    }
-}
-
-#[derive(Clone)]
-pub(crate) enum UnitsIter<'a> {
-    Ascii(std::slice::Iter<'a, u8>),
-    Wide(std::slice::Iter<'a, u16>),
-}
-
-impl Iterator for UnitsIter<'_> {
-    type Item = u16;
-
-    fn next(&mut self) -> Option<u16> {
-        match self {
-            Self::Ascii(bytes) => bytes.next().map(|byte| u16::from(*byte)),
-            Self::Wide(units) => units.next().copied(),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Ascii(bytes) => bytes.size_hint(),
-            Self::Wide(units) => units.size_hint(),
-        }
-    }
-}
-
-impl DoubleEndedIterator for UnitsIter<'_> {
-    fn next_back(&mut self) -> Option<u16> {
-        match self {
-            Self::Ascii(bytes) => bytes.next_back().map(|byte| u16::from(*byte)),
-            Self::Wide(units) => units.next_back().copied(),
-        }
-    }
-}
-
-impl ExactSizeIterator for UnitsIter<'_> {}
 
 fn is_ascii_unit(unit: u16) -> bool {
     unit < 0x80
@@ -1315,10 +1116,12 @@ impl JsString {
         if self.append_in_place(text) {
             return;
         }
-        let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
-        let rope = |left: &Self, right: &Self| {
-            Self::shared(JsStringInner::concat(left.node(), right.node()))
-        };
+        *self = self.joined_by_policy(text);
+    }
+
+    /// The string `self` then `text` make when `text` does not append in place: a rope node, or
+    /// a flat copy where the join policy keeps the pieces flat.
+    fn joined_by_policy(&self, text: &Self) -> Self {
         // A long slice stays a view of the text it was cut from: a copy to join a short piece
         // would hold the run twice, and a text cut, given a unit and joined back (V8-v7
         // RegExp's input variants, 2-4 KB each) once more per variant. V8 joins a sliced
@@ -1326,27 +1129,35 @@ impl JsString {
         if matches!(self.existing_flat(), Some(FlatUnits::AsciiSlice(_) | FlatUnits::WideSlice(_)))
             && self.len() > APPEND_BUFFER_MIN_UNITS
         {
-            *self = rope(self, text);
-            return;
+            return Self::rope_of(self, text);
         }
         // A flattened rope joins as the flat text it holds.
-        if self.existing_flat().is_some() && text.existing_flat().is_some() && short(text) {
-            *self = Self::extended(self, text);
-            return;
+        if self.existing_flat().is_some() && text.existing_flat().is_some() && text.len() <= ROPE_LEAF_MAX_UNITS {
+            return Self::extended(self, text);
         }
-        // The QuickJS policy: a short flat piece joins the flat side it meets, whether that
-        // is the other operand or the facing half of a rope operand.
-        *self = match (self.rope_halves(), text.rope_halves()) {
+        self.joined_at_facing_halves(text).unwrap_or_else(|| Self::rope_of(self, text))
+    }
+
+    /// The QuickJS policy: a short flat piece joins the flat side it meets, whether that is the
+    /// other operand or the facing half of a rope operand. `None` when neither case applies.
+    fn joined_at_facing_halves(&self, text: &Self) -> Option<Self> {
+        let short = |piece: &Self| piece.len() <= ROPE_LEAF_MAX_UNITS;
+        match (self.rope_halves(), text.rope_halves()) {
             (Some((left, right)), None) if short(text) && right.is_flat() && short(&right) => {
-                rope(&left, &Self::extended(&right, text))
+                Some(Self::rope_of(&left, &Self::extended(&right, text)))
             }
             (None, Some((left, right)))
                 if self.len() <= FLAT_PREFIX_MAX_UNITS && left.is_flat() && short(&left) =>
             {
-                rope(&Self::joined(self, &left), &right)
+                Some(Self::rope_of(&Self::joined(self, &left), &right))
             }
-            _ => rope(self, text),
-        };
+            _ => None,
+        }
+    }
+
+    /// A rope node joining `left` and `right`, both kept as they are.
+    fn rope_of(left: &Self, right: &Self) -> Self {
+        Self::shared(JsStringInner::concat(left.node(), right.node()))
     }
 
     /// Flat `left` then flat `right`, which is short: copied into storage of their exact
@@ -1495,86 +1306,5 @@ impl Hash for JsString {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::JsString;
-
-    #[test]
-    fn concatenation_length_checks_the_limit_and_arithmetic_overflow() {
-        use super::{MAX_STRING_UNITS, StringBuildError, checked_string_length};
-        assert_eq!(
-            checked_string_length(MAX_STRING_UNITS - 1, 1),
-            Ok(MAX_STRING_UNITS)
-        );
-        assert_eq!(
-            checked_string_length(MAX_STRING_UNITS, 1),
-            Err(StringBuildError::InvalidLength)
-        );
-        assert_eq!(
-            checked_string_length(usize::MAX, 1),
-            Err(StringBuildError::InvalidLength)
-        );
-    }
-
-    #[test]
-    fn preserves_lone_surrogates_until_host_conversion() {
-        let value = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
-        assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
-        assert_eq!(value.to_string(), "�a�");
-    }
-
-    #[test]
-    fn encodes_unicode_scalars_as_utf16_units() {
-        let value = JsString::from_str("A🦀");
-        assert_eq!(value.units(), &[u16::from(b'A'), 0xD83E, 0xDD80]);
-    }
-
-    #[test]
-    fn concatenation_keeps_utf16_units_and_flattens_on_demand() {
-        let mut value = JsString::from_units(&[0xD800, b'a' as u16]);
-        value.push_js_string(&JsString::from_str("bc"));
-        assert_eq!(value.units().len(), 4);
-        assert_eq!(
-            value.units(),
-            &[0xD800, b'a' as u16, b'b' as u16, b'c' as u16]
-        );
-        assert_eq!(value.host_string(), "�abc");
-    }
-
-    #[test]
-    fn repeats_units_without_reencoding_surrogates() {
-        let value = JsString::from_units(&[0xD800, b'a' as u16]);
-        let repeated = value.repeat(2);
-        assert_eq!(
-            repeated.units(),
-            &[0xD800, b'a' as u16, 0xD800, b'a' as u16]
-        );
-    }
-
-    #[test]
-    fn searches_and_splits_by_units() {
-        let value = JsString::from_units(&[0xD800, b'|' as u16, 0xDC00]);
-        assert_eq!(
-            value.find_units(super::Units::Wide(&[b'|' as u16]), 0),
-            Some(1)
-        );
-        let mut parts = Vec::new();
-        value.split_runs(super::Units::Wide(&[b'|' as u16]), usize::MAX, |run| parts.push(JsString::from_unit_run(run)));
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0].units(), &[0xD800]);
-        assert_eq!(parts[1].units(), &[0xDC00]);
-    }
-
-    #[test]
-    fn host_text_is_lazy_and_utf16_remains_authoritative() {
-        let paired = JsString::from_units(&[0xD83E, 0xDD80]);
-        let lone = JsString::from_units(&[0xD800]);
-
-        assert!(paired.existing_host().is_none());
-        assert!(lone.existing_host().is_none());
-        assert!(paired.existing_host().is_none());
-        assert!(lone.existing_host().is_none());
-        assert_eq!(lone.host_string(), "�");
-        assert_eq!(lone.units(), &[0xD800]);
-        assert!(lone.existing_host().is_some());
-    }
-}
+#[path = "wtf16/tests.rs"]
+mod tests;

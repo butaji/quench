@@ -112,7 +112,7 @@ fn sequential(nodes: &mut [Node], phis: &[(u16, Arg)]) -> Vec<u16> {
                 Arg::Col(n) => nodes[usize::from(n)].seq,
                 _ => false,
             };
-            let seq = matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && (reads(node.a) || reads(node.b));
+            let seq = node.op.is_operator() && (reads(node.a) || reads(node.b));
             nodes[id].seq = seq;
         }
         let next: Vec<Option<(u16, u8)>> = phis

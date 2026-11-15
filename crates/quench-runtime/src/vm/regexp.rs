@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod steady;
+mod install;
 mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;
 mod literal_matches;
@@ -270,285 +271,6 @@ impl<H: Host> Vm<H> {
             .constructor
     }
 
-    pub(super) fn install_regexp_intrinsics(
-        &mut self,
-        realm: Value,
-        constructor: Value,
-        prototype: Value,
-    ) -> Result<(), JsError> {
-        self.realm
-            .intrinsics
-            .regexp_intrinsics
-            .insert(realm, RegExpIntrinsics::new(constructor, prototype));
-        self.set_builtin_function_name(constructor, "RegExp")?;
-        self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.prototype_atom();
-        self.set_property_attributes(
-            constructor,
-            PropertyKey::string(prototype_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let initial_constructor = self.native_value(Native::RegExp);
-        for (name, native) in [
-            ("compile", Native::RegExpCompile),
-            ("exec", Native::RegExpExec),
-            ("test", Native::RegExpTest),
-            ("toString", Native::RegExpToString),
-        ] {
-            let method = if constructor == initial_constructor {
-                self.native_value(native)
-            } else {
-                self.native_with_realm(native, realm, realm)
-            };
-            self.set_builtin_function_name(method, name)?;
-            self.set_builtin_value_named(prototype, name, method)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn install_regexp(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        for name in ["source", "flags", "lastIndex", "index", "input"] {
-            self.intern_atom(name);
-        }
-        let constructor = self.native_value(Native::RegExp);
-        self.regexp_proto = self.object();
-        self.install_regexp_intrinsics(self.realm.globals, constructor, self.regexp_proto)?;
-        self.set_builtin_named(program, constructor, "escape", Native::RegExpEscape)?;
-        self.install_regexp_symbol_properties(constructor, self.regexp_proto, self.realm.globals)?;
-        self.install_regexp_accessors(program, self.regexp_proto, self.realm.globals)?;
-        self.install_regexp_legacy_accessors(program, constructor, self.realm.globals)?;
-        self.global(program, "RegExp", constructor)
-    }
-
-    pub(super) fn install_regexp_legacy_accessors(
-        &mut self,
-        program: &ResidualProgram,
-        constructor: Value,
-        realm: Value,
-    ) -> Result<(), JsError> {
-        for capture in 1..=REGEXP_LEGACY_CAPTURE_COUNT {
-            let name = format!("${capture}");
-            self.install_regexp_legacy_accessor(program, constructor, realm, &name, false)?;
-        }
-        for (names, has_setter) in REGEXP_LEGACY_ACCESSOR_GROUPS {
-            for name in *names {
-                self.install_regexp_legacy_accessor(
-                    program,
-                    constructor,
-                    realm,
-                    name,
-                    *has_setter,
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn install_regexp_legacy_accessor(
-        &mut self,
-        program: &ResidualProgram,
-        constructor: Value,
-        realm: Value,
-        name: &str,
-        has_setter: bool,
-    ) -> Result<(), JsError> {
-        let atom = self.intern_atom(name);
-        let selector = Value::number(atom as f64);
-        let getter = self.native_with_realm(Native::RegExpLegacyGetter, selector, realm);
-        self.set_builtin_function_name(getter, &format!("get RegExp.{name}"))?;
-        let setter =
-            has_setter.then(|| self.native_with_realm(Native::RegExpLegacySetter, selector, realm));
-        if let Some(setter) = setter {
-            self.set_builtin_function_name(setter, &format!("set RegExp.{name}"))?;
-        }
-        self.set_named(program, constructor, name, getter)?;
-        self.set_property_attributes(
-            constructor,
-            PropertyKey::string(atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter,
-            },
-        );
-        Ok(())
-    }
-
-    pub(super) fn install_regexp_accessors(
-        &mut self,
-        program: &ResidualProgram,
-        prototype: Value,
-        realm: Value,
-    ) -> Result<(), JsError> {
-        // Preserve the existing prototype property order: hasIndices was
-        // installed after the older accessors. Flags lookup uses canonical order.
-        let (has_indices, older_flags) = REGEXP_FLAG_ACCESSORS
-            .split_first()
-            .expect("RegExp flag metadata includes hasIndices");
-        for (name, native, _) in older_flags.iter().chain(std::iter::once(has_indices)) {
-            let getter = self.native_with_realm(*native, realm, realm);
-            self.set_builtin_function_name(getter, &format!("get {name}"))?;
-            let atom = self.intern_atom(name);
-            self.set_named(program, prototype, name, getter)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::string(atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        for (name, native) in [
-            ("source", Native::RegExpSource),
-            ("flags", Native::RegExpFlags),
-        ] {
-            let getter = self.native_with_realm(native, realm, realm);
-            self.set_builtin_function_name(getter, &format!("get {name}"))?;
-            let atom = self.intern_atom(name);
-            self.set_named(program, prototype, name, getter)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::string(atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
-    }
-
-    pub(super) fn install_regexp_symbol_properties(
-        &mut self,
-        constructor: Value,
-        prototype: Value,
-        realm: Value,
-    ) -> Result<(), JsError> {
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Match) {
-            let method = self.native_with_realm(Native::RegExpSymbolMatch, realm, realm);
-            self.set_builtin_function_name(method, "[Symbol.match]")?;
-            self.set_symbol_property(prototype, symbol, method)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Replace) {
-            let method = self.native_with_realm(Native::RegExpSymbolReplace, realm, realm);
-            self.set_builtin_function_name(method, "[Symbol.replace]")?;
-            self.set_symbol_property(prototype, symbol, method)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Search) {
-            let method = self.native_with_realm(Native::RegExpSymbolSearch, realm, realm);
-            self.set_builtin_function_name(method, "[Symbol.search]")?;
-            self.set_symbol_property(prototype, symbol, method)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Split) {
-            let method = self.native_with_realm(Native::RegExpSymbolSplit, realm, realm);
-            self.set_builtin_function_name(method, "[Symbol.split]")?;
-            self.set_symbol_property(prototype, symbol, method)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::MatchAll) {
-            let method = self.native_with_realm(Native::RegExpSymbolMatchAll, realm, realm);
-            self.set_builtin_function_name(method, "[Symbol.matchAll]")?;
-            self.set_symbol_property(prototype, symbol, method)?;
-            self.set_property_attributes(
-                prototype,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(constructor, symbol, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
-    }
-
     pub(super) fn regexp_symbol_replace(
         &mut self,
         p: &ResidualProgram,
@@ -559,173 +281,158 @@ impl<H: Host> Vm<H> {
             std::iter::once(receiver).chain(args.iter().copied()),
             |vm| {
                 if !vm.is_object_like(receiver) {
-                    return Err(vm.type_error(
-                        p,
-                        "RegExp.prototype[@@replace] receiver is not an object".into(),
-                    ));
+                    return Err(vm.type_error(p, "RegExp.prototype[@@replace] receiver is not an object".into()));
                 }
-                let input =
-                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let input = vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 // The protocol path reads the input's units throughout; a rope the program keeps
                 // is read through a copy that leaves it a rope (`unkept_flat`), as the fast
                 // path's is.
                 let input = input.unkept_flat();
                 let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let callable = vm.is_function(replacement);
-                let template = if callable {
-                    None
-                } else {
-                    Some(vm.coerce_js_string(p, replacement)?)
-                };
-                let input_value =
-                    vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
+                let template = if callable { None } else { Some(vm.coerce_js_string(p, replacement)?) };
+                let input_value = vm.string_value_from(args.first().copied().unwrap_or(Value::UNDEFINED), &input);
                 vm.with_call_roots([input_value], |vm| {
                     if let Some((matcher, flags)) = vm.regexp_builtin_receiver_matcher(receiver) {
                         let replacement = match template.as_ref() {
                             Some(template) => FastReplacement::Template(template),
                             None => FastReplacement::Function(replacement),
                         };
-                        return vm.regexp_symbol_replace_fast(
-                            p,
-                            receiver,
-                            &input,
-                            input_value,
-                            replacement,
-                            &matcher,
-                            flags,
-                            true,
-                        );
+                        return vm.regexp_symbol_replace_fast(p, receiver, &input, input_value, replacement, &matcher, flags, true);
                     }
                     let flags = vm.regexp_flags_text(p, receiver)?;
                     let global = flags.host_string().contains('g');
-                    let unicode =
-                        flags.host_string().contains('u') || flags.host_string().contains('v');
+                    let unicode = flags.host_string().contains('u') || flags.host_string().contains('v');
                     let last_index_atom = vm.intern_atom("lastIndex");
                     if global {
-                        vm.set_property_with_program_mode(
-                            p,
-                            receiver,
-                            last_index_atom,
-                            Value::number(0.0),
-                            true,
-                        )?;
+                        vm.set_property_with_program_mode(p, receiver, last_index_atom, Value::number(0.0), true)?;
                     }
-                    // Results are the authoritative list. Scoped call roots trace its
-                    // values until replacement finishes, including every abrupt exit.
-                    let mut results = Vec::new();
-                    loop {
-                        let result = vm.regexp_exec_value(p, receiver, input_value)?;
-                        if result.is_null() {
-                            break;
-                        }
-                        results.push(result);
-                        vm.active_call_roots.push(result);
-                        if !global {
-                            break;
-                        }
-                        let atom = vm.intern_atom("0");
-                        let matched = vm.get_property(p, result, atom)?;
-                        let matched = vm.coerce_js_string(p, matched)?;
-                        if matched.units().is_empty() {
-                            let index = vm.get_property(p, receiver, last_index_atom)?;
-                            let index = vm.regexp_to_length_value(p, index)?;
-                            let next = advance_string_index_units(input.units(), index, unicode);
-                            vm.set_property_with_program_mode(
-                                p,
-                                receiver,
-                                last_index_atom,
-                                Value::number(next as f64),
-                                true,
-                            )?;
-                        }
-                    }
-                    let mut output = super::wtf16::JsStringBuilder::default();
-                    let mut next_source = 0;
-                    for result in results {
-                        vm.with_call_roots([result], |vm| {
-                            let atom = vm.intern_atom("length");
-                            let length = vm.get_property(p, result, atom)?;
-                            let length = vm.regexp_to_length_value(p, length)?;
-                            let atom = vm.intern_atom("0");
-                            let matched = vm.get_property(p, result, atom)?;
-                            let matched = vm.coerce_js_string(p, matched)?;
-                            let atom = vm.intern_atom("index");
-                            let position = vm.get_property(p, result, atom)?;
-                            let position = vm.to_primitive(p, position, "number")?;
-                            let position =
-                                regexp_to_integer_or_infinity(vm.to_number(p, position)?);
-                            let position =
-                                position.max(0.0).min(input.units().len() as f64) as usize;
-                            let mut captures = Vec::new();
-                            for index in 1..length {
-                                let atom = vm.intern_atom(&index.to_string());
-                                let capture = vm.get_property(p, result, atom)?;
-                                let capture = if capture.is_undefined() {
-                                    capture
-                                } else {
-                                    let string = vm.coerce_js_string(p, capture)?;
-                                    vm.heap.alloc_string(string)
-                                };
-                                captures.push(capture);
-                                vm.active_call_roots.push(capture);
-                            }
-                            let atom = vm.intern_atom("groups");
-                            let groups = vm.get_property(p, result, atom)?;
-                            let text = vm.with_call_roots([groups], |vm| {
-                                if callable {
-                                    let matched = vm.heap.alloc_string(matched.clone());
-                                    let mut args = Vec::new();
-                                    args.push(matched);
-                                    args.extend(captures.iter().copied());
-                                    args.push(Value::number(position as f64));
-                                    args.push(input_value);
-                                    if !groups.is_undefined() {
-                                        args.push(groups);
-                                    }
-                                    let value =
-                                        vm.call_value(p, replacement, Value::UNDEFINED, &args)?;
-                                    vm.coerce_js_string(p, value)
-                                } else {
-                                    let groups =
-                                        if groups.is_undefined() || vm.is_object_like(groups) {
-                                            groups
-                                        } else {
-                                            vm.require_object_coercible(p, groups)?;
-                                            vm.box_primitive_object(groups)?
-                                        };
-                                    vm.with_call_roots([groups], |vm| {
-                                        vm.replacement_substitution(
-                                            p,
-                                            template
-                                                .as_ref()
-                                                .expect("template replacement owns its string"),
-                                            &input,
-                                            position,
-                                            &matched,
-                                            &captures,
-                                            groups,
-                                        )
-                                    })
-                                }
-                            })?;
-                            // Backward positions still run replacement effects; only
-                            // the projection into the output is conditional.
-                            if position >= next_source {
-                                output.append_slice(&input, next_source..position);
-                                output.append(&text);
-                                next_source = position.saturating_add(matched.units().len());
-                            }
-                            Ok::<_, JsError>(())
-                        })?;
-                    }
-                    if next_source < input.units().len() {
-                        output.append_slice(&input, next_source..input.units().len());
-                    }
-                    let output = vm.string_build_result(p, output.finish())?;
+                    let results = vm.collect_replace_results(p, receiver, &input, input_value, (global, unicode, last_index_atom))?;
+                    let substitution = Substitution { input: &input, input_value, replacement, callable, template };
+                    let output = vm.substitute_results(p, results, &substitution)?;
                     Ok(vm.heap.alloc_string(output))
                 })
             },
         )
+    }
+
+    /// The matches a `@@replace` substitutes, in order: the one match of a non-global RegExp, else
+    /// every match from `lastIndex` 0, an empty match advancing `lastIndex` past it (by a code point
+    /// where `unicode`). Results are the authoritative list, kept as scoped call roots until the
+    /// replacement finishes, including every abrupt exit.
+    fn collect_replace_results(&mut self, p: &ResidualProgram, receiver: Value, input: &JsString, input_value: Value, (global, unicode, last_index_atom): (bool, bool, Atom)) -> Result<Vec<Value>, JsError> {
+        let mut results = Vec::new();
+        loop {
+            let result = self.regexp_exec_value(p, receiver, input_value)?;
+            if result.is_null() {
+                break;
+            }
+            results.push(result);
+            self.active_call_roots.push(result);
+            if !global {
+                break;
+            }
+            let atom = self.intern_atom("0");
+            let matched = self.get_property(p, result, atom)?;
+            let matched = self.coerce_js_string(p, matched)?;
+            if matched.units().is_empty() {
+                let index = self.get_property(p, receiver, last_index_atom)?;
+                let index = self.regexp_to_length_value(p, index)?;
+                let next = advance_string_index_units(input.units(), index, unicode);
+                self.set_property_with_program_mode(p, receiver, last_index_atom, Value::number(next as f64), true)?;
+            }
+        }
+        Ok(results)
+    }
+
+    /// The output of a `@@replace`: the input with each result's substitution in place of its
+    /// match, the text between them kept.
+    fn substitute_results(&mut self, p: &ResidualProgram, results: Vec<Value>, substitution: &Substitution<'_>) -> Result<JsString, JsError> {
+        let input = substitution.input;
+        let mut output = super::wtf16::JsStringBuilder::default();
+        let mut next_source = 0;
+        for result in results {
+            self.with_call_roots([result], |vm| {
+                let (position, text, matched_length) = vm.replace_match(p, result, substitution)?;
+                // Backward positions still run replacement effects; only
+                // the projection into the output is conditional.
+                if position >= next_source {
+                    output.append_slice(input, next_source..position);
+                    output.append(&text);
+                    next_source = position.saturating_add(matched_length);
+                }
+                Ok::<_, JsError>(())
+            })?;
+        }
+        if next_source < input.units().len() {
+            output.append_slice(input, next_source..input.units().len());
+        }
+        self.string_build_result(p, output.finish())
+    }
+
+    /// One result's substitution for `@@replace`: its match position, the replacement text, and
+    /// the length of the matched text.
+    fn replace_match(&mut self, p: &ResidualProgram, result: Value, substitution: &Substitution<'_>) -> Result<(usize, JsString, usize), JsError> {
+        let atom = self.intern_atom("length");
+        let length = self.get_property(p, result, atom)?;
+        let length = self.regexp_to_length_value(p, length)?;
+        let atom = self.intern_atom("0");
+        let matched = self.get_property(p, result, atom)?;
+        let matched = self.coerce_js_string(p, matched)?;
+        let atom = self.intern_atom("index");
+        let position = self.get_property(p, result, atom)?;
+        let position = self.to_primitive(p, position, "number")?;
+        let position = regexp_to_integer_or_infinity(self.to_number(p, position)?);
+        let position = position.max(0.0).min(substitution.input.units().len() as f64) as usize;
+        let mut captures = Vec::new();
+        for index in 1..length {
+            let atom = self.intern_atom(&index.to_string());
+            let capture = self.get_property(p, result, atom)?;
+            let capture = if capture.is_undefined() {
+                capture
+            } else {
+                let string = self.coerce_js_string(p, capture)?;
+                self.heap.alloc_string(string)
+            };
+            captures.push(capture);
+            self.active_call_roots.push(capture);
+        }
+        let atom = self.intern_atom("groups");
+        let groups = self.get_property(p, result, atom)?;
+        let text = self.with_call_roots([groups], |vm| {
+            if substitution.callable {
+                let matched_value = vm.heap.alloc_string(matched.clone());
+                let mut args = Vec::new();
+                args.push(matched_value);
+                args.extend(captures.iter().copied());
+                args.push(Value::number(position as f64));
+                args.push(substitution.input_value);
+                if !groups.is_undefined() {
+                    args.push(groups);
+                }
+                let value = vm.call_value(p, substitution.replacement, Value::UNDEFINED, &args)?;
+                vm.coerce_js_string(p, value)
+            } else {
+                let groups = if groups.is_undefined() || vm.is_object_like(groups) {
+                    groups
+                } else {
+                    vm.require_object_coercible(p, groups)?;
+                    vm.box_primitive_object(groups)?
+                };
+                vm.with_call_roots([groups], |vm| {
+                    vm.replacement_substitution(
+                        p,
+                        substitution.template.as_ref().expect("template replacement owns its string"),
+                        substitution.input,
+                        position,
+                        &matched,
+                        &captures,
+                        groups,
+                    )
+                })
+            }
+        })?;
+        Ok((position, text, matched.units().len()))
     }
 
     fn regexp_builtin_receiver_matcher(
@@ -2656,10 +2363,7 @@ impl<H: Host> Vm<H> {
         // the match is ranges, which the caller reads out by the same units.
         if let Some(Some(found)) = input.with_ascii_rope_bytes(|bytes| {
             let length = bytes.len();
-            if !prefiltered
-                && ((stateful && start > length)
-                    || regex.excludes_search(length, start, sticky, || bytes.get(start).map(|byte| u16::from(*byte))))
-            {
+            if search_excluded(regex, length, start, (stateful, sticky), prefiltered, || bytes.get(start).map(|byte| u16::from(*byte))) {
                 return Some(None);
             }
             if steady.is_some_and(|steady| !steady.captures) {
@@ -2673,10 +2377,7 @@ impl<H: Host> Vm<H> {
         let unkept = input.unkept_flat();
         let input = &unkept;
         let units = input.units();
-        if !steady.is_some_and(|steady| steady.prefiltered)
-            && ((stateful && start > units.len())
-                || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start))))
-        {
+        if search_excluded(regex, units.len(), start, (stateful, sticky), prefiltered, || (start < units.len()).then(|| units.at(start))) {
             return None;
         }
         if let Some(found) = Self::regexp_search_ascii(regex, input, start, sticky, steady) {
@@ -2721,53 +2422,51 @@ impl<H: Host> Vm<H> {
         input: JsString,
         matched: quench_regexp::Match,
     ) -> Result<Value, JsError> {
-        {
-            let vm = self;
-            let has_indices = match vm.heap.get(this) {
-                Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
-                _ => false,
-            };
-            let named = regexp_named_capture_ranges(&matched);
-            // A match or capture of the whole input is the input itself, as a pattern that
-            // parses a whole line or URL returns: no copy of its text.
-            let input_value = vm.string_value_from(argument, &input);
-            // The captures are copied out, so an input rope not yet flat is read through a
-            // reused buffer and stays a rope: flattening it gave every input a kept copy of
-            // its text (V8-v7 RegExp's check run, whose results are used: 16,661 input variants
-            // of 2-4 KB each, 2.3 MB at its peak).
-            let (values, groups) = match input.with_ascii_rope_bytes(|bytes| {
-                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes), input_value)
-            }) {
-                Some(captures) => captures?,
-                None => {
-                    let units = input.units();
-                    vm.regexp_result_captures(&matched, &named, units, input_value)?
-                }
-            };
-            let index = Value::number(matched.range.start as f64);
-            let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
-            let result = match vm.regexp_result_layout() {
-                // The recorded layout: the array is allocated with its properties, by the
-                // same storage steps `initialize_regexp_result` takes on the published cell.
-                Some((shape, properties)) => vm.heap.alloc_array_with_properties(
-                    array,
-                    shape,
-                    &properties.values(index, input_value, groups),
-                ),
-                None => {
-                    let result = vm.heap.alloc(Cell::Array { object: array });
-                    vm.initialize_regexp_result(result, index, input_value, groups)?;
-                    result
-                }
-            };
-            if has_indices {
-                let indices = vm.regexp_indices_array(&matched, &named)?;
-                let indices_atom = vm.intern_atom("indices");
-                vm.set_property(result, indices_atom, indices)?;
+        let vm = self;
+        let has_indices = match vm.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
+            _ => false,
+        };
+        let named = regexp_named_capture_ranges(&matched);
+        // A match or capture of the whole input is the input itself, as a pattern that
+        // parses a whole line or URL returns: no copy of its text.
+        let input_value = vm.string_value_from(argument, &input);
+        // The captures are copied out, so an input rope not yet flat is read through a
+        // reused buffer and stays a rope: flattening it gave every input a kept copy of
+        // its text (V8-v7 RegExp's check run, whose results are used: 16,661 input variants
+        // of 2-4 KB each, 2.3 MB at its peak).
+        let (values, groups) = match input.with_ascii_rope_bytes(|bytes| {
+            vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes), input_value)
+        }) {
+            Some(captures) => captures?,
+            None => {
+                let units = input.units();
+                vm.regexp_result_captures(&matched, &named, units, input_value)?
             }
-            vm.record_regexp_legacy_match(this, input, matched)?;
-            Ok(result)
+        };
+        let index = Value::number(matched.range.start as f64);
+        let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
+        let result = match vm.regexp_result_layout() {
+            // The recorded layout: the array is allocated with its properties, by the
+            // same storage steps `initialize_regexp_result` takes on the published cell.
+            Some((shape, properties)) => vm.heap.alloc_array_with_properties(
+                array,
+                shape,
+                &properties.values(index, input_value, groups),
+            ),
+            None => {
+                let result = vm.heap.alloc(Cell::Array { object: array });
+                vm.initialize_regexp_result(result, index, input_value, groups)?;
+                result
+            }
+        };
+        if has_indices {
+            let indices = vm.regexp_indices_array(&matched, &named)?;
+            let indices_atom = vm.intern_atom("indices");
+            vm.set_property(result, indices_atom, indices)?;
         }
+        vm.record_regexp_legacy_match(this, input, matched)?;
+        Ok(result)
     }
 
     /// An exec result's elements and groups object from the input's `units`. Each matched
@@ -2776,6 +2475,25 @@ impl<H: Host> Vm<H> {
     /// callgrind: 50 against 75 instructions a capture). The groups object is made before the
     /// result array: no guest code runs and no collection is taken between them, so the order
     /// is unobservable.
+    /// The value of group `index` of a match (0 for the whole match): the whole input when the
+    /// group spans it (`whole`), else a string of its units, or undefined where it did not match.
+    fn capture_value(&mut self, matched: &quench_regexp::Match, units: super::wtf16::Units<'_>, whole: Value, index: usize) -> Value {
+        let range = match index.checked_sub(1) {
+            None => Some(matched.range.clone()),
+            Some(capture) => matched.captures[capture].clone(),
+        };
+        range.map_or(Value::UNDEFINED, |range| {
+            if range.start == 0 && range.end == units.len() {
+                whole
+            } else {
+                match units {
+                    super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
+                    super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                }
+            }
+        })
+    }
+
     fn regexp_result_captures(
         &mut self,
         matched: &quench_regexp::Match,
@@ -2783,25 +2501,9 @@ impl<H: Host> Vm<H> {
         units: super::wtf16::Units<'_>,
         whole: Value,
     ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
-        let length = units.len();
         let len = 1 + matched.captures.len();
         let run = self.heap.young_elements(len);
-        let element = |index: usize| {
-            let range = match index.checked_sub(1) {
-                None => Some(matched.range.clone()),
-                Some(capture) => matched.captures[capture].clone(),
-            };
-            range.map_or(Value::UNDEFINED, |range| {
-                if range.start == 0 && range.end == length {
-                    whole
-                } else {
-                    match units {
-                        super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
-                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
-                    }
-                }
-            })
-        };
+        let element = |index: usize| self.capture_value(matched, units, whole, index);
         // A young run where the nursery has one, as an array literal's: most results die
         // young. The result array record is made before any collection (`regexp_exec_result`).
         let values = match run {
@@ -3401,6 +3103,11 @@ pub(super) const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
     ("sticky", Native::RegExpSticky, 'y'),
 ];
 
+/// A weak table's dead entries are swept once it holds `WEAK_SWEEP_GROWTH` times the entries the
+/// last sweep kept, and never below `WEAK_SWEEP_FLOOR` entries.
+const WEAK_SWEEP_GROWTH: usize = 2;
+const WEAK_SWEEP_FLOOR: usize = 64;
+
 /// Upper bound on cached compiled matchers. Compiled automata are the largest per-RegExp
 /// allocation, so the cache is capped; reaching the cap drops every entry and recompiles on demand.
 const REGEXP_MATCHER_CACHE_LIMIT: usize = 64;
@@ -3428,12 +3135,29 @@ impl LazyMatchers {
     }
 
     fn insert(&mut self, source: &JsString, flags: RegExpFlags, matcher: &Rc<quench_regexp::Regex>) {
-        if self.by_pattern.len() >= 2 * self.swept.max(64) {
+        if self.by_pattern.len() >= WEAK_SWEEP_GROWTH * self.swept.max(WEAK_SWEEP_FLOOR) {
             self.by_pattern.retain(|_, matcher| matcher.strong_count() > 0);
             self.swept = self.by_pattern.len();
         }
         self.by_pattern.insert((source.clone(), flags.0), Rc::downgrade(matcher));
     }
+}
+
+/// What each match of a `@@replace` substitutes: the input and its value, and the replacement,
+/// either a function (`callable`) or a template.
+struct Substitution<'a> {
+    input: &'a JsString,
+    input_value: Value,
+    replacement: Value,
+    callable: bool,
+    template: Option<JsString>,
+}
+
+/// Whether a search of a `length`-unit subject from `start` finds nothing before it starts: a
+/// stateful search past the end, or a search the regex's first-unit filter excludes (`first`
+/// reads the unit at `start`). A prefiltered search is never excluded here.
+fn search_excluded(regex: &quench_regexp::Regex, length: usize, start: usize, (stateful, sticky): (bool, bool), prefiltered: bool, first: impl FnOnce() -> Option<u16>) -> bool {
+    !prefiltered && ((stateful && start > length) || regex.excludes_search(length, start, sticky, first))
 }
 
 /// The matchers compiled for patterns and flags: the last `REGEXP_MATCHER_CACHE_LIMIT` held,
@@ -3465,7 +3189,7 @@ impl RegExpMatcherCache {
         }
         if self.live.len() >= self.prune_live_at {
             self.live.retain(|_, matcher| matcher.strong_count() > 0);
-            self.prune_live_at = (self.live.len() * 2).max(REGEXP_MATCHER_CACHE_LIMIT);
+            self.prune_live_at = (self.live.len() * WEAK_SWEEP_GROWTH).max(REGEXP_MATCHER_CACHE_LIMIT);
         }
         self.live.insert((source.clone(), flags.to_owned()), Rc::downgrade(&matcher));
         self.by_source

@@ -74,6 +74,8 @@ static NEXT: AtomicU32 = AtomicU32::new(1);
 static MAP: Mutex<Option<FxHashMap<u64, u32>>> = Mutex::new(None);
 
 const CACHE_BITS: u32 = 12;
+/// The multiplier that hashes a layout word to its cache slot: the 64-bit golden ratio.
+const CACHE_HASH_MULTIPLIER: u64 = 0x9e37_79b9_7f4a_7c15;
 static CACHE: [AtomicU32; 1 << CACHE_BITS] = [const { AtomicU32::new(0) }; 1 << CACHE_BITS];
 
 /// The base address of the table, entry `id` at `id * 8` past it.
@@ -100,7 +102,7 @@ pub(crate) fn intern(word: u64) -> u32 {
     if word == 0 {
         return 0;
     }
-    let slot = (word.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (u64::BITS - CACHE_BITS)) as usize;
+    let slot = (word.wrapping_mul(CACHE_HASH_MULTIPLIER) >> (u64::BITS - CACHE_BITS)) as usize;
     // Every id the cache holds is a written entry, so its check reads a valid word.
     let id = CACHE[slot].load(Ordering::Relaxed);
     if self::word(id) == word {

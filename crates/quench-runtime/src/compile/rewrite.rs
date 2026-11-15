@@ -70,9 +70,7 @@ fusion_recipes! {
             let crate::bytecode::FieldLookup::Atom { base, .. } = second.field_lookup()? else {
                 return None;
             };
-            if base.register_index() != Some(first.result_register()) {
-                return None;
-            }
+            if base.register_index() != Some(first.result_register()) { return None; }
             let local = u16::try_from(first.local_slot()).ok()?;
             // A local past the packed field domain keeps the pair.
             second.try_set_b(crate::bytecode::FieldBase::local(local)?.0)?;
@@ -202,9 +200,7 @@ fn remove_dead_moves(
     current: &mut Option<CodeFacts>,
 ) -> bool {
     let removable = |i: Instr| matches!(i.op(), Op::Move | Op::LoadConst) && !i.is_wide() && i.result_flags() == 0;
-    if !function.code.iter().any(|&instruction| removable(instruction)) {
-        return false;
-    }
+    if !function.code.iter().any(|&instruction| removable(instruction)) { return false; }
     let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;

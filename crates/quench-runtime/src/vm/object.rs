@@ -3199,7 +3199,6 @@ impl<H: Host> Vm<H> {
     /// own one). Only receivers proved reads start from and shapes outside dictionary mode,
     /// whose layout fixes where each name is.
     fn record_accessor_fact(&self, object: Value, atom: Atom, layout: u32, epoch: u64, hops: u8, slot: usize, holder: Value) {
-        use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
         let key = PropertyKey::string(atom);
         let Some(receiver) = self.proved_read_receiver(object, key) else {
             return;
@@ -3211,11 +3210,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(receiver.shape()) || self.shape_is_dictionary(holder_object.shape()) {
             return;
         }
-        let kind = match self.slot_accessor(holder_object.shape(), slot) {
-            super::SlotAccessor::Getter => KIND_GETTER_SLOT,
-            super::SlotAccessor::Pair => KIND_GETTER_PAIR,
-            super::SlotAccessor::Attributes => KIND_GETTER,
-        };
+        let kind = super::symbol_load_proof::getter_kind(self.slot_accessor(holder_object.shape(), slot));
         let holder_id = if hops == 0 { 0 } else { holder.direct_object_index().map_or(0, |id| id + 1) };
         self.symbol_load_proofs.record_accessor(layout, key32, epoch, hops, slot32, kind, holder_id);
     }

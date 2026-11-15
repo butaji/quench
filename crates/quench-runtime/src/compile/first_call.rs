@@ -169,6 +169,20 @@ impl Engine {
     }
 }
 
+/// Whether `program` runs strictly: inherited, or by its own `"use strict"` directive.
+fn is_strict(program: &Program<'_>, inherited_strict: bool) -> bool {
+    inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict")
+}
+
+/// Whether `program`'s top level declares a lexical binding (a `let`, `const` or class).
+fn declares_lexically(program: &Program<'_>) -> bool {
+    program.body.iter().any(|statement| match statement {
+        Statement::VariableDeclaration(declaration) => !declaration.kind.is_var(),
+        Statement::ClassDeclaration(_) => true,
+        _ => false,
+    })
+}
+
 /// The rest parameter that holds a stub's arguments.
 const STUB_ARGUMENTS: &str = "\0quench:first-call-args";
 
@@ -180,13 +194,7 @@ impl ParsedProgramShape<'_> {
     /// as first-call stubs: an eval's whose functions compile again from their text alone
     /// (`replayable`), when its root is sloppy and declares no lexical binding.
     pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
-        let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
-        let lexical = program.body.iter().any(|statement| match statement {
-            Statement::VariableDeclaration(declaration) => !declaration.kind.is_var(),
-            Statement::ClassDeclaration(_) => true,
-            _ => false,
-        });
-        if !replayable || !matches!(self, Self::Eval(..)) || strict || lexical {
+        if !replayable || !matches!(self, Self::Eval(..)) || is_strict(program, inherited_strict) || declares_lexically(program) {
             return FxHashSet::default();
         }
         TopLevelFunctions::of(program)
@@ -198,18 +206,12 @@ impl ParsedProgramShape<'_> {
     /// compile as stubs where their bodies stream (`Stubs::streamed_roots`): a sloppy
     /// script's, whose lexical bindings are global too, or an eval's that declares none.
     fn streamed_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
-        let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
-        let lexical = program.body.iter().any(|statement| match statement {
-            Statement::VariableDeclaration(declaration) => !declaration.kind.is_var(),
-            Statement::ClassDeclaration(_) => true,
-            _ => false,
-        });
         let shaped = match self {
             Self::Any => !program.source_type.is_module(),
-            Self::Eval(..) => !lexical,
+            Self::Eval(..) => !declares_lexically(program),
             _ => false,
         };
-        if !replayable || strict || !shaped {
+        if !replayable || is_strict(program, inherited_strict) || !shaped {
             return FxHashSet::default();
         }
         program

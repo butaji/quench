@@ -110,16 +110,7 @@ pub(super) fn lane_read_getter<H: Host>(
     // A native getter is answered or called in place; a script getter's target, resolved
     // once, is answered by its read or activated.
     if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = unsafe { vm(cx) }.heap.function(getter) {
-        let native = *native;
-        if reads {
-            if let Some(value) = unsafe { vm(cx) }.pure_native_getter_value(getter, base) {
-                let r = unsafe { (*cx).registers };
-                r.set(i.a, value);
-                return Ok((r, following(ip)));
-            }
-            return lane_native_getter(cx, ip, i, native, getter, base);
-        }
-        return lane_activate_getter(cx, r, ip, getter, base, None);
+        return lane_native_read_getter(cx, r, ip, i, *native, getter, base, reads);
     }
     let target = lane_script_target(cx, getter);
     if reads
@@ -135,6 +126,30 @@ pub(super) fn lane_read_getter<H: Host>(
         return Ok((r, following(ip)));
     }
     lane_activate_getter(cx, r, ip, getter, base, target)
+}
+
+/// `lane_read_getter` of a native getter: a read answers a pure getter in place and otherwise
+/// calls it; a write activates it.
+#[inline(always)]
+fn lane_native_read_getter<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    native: Native,
+    getter: Value,
+    base: Value,
+    reads: bool,
+) -> Result<(Registers, Ip), Ip> {
+    if !reads {
+        return lane_activate_getter(cx, r, ip, getter, base, None);
+    }
+    if let Some(value) = unsafe { vm(cx) }.pure_native_getter_value(getter, base) {
+        let r = unsafe { (*cx).registers };
+        r.set(i.a, value);
+        return Ok((r, following(ip)));
+    }
+    lane_native_getter(cx, ip, i, native, getter, base)
 }
 
 /// `lane_read_getter` of a native getter: called as a lane `Call` of it with no arguments is.

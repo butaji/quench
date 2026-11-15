@@ -191,34 +191,14 @@ impl<H: Host> Vm<H> {
         // on its shape.
         // A collection, date, regexp, promise or iterator holds its own names on its shape as
         // an ordinary object does (`Heap::ordinary_builtin_object`).
-        let facts = self
-            .heap
-            .ordinary_object(target)
-            .or_else(|| self.heap.ordinary_builtin_object(target))
-            .filter(|data| !data.is_arguments_object() && !data.has_side_descriptors() && self.plain_named_key(atom))
-            .and_then(|data| Some((data.layout_id(), super::super::PropertyKey::string(atom).key32()?, data)));
+        let facts = self.named_fact_key(target, atom);
         if let Some((layout, key32, data)) = facts
-            && let Some(word) = self.symbol_load_proofs.word(layout, key32)
+            && let Some(answer) = self.recorded_unconstrained(layout, key32, data)
         {
-            use super::super::symbol_load_proof::{KIND_ABSENT, KIND_ABSENT_OWN, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
-            match word.kind() {
-                KIND_OWN => {
-                    return self.shape_slot_attributes(data.shape(), word.slot()).is_some_and(|attributes| attributes.configurable);
-                }
-                KIND_INHERITED | KIND_ABSENT | KIND_ABSENT_OWN => return true,
-                KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if word.hops() > 0 => return true,
-                _ => {}
-            }
+            return answer;
         }
-        if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
-            // An array's `length` is non-configurable and writable unless a descriptor says
-            // otherwise; its elements are configurable unless a descriptor was recorded.
-            if atom == self.length_atom {
-                return !array.has_length_descriptor();
-            }
-            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
-                return array.is_extensible() && !array.has_indexed_descriptors();
-            }
+        if let Some(answer) = self.array_leaves_atom_unconstrained(target, atom) {
+            return answer;
         }
         if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) || !self.shape_names_own_keys(target) {
             return false;
@@ -236,6 +216,44 @@ impl<H: Host> Vm<H> {
             }
             Some(slot) => self.shape_slot_attributes(shape, slot).is_some_and(|attributes| attributes.configurable),
         }
+    }
+
+    /// The layout, string key and record of an ordinary target that the fact table can record
+    /// the named key `atom` of: no arguments object, no side descriptors, and a plain name.
+    fn named_fact_key(&self, target: Value, atom: Atom) -> Option<(u32, u32, &crate::heap::Object)> {
+        self.heap
+            .ordinary_object(target)
+            .or_else(|| self.heap.ordinary_builtin_object(target))
+            .filter(|data| !data.is_arguments_object() && !data.has_side_descriptors() && self.plain_named_key(atom))
+            .and_then(|data| Some((data.layout_id(), super::super::PropertyKey::string(atom).key32()?, data)))
+    }
+
+    /// Whether the fact table's word for `layout` and `key32` settles the key on the shape of
+    /// `data`: `None` when no word settles it.
+    fn recorded_unconstrained(&self, layout: u32, key32: u32, data: &crate::heap::Object) -> Option<bool> {
+        use super::super::symbol_load_proof::{KIND_ABSENT, KIND_ABSENT_OWN, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
+        let word = self.symbol_load_proofs.word(layout, key32)?;
+        match word.kind() {
+            KIND_OWN => Some(self.shape_slot_attributes(data.shape(), word.slot()).is_some_and(|attributes| attributes.configurable)),
+            KIND_INHERITED | KIND_ABSENT | KIND_ABSENT_OWN => Some(true),
+            KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if word.hops() > 0 => Some(true),
+            _ => None,
+        }
+    }
+
+    /// Whether an array target leaves `atom` unconstrained by its own state: `length` and index
+    /// keys are settled by the array's descriptors. `None` for any other key.
+    fn array_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> Option<bool> {
+        let array = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object())?;
+        // An array's `length` is non-configurable and writable unless a descriptor says
+        // otherwise; its elements are configurable unless a descriptor was recorded.
+        if atom == self.length_atom {
+            return Some(!array.has_length_descriptor());
+        }
+        if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+            return Some(array.is_extensible() && !array.has_indexed_descriptors());
+        }
+        None
     }
 
     /// Whether `target`'s shape holds each own name it has beyond the virtual ones

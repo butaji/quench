@@ -171,6 +171,43 @@ fn place<'a>(
     }
 }
 
+/// The binary's symbols by their stable names: every copy of a name, which a profile cannot
+/// tell apart, is ordered.
+fn known_copies(symbols: &[String]) -> std::collections::HashMap<&str, Vec<&str>> {
+    let mut known: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for name in symbols {
+        known.entry(stable_name(name)).or_default().push(name);
+    }
+    known
+}
+
+/// Places the run tiers: the first tier's run phase, then the functions matching `dense`, then
+/// each later tier ranked on its own.
+fn place_run_tiers<'a>(
+    run: &[Vec<String>],
+    dense: &[String],
+    symbols: &'a [String],
+    known: &std::collections::HashMap<&'a str, Vec<&'a str>>,
+    seen: &mut HashSet<&'a str>,
+    order: &mut Vec<&'a str>,
+) -> Result<(), String> {
+    let (first_tier, later_tiers) = run
+        .split_first()
+        .map_or((&[][..], &[][..]), |(first, later)| {
+            (first.as_slice(), later)
+        });
+    place(run_phase(first_tier)?, known, seen, order);
+    let dense_names = symbols
+        .iter()
+        .filter(|name| dense.iter().any(|pattern| name.contains(pattern.as_str())))
+        .cloned();
+    place(dense_names, known, seen, order);
+    for tier in later_tiers {
+        place(ranked(tier)?, known, seen, order);
+    }
+    Ok(())
+}
+
 fn run(
     binary: &str,
     out: &str,
@@ -182,42 +219,18 @@ fn run(
 ) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     // Profiles may come from an earlier link of the same build: match names
-    // without LTO module hashes, and write the binary's current names. A
-    // name can belong to several local copies, which a profile cannot tell
-    // apart; every copy is ordered.
-    let mut known: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
-    for name in &symbols {
-        known.entry(stable_name(name)).or_default().push(name);
-    }
+    // without LTO module hashes, and write the binary's current names.
+    let known = known_copies(&symbols);
     let mut seen = HashSet::new();
     let mut order: Vec<&str> = Vec::new();
     if !sets.is_empty() {
         place(PROCESS_RUNTIME.iter().map(|name| (*name).to_owned()), &known, &mut seen, &mut order);
         place(by_sets(sets)?, &known, &mut seen, &mut order);
     }
-    let (first_tier, later_tiers) = run
-        .split_first()
-        .map_or((&[][..], &[][..]), |(first, later)| {
-            (first.as_slice(), later)
-        });
-    place(run_phase(first_tier)?, &known, &mut seen, &mut order);
-    let dense_names = symbols
-        .iter()
-        .filter(|name| dense.iter().any(|pattern| name.contains(pattern.as_str())))
-        .cloned();
-    place(dense_names, &known, &mut seen, &mut order);
-    for tier in later_tiers {
-        place(ranked(tier)?, &known, &mut seen, &mut order);
-    }
+    place_run_tiers(run, dense, &symbols, &known, &mut seen, &mut order)?;
     let runtime = PROCESS_RUNTIME.iter().map(|name| (*name).to_owned());
     for profile in profiles {
-        for name in runtime.clone().chain(executed(profile)?) {
-            for name in known.get(stable_name(&name)).into_iter().flatten() {
-                if seen.insert(*name) {
-                    order.push(name);
-                }
-            }
-        }
+        place(runtime.clone().chain(executed(profile)?), &known, &mut seen, &mut order);
     }
     if foreign_first {
         order.sort_by_key(|name| name.starts_with(RUST_SYMBOL_PREFIX));
@@ -229,16 +242,13 @@ fn run(
     Ok(())
 }
 
-fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let [binary, out, profiles @ ..] = args.as_slice() else {
-        eprintln!("usage: symbol-order <binary> <out.order> [--foreign-first] [--dense PATTERN]... <cachegrind.out>... [--sets <cachegrind.out>...] [--run <callgrind.out>...]...");
-        return ExitCode::from(2);
-    };
+/// Splits the flags `--foreign-first` and `--dense PATTERN` from the profile arguments:
+/// the dense patterns, whether foreign code goes first, and the rest in order.
+fn split_flags(arguments: &[String]) -> (Vec<String>, bool, Vec<String>) {
     let mut dense = Vec::new();
     let mut foreign_first = false;
     let mut rest = Vec::new();
-    let mut arguments = profiles.iter();
+    let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
         match (argument.as_str(), arguments.clone().next()) {
             ("--foreign-first", _) => foreign_first = true,
@@ -249,8 +259,12 @@ fn main() -> ExitCode {
             _ => rest.push(argument.clone()),
         }
     }
-    // Each `--run` starts a run tier and `--sets` the leading set-ordered group; profiles
-    // before either are start-up profiles.
+    (dense, foreign_first, rest)
+}
+
+/// Groups the profile arguments by their `--sets` and `--run` markers: the start-up profiles,
+/// the set-ordered ones, and one group per run tier.
+fn group_profiles(rest: Vec<String>) -> (Vec<String>, Vec<String>, Vec<Vec<String>>) {
     let mut profiles = Vec::new();
     let mut sets = Vec::new();
     let mut run_profiles: Vec<Vec<String>> = Vec::new();
@@ -269,6 +283,19 @@ fn main() -> ExitCode {
             },
         }
     }
+    (profiles, sets, run_profiles)
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let [binary, out, profiles @ ..] = args.as_slice() else {
+        eprintln!("usage: symbol-order <binary> <out.order> [--foreign-first] [--dense PATTERN]... <cachegrind.out>... [--sets <cachegrind.out>...] [--run <callgrind.out>...]...");
+        return ExitCode::from(2);
+    };
+    let (dense, foreign_first, rest) = split_flags(profiles);
+    // Each `--run` starts a run tier and `--sets` the leading set-ordered group; profiles
+    // before either are start-up profiles.
+    let (profiles, sets, run_profiles) = group_profiles(rest);
     match run(binary, out, &profiles, &sets, &run_profiles, &dense, foreign_first) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

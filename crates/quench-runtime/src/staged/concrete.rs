@@ -3,6 +3,9 @@
 use super::{Stage, Table};
 use super::region::Access;
 
+/// The bits of a shift count that a 64-bit shift uses: the count is taken modulo the word width.
+const U64_SHIFT_MASK: u64 = u64::BITS as u64 - 1;
+
 /// The interpreter's stage: machine words, read from live memory. It knows every condition,
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
@@ -76,7 +79,7 @@ impl Stage for Concrete {
     #[inline(always)]
     fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
     fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
-    fn shl(&mut self, a: u64, b: u64) -> u64 { a << (b & 63) }
+    fn shl(&mut self, a: u64, b: u64) -> u64 { a << (b & U64_SHIFT_MASK) }
     #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_add(imm) }
     #[inline(always)]

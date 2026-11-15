@@ -131,7 +131,7 @@ pub(crate) fn release_free_pages_below(allocator: &Allocator, chunk: usize, kept
         let cursor = std::ptr::from_mut(allocator.alloc(0u8));
         let start = (cursor.addr() + allocator.used_bytes()).saturating_sub(chunk);
         // SAFETY: sysconf only reads a system constant.
-        let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(4096);
+        let page = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(quench_alloc::PAGE_BYTES);
         let (from, to) = (start.next_multiple_of(page), cursor.addr().saturating_sub(kept) / page * page);
         if to > from {
             // SAFETY: the pages lie in the chunk's free space, which holds no live allocation;

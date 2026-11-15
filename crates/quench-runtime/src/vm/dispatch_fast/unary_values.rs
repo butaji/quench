@@ -15,13 +15,8 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
 ) -> Option<Value> {
     let operator = i.imm();
     let operand = r.get(i.b);
-    // A Number operand of a Number operator (negation, plus, increments): its result made
-    // here, where `Vm::unary` would be a call (Box2D's `-x` on doubles).
-    if let Some(number) = operand.as_number()
-        && super::super::operations::NumberUnary::from_operator(operator).is_some()
-        && let Some(result) = super::super::operations::number_unary_result(operator, number)
-    {
-        return Some(Value::number(result));
+    if let Some(result) = number_unary_value(operator, operand) {
+        return Some(result);
     }
     let vm = unsafe { vm(cx) };
     if let Some(answer) = lane_value_query(vm, operator, operand) {
@@ -32,17 +27,36 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
         return Some(operand);
     }
     if operand.as_number().is_some() && super::coercion::numeric_unary(operator) {
-        // SAFETY: the context's program outlives the lane run.
-        return vm.unary(unsafe { &*(*cx).code }, operator, operand).ok();
+        return unsafe { lane_vm_unary(cx, vm, operator, operand) };
     }
     if !pure {
         return None;
     }
-    // SAFETY: the context's program outlives the lane run.
-    let value = vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()?;
+    let value = unsafe { lane_vm_unary(cx, vm, operator, operand) }?;
     // Converting to a string can allocate.
     note_allocation(vm);
     Some(value)
+}
+
+/// A Number operand of a Number operator (negation, plus, increments): its result made here,
+/// where `Vm::unary` would be a call (Box2D's `-x` on doubles).
+#[inline(always)]
+fn number_unary_value(operator: u32, operand: Value) -> Option<Value> {
+    let number = operand.as_number()?;
+    if super::super::operations::NumberUnary::from_operator(operator).is_none() {
+        return None;
+    }
+    super::super::operations::number_unary_result(operator, number).map(Value::number)
+}
+
+/// `Vm::unary` of `operand` for the running lane's program.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_vm_unary<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, operator: u32, operand: Value) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run.
+    vm.unary(unsafe { &*(*cx).code }, operator, operand).ok()
 }
 
 /// Logical not and the `typeof` operators: they read any value's truthiness or type, so no

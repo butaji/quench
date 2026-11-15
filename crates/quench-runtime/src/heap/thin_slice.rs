@@ -27,6 +27,25 @@ pub(crate) struct ThinBoxSlice<T, const P: usize = 0> {
     marker: std::marker::PhantomData<T>,
 }
 
+/// Owns the allocation and its initialized prefix until every element exists.
+struct Partial<T> {
+    raw: *mut u8,
+    layout: Layout,
+    elements: *mut T,
+    initialized: usize,
+}
+
+impl<T> Drop for Partial<T> {
+    fn drop(&mut self) {
+        // SAFETY: the prefix is initialized and the allocation came from `alloc` with
+        // this layout.
+        unsafe {
+            std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(self.elements, self.initialized));
+            dealloc(self.raw, self.layout);
+        }
+    }
+}
+
 impl<T, const P: usize> ThinBoxSlice<T, P> {
     /// The allocation's header, stable while this storage remains live and unchanged.
     #[inline(always)]
@@ -186,23 +205,6 @@ impl<T, const P: usize> ThinBoxSlice<T, P> {
     /// A slice of `len` elements made in place by `element(index)`, or `None` when one is
     /// missing, which drops those made before it, or when no room is left for them.
     pub(crate) fn try_from_fn(len: usize, mut element: impl FnMut(usize) -> Option<T>) -> Option<Self> {
-        /// Owns the allocation and its initialized prefix until every element exists.
-        struct Partial<T> {
-            raw: *mut u8,
-            layout: Layout,
-            elements: *mut T,
-            initialized: usize,
-        }
-        impl<T> Drop for Partial<T> {
-            fn drop(&mut self) {
-                // SAFETY: the prefix is initialized and the allocation came from `alloc` with
-                // this layout.
-                unsafe {
-                    std::ptr::drop_in_place(std::ptr::slice_from_raw_parts_mut(self.elements, self.initialized));
-                    dealloc(self.raw, self.layout);
-                }
-            }
-        }
         if len == 0 {
             return Some(Self::empty());
         }

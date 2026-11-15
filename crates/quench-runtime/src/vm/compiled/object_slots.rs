@@ -158,7 +158,7 @@ pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlags
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let id = builder.ins().load(types::I32, flags, address, layout.layout_offset as i32);
     let id = builder.ins().uextend(types::I64, id);
-    let offset = builder.ins().imul_imm_u(id, 8);
+    let offset = builder.ins().imul_imm_u(id, size_of::<u64>() as _);
     let base = builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64);
     let entry = builder.ins().iadd(base, offset);
     let word = builder.ins().load(types::I32, flags, entry, layout.auxiliary_offset as i32);
@@ -287,9 +287,7 @@ impl InheritedConstant {
         (constant.count > 0).then_some(constant)
     }
 
-    pub(crate) fn values(&self) -> &[(u32, Value)] {
-        &self.values[..usize::from(self.count)]
-    }
+    pub(crate) fn values(&self) -> &[(u32, Value)] { &self.values[..usize::from(self.count)] }
 
     /// These values and `other`'s, each prototype once; `None` where a prototype holds two
     /// values or there are more than the read folds.

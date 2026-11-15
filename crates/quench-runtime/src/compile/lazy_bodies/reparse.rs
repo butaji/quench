@@ -116,15 +116,10 @@ pub(in crate::compile) fn reparse<'a>(
     source_type: SourceType,
     nesting: Nesting<'_>,
 ) -> Result<Reparsed<'a>, ReparseFailure> {
-    // The bodies inside whose free names and ends a parse before found are skipped unread: a
-    // body nested deep is otherwise read again by each function around it that compiles.
     let mut known = rustc_hash::FxHashMap::default();
     let (names, recorded) = match nesting {
         Nesting::Parse(found, direct) => {
-            let from = delta.wrapping_add(offset + 1);
-            if let Some(to) = from.checked_add((text.len() as u32).saturating_sub(offset + 1)) {
-                known.extend(found.ends_in(from..to).map(|(start, end)| (start.wrapping_sub(delta), end.wrapping_sub(delta))));
-            }
+            extend_known_bodies(&mut known, found, text, offset, delta);
             (Some(FreeNameCheck::new(found, delta, direct)), None)
         }
         Nesting::Recorded(starts) => (None, Some(starts)),
@@ -148,9 +143,31 @@ pub(in crate::compile) fn reparse<'a>(
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
     let check = lazy_from.filter(|_| checks).map(|_| unsafe { oxc_parser::LazyBodyCheck::new(&mut check) });
     let skim = lazy_from.filter(|_| !checks).map(|_| unsafe { oxc_parser::LazyBodySkim::new(&mut skim) });
-    let mut parsed = parse(allocator, text, source_type, lazy_from, check, skim, false, false, crate::compile::annex_b_targets::Recognize::All, skips);
+    let parsed = parse(allocator, text, source_type, lazy_from, check, skim, false, false, crate::compile::annex_b_targets::Recognize::All, skips);
+    finish_reparse(allocator, parsed, recorded.map(|starts| starts.iter().copied()), (offset, delta), text.len())
+}
+
+/// Adds to `known` the bodies inside `text` whose free names and ends a parse before `found`
+/// already found, keyed by their starts in the program's text: a parse skips them unread, since
+/// a body nested deep is otherwise read again by each function around it that compiles.
+fn extend_known_bodies(known: &mut impl Extend<(u32, u32)>, found: &FreeNames, text: &str, offset: u32, delta: u32) {
+    let from = delta.wrapping_add(offset + 1);
+    if let Some(to) = from.checked_add((text.len() as u32).saturating_sub(offset + 1)) {
+        known.extend(found.ends_in(from..to).map(|(start, end)| (start.wrapping_sub(delta), end.wrapping_sub(delta))));
+    }
+}
+
+/// The reparsed program, once its parse is judged: a replay stands its recorded bodies in, the
+/// tree's depth is checked where the function compiles, and its spans shift into the program's text.
+fn finish_reparse<'a>(
+    allocator: &'a Allocator,
+    mut parsed: oxc_parser::ParserReturn<'a>,
+    recorded: Option<impl Iterator<Item = u32>>,
+    (offset, delta): (u32, u32),
+    len: usize,
+) -> Result<Reparsed<'a>, ReparseFailure> {
     if let Some(starts) = recorded {
-        stand_in_recorded(allocator, &mut parsed.program, starts.iter().copied(), (offset, delta), text.len());
+        stand_in_recorded(allocator, &mut parsed.program, starts, (offset, delta), len);
     }
     // The early checks passed before code generation (`BodyFacts::check`); the depth of the tree
     // is checked again here, where the function compiles.

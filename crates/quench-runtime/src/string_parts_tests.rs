@@ -26,6 +26,27 @@ fn concatenation_parts_survive_collection_and_read_as_flat_text() {
     assert_eq!(output(source), expected);
 }
 
+/// The lines `small_strings_read_as_flat_text_across_collections` prints, in order.
+fn small_string_expected_lines() -> Vec<String> {
+    let mut joined = 0;
+    for i in 0..300 {
+        joined += format!("String for key {i} in leaf node").len() + 1;
+    }
+    vec![
+        "String for key 299 in leaf node".to_string(),
+        "0 and a fairly long suffix text".into(),
+        "a fairly long prefix text -0.5".into(),
+        "x-prefix-text 7 String for key 9 in leaf node".into(),
+        "String for key 1.5 in leaf node3 and then the rest".into(),
+        "k k".into(),
+        "1".into(),
+        "49 0 30".into(),
+        "true true \"String for key 1 in leaf node\"".into(),
+        (joined - 1).to_string(),
+        "199 middle words here the tail end|the tail end middle words here 198".into(),
+    ]
+}
+
 /// Small strings (a Number with at most one string on each side) read as their text whichever
 /// side they have, as parts of other strings, as keys and through the string natives, before and
 /// after collections, whether first read before or after one.
@@ -57,24 +78,7 @@ fn small_strings_read_as_flat_text_across_collections() {
       churn();
       print(firsts[199] + '|' + lasts[198]);
     "#;
-    let mut joined = 0;
-    for i in 0..300 {
-        joined += format!("String for key {i} in leaf node").len() + 1;
-    }
-    let expected = [
-        "String for key 299 in leaf node".to_string(),
-        "0 and a fairly long suffix text".into(),
-        "a fairly long prefix text -0.5".into(),
-        "x-prefix-text 7 String for key 9 in leaf node".into(),
-        "String for key 1.5 in leaf node3 and then the rest".into(),
-        "k k".into(),
-        "1".into(),
-        "49 0 30".into(),
-        "true true \"String for key 1 in leaf node\"".into(),
-        (joined - 1).to_string(),
-        "199 middle words here the tail end|the tail end middle words here 198".into(),
-    ];
-    assert_eq!(output(source), expected);
+    assert_eq!(output(source), small_string_expected_lines());
 }
 
 /// More small strings read once than the views kept between collections (`SmallViews`): each

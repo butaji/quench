@@ -11,6 +11,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::units::{MILLISECONDS_PER_SECOND, NANOSECONDS_PER_DAY, NANOSECONDS_PER_SECOND};
+
 /// How far the virtual clock moves on each read: enough that two reads differ, as
 /// benchmark harnesses divide by elapsed time.
 const VIRTUAL_STEP_NS: u64 = 100_000;
@@ -58,14 +60,14 @@ pub fn system_now() -> SystemTime {
 
 /// Milliseconds since the Unix epoch, as `Date.now` reads them.
 pub fn unix_millis() -> f64 {
-    system_now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64() * 1000.0
+    system_now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64() * MILLISECONDS_PER_SECOND
 }
 
 /// A monotonic clock in nanoseconds (`CLOCK_MONOTONIC` by default); `None` where unavailable.
 pub fn monotonic_ns() -> Option<f64> {
     if is_virtual() {
         // Offset by a day so that origins taken from it are never zero.
-        return Some(86_400.0 * 1e9 + virtual_tick() as f64);
+        return Some(NANOSECONDS_PER_DAY as f64 + virtual_tick() as f64);
     }
     #[cfg(unix)]
     {
@@ -73,7 +75,7 @@ pub fn monotonic_ns() -> Option<f64> {
         if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) } != 0 {
             return None;
         }
-        Some(time.tv_sec as f64 * 1_000_000_000.0 + time.tv_nsec as f64)
+        Some(time.tv_sec as f64 * NANOSECONDS_PER_SECOND as f64 + time.tv_nsec as f64)
     }
     #[cfg(not(unix))]
     {

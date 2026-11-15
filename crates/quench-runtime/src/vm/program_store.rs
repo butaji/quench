@@ -9,6 +9,8 @@ use residual::{EncodedResidual, Residual};
 
 pub(in crate::vm) mod lane_publication;
 mod chunks;
+mod js_jit_counters;
+mod tier_manager;
 mod eval_cache;
 mod js_jit_report;
 mod residual;
@@ -16,141 +18,12 @@ mod snapshot;
 mod tier_census;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
+use js_jit_counters::*;
+pub(in crate::vm) use js_jit_counters::JsJitCallOutcome;
 
-#[derive(Default)]
-struct JsJitCounters {
-    source_name: Option<Box<str>>,
-    function_name: Option<Box<str>>,
-    parameter_count: u16,
-    instruction_count: u32,
-    guard_conditional_branches: u32,
-    guard_typeof_ops: u32,
-    guard_strict_comparisons: u32,
-    guard_relational_comparisons: u32,
-    entries: u64,
-    lane_entries: u64,
-    numeric_entries: u64,
-    promotions: u64,
-    compile_attempts: u64,
-    compile_successes: u64,
-    rejection_reason: Option<&'static str>,
-    compile_ns: u64,
-    native_entries: u64,
-    field_cache_probes: u64,
-    field_cache_hits: u64,
-    field_cache_sites: FxHashMap<u16, (u64, u64)>,
-    field_store_cache_probes: u64,
-    field_store_cache_hits: u64,
-    field_return_candidate_entries: u64,
-    field_return_fixed_this_entries: u64,
-    field_return_fast_entries: u64,
-    field_increment_candidate_entries: u64,
-    field_increment_fixed_this_entries: u64,
-    field_increment_fast_entries: u64,
-    captured_store_fast_entries: u64,
-    numeric_find_fast_entries: u64,
-    fallback_entries: u64,
-    interpreter_completions: u64,
-    interpreter_inclusive_ns: u64,
-    opcode_counts: Vec<(u16, u32)>,
-    call_sites: Vec<JsJitCallSiteCounters>,
-    code_bytes: usize,
-}
-
-#[derive(Default)]
-struct JsJitCallSiteCounters {
-    pc: u32,
-    opcode: u16,
-    attempts: u64,
-    direct_target: Option<(u32, u32)>,
-    direct_target_calls: u64,
-    alternate_target_calls: u64,
-    other_target_calls: u64,
-    outcomes: [u64; JsJitCallOutcome::COUNT],
-    sampled_calls: u64,
-    sampled_call_ns: [u64; JsJitCallOutcome::COUNT],
-}
-
-#[cfg(feature = "native-execution")]
-impl JsJitCallSiteCounters {
-    /// Counts one call by where it went: the site's first direct target, a later call to it,
-    /// a call to another direct target, or a target that is not a direct callee.
-    fn note_target(&mut self, direct_target: Option<(u32, u32)>) {
-        match direct_target {
-            Some(target) => match self.direct_target {
-                None => {
-                    self.direct_target = Some(target);
-                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
-                }
-                Some(first) if first == target => {
-                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
-                }
-                Some(_) => {
-                    self.alternate_target_calls = self.alternate_target_calls.saturating_add(1);
-                }
-            },
-            None => {
-                self.other_target_calls = self.other_target_calls.saturating_add(1);
-            }
-        }
-    }
-}
-
-#[cfg(feature = "native-execution")]
-const JS_JIT_CALL_DIAGNOSTIC_SAMPLE_INTERVAL: u64 = 256;
-
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub(super) enum JsJitCallOutcome {
-    Continue = 0,
-    TailCall = 1,
-    PushFrame = 2,
-    Return = 3,
-    Await = 4,
-    Yield = 5,
-    Error = 6,
-}
-
-impl JsJitCallOutcome {
-    const COUNT: usize = Self::Error as usize + 1;
-
-    const ALL: [Self; Self::COUNT] = [
-        Self::Continue,
-        Self::TailCall,
-        Self::PushFrame,
-        Self::Return,
-        Self::Await,
-        Self::Yield,
-        Self::Error,
-    ];
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Continue => "continue",
-            Self::TailCall => "tail_call",
-            Self::PushFrame => "push_frame",
-            Self::Return => "return",
-            Self::Await => "await",
-            Self::Yield => "yield",
-            Self::Error => "error",
-        }
-    }
-}
-
-const JS_JIT_MAX_FUNCTIONS: usize = 64;
-// Tier observations include dynamically generated functions across all retained
-// programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
-// metadata bound large enough to observe that workload without changing the
-// independent compiled-artifact or executable-memory budgets.
-const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
-const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
-const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
-const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
-// Executable mappings were once page-rounded. A 64 KiB cap then admitted only
-// sixteen tiny JS artifacts on 4 KiB systems, starving later high-frequency
-// helpers; the function-count cap still bounds artifact proliferation.
-const JS_JIT_MAX_MAPPED_BYTES: usize = 512 * 1024;
 const WASM_JIT_MAX_TIER_ROOTS: usize = 32;
+/// The spacing between stores' first context epochs (`next_store_epoch`): 2^40 epochs apart.
+const STORE_EPOCH_SPACING: u64 = 1 << 40;
 /// When a Wasm module running under `--jit` compiles whole (`WasmModuleTier`). It starts in
 /// the interpreter with its hot roots promoted, so a module used briefly pays only for them;
 /// one that runs long gets the code eager compilation would have made at its first entry.
@@ -395,6 +268,8 @@ enum WasmModuleTier {
 /// (a general-path activation, a callout) costs more than the native function saves: the Wasm
 /// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
 /// slower than with no JIT.
+/// The units in a thousand: `WASM_MODULE_MIN_COVERAGE` counts in thousandths.
+const MILLE: usize = 1000;
 const WASM_MODULE_MIN_COVERAGE: usize = 500;
 
 /// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
@@ -407,257 +282,6 @@ impl Default for WasmModuleTier {
     }
 }
 
-
-impl JitTierManager {
-    /// Apply JavaScript's bounded statistical promotion transition to the
-    /// manager-owned tier record. ProgramStore handles only global counters
-    /// and diagnostic side effects after this decision is complete.
-    fn note_js_entry(
-        &mut self,
-        tiers: &Tiers,
-        function: u32,
-        numeric: bool,
-        first_entry_candidate: bool,
-        compiled_functions: usize,
-        can_track: bool,
-    ) -> JsEntryStep {
-        if self.is_wasm() {
-            return JsEntryStep::Count;
-        }
-        let full = compiled_functions >= JS_JIT_MAX_FUNCTIONS;
-        let Some(state) = self.js_mut(function) else {
-            if !can_track {
-                return JsEntryStep::Count;
-            }
-            let (initial, step) = if full {
-                (JsTierState::Unsupported, JsEntryStep::Count)
-            } else if first_entry_candidate {
-                (JsTierState::PromotionPending, JsEntryStep::PromoteAndCompile)
-            } else {
-                (JsTierState::Hot { observations: 1, numeric: u8::from(numeric) }, JsEntryStep::Count)
-            };
-            let inserted = self.js_insert(function, initial);
-            debug_assert!(inserted);
-            return step;
-        };
-        match state {
-            JsTierState::Hot { observations, numeric: numeric_entries } => {
-                *observations = observations.saturating_add(1);
-                *numeric_entries = numeric_entries.saturating_add(u8::from(numeric));
-                let promotion = numeric_promotion_decision(tiers, *numeric_entries, *observations);
-                let (next, step) = if full {
-                    (Some(JsTierState::Unsupported), JsEntryStep::Count)
-                } else if first_entry_candidate || (promotion == Some(true) && numeric) {
-                    (None, JsEntryStep::PromoteAndCompile)
-                } else if promotion == Some(true) {
-                    (Some(JsTierState::PromotionPending), JsEntryStep::Promote)
-                } else {
-                    let exhausted = promotion == Some(false) && *observations == u8::MAX;
-                    (exhausted.then_some(JsTierState::Unsupported), JsEntryStep::Count)
-                };
-                if let Some(next) = next {
-                    *state = next;
-                }
-                step
-            }
-            JsTierState::PromotionPending if full => {
-                *state = JsTierState::Unsupported;
-                JsEntryStep::Count
-            }
-            JsTierState::PromotionPending if numeric => JsEntryStep::Compile,
-            JsTierState::PromotionPending
-            | JsTierState::Rejected { .. }
-            | JsTierState::Unsupported
-            | JsTierState::Compiled(_) => JsEntryStep::Count,
-        }
-    }
-
-    /// Advance the Wasm call-hotness state. Both the lane handoff and the
-    /// ordinary dispatcher call this transition owner, so the threshold and
-    /// one-shot attempt bit have one implementation.
-    fn note_wasm_entry(&mut self, tiers: &Tiers, function: u32, lane_handoff: bool) -> bool {
-        let Some(state) = self.wasm_mut_or_default(function) else {
-            return false;
-        };
-        let WasmTierState::Counting(count) = *state else {
-            return false;
-        };
-        let count = count.saturating_add(1);
-        if lane_handoff && count >= tiers.wasm.promotion_entries {
-            return true;
-        }
-        if count < tiers.wasm.promotion_entries {
-            *state = WasmTierState::Counting(count);
-            return false;
-        }
-        *state = WasmTierState::Attempted;
-        true
-    }
-
-    /// `note_wasm_tier_backedges`'s transition: one more observation, held below the
-    /// threshold.
-    fn note_wasm_backedges(&mut self, tiers: &Tiers, function: u32) {
-        let Some(state) = self.wasm_mut_or_default(function) else {
-            return;
-        };
-        if let WasmTierState::Counting(count) = state {
-            *count = count.saturating_add(1).min(tiers.wasm.promotion_entries - 1);
-        }
-    }
-
-    fn js(&self, function: u32) -> Option<&JsTierState> {
-        match self {
-            Self::JavaScript(functions) => functions.get(&function),
-            Self::Empty | Self::Wasm(_) => None,
-        }
-    }
-
-    fn js_mut(&mut self, function: u32) -> Option<&mut JsTierState> {
-        match self {
-            Self::JavaScript(functions) => functions.get_mut(&function),
-            Self::Empty | Self::Wasm(_) => None,
-        }
-    }
-
-    fn js_insert(&mut self, function: u32, state: JsTierState) -> bool {
-        if matches!(self, Self::Empty) {
-            *self = Self::JavaScript(FxHashMap::default());
-        }
-        match self {
-            Self::JavaScript(functions) => {
-                if let std::collections::hash_map::Entry::Vacant(slot) = functions.entry(function) {
-                    slot.insert(state);
-                    true
-                } else {
-                    false
-                }
-            }
-            Self::Empty | Self::Wasm(_) => false,
-        }
-    }
-
-    fn js_values(&self) -> impl Iterator<Item = &JsTierState> {
-        let functions = match self {
-            Self::JavaScript(functions) => Some(functions),
-            Self::Empty | Self::Wasm(_) => None,
-        };
-        functions.into_iter().flat_map(|functions| functions.values())
-    }
-
-    fn wasm(&self, function: u32) -> Option<&WasmTierState> {
-        match self {
-            Self::Wasm(tiers) => tiers.functions.get(&function),
-            Self::Empty | Self::JavaScript(_) => None,
-        }
-    }
-
-    fn wasm_mut_or_default(&mut self, function: u32) -> Option<&mut WasmTierState> {
-        if matches!(self, Self::Empty) {
-            *self = Self::Wasm(WasmTiers::default());
-        }
-        match self {
-            Self::Wasm(tiers) => Some(tiers.functions.entry(function).or_default()),
-            Self::Empty | Self::JavaScript(_) => None,
-        }
-    }
-
-    /// The selective artifact holding `function` (`WasmTiers::holders`).
-    fn wasm_holding(&self, function: u32) -> Option<&Rc<super::compiled::CompiledProgram>> {
-        let Self::Wasm(tiers) = self else { return None };
-        tiers.functions.get(tiers.holders.get(&function)?)?.compiled()
-    }
-
-    fn wasm_values(&self) -> impl Iterator<Item = &WasmTierState> {
-        let functions = match self {
-            Self::Wasm(tiers) => Some(&tiers.functions),
-            Self::Empty | Self::JavaScript(_) => None,
-        };
-        functions.into_iter().flat_map(|functions| functions.values())
-    }
-
-    fn wasm_tiers_mut(&mut self) -> Option<&mut WasmTiers> {
-        if matches!(self, Self::Empty) {
-            *self = Self::Wasm(WasmTiers::default());
-        }
-        match self {
-            Self::Wasm(tiers) => Some(tiers),
-            Self::Empty | Self::JavaScript(_) => None,
-        }
-    }
-
-    /// Count `work` more entries of a selective module; whether `policy` says its
-    /// whole-module compile is due (claimed by `claim_wasm_module_escalation`).
-    fn note_wasm_module_work(&mut self, work: u32, policy: WasmModuleCompile) -> bool {
-        match self.wasm_tiers_mut().map(|tiers| &mut tiers.module) {
-            Some(WasmModuleTier::Selective { work: observed, first }) => {
-                let first = *first.get_or_insert_with(std::time::Instant::now);
-                let before = *observed;
-                *observed = observed.saturating_add(work);
-                // A passed time bound counts as the work bound from then on, so every later
-                // entry, whichever path observes it, finds the compile due.
-                if *observed / WASM_JIT_MODULE_CLOCK_INTERVAL != before / WASM_JIT_MODULE_CLOCK_INTERVAL
-                    && policy.due(0, first.elapsed())
-                {
-                    *observed = (*observed).max(policy.work);
-                }
-                policy.due(*observed, std::time::Duration::ZERO)
-            }
-            Some(WasmModuleTier::Whole | WasmModuleTier::Declined) | None => false,
-        }
-    }
-
-    /// Whether the module's hot functions compile one by one (`WasmTierState`): under the
-    /// selective A/B arm, which never compiles a module whole, or once a module's whole
-    /// compile was claimed without an artifact (it failed, or the budget refused it). A module
-    /// still waiting to compile whole runs interpreted until then: a short use (an npm
-    /// package's one source-map parse) runs faster in the interpreter than through root
-    /// compiles, and a long one would throw them away at its whole compile.
-    fn wasm_promotes_roots(&self, policy: WasmModuleCompile) -> bool {
-        !self.wasm_module_declined() && (policy == WasmModuleCompile::NEVER || !self.wasm_module_selective())
-    }
-
-    fn wasm_module_declined(&self) -> bool {
-        matches!(self, Self::Wasm(tiers) if tiers.module == WasmModuleTier::Declined)
-    }
-
-    fn wasm_module_selective(&self) -> bool {
-        match self {
-            Self::Wasm(tiers) => matches!(tiers.module, WasmModuleTier::Selective { .. }),
-            Self::Empty => true,
-            Self::JavaScript(_) => false,
-        }
-    }
-
-    /// Claim the one whole-module compile of a selective module (`note_wasm_module_work`
-    /// said it is due), and retire its selective artifacts: the module artifact holds every
-    /// function they hold. Returns the retired artifacts' mapped bytes, or `None` when the
-    /// module is not selective.
-    fn claim_wasm_module_escalation(&mut self) -> Option<(usize, usize)> {
-        let tiers = match self {
-            Self::Wasm(tiers) => tiers,
-            Self::Empty | Self::JavaScript(_) => return None,
-        };
-        if matches!(tiers.module, WasmModuleTier::Whole | WasmModuleTier::Declined) {
-            return None;
-        }
-        tiers.module = WasmModuleTier::Whole;
-        tiers.holders.clear();
-        let retired = tiers
-            .functions
-            .values_mut()
-            .filter_map(WasmTierState::take_compiled)
-            .fold((0, 0), |(count, bytes), compiled| (count + 1, bytes + compiled.mapped_bytes()));
-        Some(retired)
-    }
-
-    fn is_javascript(&self) -> bool {
-        matches!(self, Self::JavaScript(_))
-    }
-
-    fn is_wasm(&self) -> bool {
-        matches!(self, Self::Wasm(_))
-    }
-}
 
 struct ProgramEntry {
     residual: Residual,
@@ -852,6 +476,136 @@ pub(crate) struct ProgramStore {
     tiers: &'static Tiers,
 }
 
+/// A new store's first context epoch. Each store's epochs start apart from every other's, so a
+/// context derived from a store a snapshot or reset replaced never matches its successor's.
+fn next_store_epoch() -> u64 {
+    static STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    STORES.fetch_add(STORE_EPOCH_SPACING, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The Wasm module compile policy a new store starts with. TOD-191's correctness oracle may
+/// force hot candidates past the payback model so guarded exits can be tested independently
+/// of profitability (diagnostic only).
+fn initial_wasm_module_compile() -> WasmModuleCompile {
+    if super::compiled::jit_wasm_selective_enabled() {
+        WasmModuleCompile::NEVER
+    } else {
+        WasmModuleCompile::ADAPTIVE
+    }
+}
+
+/// Whether the signature operands of a wide instruction (its function, type, descriptor and
+/// array references) resolve in the module's `signatures`; `registers` is its function's
+/// register count.
+fn wasm_operands_resolve(
+    signatures: &crate::wasm::WasmSignatures,
+    registers: u16,
+    instruction: crate::bytecode::WideInstruction,
+) -> bool {
+    match instruction.op().class() {
+        crate::bytecode::Class::WasmRefFunc => {
+            signatures.get(instruction.imm() as usize).is_some()
+        }
+        crate::bytecode::Class::WasmIndirectTarget => {
+            signatures.type_signature(instruction.imm()).is_some()
+        }
+        _ if crate::wasm::gc::StructConstruction::from_op(instruction.op()).is_some() => {
+            let mode = crate::wasm::gc::StructConstruction::from_op(instruction.op()).unwrap();
+            signatures
+                .declarations
+                .struct_fields(instruction.imm())
+                .is_some_and(|fields| {
+                    mode.described()
+                        == signatures
+                            .declarations
+                            .descriptor_type(instruction.imm())
+                            .is_some()
+                        && fields.iter().all(|field| match field.element_type {
+                            wasmparser::StorageType::I8
+                            | wasmparser::StorageType::I16 => true,
+                            wasmparser::StorageType::Val(ty) => {
+                                signatures
+                                    .declarations
+                                    .callable_value_type(ty)
+                                    .is_some()
+                                    && (!mode.defaulted() || ty.is_defaultable())
+                            }
+                        })
+                        && (mode == crate::wasm::gc::StructConstruction::Default
+                            || usize::from(instruction.register_window().count)
+                                == if mode.defaulted() {
+                                    1
+                                } else {
+                                    fields.len() + usize::from(mode.described())
+                                })
+                })
+        }
+        crate::bytecode::Class::WasmRefGetDesc => signatures
+            .declarations
+            .descriptor_type(instruction.imm())
+            .is_some(),
+        crate::bytecode::Class::WasmArrayNewData
+        | crate::bytecode::Class::WasmArrayNewElem => {
+            use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
+            instruction.register_window().count == ArraySegmentInput::COUNT
+                && signatures
+                    .declarations
+                    .array_field(instruction.imm())
+                    .is_some_and(|field| {
+                        ArraySegmentKind::from_op(instruction.op())
+                            .unwrap()
+                            .accepts(field.element_type)
+                            && match field.element_type {
+                                wasmparser::StorageType::Val(ty) => signatures
+                                    .declarations
+                                    .callable_value_type(ty)
+                                    .is_some(),
+                                _ => true,
+                            }
+                    })
+        }
+        crate::bytecode::Class::WasmArrayNew
+        | crate::bytecode::Class::WasmArrayNewDefault
+        | crate::bytecode::Class::WasmArrayNewFixed => signatures
+            .declarations
+            .array_field(instruction.imm())
+            .is_some_and(|field| {
+                let valid = match field.element_type {
+                    wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => true,
+                    wasmparser::StorageType::Val(ty) => {
+                        signatures.declarations.callable_value_type(ty).is_some()
+                            && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewDefault)
+                                || ty.is_defaultable())
+                    }
+                };
+                valid
+                    && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewFixed)
+                        || usize::from(instruction.register_b())
+                            .checked_add(usize::from(
+                                instruction.register_window().count,
+                            ))
+                            .is_some_and(|end| end <= usize::from(registers)))
+            }),
+        crate::bytecode::Class::WasmDescriptorTest
+        | crate::bytecode::Class::WasmDescriptorCast => {
+            crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
+                .and_then(|target| target.descriptor_type(&signatures.declarations))
+                .is_some()
+        }
+        crate::bytecode::Class::WasmRefTest | crate::bytecode::Class::WasmRefCast => {
+            crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
+                .and_then(|target| target.reference_type())
+                .and_then(|ty| {
+                    signatures
+                        .declarations
+                        .callable_value_type(wasmparser::ValType::Ref(ty))
+                })
+                .is_some()
+        }
+        _ => true,
+    }
+}
+
 impl Default for ProgramStore {
     fn default() -> Self {
         crate::jit_coverage::sample_this_thread();
@@ -863,12 +617,7 @@ impl Default for ProgramStore {
             lane_compiles: Default::default(),
             lane_plan_ir: Default::default(),
             programs: Vec::new(),
-            // Each store's epochs start apart from every other's, so a context derived from
-            // a store a snapshot or reset replaced never matches its successor's.
-            context_epoch: {
-                static STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                STORES.fetch_add(1 << 40, std::sync::atomic::Ordering::Relaxed)
-            },
+            context_epoch: next_store_epoch(),
             global_eval_programs: FxHashMap::default(),
             direct_eval_programs: FxHashMap::default(),
             strict_direct_eval_code: FxHashMap::default(),
@@ -881,13 +630,7 @@ impl Default for ProgramStore {
             js_jit_tracking_exhaustions: 0,
             js_jit_rejected_functions: 0,
             jit_code_cache: JitCodeCacheBudget::default(),
-            // TOD-191's correctness oracle may force hot candidates past the payback model so
-            // guarded exits can be tested independently of profitability (diagnostic only).
-            wasm_module_compile: if super::compiled::jit_wasm_selective_enabled() {
-                WasmModuleCompile::NEVER
-            } else {
-                WasmModuleCompile::ADAPTIVE
-            },
+            wasm_module_compile: initial_wasm_module_compile(),
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_lane_methods_enabled: tiers.stress,
             #[cfg(test)]
@@ -1301,8 +1044,6 @@ impl ProgramStore {
         }
         // Sized by the sites the program has: a chunk's sites, appended later, grow it.
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
-        let function_sources = FxHashMap::default();
-        let lane_views = LaneViews::default();
         let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
@@ -1313,14 +1054,14 @@ impl ProgramStore {
             wasm_signatures: None,
             constants: Vec::new().into(),
             const_arrays: FxHashMap::default(),
-            function_sources,
+            function_sources: FxHashMap::default(),
             regexp_literals,
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
             root_slots: std::cell::OnceCell::new(),
             module: false,
-            lane_views,
+            lane_views: LaneViews::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
@@ -1361,109 +1102,7 @@ impl ProgramStore {
                 } else {
                     instruction.as_wide()
                 };
-                let valid = match instruction.op().class() {
-                    crate::bytecode::Class::WasmRefFunc => {
-                        signatures.get(instruction.imm() as usize).is_some()
-                    }
-                    crate::bytecode::Class::WasmIndirectTarget => {
-                        signatures.type_signature(instruction.imm()).is_some()
-                    }
-                    _ if crate::wasm::gc::StructConstruction::from_op(instruction.op()).is_some() => {
-                        let mode = crate::wasm::gc::StructConstruction::from_op(instruction.op()).unwrap();
-                        signatures
-                            .declarations
-                            .struct_fields(instruction.imm())
-                            .is_some_and(|fields| {
-                                mode.described()
-                                    == signatures
-                                        .declarations
-                                        .descriptor_type(instruction.imm())
-                                        .is_some()
-                                    && fields.iter().all(|field| match field.element_type {
-                                        wasmparser::StorageType::I8
-                                        | wasmparser::StorageType::I16 => true,
-                                        wasmparser::StorageType::Val(ty) => {
-                                            signatures
-                                                .declarations
-                                                .callable_value_type(ty)
-                                                .is_some()
-                                                && (!mode.defaulted() || ty.is_defaultable())
-                                        }
-                                    })
-                                    && (mode == crate::wasm::gc::StructConstruction::Default
-                                        || usize::from(instruction.register_window().count)
-                                            == if mode.defaulted() {
-                                                1
-                                            } else {
-                                                fields.len() + usize::from(mode.described())
-                                            })
-                            })
-                    }
-                    crate::bytecode::Class::WasmRefGetDesc => signatures
-                        .declarations
-                        .descriptor_type(instruction.imm())
-                        .is_some(),
-                    crate::bytecode::Class::WasmArrayNewData
-                    | crate::bytecode::Class::WasmArrayNewElem => {
-                        use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
-                        instruction.register_window().count == ArraySegmentInput::COUNT
-                            && signatures
-                                .declarations
-                                .array_field(instruction.imm())
-                                .is_some_and(|field| {
-                                    ArraySegmentKind::from_op(instruction.op())
-                                        .unwrap()
-                                        .accepts(field.element_type)
-                                        && match field.element_type {
-                                            wasmparser::StorageType::Val(ty) => signatures
-                                                .declarations
-                                                .callable_value_type(ty)
-                                                .is_some(),
-                                            _ => true,
-                                        }
-                                })
-                    }
-                    crate::bytecode::Class::WasmArrayNew
-                    | crate::bytecode::Class::WasmArrayNewDefault
-                    | crate::bytecode::Class::WasmArrayNewFixed => signatures
-                        .declarations
-                        .array_field(instruction.imm())
-                        .is_some_and(|field| {
-                            let valid = match field.element_type {
-                                wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => true,
-                                wasmparser::StorageType::Val(ty) => {
-                                    signatures.declarations.callable_value_type(ty).is_some()
-                                        && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewDefault)
-                                            || ty.is_defaultable())
-                                }
-                            };
-                            valid
-                                && (!instruction.op().class().eq(crate::bytecode::Class::WasmArrayNewFixed)
-                                    || usize::from(instruction.register_b())
-                                        .checked_add(usize::from(
-                                            instruction.register_window().count,
-                                        ))
-                                        .is_some_and(|end| end <= usize::from(function.registers)))
-                        }),
-                    crate::bytecode::Class::WasmDescriptorTest
-                    | crate::bytecode::Class::WasmDescriptorCast => {
-                        crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
-                            .and_then(|target| target.descriptor_type(&signatures.declarations))
-                            .is_some()
-                    }
-                    crate::bytecode::Class::WasmRefTest | crate::bytecode::Class::WasmRefCast => {
-                        crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
-                            .and_then(|target| target.reference_type())
-                            .and_then(|ty| {
-                                signatures
-                                    .declarations
-                                    .callable_value_type(wasmparser::ValType::Ref(ty))
-                            })
-                            .is_some()
-                    }
-                    _ => true,
-                };
-                if !valid {
+                if !wasm_operands_resolve(signatures, function.registers, instruction) {
                     return false;
                 }
             }
@@ -1786,7 +1425,7 @@ impl ProgramStore {
                 held += function.code.len();
             }
         }
-        held * 1000 < total * WASM_MODULE_MIN_COVERAGE
+        held * MILLE < total * WASM_MODULE_MIN_COVERAGE
     }
 
     /// Claim a due whole-module compile (`WasmModuleTier::Whole`), releasing the

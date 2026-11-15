@@ -10,6 +10,12 @@ use crate::float_layout::{BINARY16, BINARY64, power_of_two};
 use crate::units::{BINARY_RADIX, DECIMAL_RADIX, HEXADECIMAL_RADIX, OCTAL_RADIX};
 const MAX_NUMBER_FORMAT_DIGITS: usize = 100;
 
+mod half;
+mod precise_sum;
+pub(super) use half::{f64_to_half, half_to_f64};
+use half::f16_round;
+use precise_sum::PreciseSumState;
+
 pub(super) fn parse_number_string(text: &str) -> f64 {
     let text = text.trim_matches(super::primitives::is_ecma_whitespace_character);
     if text.is_empty() {
@@ -65,15 +71,30 @@ pub(super) fn integer_digits_value(digits: &str, radix: u32) -> f64 {
     value
 }
 
+/// Powers of ten a short fixed decimal scales by: `10^0` through `10^20`, every digit count a
+/// 128-bit product holds.
+const SHORT_POWERS: usize = 21;
+/// The binary shift from which a short fixed decimal's rounding has no bit left in 128 bits.
+const SHORT_SHIFT_LIMIT: u32 = 127;
+/// Room for the longest short text: 39 integer digits, a point, `digits` zeros and a sign.
+const SHORT_TEXT_BYTES: usize = 64;
+
 /// `fixed_decimal` when the exact product significand * 10^digits, and its shift by the
 /// binary exponent, fit 128 bits (every finite |x| < 1e21 with a few digits and a binary
 /// exponent above -128): the nearest integer, a tie taking the larger, by integer arithmetic,
 /// written on the stack. `None` leaves any other value to the exact big-integer path.
 fn fixed_decimal_short(number: f64, digits: usize) -> Option<super::wtf16::JsString> {
-    const POWERS: [u128; 21] = {
-        let mut powers = [1u128; 21];
+    let rounded = short_rounded_significand(number, digits)?;
+    Some(short_fixed_text(number, digits, rounded))
+}
+
+/// The nearest integer to `number * 10^digits` by 128-bit integer arithmetic, a tie taking the
+/// larger; `None` when the product or its shift does not fit (`fixed_decimal_short`).
+fn short_rounded_significand(number: f64, digits: usize) -> Option<u128> {
+    const POWERS: [u128; SHORT_POWERS] = {
+        let mut powers = [1u128; SHORT_POWERS];
         let mut index = 1;
-        while index < 21 {
+        while index < SHORT_POWERS {
             powers[index] = powers[index - 1] * 10;
             index += 1;
         }
@@ -81,18 +102,21 @@ fn fixed_decimal_short(number: f64, digits: usize) -> Option<super::wtf16::JsStr
     };
     let (significand, exponent) = crate::float_layout::binary64_parts(number);
     let scaled = u128::from(significand).checked_mul(*POWERS.get(digits)?)?;
-    let rounded = if exponent >= 0 {
+    if exponent >= 0 {
         let shift = exponent as u32;
-        (shift < scaled.leading_zeros()).then(|| scaled << shift)?
-    } else {
-        let shift = (-exponent) as u32;
-        if shift >= 127 {
-            return None;
-        }
-        (scaled + (1u128 << (shift - 1))) >> shift
-    };
-    // 39 integer digits at most, a point, `digits` zeros of padding and a sign.
-    let mut buffer = [b'0'; 64];
+        return (shift < scaled.leading_zeros()).then(|| scaled << shift);
+    }
+    let shift = (-exponent) as u32;
+    if shift >= SHORT_SHIFT_LIMIT {
+        return None;
+    }
+    Some((scaled + (1u128 << (shift - 1))) >> shift)
+}
+
+/// The text of a rounded short significand: `rounded` with its point `digits` places from the
+/// end, leading zeros padding a short text and a sign for a negative `number`.
+fn short_fixed_text(number: f64, digits: usize, rounded: u128) -> super::wtf16::JsString {
+    let mut buffer = [b'0'; SHORT_TEXT_BYTES];
     let mut integer = itoa::Buffer::new();
     let text = integer.format(rounded).as_bytes();
     let mut at = 1;
@@ -103,7 +127,7 @@ fn fixed_decimal_short(number: f64, digits: usize) -> Option<super::wtf16::JsStr
     }
     if digits == 0 {
         buffer[at..at + text.len()].copy_from_slice(text);
-        return Some(super::wtf16::JsString::from_ascii_bytes(&buffer[..at + text.len()]));
+        return super::wtf16::JsString::from_ascii_bytes(&buffer[..at + text.len()]);
     }
     // At least one integer digit: leading zeros pad a short text.
     let width = text.len().max(digits + 1);
@@ -112,7 +136,7 @@ fn fixed_decimal_short(number: f64, digits: usize) -> Option<super::wtf16::JsStr
     let point = at + width - digits;
     buffer.copy_within(point..at + width, point + 1);
     buffer[point] = b'.';
-    Some(super::wtf16::JsString::from_ascii_bytes(&buffer[..at + width + 1]))
+    super::wtf16::JsString::from_ascii_bytes(&buffer[..at + width + 1])
 }
 
 fn fixed_decimal(number: f64, digits: usize) -> String {
@@ -173,19 +197,9 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
-        self.set_builtin_named(
-            program,
-            prototype,
-            "toLocaleString",
-            Native::NumberToLocaleString,
-        )?;
+        self.set_builtin_named(program, prototype, "toLocaleString", Native::NumberToLocaleString)?;
         self.set_builtin_named(program, prototype, "toFixed", Native::NumberFixed)?;
-        self.set_builtin_named(
-            program,
-            prototype,
-            "toExponential",
-            Native::NumberExponential,
-        )?;
+        self.set_builtin_named(program, prototype, "toExponential", Native::NumberExponential)?;
         self.set_builtin_named(program, prototype, "toPrecision", Native::NumberPrecision)?;
         for (name, native) in [
             ("isNaN", Native::NumberIsNaN),
@@ -318,7 +332,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let number = self.number_receiver_value(p, receiver)?;
         let number = if number == 0.0 { 0.0 } else { number };
-        let number = if number == 0.0 { 0.0 } else { number };
         let digits_value = args.first().copied().filter(|value| !value.is_undefined());
         if !number.is_finite() {
             if let Some(value) = digits_value {
@@ -348,21 +361,7 @@ impl<H: Host> Vm<H> {
             Native::NumberPrecision => match digits {
                 None => number_to_decimal(number),
                 Some(0) => return Err(self.range_error(p, "Invalid precision".into())),
-                Some(digits) => {
-                    let magnitude = if number == 0.0 {
-                        0
-                    } else {
-                        number.abs().log10().floor() as i32
-                    };
-                    if magnitude >= digits as i32 || magnitude < -6 {
-                        format_scientific(number, digits - 1)
-                    } else {
-                        format!(
-                            "{number:.precision$}",
-                            precision = (digits as i32 - magnitude - 1) as usize
-                        )
-                    }
-                }
+                Some(digits) => precision_text(number, digits),
             },
             _ => unreachable!(),
         };
@@ -485,6 +484,27 @@ pub(super) fn number_predicate(native: Native, value: Value) -> Option<bool> {
         Native::NumberIsSafeInteger => integral() && number.is_some_and(|number| number.abs() <= MAX_SAFE_INTEGER),
         _ => return None,
     })
+}
+
+/// The exponent below which `toPrecision` writes scientific notation (ECMA-262 Number::toString).
+const SCIENTIFIC_MIN_EXPONENT: i32 = -6;
+
+/// `Number.prototype.toPrecision` of a finite `number` with `digits` (at least 1) significant
+/// digits: scientific when the exponent reaches the precision or falls below -6.
+fn precision_text(number: f64, digits: usize) -> String {
+    let magnitude = if number == 0.0 {
+        0
+    } else {
+        number.abs().log10().floor() as i32
+    };
+    if magnitude >= digits as i32 || magnitude < SCIENTIFIC_MIN_EXPONENT {
+        format_scientific(number, digits - 1)
+    } else {
+        format!(
+            "{number:.precision$}",
+            precision = (digits as i32 - magnitude - 1) as usize
+        )
+    }
 }
 
 fn format_scientific(number: f64, digits: usize) -> String {
@@ -796,146 +816,4 @@ impl<H: Host> Vm<H> {
             state.add(number, &mut exact_sum);
         }
     }
-}
-
-#[derive(Default)]
-struct PreciseSumState {
-    infinity: Option<bool>,
-    invalid: bool,
-    positive_zero: bool,
-    nonzero: bool,
-}
-
-impl PreciseSumState {
-    fn add(&mut self, value: f64, sum: &mut BigInt) {
-        if value.is_nan() {
-            self.invalid = true;
-        } else if value.is_infinite() {
-            self.invalid |= self
-                .infinity
-                .is_some_and(|sign| sign != value.is_sign_positive());
-            self.infinity.get_or_insert_with(|| value.is_sign_positive());
-        } else if value == 0.0 {
-            self.positive_zero |= value.is_sign_positive();
-        } else {
-            self.nonzero = true;
-            let bits = value.to_bits();
-            let fraction = bits & ((1_u64 << 52) - 1);
-            let exponent = ((bits >> 52) & 0x7ff) as usize;
-            let significand = if exponent == 0 {
-                fraction
-            } else {
-                fraction | (1_u64 << 52)
-            };
-            let units = BigInt::from(significand) << exponent.saturating_sub(1);
-            *sum += if value.is_sign_negative() {
-                -units
-            } else {
-                units
-            };
-        }
-    }
-
-    fn finish(self, sum: BigInt) -> f64 {
-        if self.invalid {
-            f64::NAN
-        } else if let Some(positive) = self.infinity {
-            if positive {
-                f64::INFINITY
-            } else {
-                f64::NEG_INFINITY
-            }
-        } else if sum == BigInt::from(0_u8) {
-            if !self.nonzero && !self.positive_zero {
-                -0.0
-            } else {
-                0.0
-            }
-        } else {
-            scaled_binary_sum(sum)
-        }
-    }
-}
-
-fn scaled_binary_sum(sum: BigInt) -> f64 {
-    let negative = sum.sign() == Sign::Minus;
-    let magnitude = if negative { -sum } else { sum };
-    let bits = magnitude.magnitude().bits() as usize;
-    let least = BINARY64.subnormal_exponent();
-    let rounded = if bits < f64::MANTISSA_DIGITS as usize {
-        magnitude.to_string().parse::<f64>().unwrap_or(f64::NAN) * power_of_two(least)
-    } else {
-        let shift = bits - f64::MANTISSA_DIGITS as usize;
-        let mut significand = &magnitude >> shift;
-        let remainder = &magnitude - (&significand << shift);
-        let halfway = BigInt::from(1_u8) << (shift - 1);
-        if remainder > halfway
-            || remainder == halfway && (&significand & BigInt::from(1_u8)) != BigInt::from(0_u8)
-        {
-            significand += 1_u8;
-        }
-        significand.to_string().parse::<f64>().unwrap_or(f64::NAN) * power_of_two(shift as i32 + least)
-    };
-    if negative { -rounded } else { rounded }
-}
-
-fn f16_round(value: f64) -> f64 {
-    half_to_f64(f64_to_half(value))
-}
-
-pub(super) fn f64_to_half(value: f64) -> u16 {
-    let (wide, half) = (BINARY64, BINARY16);
-    let narrowing = wide.fraction_bits - half.fraction_bits;
-    let bits = value.to_bits();
-    let sign = ((bits >> wide.sign_shift()) as u16) << half.sign_shift();
-    let exponent = (bits >> wide.fraction_bits) & wide.exponent_mask();
-    let fraction = bits & wide.fraction_mask();
-    let infinity = half.infinity() as u16;
-    if exponent == wide.exponent_mask() {
-        // A NaN keeps its top payload bits, and at least one so it stays a NaN.
-        return sign
-            | if fraction == 0 { infinity } else { infinity | ((fraction >> narrowing) as u16).max(1) };
-    }
-    let absolute = value.abs();
-    if absolute < power_of_two(half.min_normal_exponent()) {
-        // Rounding up past the subnormals gives the smallest normal.
-        let rounded = round_half(absolute * power_of_two(-half.subnormal_exponent()));
-        return sign | rounded.min(half.implicit_bit() as u16);
-    }
-    let unbiased = exponent as i32 - wide.bias();
-    if unbiased > half.bias() {
-        return sign | infinity;
-    }
-    let mut significand = (fraction >> narrowing) as u16;
-    let remainder = fraction & ((1 << narrowing) - 1);
-    let halfway = 1 << (narrowing - 1);
-    if remainder > halfway || (remainder == halfway && significand & 1 != 0) {
-        significand += 1;
-    }
-    // A significand rounded up to the implicit bit carries into the exponent, and from the
-    // largest exponent into infinity.
-    let encoded = (((unbiased + half.bias()) as u16) << half.fraction_bits) + significand;
-    sign | encoded.min(infinity)
-}
-
-fn round_half(value: f64) -> u16 {
-    let lower = value.floor() as u64;
-    let fraction = value - lower as f64;
-    (lower + u64::from(fraction > 0.5 || (fraction == 0.5 && lower & 1 != 0))) as u16
-}
-
-pub(super) fn half_to_f64(bits: u16) -> f64 {
-    let (wide, half) = (BINARY64, BINARY16);
-    let bits = u64::from(bits);
-    let sign = (bits >> half.sign_shift()) << wide.sign_shift();
-    let magnitude = bits & !(1 << half.sign_shift());
-    let magnitude = if magnitude >= half.infinity() {
-        // Infinity and NaN keep their payload in the top fraction bits.
-        let payload = (magnitude & half.fraction_mask()) << (wide.fraction_bits - half.fraction_bits);
-        f64::from_bits(wide.infinity() | payload)
-    } else {
-        let (significand, exponent) = half.parts(magnitude);
-        significand as f64 * power_of_two(exponent)
-    };
-    f64::from_bits(magnitude.to_bits() | sign)
 }

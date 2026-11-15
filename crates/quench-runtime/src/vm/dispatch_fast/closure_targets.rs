@@ -103,13 +103,25 @@ impl<H: Host> Vm<H> {
         // A closure of the same function over the same environment, as an immediately
         // invoked function expression makes at each run of its enclosing body: every fact
         // of the entry holds for it but its identity.
-        if entry.view.is_null() || env == entry.env {
+        if entry.view.is_null() {
             return Some(ScriptCallTarget { callee, env, ..*entry });
         }
         if entry.capture.is_null() {
             return None;
         }
-        let Some(Cell::Environment { function: old, scope: old_scope, .. }) = self.heap.get(entry.env) else {
+        let storage = self.sibling_environment_storage(entry.env, env)?;
+        let stores = entry.capture.addr() & CAPTURE_STORES;
+        if stores != 0 {
+            self.heap.remember_cell(env);
+        }
+        Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
+    }
+
+    /// The dense storage of `env`, when it is an activation of the same function in the same
+    /// program as the environment `old_env`.
+    #[inline(always)]
+    fn sibling_environment_storage(&self, old_env: Value, env: Value) -> Option<*const usize> {
+        let Some(Cell::Environment { function: old, scope: old_scope, .. }) = self.heap.get(old_env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
@@ -119,12 +131,7 @@ impl<H: Host> Vm<H> {
         if *function != old || scope.program() != old_program {
             return None;
         }
-        let storage = slots.dense_storage()?;
-        let stores = entry.capture.addr() & CAPTURE_STORES;
-        if stores != 0 {
-            self.heap.remember_cell(env);
-        }
-        Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
+        slots.dense_storage()
     }
 }
 

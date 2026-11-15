@@ -48,7 +48,7 @@ impl<T> Storage<T> {
     #[cfg(unix)]
     fn mapped(entries: Vec<T>, cap: usize) -> Result<Self, Vec<T>> {
         let Some(bytes) = cap.checked_mul(size_of::<T>()).filter(|bytes| *bytes != 0) else { return Err(entries) };
-        if align_of::<T>() > 4096 {
+        if align_of::<T>() > quench_alloc::PAGE_BYTES {
             return Err(entries);
         }
         // SAFETY: a fresh private anonymous mapping, owned by the storage until `Drop`.

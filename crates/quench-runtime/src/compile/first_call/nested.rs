@@ -48,15 +48,20 @@ impl FreeNames {
 
 /// Where the body of the function `program` holds alone (`alone_start`) ends.
 pub(in crate::compile) fn alone_body_end(program: &Program<'_>) -> Option<u32> {
-    let function = match program.body.first()? {
-        Statement::FunctionDeclaration(function) => function,
+    alone_function(program)?.body.as_ref().map(|body| body.span.end)
+}
+
+/// The function `program` holds alone: its only statement is a function declaration or a
+/// parenthesized-or-not function expression statement.
+pub(crate) fn alone_function<'p, 'a>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
+    match program.body.first()? {
+        Statement::FunctionDeclaration(function) => Some(function),
         Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-            Expression::FunctionExpression(function) => function,
-            _ => return None,
+            Expression::FunctionExpression(function) => Some(function),
+            _ => None,
         },
-        _ => return None,
-    };
-    function.body.as_ref().map(|body| body.span.end)
+        _ => None,
+    }
 }
 
 /// The bindings a stub's function reads from the scopes it closes over, by name: each with the

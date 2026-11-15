@@ -1,7 +1,4 @@
-use super::{
-    ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, IteratorRecord, Object,
-    PromiseCell,
-};
+use super::{ArrayObject, Cell, CellKind, FreeSlotBitmap, FunctionRecord, Heap, IteratorRecord, Object, PromiseCell};
 use crate::value::Value;
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;

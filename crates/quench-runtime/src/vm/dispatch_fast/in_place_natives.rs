@@ -5,46 +5,38 @@ use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
 impl<H: Host> Vm<H> {
-    /// A native call's value where its common case completes in place: the steady cases
-    /// first (`Vm::steady_native_value`), then Math, the pure string methods, objects, collections
-    /// and arrays, and primitives. `None` leaves the call to the native itself.
+    /// A native call's value where its common case completes in place: the families that
+    /// `IN_PLACE_FAMILIES` lists for `native`, tried in the order of their bits. `None` leaves
+    /// the call to the native itself.
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
-        // One table read selects the families that can answer `native` (`IN_PLACE_FAMILIES`),
-        // tried in the same order the cascade of all eight tried them.
-        let families = IN_PLACE_FAMILIES[native as usize];
-        if families == 0 {
-            return None;
-        }
-        let tries = |family: u16| families & family != 0;
-        if tries(STEADY) && let Some(value) = self.steady_native_value(native, receiver, args) {
-            return Some(value);
-        }
-        if tries(MATH) && let Some(value) = math_value(native, args) {
-            return Some(value);
-        }
-        if tries(PURE_STRING) && let Some(value) = self.pure_string_method_call(code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(OBJECT) && let Some(value) = object_value(self, code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(COLLECTION) && let Some(value) = collection_value(self, code, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(ARRAY) && let Some(value) = array_value(self, code, native, callee, receiver, args) {
-            return Some(value);
-        }
-        if tries(INTERNAL_SLOT) && let Some(value) = internal_slot_value(self, native, callee, receiver) {
-            return Some(value);
-        }
-        if tries(PRIMITIVE) && let Some(value) = primitive_value(self, native, receiver, args) {
-            return Some(value);
-        }
-        if tries(PRIMITIVE_LEAF) {
-            return primitive_leaf_value(self, code, native, receiver, args);
+        // One table read selects the families that can answer `native`; the lowest set bit is tried first.
+        let mut families = IN_PLACE_FAMILIES[native as usize];
+        while families != 0 {
+            let family = families & families.wrapping_neg();
+            families ^= family;
+            if let Some(value) = self.in_place_family_value(family, code, native, callee, receiver, args) {
+                return Some(value);
+            }
         }
         None
+    }
+
+    /// The value of `native` from one family's function (`in_place_native_value`).
+    #[inline(always)]
+    fn in_place_family_value(&mut self, family: u16, code: &ResidualProgram, native: Native, callee: Value,
+        receiver: Value, args: &[Value]) -> Option<Value> {
+        match family {
+            STEADY => self.steady_native_value(native, receiver, args),
+            MATH => math_value(native, args),
+            PURE_STRING => self.pure_string_method_call(code, native, receiver, args),
+            OBJECT => object_value(self, code, native, receiver, args),
+            COLLECTION => collection_value(self, code, native, receiver, args),
+            ARRAY => array_value(self, code, native, callee, receiver, args),
+            INTERNAL_SLOT => internal_slot_value(self, native, callee, receiver),
+            PRIMITIVE => primitive_value(self, native, receiver, args),
+            _ => primitive_leaf_value(self, code, native, receiver, args),
+        }
     }
 }
 
@@ -63,6 +55,11 @@ const PRIMITIVE_LEAF: u16 = 1 << 8;
 /// beside the function that holds them. A native outside every family completes through
 /// the native itself, with no in-place attempt.
 const fn in_place_families(native: Native) -> u16 {
+    value_families(native) | leaf_families(native)
+}
+
+/// The families of the natives that read their receiver and arguments as values.
+const fn value_families(native: Native) -> u16 {
     let mut families = 0;
     // `Vm::steady_native_value`.
     if matches!(native, Native::ArrayPush | Native::ArrayPop | Native::StringCharCodeAt | Native::StringCharAt
@@ -91,6 +88,12 @@ const fn in_place_families(native: Native) -> u16 {
     {
         families |= COLLECTION;
     }
+    families
+}
+
+/// The families of the natives that work on arrays, internal slots and primitives.
+const fn leaf_families(native: Native) -> u16 {
+    let mut families = 0;
     if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
         | Native::ArrayShift | Native::ArrayIteratorNext)
     {
@@ -140,10 +143,14 @@ fn primitive_leaf_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native:
     args: &[Value]) -> Option<Value> {
     // Immediates, strings and BigInts: values whose conversions run no guest code.
     let primitive = |value: Value| !value.is_heap() || vm.heap.is_string(value) || matches!(vm.heap.get(value), Some(Cell::BigInt(_)));
-    if !primitive(receiver) || !args.iter().all(|argument| primitive(*argument))
-        || (string_leaf(native) && !vm.heap.is_string(receiver))
-    {
+    if !primitive(receiver) || (string_leaf(native) && !vm.heap.is_string(receiver)) {
         return None;
+    }
+    // A native's arguments are few (bounded by its arity), so this loop is constant work.
+    for argument in args {
+        if !primitive(*argument) {
+            return None;
+        }
     }
     let result = vm.call_primitive_native(code, native, receiver, args).ok();
     // A string method reads its receiver as text, which it may make on demand.

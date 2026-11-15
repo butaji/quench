@@ -103,7 +103,7 @@ impl RegisterMasks {
         for chunk in 0..registers.len().div_ceil(WORD) {
             let word = match self {
                 Self::Narrow(masks) => masks.get(pc).map(|&mask| if chunk == 0 { mask } else { 0 }),
-                Self::Half(masks) => masks.get(pc).map(|&mask| if chunk < 2 { (mask >> (WORD * chunk)) as u64 } else { 0 }),
+                Self::Half(masks) => masks.get(pc).map(|&mask| if chunk < u128::BITS as usize / WORD { (mask >> (WORD * chunk)) as u64 } else { 0 }),
                 Self::Wide(masks) => masks.get(pc).map(|set| set.word(chunk)),
                 Self::Windowed { windows, masks } => {
                     masks.get(pc * usize::from(*windows) + chunk / per_set).map(|set| set.word(chunk % per_set))

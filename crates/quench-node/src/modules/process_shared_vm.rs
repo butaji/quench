@@ -50,11 +50,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.define_data_property_rooted(capture_state, key, value, true, true, true)?;
     }
     let capture_state = context.retain(capture_state)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .process_capture_state = Some(capture_state);
+    let shared = context.host_mut().shared_state();
+    shared.borrow_mut().process_capture_state = Some(capture_state);
     let function = context.host_function(crate::host::shared_vm::operation!("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
@@ -89,11 +86,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     #[cfg(unix)]
     {
-        let function =
-            context.host_function(crate::host::shared_vm::operation!("processGetgroups"))?;
-        let key = context.string_rooted("name");
-        let name = context.string_rooted("getgroups");
-        context.define_data_property_rooted(function, key, name, false, false, true)?;
+        let operation = crate::host::shared_vm::operation!("processGetgroups");
+        let function = context.host_function_named(operation, "getgroups")?;
         install(context, process, "getgroups", function)?;
     }
     #[cfg(unix)]

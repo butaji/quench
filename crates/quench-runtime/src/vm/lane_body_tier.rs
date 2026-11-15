@@ -394,16 +394,7 @@ impl LaneView {
             }
             super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
-            super::super::compiled::LaneBodyOutcome::Unpaid => {
-                self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
-                let next = entries.saturating_add(1);
-                // The attempts double with each warm-up; past the last one the counter can
-                // name, the model has priced every entry this function can give and refused.
-                // The lane would keep running it through its records for nothing, slower than
-                // the general interpreter, so decline it there (`release_from_tier`).
-                if self.last_attempt(next) { return LaneBody::Declined }
-                LaneBody::Unspecialized { entries: next, recompiles, stuck }
-            }
+            super::super::compiled::LaneBodyOutcome::Unpaid => self.unpaid_body(entries, recompiles, stuck),
             super::super::compiled::LaneBodyOutcome::Short => {
                 self.tier().history.set(LaneBodyHistory { short: true, ..self.tier().history.get() });
                 LaneBody::Declined
@@ -414,6 +405,21 @@ impl LaneView {
                 LaneBody::Declined
             }
         }
+    }
+
+    /// The body after an unpaid compile: the next entry counts toward the next attempt, and
+    /// past the last attempt the counter can name the body is declined.
+    fn unpaid_body(&self, entries: u32, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+        self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
+        let next = entries.saturating_add(1);
+        // The attempts double with each warm-up; past the last one the counter can
+        // name, the model has priced every entry this function can give and refused.
+        // The lane would keep running it through its records for nothing, slower than
+        // the general interpreter, so decline it there (`release_from_tier`).
+        if self.last_attempt(next) {
+            return LaneBody::Declined;
+        }
+        LaneBody::Unspecialized { entries: next, recompiles, stuck }
     }
 
     /// `specialize_lane_body` at once, past the warm-up: a hot loop's backward jump has run

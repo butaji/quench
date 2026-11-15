@@ -54,7 +54,7 @@ impl<H: Host> Vm<H> {
             return value;
         };
         let pair = [value, second];
-        self.heap.alloc_literal_array(self.array_proto, 2, |index| pair[index])
+        self.heap.alloc_literal_array(self.array_proto, pair.len(), |index| pair[index])
     }
 
     /// One %ArrayIteratorPrototype%.next step of a keys or entries iterator over a plain

@@ -157,6 +157,15 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The intrinsic prototype of the generators (or async generators) of `realm`, which a
+    /// generator object inherits where its function's own `prototype` is not an object.
+    fn generator_intrinsic_prototype(&self, realm: Value, is_async: bool) -> Value {
+        let realm_prototypes = self.realm.intrinsics.iterator_prototypes.get(&realm).copied();
+        realm_prototypes
+            .map(|prototypes| if is_async { prototypes.async_generator } else { prototypes.generator })
+            .unwrap_or(if is_async { self.async_generator_proto } else { self.generator_proto })
+    }
+
     pub(super) fn call_generator(
         &mut self,
         p: &ResidualProgram,
@@ -245,25 +254,7 @@ impl<H: Host> Vm<H> {
             .map(|function| self.function_realm(p, function))
             .transpose()?
             .unwrap_or(self.realm.globals);
-        let realm_prototypes = self
-            .realm
-            .intrinsics
-            .iterator_prototypes
-            .get(&realm)
-            .copied();
-        let default_prototype = realm_prototypes
-            .map(|prototypes| {
-                if function.is_async {
-                    prototypes.async_generator
-                } else {
-                    prototypes.generator
-                }
-            })
-            .unwrap_or(if function.is_async {
-                self.async_generator_proto
-            } else {
-                self.generator_proto
-            });
+        let default_prototype = self.generator_intrinsic_prototype(realm, function.is_async);
         let prototype_atom = self.prototype_atom();
         // A generator function's own `prototype` is a non-configurable data property, read
         // through its shape's memo (`own_function_prototype_data`).
@@ -468,9 +459,7 @@ impl<H: Host> Vm<H> {
             self.resume_async_generator_queue(p, generator)?;
             return Ok(Value::UNDEFINED);
         }
-        let continuation = self
-            .generator_record_mut(generator)
-            .and_then(|record| record.take_suspended());
+        let continuation = self.generator_record_mut(generator).and_then(|record| record.take_suspended());
         if resume_body && let Some(continuation) = continuation {
             let cleanup = self.close_suspended_iterators(p, &continuation);
             if let Err(error) = cleanup {
@@ -1064,48 +1053,50 @@ impl<H: Host> Vm<H> {
             Ok(value) => value,
             Err(error) => return self.resume_async_generator_with_throw(p, generator, error),
         };
-        let value = if self.truthy(adapter) {
-            let resolved = self.promise_for_value(p, value)?;
-            let state = self
-                .promise_record(resolved)
-                .cloned()
-                .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
-            match state.state() {
-                PromiseState::Fulfilled => state.result(),
-                PromiseState::Rejected => {
-                    return Err(JsError::thrown(
-                        state.result(),
-                        "async-from-sync value rejected".into(),
-                    ));
-                }
-                PromiseState::Pending => value,
-            }
-        } else {
-            value
-        };
+        let value = self.unwrap_async_from_sync(p, adapter, value)?;
         if !done {
             return self.iterator_result(value, false);
         }
         if self.truthy(throwing) {
-            if let Some(record) = self.generator_record_mut(generator)
-                && let Some(continuation) = record.continuation_mut()
-            {
-                continuation.frame.pc += 1;
-                continuation.resume_register = None;
-                if let Some(slot) = continuation
-                    .frame
-                    .registers
-                    .get_mut(destination.as_number().unwrap_or(0.0) as usize)
-                {
-                    *slot = value;
-                }
-            }
-            self.async_generator_next(p, generator, &[])
+            self.resume_delegate_throw(p, generator, destination, value)
         } else {
             let promise = self.promise_object()?;
             self.await_async_generator_return(p, generator, value, promise)?;
             Ok(promise)
         }
+    }
+
+    /// The value of a delegate's result when its iterator is an async-from-sync adapter
+    /// (`adapter`): the settled value of its promise, or the rejection it carries.
+    fn unwrap_async_from_sync(&mut self, p: &ResidualProgram, adapter: Value, value: Value) -> Result<Value, JsError> {
+        if !self.truthy(adapter) {
+            return Ok(value);
+        }
+        let resolved = self.promise_for_value(p, value)?;
+        let state = self
+            .promise_record(resolved)
+            .cloned()
+            .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
+        match state.state() {
+            PromiseState::Fulfilled => Ok(state.result()),
+            PromiseState::Rejected => Err(JsError::thrown(state.result(), "async-from-sync value rejected".into())),
+            PromiseState::Pending => Ok(value),
+        }
+    }
+
+    /// Resumes a delegating generator's body with a throw completion whose value lands in the
+    /// `destination` register of its suspended frame, then continues the async generator queue.
+    fn resume_delegate_throw(&mut self, p: &ResidualProgram, generator: Value, destination: Value, value: Value) -> Result<Value, JsError> {
+        if let Some(record) = self.generator_record_mut(generator)
+            && let Some(continuation) = record.continuation_mut()
+        {
+            continuation.frame.pc += 1;
+            continuation.resume_register = None;
+            if let Some(slot) = continuation.frame.registers.get_mut(destination.as_number().unwrap_or(0.0) as usize) {
+                *slot = value;
+            }
+        }
+        self.async_generator_next(p, generator, &[])
     }
 
     pub(super) fn async_generator_delegate_rejected(
@@ -1691,19 +1682,4 @@ impl<H: Host> Vm<H> {
 }
 
 #[cfg(test)]
-mod call_completion_tests {
-    use super::*;
-
-    #[test]
-    fn generator_completion_moves_resume_state_once() {
-        for reuses_result in [false, true] {
-            let mut completion = CallCompletion::Generator(GeneratorResume { reuses_result });
-            assert!(completion.take_promise().is_none());
-            assert!(completion.is_generator());
-            let resume = completion.take_generator().expect("generator completion");
-            assert_eq!(resume.reuses_result, reuses_result);
-            assert!(completion.take_generator().is_none());
-            assert!(matches!(completion, CallCompletion::Value));
-        }
-    }
-}
+mod call_completion_tests;

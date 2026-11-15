@@ -7,225 +7,12 @@
 //! marking runs on a marker thread beside steps on the mutator at allocation polls.
 use super::*;
 
-/// How full collections that pass the static gates choose between a concurrent cycle and
-/// stopping the world: `QUENCH_DEV=concurrent-gc` (or `=on`) always runs cycles,
-/// `concurrent-gc=adaptive` runs them where they pay (`CycleGate`), `concurrent-gc=off` never.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CycleMode {
-    Off,
-    Adaptive,
-    Always,
-}
+mod gate;
+mod snapshot;
 
-/// The mode without `QUENCH_DEV=concurrent-gc`.
-const DEFAULT_CYCLE_MODE: CycleMode = CycleMode::Off;
-
-impl CycleMode {
-    /// The process's mode, from `QUENCH_DEV`.
-    pub(crate) fn current() -> Self {
-        static MODE: std::sync::OnceLock<CycleMode> = std::sync::OnceLock::new();
-        *MODE.get_or_init(|| {
-            let dev = crate::trace::Dev::ConcurrentGc;
-            if !dev.on() {
-                return DEFAULT_CYCLE_MODE;
-            }
-            match dev.value() {
-                None | Some("on") => CycleMode::Always,
-                Some("adaptive") => CycleMode::Adaptive,
-                Some("off") => CycleMode::Off,
-                Some(other) => {
-                    eprintln!("Quench: unknown concurrent-gc mode `{other}`; known: on,adaptive,off");
-                    DEFAULT_CYCLE_MODE
-                }
-            }
-        })
-    }
-}
-
-/// A stop-the-world full mark shorter than this pauses too little for a cycle to pay for its
-/// marker thread, barrier and floating garbage (V8's minimum heap size for concurrent marking,
-/// in time).
-const CYCLE_MIN_MARK_MICROS: u64 = 3_000;
-/// The share of the time between full collections, in thousandths, that their stop-the-world
-/// mark takes, below which cycles do not pay.
-const CYCLE_MIN_MARK_SHARE_PERMILLE: u64 = 50;
-/// A cycle interval whose peak occupancy (with what the cycle held beside the heap,
-/// `CycleExtent::overhead_bytes`) passes, by more than this share (one in N), the peak either
-/// of the last two stop-the-world intervals reached for the same live weight shows the floating
-/// garbage and the cycle's own memory costing more than stopping the world.
-const CYCLE_PEAK_MARGIN_SHARE: u64 = 16;
-/// Full collections a heap stops the world for after its cycles fell back, doubling with each
-/// fallback up to this shift.
-const CYCLE_MAX_BLOCK_SHIFT: u32 = 6;
-
-/// Whether cycles pay for this heap (`CycleMode::Adaptive`): a heap starts stopping the world,
-/// takes cycles once a stop-the-world full mark is long both in time and as a share of the
-/// time between full collections, and stops the world again (for a while that doubles each
-/// time) when a cycle shows it does not pay. A cycle is judged by what its interval produced
-/// against what stop-the-world intervals measured: the peak occupancy (records and payload,
-/// the resident measure, with the cycle's mark stacks and quarantined backings) per live
-/// weight (the larger of the interval's start's and end's), where its floating garbage shows,
-/// and the mutator's pause time (the cycle's start, polls and assists, and its remark)
-/// per allocated weight.
-#[derive(Debug, Default)]
-pub(super) struct CycleGate {
-    /// When the last full collection ended.
-    full_ended: Option<std::time::Instant>,
-    /// Whether the next full collection may run as a cycle.
-    cycles: bool,
-    /// The live weight the last full collection kept (its snapshot's, for a remark).
-    live_weight: usize,
-    /// The last two stop-the-world intervals' peak bytes per thousand weight of live (the
-    /// larger of their start's and end's), and the larger of them; their pause nanoseconds
-    /// per allocated weight, averaged.
-    stw_peaks: [u64; 2],
-    stw_peak: Option<u64>,
-    stw_cost: Option<u64>,
-    /// Stop-the-world full collections left before cycles may be taken again, and fallbacks.
-    blocked: u32,
-    fallbacks: u32,
-    /// The last full collection's measures, for the trace.
-    mark_micros: u64,
-    interval_micros: u64,
-    peak: u64,
-    cost: u64,
-}
-
-impl CycleGate {
-    /// The last full collection's mark time and the time since the one before, in
-    /// microseconds; an interval of zero when unknown.
-    fn last_mark_and_interval(&self) -> (u64, u64) {
-        (self.mark_micros, self.interval_micros)
-    }
-}
-
-/// `average`, taking in `sample`.
-fn blend(average: Option<u64>, sample: u64) -> Option<u64> {
-    Some(average.map_or(sample, |average| (average + sample) / 2))
-}
-
-impl std::fmt::Display for CycleGate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "gate_cycles={} full_mark_us={} full_interval_us={} peak={} stw_peak={:?} cost={} stw_cost={:?} blocked={} fallbacks={}",
-            self.cycles, self.mark_micros, self.interval_micros, self.peak, self.stw_peak, self.cost, self.stw_cost, self.blocked, self.fallbacks
-        )
-    }
-}
-
-/// Live legacy cells past which no cycle starts: the initial mark pushes every live cell's
-/// children in its pause, as cells pass no snapshot barrier.
-pub(super) const CONCURRENT_CYCLE_MAX_LEGACY_CELLS: usize = 64 * 1024;
-
-/// The first gate a heap fails, which makes its next full collection stop the world.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CycleRefusal {
-    /// Concurrent cycles are an experiment, on only under `QUENCH_DEV=concurrent-gc`.
-    Disabled,
-    /// A JIT tier may run: native stores inline the generational guard
-    /// (`NATIVE_RECORD_MARK_OFFSET`) and would bypass the snapshot barrier. `--no-jit` only.
-    NativeCode,
-    /// Pacing favors minor collections; a cycle replaces full collections only where they
-    /// alone reclaim memory (`Regime::FullOnly`).
-    Generational,
-    /// The property arena lives in a moving allocation, not its fixed reservation, so a
-    /// marker could read a buffer the mutator freed.
-    MovingProperties,
-    /// More live legacy cells than the initial mark's pause should visit
-    /// (`CONCURRENT_CYCLE_MAX_LEGACY_CELLS`).
-    LegacyCells,
-    /// The memory profile attributes each record as the stop-the-world sweep frees it.
-    ProfilingMemory,
-    /// Cycles are adaptive and this heap's measures say they do not pay (`CycleGate`).
-    NotPaying,
-    /// Old records keep reference counts (`super::rc`), whose barrier the snapshot barrier
-    /// would replace.
-    ReferenceCounting,
-}
+pub(super) use gate::{CONCURRENT_CYCLE_MAX_LEGACY_CELLS, CycleGate, CycleMode, CycleRefusal};
 
 impl Heap {
-    /// Why this heap's next full collection cannot run as a concurrent cycle, or `None` when
-    /// every gate passes.
-    pub(crate) fn concurrent_cycle_refusal(&self) -> Option<CycleRefusal> {
-        self.concurrent_cycle_refusal_with(
-            CycleMode::current(),
-            crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::ANY),
-        )
-    }
-
-    /// `concurrent_cycle_refusal` with the process-wide inputs given.
-    pub(super) fn concurrent_cycle_refusal_with(&self, mode: CycleMode, native_code: bool) -> Option<CycleRefusal> {
-        if mode == CycleMode::Off {
-            Some(CycleRefusal::Disabled)
-        } else if native_code {
-            Some(CycleRefusal::NativeCode)
-        } else if self.pacing_state.regime(&self.pacing()) != pacing::Regime::FullOnly {
-            Some(CycleRefusal::Generational)
-        } else if !self.properties.values_stay_in_place() {
-            Some(CycleRefusal::MovingProperties)
-        } else if self.slots.len() - self.free_slots > CONCURRENT_CYCLE_MAX_LEGACY_CELLS {
-            Some(CycleRefusal::LegacyCells)
-        } else if cfg!(feature = "profile-memory") {
-            Some(CycleRefusal::ProfilingMemory)
-        } else if self.rc_active {
-            Some(CycleRefusal::ReferenceCounting)
-        } else if mode == CycleMode::Adaptive && !self.cycle_gate.cycles {
-            Some(CycleRefusal::NotPaying)
-        } else {
-            None
-        }
-    }
-
-    /// Weighs a full collection that just ended, which paused the mutator for `pause_micros`
-    /// and marked for `mark_micros` of it, for the gate (`CycleGate`).
-    pub(super) fn judge_cycles(&mut self, premarked: bool, mark_micros: u64, pause_micros: u64) {
-        let now = std::time::Instant::now();
-        let gate = &mut self.cycle_gate;
-        let interval = gate.full_ended.map(|ended| (now - ended).as_micros() as u64);
-        gate.full_ended = Some(now);
-        let live_before = std::mem::replace(&mut gate.live_weight, self.live_weight_after_full);
-        let (paused, peak) = if premarked {
-            let extent = &self.last_cycle_extent;
-            (pause_micros + extent.mutator_micros, self.resident_at_full_start + extent.overhead_bytes())
-        } else {
-            (pause_micros, self.resident_at_full_start)
-        };
-        // The live weight the interval's peak held: what it started with, or what it ended
-        // with where the live set grew through it.
-        let live = live_before.max(self.live_weight_after_full);
-        gate.peak = (peak as u128 * 1000 / live.max(1) as u128) as u64;
-        gate.cost = paused * 1000 / self.weight_between_fulls.max(1) as u64;
-        gate.mark_micros = mark_micros;
-        gate.interval_micros = interval.unwrap_or(0);
-        let measured = live_before != 0 && self.weight_between_fulls != 0;
-        if premarked {
-            let over_peak = gate.stw_peak.is_some_and(|stw| gate.peak > stw + stw / CYCLE_PEAK_MARGIN_SHARE);
-            let costly = gate.stw_cost.is_some_and(|stw| gate.cost > stw);
-            if measured && self.last_cycle_extent.planned && (over_peak || costly) {
-                gate.cycles = false;
-                gate.blocked = 1 << gate.fallbacks.min(CYCLE_MAX_BLOCK_SHIFT);
-                gate.fallbacks += 1;
-            }
-            return;
-        }
-        if measured {
-            gate.stw_peaks = [gate.stw_peaks[1], gate.peak];
-            gate.stw_peak = Some(gate.stw_peaks[0].max(gate.stw_peaks[1]));
-            gate.stw_cost = blend(gate.stw_cost, gate.cost);
-        }
-        if gate.blocked > 0 {
-            gate.blocked -= 1;
-            gate.cycles = false;
-            return;
-        }
-        gate.cycles = gate.stw_peak.is_some()
-            && interval.is_some_and(|interval| {
-                mark_micros >= CYCLE_MIN_MARK_MICROS
-                    && mark_micros * 1000 >= interval * CYCLE_MIN_MARK_SHARE_PERMILLE
-            });
-    }
-
     /// Whether a concurrent cycle is marking: the snapshot barrier is on and allocation is
     /// black.
     #[inline(always)]
@@ -241,98 +28,6 @@ impl Heap {
         if self.cycle.is_some() {
             while !self.mark_step(usize::MAX) {}
         }
-    }
-}
-
-/// The snapshot barrier's copy of a record's children (`RecordSpace::satb_note`): what the
-/// mark would push for it, with no shape roots (pushed per shape when a cycle starts) and
-/// every string left to the cycle's mark.
-fn snapshot_object(object: &Object, properties: &ValueArena, out: &mut Vec<Value>) {
-    Heap::object_children(
-        Value::UNDEFINED,
-        object,
-        properties,
-        out,
-        &mut |_, _, _, _, _| {},
-        GcTraceKind::Collection,
-        &mut PushedProtos::default(),
-    );
-}
-
-impl records::SatbSnapshot for Object {
-    fn snapshot(&self, properties: &ValueArena, out: &mut Vec<Value>) {
-        snapshot_object(self, properties, out);
-    }
-}
-
-impl records::SatbSnapshot for ArrayObject {
-    fn snapshot(&self, properties: &ValueArena, out: &mut Vec<Value>) {
-        Heap::array_children(
-            Value::UNDEFINED,
-            self,
-            properties,
-            |_| false,
-            out,
-            &mut |_, _, _, _, _| {},
-            GcTraceKind::Collection,
-            &mut PushedProtos::default(),
-        );
-    }
-}
-
-impl records::SatbSnapshot for FunctionRecord {
-    fn snapshot(&self, properties: &ValueArena, out: &mut Vec<Value>) {
-        snapshot_object(&self.object, properties, out);
-        out.extend([self.realm, self.env]);
-    }
-}
-
-impl records::SatbSnapshot for PromiseCell {
-    fn snapshot(&self, properties: &ValueArena, out: &mut Vec<Value>) {
-        snapshot_object(&self.object, properties, out);
-        self.record.append_roots(out);
-    }
-}
-
-impl records::SatbSnapshot for IteratorRecord {
-    fn snapshot(&self, properties: &ValueArena, out: &mut Vec<Value>) {
-        snapshot_object(&self.object, properties, out);
-        Heap::iterator_edges(self, out);
-    }
-}
-
-impl records::SatbSnapshot for AwaitState {
-    fn snapshot(&self, _properties: &ValueArena, out: &mut Vec<Value>) {
-        self.extend_roots(out);
-    }
-}
-
-impl Heap {
-    /// Turns the snapshot barrier on or off in every record family, as a concurrent cycle's
-    /// start and remark will; the children it copies are taken with `take_satb_values`.
-    pub(super) fn set_satb(&mut self, active: bool) {
-        self.satb_active = active;
-        for (family, _) in self.record_families_mut() {
-            if active { family.begin_satb() } else { family.end_satb() }
-        }
-    }
-
-    /// Allocation is black while a cycle marks: a cell made now is marked at once, newer than
-    /// the snapshot, so the cycle neither traces nor frees it.
-    #[cold]
-    #[inline(never)]
-    pub(super) fn blacken_slot(&mut self, index: usize) {
-        let (word, bit) = slot_bit(index);
-        *self.marks[word].get_mut() |= bit;
-    }
-
-    /// The children the snapshot barrier copied in every family since the last call.
-    pub(super) fn take_satb_values(&mut self) -> Vec<Value> {
-        let mut values = Vec::new();
-        for (family, _) in self.record_families_mut() {
-            values.append(&mut family.take_satb_values());
-        }
-        values
     }
 }
 
@@ -433,6 +128,20 @@ const CYCLE_POLLS_PER_LIVE_SET: usize = 8;
 /// budget the mutator polls four times as often, so it marks a quarter of the live set over
 /// what would have been sixteen ordinary polls, the marker doing the rest beside it.
 const CYCLE_ASSIST_SHARE: usize = 16;
+/// The fewest values a poll's step marks, however small the live set.
+const MIN_STEP_VALUES: usize = 1024;
+/// How much more often the mutator polls past a cycle's budget: each poll is then an assist.
+const OVERDUE_POLL_SPEEDUP: usize = 4;
+/// Before any cycle is measured, a cycle is taken to allocate this many times what the
+/// interval allocates over the last stop-the-world mark's time.
+const UNMEASURED_CYCLE_WEIGHT_RATIO: u128 = 2;
+/// Before any cycle is measured, its allocation is capped at this divisor of the budget:
+/// half of it.
+const UNMEASURED_CYCLE_BUDGET_CAP: u128 = 2;
+/// The divisor that averages a cycle's weight with the last one's.
+const AVERAGE_OF_TWO_WEIGHTS: usize = 2;
+/// Nanoseconds in a microsecond, the unit the cycle's measures are kept in.
+const NANOS_PER_MICRO: u64 = 1000;
 /// Polls a cycle spreads over the allocation one full collection interval charges.
 const CYCLE_POLLS_PER_INTERVAL: usize = 128;
 
@@ -458,6 +167,41 @@ impl Heap {
         assert!(self.cycle.is_none() && !self.satb_active, "one cycle at a time");
         self.retire_bump();
         let begun = std::time::Instant::now();
+        self.clear_cycle_marks();
+        let work = self.cycle_snapshot(roots);
+        let live = self.live_after_full.max(work.len());
+        self.last_cycle_extent.initial_work = work.len();
+        let interval = self.weight_between_fulls.max(self.pacing().minimum_young);
+        self.set_satb(true);
+        let quarantine = BackingQuarantine::begin();
+        let (marker, work) = if threaded {
+            let view = concurrent_view::ConcurrentMarkView::new(self);
+            (Some(concurrent_view::MarkerThread::start(view, work)), Vec::new())
+        } else {
+            (None, work)
+        };
+        self.cycle = Some(Box::new(ConcurrentCycle {
+            marker,
+            work,
+            ephemerons: weak::EphemeronWork::default(),
+            last_proto: PushedProtos::default(),
+            step_values: (live / CYCLE_POLLS_PER_LIVE_SET).max(MIN_STEP_VALUES),
+            poll_weight: (interval / CYCLE_POLLS_PER_INTERVAL).max(1),
+            polls: 0,
+            assists: 0,
+            planned: self.cycle_due_at != usize::MAX,
+            mutator_nanos: begun.elapsed().as_nanos() as u64,
+            started_at: self.allocated,
+            started: std::time::Instant::now(),
+            _quarantine: quarantine,
+        }));
+        self.arm_cycle_poll();
+    }
+
+    /// Clears the marks, remembered sets and aged records a cycle starts from, as a full
+    /// collection does, with the shared unit strings handed out again: a cycle starts them
+    /// anew.
+    fn clear_cycle_marks(&mut self) {
         // The shared unit strings are handed out with no barrier: a cycle starts them anew,
         // as a collection does.
         if let Some(strings) = &mut self.ascii_unit_strings {
@@ -472,6 +216,12 @@ impl Heap {
             family.clear_marks();
             family.forget_ages();
         }
+    }
+
+    /// The snapshot a cycle starts from: `roots`, the root table, and the children of every
+    /// live cell (cells pass no snapshot barrier), with sparse elements and the weakly held
+    /// values, as `begin_cycle` describes.
+    fn cycle_snapshot(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<Value> {
         let mut work: Vec<Value> = roots.into_iter().collect();
         work.extend(self.roots.values());
         let mut last_proto = PushedProtos::default();
@@ -498,40 +248,14 @@ impl Heap {
                 work.extend(elements.values.values().copied());
             }
         }
-        let live = self.live_after_full.max(work.len());
-        self.last_cycle_extent.initial_work = work.len();
-        let interval = self.weight_between_fulls.max(self.pacing().minimum_young);
-        self.set_satb(true);
-        let quarantine = BackingQuarantine::begin();
-        let (marker, work) = if threaded {
-            let view = concurrent_view::ConcurrentMarkView::new(self);
-            (Some(concurrent_view::MarkerThread::start(view, work)), Vec::new())
-        } else {
-            (None, work)
-        };
-        self.cycle = Some(Box::new(ConcurrentCycle {
-            marker,
-            work,
-            ephemerons: weak::EphemeronWork::default(),
-            last_proto: PushedProtos::default(),
-            step_values: (live / CYCLE_POLLS_PER_LIVE_SET).max(1024),
-            poll_weight: (interval / CYCLE_POLLS_PER_INTERVAL).max(1),
-            polls: 0,
-            assists: 0,
-            planned: self.cycle_due_at != usize::MAX,
-            mutator_nanos: begun.elapsed().as_nanos() as u64,
-            started_at: self.allocated,
-            started: std::time::Instant::now(),
-            _quarantine: quarantine,
-        }));
-        self.arm_cycle_poll();
+        work
     }
 
     /// Makes `should_collect` answer at the cycle's next poll.
     fn arm_cycle_poll(&mut self) {
         let weight = self.cycle.as_ref().map_or(0, |cycle| cycle.poll_weight);
         // Past the budget, polls (each an assist) come four times as often.
-        let weight = if self.allocated >= self.cycle_due_at { weight / 4 } else { weight };
+        let weight = if self.allocated >= self.cycle_due_at { weight / OVERDUE_POLL_SPEEDUP } else { weight };
         self.collect_at.set(self.allocated.saturating_add(weight.max(1)));
     }
 
@@ -552,7 +276,8 @@ impl Heap {
             self.cycle_weight_average
         } else {
             let (mark, interval) = self.cycle_gate.last_mark_and_interval();
-            (2 * threshold as u128 * mark as u128 / interval.max(1) as u128).min(budget as u128 / 2) as usize
+            let unmeasured = UNMEASURED_CYCLE_WEIGHT_RATIO * threshold as u128 * mark as u128;
+            (unmeasured / interval.max(1) as u128).min(budget as u128 / UNMEASURED_CYCLE_BUDGET_CAP) as usize
         };
         self.cycle_due_at = self.allocated.saturating_add(budget);
         let start = budget.saturating_sub(weight).max(1);
@@ -657,21 +382,42 @@ impl Heap {
     /// what it allocated): the start of its remark, the collection that keeps these marks.
     /// `false` when no cycle runs.
     pub(super) fn complete_cycle_marking(&mut self) -> bool {
-        let Some(cycle) = self.cycle.as_mut() else {
+        if self.cycle.is_none() {
             return false;
-        };
-        // The marker stops first: the rest is marked here, serially.
-        if let Some(marker) = cycle.marker.take() {
-            let (marked, busy) = marker.stats();
-            self.last_cycle_extent.marker_peak_work = marker.peak_work();
-            self.last_cycle_extent.quarantined = array_elements::quarantined_bytes();
-            self.last_cycle_extent.marked = marked;
-            self.last_cycle_extent.marker_busy_micros = busy / 1000;
-            let mut left = marker.stop();
-            cycle.work.append(&mut left);
         }
+        self.stop_marker();
+        let cycle = self.cycle.as_mut().expect("a running cycle");
         let remark_values = cycle.work.len() + self.satb_shaded.get_mut().len()
             + self.record_families_mut().iter_mut().map(|(family, _)| family.satb_values_len()).sum::<usize>();
+        self.record_cycle_extent(remark_values);
+        self.cycle_weight_average = if self.cycle_weight_average == 0 {
+            self.last_cycle_extent.weight
+        } else {
+            (self.cycle_weight_average + self.last_cycle_extent.weight) / AVERAGE_OF_TWO_WEIGHTS
+        };
+        while !self.mark_step(usize::MAX) {}
+        self.cycle = None;
+        self.set_satb(false);
+        true
+    }
+
+    /// Stops the running cycle's marker thread, if any, and takes what it left back: the rest
+    /// is marked serially by the remark, with the marker's own measures kept.
+    fn stop_marker(&mut self) {
+        let Some(cycle) = self.cycle.as_mut() else { return };
+        let Some(marker) = cycle.marker.take() else { return };
+        let (marked, busy) = marker.stats();
+        self.last_cycle_extent.marker_peak_work = marker.peak_work();
+        self.last_cycle_extent.quarantined = array_elements::quarantined_bytes();
+        self.last_cycle_extent.marked = marked;
+        self.last_cycle_extent.marker_busy_micros = busy / NANOS_PER_MICRO;
+        let mut left = marker.stop();
+        cycle.work.append(&mut left);
+    }
+
+    /// Records what the running cycle took, as its `CycleExtent`, at its remark's start
+    /// (`remark_values` are the values the remark will mark).
+    fn record_cycle_extent(&mut self, remark_values: usize) {
         let cycle = self.cycle.as_ref().expect("a running cycle");
         self.last_cycle_extent = CycleExtent {
             polls: cycle.polls,
@@ -682,21 +428,12 @@ impl Heap {
             marker_busy_micros: self.last_cycle_extent.marker_busy_micros,
             assists: cycle.assists,
             late_weight: self.allocated.saturating_sub(self.cycle_due_at.max(cycle.started_at)),
-            mutator_micros: cycle.mutator_nanos / 1000,
+            mutator_micros: cycle.mutator_nanos / NANOS_PER_MICRO,
             marker_peak_work: self.last_cycle_extent.marker_peak_work,
             quarantined: self.last_cycle_extent.quarantined,
             initial_work: self.last_cycle_extent.initial_work,
             planned: cycle.planned,
         };
-        self.cycle_weight_average = if self.cycle_weight_average == 0 {
-            self.last_cycle_extent.weight
-        } else {
-            (self.cycle_weight_average + self.last_cycle_extent.weight) / 2
-        };
-        while !self.mark_step(usize::MAX) {}
-        self.cycle = None;
-        self.set_satb(false);
-        true
     }
 
     /// Drops a running cycle without finishing it, for a heap discarding everything

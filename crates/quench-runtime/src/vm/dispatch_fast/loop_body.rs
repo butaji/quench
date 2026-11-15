@@ -119,13 +119,7 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
         return;
     }
     let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
-    // The loop's arrays are the activation's registers live at its header now: sampled, as an
-    // OSR loop samples its own. A dead register may hold any value a window held before
-    // (`RegisterRoots::entry_fill`), so it reads as `undefined`.
-    let live = code.register_root_masks(function);
-    let arrays = super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
-        if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
-    }));
+    let arrays = sampled_header_arrays(vm, code, r, site);
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
         None => LaneBodyWork::Start { generic: &stuck.listed(), shrinks: 0, observed: None, looped: Some((site.span(), site.body_iterations())), called: false, caller: own, arrays: &arrays },
@@ -140,6 +134,17 @@ fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView
     }
     *body = LoopBody::after(outcome, stuck, attempts);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+}
+
+/// The loop's arrays: the activation's registers live at its header now, sampled as an OSR
+/// loop samples its own. A dead register may hold any value a window held before
+/// (`RegisterRoots::entry_fill`), so it reads as `undefined`.
+fn sampled_header_arrays<H: Host>(vm: &Vm<H>, code: &crate::bytecode::ResidualProgram, r: Registers, site: &LoopSite) -> Vec<(crate::bytecode::Register, crate::typed_ir::Type)> {
+    let function = site.function;
+    let live = code.register_root_masks(function);
+    super::loop_tier::sampled_arrays(vm, (0..code.function_get(function as usize).map_or(0, |body| body.registers)).map(|register| {
+        if live.is_none_or(|live| live.is_live(site.header as usize, register)) { r.get(register) } else { Value::UNDEFINED }
+    }))
 }
 
 /// The running regions leave at their next backward jump (`left_for_tier_up`), and the header

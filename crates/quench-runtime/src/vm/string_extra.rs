@@ -273,11 +273,14 @@ const RADIX_DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 /// `number_to_radix` as a string value. An integer below 2^53 spells exactly its digits (no
 /// fraction, no digit below the double's precision), which a `u64` loop writes on the stack
 /// with one division per digit instead of `fmod` and two growing vectors.
+/// The bytes an exact integer's binary digits and sign need: one per digit of an exact
+/// integer's mantissa, and one for the sign.
+const EXACT_INTEGER_RADIX_BYTES: usize = f64::MANTISSA_DIGITS as usize + 1;
+
 pub(super) fn number_to_radix_string(number: f64, radix: u32) -> super::wtf16::JsString {
     let magnitude = number.abs();
     if magnitude < crate::number_to_string::EXACT_INTEGER_MAGNITUDE && magnitude.fract() == 0.0 {
-        // 53 binary digits and a sign.
-        let mut buffer = [0u8; 54];
+        let mut buffer = [0u8; EXACT_INTEGER_RADIX_BYTES];
         let mut at = buffer.len();
         let mut integer = magnitude as u64;
         let radix = u64::from(radix);

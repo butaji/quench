@@ -7,8 +7,10 @@
 //! the recurrence without feeding it run as columns after the pass. A loop with any other
 //! recurrence keeps its own records.
 use super::super::super::operations::{NumberArithmetic, NumberBitwise};
-use super::run::{CHUNK, apply, arith};
+use super::operators::{apply, arith};
+use super::run::CHUNK;
 use super::shape::{Arg, NodeOp, Shape};
+use crate::bitset::BitSet;
 
 /// One recurrence folded by one arithmetic operator, maybe truncated to int32 after
 /// (`(s op x) | 0`): `s = op(s, x[k])`, or `op(x[k], s)` when the recurrence is the right operand.
@@ -26,6 +28,10 @@ pub(super) struct Fold {
 
 /// The longest chain a kernel runs.
 const MAX_LINKS: usize = 24;
+
+/// The links of a cycle that truncates to int32 after its one operator: the operator and the
+/// `| 0`.
+const TRUNCATED_CYCLE_LINKS: usize = 2;
 
 /// One link of a chain: `v = code(v, x)` with `x` the column (or broadcast scalar) at element
 /// offset `operand` of the scratch, the result written at offset `out` (a dump column when no
@@ -114,27 +120,41 @@ pub(super) fn read_later(shape: &Shape, side: &[u16], id: u16) -> bool {
     read_as_column(shape, side, id) || shape.temps.iter().any(|&(_, arg)| arg == Arg::Col(id))
 }
 
+/// The column a node argument names, if it is one.
+fn as_column(arg: Arg) -> Option<u16> {
+    match arg {
+        Arg::Col(n) => Some(n),
+        _ => None,
+    }
+}
+
+/// The nodes that the recurrences' next values read, directly or through the nodes they read.
+fn needed_by_next_values(shape: &Shape) -> BitSet {
+    let mut needed = BitSet::new(shape.nodes.len());
+    let mut work: Vec<u16> = shape.phis.iter().filter_map(|&(_, arg)| as_column(arg)).collect();
+    while let Some(n) = work.pop() {
+        let node = shape.nodes[usize::from(n)];
+        if !node.seq || !needed.insert(usize::from(n)) {
+            continue;
+        }
+        work.extend([node.a, node.b].into_iter().filter_map(as_column));
+    }
+    needed
+}
+
 /// The nodes of the scalar pass that no recurrence's next value reads, directly or through
 /// other nodes, and that read no recurrence directly: they run as columns after the pass.
 fn feeds_none(shape: &Shape) -> Vec<u16> {
-    let mut needed = vec![false; shape.nodes.len()];
-    let mut work: Vec<u16> = shape.phis.iter().filter_map(|&(_, arg)| if let Arg::Col(n) = arg { Some(n) } else { None }).collect();
-    while let Some(n) = work.pop() {
-        let node = shape.nodes[usize::from(n)];
-        if !node.seq || std::mem::replace(&mut needed[usize::from(n)], true) {
-            continue;
-        }
-        work.extend([node.a, node.b].into_iter().filter_map(|arg| if let Arg::Col(m) = arg { Some(m) } else { None }));
-    }
+    let needed = needed_by_next_values(shape);
     let mut side: Vec<u16> = Vec::new();
     for &id in &shape.seq {
         let node = shape.nodes[usize::from(id)];
         let column = |arg: Arg| match arg {
             Arg::Phi(_) => false,
-            Arg::Col(m) => !shape.nodes[usize::from(m)].seq || needed[usize::from(m)] || side.contains(&m),
+            Arg::Col(m) => !shape.nodes[usize::from(m)].seq || needed.contains(usize::from(m)) || side.contains(&m),
             _ => true,
         };
-        if !needed[usize::from(id)] && column(node.a) && column(node.b) {
+        if !needed.contains(usize::from(id)) && column(node.a) && column(node.b) {
             side.push(id);
         }
     }
@@ -185,7 +205,7 @@ impl Recurrence {
         let (left, operand) = if node.a == Arg::Phi(0) { (true, node.b) } else { (false, node.a) };
         let int32 = match cycle.len() {
             1 => false,
-            2 if is_int32_truncation(shape, first, last) => true,
+            TRUNCATED_CYCLE_LINKS if is_int32_truncation(shape, first, last) => true,
             _ => return None,
         };
         let outs = [first, last].map(|id| read_as_column(shape, side, id).then_some(id));
@@ -290,58 +310,110 @@ impl Fold {
         len: usize,
         f: impl Fn(f64, f64) -> f64,
     ) {
-        let step = |value: f64, x: f64| {
-            let sum = if LEFT { f(value, x) } else { f(x, value) };
-            (sum, if INT32 { to_int32(sum) } else { sum })
-        };
-        let mut value = phis[0];
         // The value before the last iteration, from which the last's nodes are redone.
-        let mut before = value;
-        if self.outs == [None, None] {
-            match self.operand {
-                Arg::Col(n) => {
-                    for &x in &scratch[usize::from(n) * CHUNK..][..len] {
-                        before = value;
-                        value = step(value, x).1;
-                    }
-                }
-                _ => {
-                    let x = self.scalar(scalars);
-                    (0..len).for_each(|_| {
-                        before = value;
-                        value = step(value, x).1;
-                    });
-                }
-            }
+        let (value, before) = if self.outs == [None, None] {
+            self.unwritten::<LEFT, INT32>(phis[0], scalars, scratch, len, &f)
         } else {
-            for k in 0..len {
-                let x = match self.operand { Arg::Col(n) => scratch[usize::from(n) * CHUNK + k], _ => self.scalar(scalars) };
-                let (first, last) = step(value, x);
-                before = value;
-                value = last;
-                for (out, result) in self.outs.iter().zip([first, last]) {
-                    if let Some(id) = out {
-                        scratch[usize::from(*id) * CHUNK + k] = result;
-                    }
-                }
-            }
-        }
-        if len > 0 && self.lasts != [None, None] {
-            let x = match self.operand { Arg::Col(n) => scratch[usize::from(n) * CHUNK + len - 1], _ => self.scalar(scalars) };
-            let (first, last) = step(before, x);
-            for (out, result) in self.lasts.iter().zip([first, last]) {
-                if let Some(id) = out {
-                    scratch[usize::from(*id) * CHUNK + len - 1] = result;
-                }
-            }
-        }
+            self.written::<LEFT, INT32>(phis[0], scalars, scratch, len, &f)
+        };
+        self.redo_last::<LEFT, INT32>(before, scalars, scratch, len, &f);
         phis[0] = value;
+    }
+
+    /// The iterations of a fold that no column reads: only the value advances. Returns the
+    /// value and the one before the last iteration.
+    #[inline(always)]
+    fn unwritten<const LEFT: bool, const INT32: bool>(
+        &self,
+        mut value: f64,
+        scalars: &[f64],
+        scratch: &[f64],
+        len: usize,
+        f: &impl Fn(f64, f64) -> f64,
+    ) -> (f64, f64) {
+        let mut before = value;
+        match self.operand {
+            Arg::Col(n) => {
+                for &x in &scratch[usize::from(n) * CHUNK..][..len] {
+                    before = value;
+                    value = step::<LEFT, INT32>(f, value, x).1;
+                }
+            }
+            _ => {
+                let x = self.scalar(scalars);
+                (0..len).for_each(|_| {
+                    before = value;
+                    value = step::<LEFT, INT32>(f, value, x).1;
+                });
+            }
+        }
+        (value, before)
+    }
+
+    /// The iterations of a fold that some column reads: each writes its nodes' results to the
+    /// columns that read them. Returns the value and the one before the last iteration.
+    #[inline(always)]
+    fn written<const LEFT: bool, const INT32: bool>(
+        &self,
+        mut value: f64,
+        scalars: &[f64],
+        scratch: &mut [f64],
+        len: usize,
+        f: &impl Fn(f64, f64) -> f64,
+    ) -> (f64, f64) {
+        let mut before = value;
+        for k in 0..len {
+            let x = match self.operand { Arg::Col(n) => scratch[usize::from(n) * CHUNK + k], _ => self.scalar(scalars) };
+            let results = step::<LEFT, INT32>(f, value, x);
+            before = value;
+            value = results.1;
+            store_results(&self.outs, scratch, k, [results.0, results.1]);
+        }
+        (value, before)
+    }
+
+    /// Redoes the last iteration's nodes from the value before it, for the columns that a
+    /// written register's final value reads.
+    #[inline(always)]
+    fn redo_last<const LEFT: bool, const INT32: bool>(
+        &self,
+        before: f64,
+        scalars: &[f64],
+        scratch: &mut [f64],
+        len: usize,
+        f: &impl Fn(f64, f64) -> f64,
+    ) {
+        if len == 0 || self.lasts == [None, None] {
+            return;
+        }
+        let x = match self.operand { Arg::Col(n) => scratch[usize::from(n) * CHUNK + len - 1], _ => self.scalar(scalars) };
+        let results = step::<LEFT, INT32>(f, before, x);
+        store_results(&self.lasts, scratch, len - 1, [results.0, results.1]);
     }
 
     fn scalar(&self, scalars: &[f64]) -> f64 {
         match self.operand {
             Arg::Scalar(s) => scalars[usize::from(s)],
             _ => 0.0,
+        }
+    }
+}
+
+/// One step of a fold: the operator's result, and that result truncated to int32 when the
+/// fold truncates.
+#[inline(always)]
+fn step<const LEFT: bool, const INT32: bool>(f: &impl Fn(f64, f64) -> f64, value: f64, x: f64) -> (f64, f64) {
+    let sum = if LEFT { f(value, x) } else { f(x, value) };
+    (sum, if INT32 { to_int32(sum) } else { sum })
+}
+
+/// Writes a fold's two results at element `k` to the columns they are read from (`None`
+/// where none reads them).
+#[inline(always)]
+fn store_results(columns: &[Option<u16>; 2], scratch: &mut [f64], k: usize, results: [f64; 2]) {
+    for (column, result) in columns.iter().zip(results) {
+        if let Some(id) = column {
+            scratch[usize::from(*id) * CHUNK + k] = result;
         }
     }
 }

@@ -284,6 +284,22 @@ impl JsError {
 /// per call. Past the budget, programs still load from the cache but are no longer offered.
 pub(super) const DYNAMIC_FUNCTIONS_KEPT: u16 = 64;
 
+/// The source position a frame's call site names: its field access's when the frame is at one
+/// (`source_field`), else the instruction's.
+fn frame_source_position(
+    residual: &ResidualProgram,
+    frame: &Frame,
+    pc: u32,
+) -> Option<crate::bytecode::SourcePosition> {
+    let Some((site, part)) = frame.source_field else {
+        return residual.source_position(frame.function, pc);
+    };
+    match residual.field_sites.get(site).and_then(|site| site.source(part)) {
+        Some((line, column)) => residual.adjust_source_position(crate::bytecode::SourcePosition { pc, line, column }),
+        None => residual.source_position(frame.function, pc),
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn error_is_error(&self, value: Value) -> bool {
         self.heap
@@ -546,23 +562,7 @@ impl<H: Host> Vm<H> {
         let residual = self.programs.get(frame.program)?;
         let function = residual.function_get(frame.function as usize)?;
         let pc = u32::try_from(frame.source_instruction_pc()).unwrap_or(u32::MAX);
-        let position = if let Some((site, part)) = frame.source_field {
-            if let Some((line, column)) = residual
-                .field_sites
-                .get(site)
-                .and_then(|site| site.source(part))
-            {
-                residual.adjust_source_position(crate::bytecode::SourcePosition {
-                    pc,
-                    line,
-                    column,
-                })?
-            } else {
-                residual.source_position(frame.function, pc)?
-            }
-        } else {
-            residual.source_position(frame.function, pc)?
-        };
+        let position = frame_source_position(residual, frame, pc)?;
         // A call-only closure (`Value::known_closure`) has no function object to name it.
         let name = frame.context.callable().filter(|callee| callee.as_known_closure().is_none()).map_or_else(
             || {

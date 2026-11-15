@@ -4620,7 +4620,6 @@ mod tests {
             vm.wasm_global(&third, 3).unwrap(),
             WasmValue::FuncRef(third_function)
         );
-
         assert!(vm.release_root(second.environment));
         vm.collect_now(importer.residual());
         assert_eq!(

@@ -14,6 +14,8 @@ use wasmparser::ExternalKind;
 
 /// Arguments of a Wasm call that a JavaScript caller passes without a heap allocation.
 const WASM_INLINE_ARGUMENTS: usize = 8;
+/// The most parameters an exported function's frame call admits: each one a bit of `f32_params`.
+const EXPORT_FRAME_PARAMS: usize = u16::BITS as usize;
 
 /// Whether a value of `ty` may encode into a fresh heap cell (`Vm::encode_wasm_value`): 64-bit
 /// payloads outside the in-place range (`Vm::encode_bits64`) and vectors. 32-bit values encode
@@ -82,83 +84,8 @@ impl WasmJsIntrinsics {
     }
 }
 
-/// The interface constructors: name, constructor, prototype methods and accessors.
-struct Interface {
-    name: &'static str,
-    constructor: Native,
-    statics: &'static [(&'static str, Native)],
-    methods: &'static [(&'static str, Native)],
-    getters: &'static [(&'static str, Native, Option<Native>)],
-}
-
-const INTERFACES: &[Interface] = &[
-    Interface {
-        name: "Module",
-        constructor: Native::WasmModule,
-        statics: &[
-            ("exports", Native::WasmModuleExports),
-            ("imports", Native::WasmModuleImports),
-            ("customSections", Native::WasmModuleCustomSections),
-        ],
-        methods: &[],
-        getters: &[],
-    },
-    Interface {
-        name: "Instance",
-        constructor: Native::WasmInstance,
-        statics: &[],
-        methods: &[],
-        getters: &[("exports", Native::WasmInstanceExportsGetter, None)],
-    },
-    Interface {
-        name: "Memory",
-        constructor: Native::WasmMemory,
-        statics: &[],
-        methods: &[("grow", Native::WasmMemoryGrow)],
-        getters: &[("buffer", Native::WasmMemoryBufferGetter, None)],
-    },
-    Interface {
-        name: "Table",
-        constructor: Native::WasmTable,
-        statics: &[],
-        methods: &[
-            ("grow", Native::WasmTableGrow),
-            ("get", Native::WasmTableGet),
-            ("set", Native::WasmTableSet),
-        ],
-        getters: &[("length", Native::WasmTableLengthGetter, None)],
-    },
-    Interface {
-        name: "Global",
-        constructor: Native::WasmGlobal,
-        statics: &[],
-        methods: &[("valueOf", Native::WasmGlobalValueOf)],
-        getters: &[(
-            "value",
-            Native::WasmGlobalValueGetter,
-            Some(Native::WasmGlobalValueSetter),
-        )],
-    },
-    Interface { name: "Tag", constructor: Native::WasmTag, statics: &[], methods: &[], getters: &[] },
-];
-
-const NAMESPACE_FUNCTIONS: &[(&str, Native)] = &[
-    ("compile", Native::WebAssemblyCompile),
-    ("validate", Native::WebAssemblyValidate),
-    ("instantiate", Native::WebAssemblyInstantiate),
-];
-
-fn wasm_source_consumer_name(native: Native) -> &'static str {
-    NAMESPACE_FUNCTIONS.iter().find(|(_, operation)| *operation == native).map(|(name, _)| *name)
-        .or_else(|| INTERFACES.iter().find(|interface| interface.constructor == native).map(|interface| interface.name))
-        .expect("Wasm source consumer has installed API metadata")
-}
-
-pub(super) const WASM_ERRORS: &[(&str, Native)] = &[
-    ("CompileError", Native::WasmCompileError),
-    ("LinkError", Native::WasmLinkError),
-    ("RuntimeError", Native::WasmRuntimeError),
-];
+use interfaces::{INTERFACES, NAMESPACE_FUNCTIONS, wasm_source_consumer_name};
+pub(super) use interfaces::WASM_ERRORS;
 
 /// The largest page count or element count a WebIDL `unsigned long` descriptor member holds.
 const DESCRIPTOR_LIMIT: f64 = u32::MAX as f64;
@@ -1222,7 +1149,7 @@ impl<H: Host> Vm<H> {
             &[ty @ (WasmType::I32 | WasmType::F32 | WasmType::F64)] => Some(ty),
             _ => return None,
         };
-        if signature.params.len() > 16 {
+        if signature.params.len() > EXPORT_FRAME_PARAMS {
             return None;
         }
         let mut f32_params = 0u16;
@@ -1990,63 +1917,8 @@ impl<H: Host> Vm<H> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{cell::RefCell, rc::Rc};
-    use crate::{Engine, ExecutionMode, Runtime, test_host::TestHost};
-
-    const EMPTY_MODULE: &[u8] = b"\0asm\x01\0\0\0";
-
-    #[test]
-    fn shared_memory_views_preserve_aliasing_and_lengths_across_growth() {
-        let source = r#"
-            const memory = new WebAssembly.Memory({initial: 1, maximum: 3, shared: true});
-            const before = memory.buffer;
-            const integers = new Int32Array(before);
-            Atomics.store(integers, 0, 42);
-            if (memory.grow(1) !== 1) throw 'wrong previous size';
-            const after = memory.buffer;
-            if (!(before instanceof SharedArrayBuffer) || !(after instanceof SharedArrayBuffer)
-                || before === after || memory.buffer !== after
-                || before.byteLength !== 65536 || after.byteLength !== 131072) throw 'wrong shared views';
-            Atomics.add(new Int32Array(after), 0, 1);
-            if (integers[0] !== 43 || new DataView(before).getInt32(0, true) !== 43) throw 'lost alias';
-            new Uint8Array(after)[65536] = 17;
-            new Uint8Array(before, 8, 1).set(new Uint8Array(after, 65536, 1));
-            if (new Uint8Array(before)[8] !== 17) throw 'cross-prefix copy failed';
-            memory.grow(0);
-            if (memory.buffer === after || after.byteLength !== 131072) throw 'wrong grow-zero identity';
-            const ordinary = new WebAssembly.Memory({initial: 1});
-            const old = ordinary.buffer;
-            ordinary.grow(0);
-            if (old.byteLength !== 0 || old === ordinary.buffer) throw 'ordinary buffer not detached';
-        "#;
-        let program = Engine::specialize(source, "shared-memory-views.js").unwrap();
-        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
-            let mut runtime = Runtime::new(TestHost::default());
-            runtime.set_execution_mode(mode);
-            runtime.execute(&program).unwrap();
-        }
-    }
-
-    #[test]
-    fn validation_runs_without_a_host_compiler_in_interpreter_and_jit_modes() {
-        fn validate(host: &mut TestHost, bytes: &[u8], mode: ExecutionMode) -> bool {
-            assert_eq!(bytes, EMPTY_MODULE);
-            host.state::<RefCell<Vec<ExecutionMode>>>().borrow_mut().push(mode);
-            true
-        }
-        let source = format!("if (!WebAssembly.validate(new Uint8Array({EMPTY_MODULE:?}))) throw 'validation required a compiler';");
-        let program = Engine::specialize(&source, "validation-only.js").unwrap();
-        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
-            let calls = Rc::new(RefCell::new(Vec::<ExecutionMode>::new()));
-            let host = TestHost::default().with_state(calls.clone()).with_wasm_validation(validate);
-            let mut runtime = Runtime::new(host);
-            runtime.set_execution_mode(mode);
-            runtime.execute(&program).unwrap();
-            assert_eq!(*calls.borrow(), [mode]);
-        }
-    }
-}
+mod tests;
+mod interfaces;
 
 /// An exported Wasm function's call as `Vm::wasm_export_frame_call` admits it, for the
 /// wrapper `callee` (`LaneStack::wasm_export`).

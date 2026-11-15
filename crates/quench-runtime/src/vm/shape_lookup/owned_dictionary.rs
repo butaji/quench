@@ -184,7 +184,7 @@ impl<H: Host> Vm<H> {
             if !entry.facts.deletions() {
                 break;
             }
-            count += usize::from(matches!(entry.transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant));
+            count += usize::from(entry.transition.removes_slot());
             cursor = entry.parent();
         }
         count

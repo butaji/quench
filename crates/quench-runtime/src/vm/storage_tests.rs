@@ -83,11 +83,7 @@ fn packed_scope_names_iterate_as_given() {
     assert_eq!(ScopeNames::from_iter([]).iter().count(), 0);
 }
 
-#[test]
-fn arrays_with_named_properties_keep_both_their_properties_and_their_elements() {
-    // An array keeps a named property store behind its extras (`ArrayObject`): RegExp
-    // results, an array given fields, one in dictionary storage, and copies of each.
-    let source = r#"(function () {
+const ARRAY_NAMED_PROPERTIES_SOURCE: &str = r#"(function () {
         const out = [];
         const match = /(b+)(?<tail>c)?/.exec("aabbbc");
         out.push(match.index, match.input, match[0], match[1], match.groups.tail, match.length);
@@ -116,6 +112,12 @@ fn arrays_with_named_properties_keep_both_their_properties_and_their_elements() 
         out.push(Object.isFrozen(fields), fields.fixed, fields[0]);
         return JSON.stringify(out);
     })()"#;
+
+#[test]
+fn arrays_with_named_properties_keep_both_their_properties_and_their_elements() {
+    // An array keeps a named property store behind its extras (`ArrayObject`): RegExp
+    // results, an array given fields, one in dictionary storage, and copies of each.
+    let source = ARRAY_NAMED_PROPERTIES_SOURCE;
     let (vm, value) = evaluate(source);
     let text = vm.heap.string(value).expect("a string result").to_string();
     let mut sum = 0;

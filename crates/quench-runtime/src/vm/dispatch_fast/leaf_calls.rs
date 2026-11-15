@@ -217,6 +217,24 @@ pub(super) fn lane_cross_leaf_call<H: Host>(
     }
     vm.programs.record_js_jit_lane_entry(target.program(), target.function);
     // SAFETY: as `lane_script_call_leaf`'s window.
+    let registers = unsafe { leaf_window(vm, r, i, target, form, argc, this) };
+    // SAFETY: as `lane_script_call_leaf`'s first record.
+    let base = unsafe { enter_leaf_call(cx, r, ip, target, form, argc, registers) };
+    Some((registers, base))
+}
+
+/// The callee's window of a leaf call: its registers filled for `target`, the `argc` arguments
+/// of the call window `i` copied in, and `this` bound when the form binds it.
+#[inline(always)]
+unsafe fn leaf_window<H: Host>(
+    vm: &mut Vm<H>,
+    r: Registers,
+    i: &LaneInstruction,
+    target: &ScriptCallTarget,
+    form: LeafForm,
+    argc: u16,
+    this: Value,
+) -> Registers {
     let registers = unsafe {
         let registers = vm.lane_stack.values.top();
         fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
@@ -226,7 +244,22 @@ pub(super) fn lane_cross_leaf_call<H: Host>(
     if leaf_binds_this(form) {
         registers.set_this(this);
     }
-    // SAFETY: as `lane_script_call_leaf`'s first record.
+    registers
+}
+
+/// Enters the callee of a leaf call from the caller's lane context: the call is recorded on the
+/// leaf state, the callee's environment is swapped in when its form does, and its program is
+/// entered. Returns the callee's first record.
+#[inline(always)]
+unsafe fn enter_leaf_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    form: LeafForm,
+    argc: u16,
+    registers: Registers,
+) -> Ip {
     let base = unsafe { (*target.view).records() };
     unsafe {
         let caller_program = (*cx).program;
@@ -245,5 +278,5 @@ pub(super) fn lane_cross_leaf_call<H: Host>(
         (*cx).registers = registers;
         (*cx).base = base;
     }
-    Some((registers, base))
+    base
 }

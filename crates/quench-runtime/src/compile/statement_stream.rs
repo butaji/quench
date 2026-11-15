@@ -19,10 +19,10 @@ use super::FunctionCompiler;
 /// The least body, in bytes of source, that streams: below it the tree is small.
 const STREAM_MIN_BODY: u32 = 256 << 10;
 /// The statements, and the arena bytes, of one run.
-const RUN_STATEMENTS: usize = 4096;
-const RUN_BYTES: usize = 1 << 20;
+pub(crate) const RUN_STATEMENTS: usize = 4096;
+pub(crate) const RUN_BYTES: usize = 1 << 20;
 /// The stream's arena: a run releases what it took, so one chunk holds every run.
-const STREAM_ARENA: usize = 2 << 20;
+pub(crate) const STREAM_ARENA: usize = 2 << 20;
 
 /// A function body that compiles from its text as a stream, by its source range between the
 /// braces (offsets into the program's text).
@@ -72,14 +72,7 @@ impl StreamRun {
 /// The function `program` holds alone (as `BodyFacts::check` sees it) when its body may
 /// stream by its size and kind: plain, past the streaming size, without directives.
 pub(super) fn streaming_function<'p, 'a>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
-    let function = match program.body.first()? {
-        Statement::FunctionDeclaration(function) => function,
-        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-            Expression::FunctionExpression(function) => function,
-            _ => return None,
-        },
-        _ => return None,
-    };
+    let function = crate::compile::first_call::nested::alone_function(program)?;
     let body = function.body.as_ref()?;
     (body.span.size() >= STREAM_MIN_BODY && body.directives.is_empty() && !function.generator && !function.r#async).then_some(function)
 }

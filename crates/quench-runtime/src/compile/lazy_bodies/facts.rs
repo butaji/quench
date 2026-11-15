@@ -59,9 +59,7 @@ impl BodyFacts {
             return early.is_some_and(|early| !verify_early() && self.checked_by_parse(program, call_assignment_targets, in_function, early, functions_inside));
         }
         self.streamed.extend(crate::compile::statement_stream::streamable_start(program));
-        if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
-            eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, self.call_only_deferred, crate::compile::call_only::compiles_at_load(program, false, false));
-        }
+        trace_early_stat(program, early, self.call_only_deferred);
         if let Some(early) = early
             && !verify_early()
             && self.checked_by_parse(program, call_assignment_targets, in_function, early, true)
@@ -71,34 +69,20 @@ impl BodyFacts {
         // Its early errors are OXC's alone: the program carries the strictness the body
         // inherits as a directive, which `early::program_early_errors` exists to supply where
         // OXC cannot see it (a whole program in inherited strict code).
-        if crate::compile::stack::validate(program).is_err()
-            || call_assignment_targets && crate::compile::annex_b_targets::invalid_target(program).is_some()
-        {
+        if syntax_rejected(program, call_assignment_targets) {
             self.failed = true;
             return true;
         }
         let built = crate::compile::semantic_stats::builder(program).with_check_syntax_error(true).build(program);
-        if verify_early() && early.is_some() && !built.diagnostics.is_empty() {
-            eprintln!("early-verify: parse sure but semantic reports at {}: {:?}", program.span.start, built.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>());
-        }
+        trace_early_diagnostics(program, early, &built.diagnostics);
         if !built.diagnostics.is_empty() {
             self.failed = true;
             return true;
         }
         let inner = self.compose_released(program, built.semantic.scoping());
-        if verify_early()
-            && let Some(early) = early
-        {
-            let semantic = inner.bounded.then(|| crate::compile::first_call::free_names(program, built.semantic.scoping(), &inner.free)).flatten();
-            let tracked = parse_free_names(program, early);
-            if semantic.as_ref().map(|names| &names.1) != tracked.as_ref().map(|names| &names.1) {
-                eprintln!("early-verify: free names differ at {}: semantic {:?} parse {:?}", program.span.start, semantic.map(|names| names.1), tracked.map(|names| names.1));
-            }
-        }
+        trace_free_names(program, early, built.semantic.scoping(), &inner);
         #[cfg(feature = "aot")]
-        if let Some((specialized, requests)) = &mut self.native_source_requests {
-            requests.extend(crate::compile::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
-        }
+        self.request_native_sources(program, built.semantic.scoping(), global_script_calls);
         self.add_facts(&built.semantic, program, in_function, &inner);
         true
     }
@@ -143,17 +127,26 @@ impl BodyFacts {
         // No walk over the body runs here but the call assignment target check, so only that
         // needs the depth bound; the compilation that parses it again validates its depth
         // (`reparse`), as V8 reports a body too deep where it compiles it.
-        if call_assignment_targets
-            && (crate::compile::stack::validate(program).is_err() || crate::compile::annex_b_targets::invalid_target(program).is_some())
-        {
+        if call_target_rejected(program, call_assignment_targets) {
             self.failed = true;
             return true;
         }
         if !functions_inside {
-            // No function inside: no call-only facts to find, at load or where it compiles.
-            self.call_only_found.push((program.span.start, program.span.end));
-            self.stream_candidates.extend(crate::compile::statement_stream::streaming_function(program).map(|function| function.span.start));
+            self.note_alone_body(program);
         }
+        self.record_parsed_free_names(program, free_names);
+        true
+    }
+
+    /// A body with no function inside has no call-only facts to find, at load or where it
+    /// compiles, and its statements may stream.
+    fn note_alone_body(&mut self, program: &Program<'_>) {
+        self.call_only_found.push((program.span.start, program.span.end));
+        self.stream_candidates.extend(crate::compile::statement_stream::streaming_function(program).map(|function| function.span.start));
+    }
+
+    /// Records a checked body's free names bounded by its parse, or else marks it unbounded.
+    fn record_parsed_free_names(&mut self, program: &Program<'_>, free_names: Option<(u32, Box<[Box<str>]>)>) {
         match free_names {
             Some((start, names)) => {
                 self.free_names.insert(start, names, crate::compile::first_call::alone_body_end(program));
@@ -164,7 +157,6 @@ impl BodyFacts {
                 }
             }
         }
-        true
     }
 
     /// What the bodies released inside `program` (`ParseOptions::lazy_nested_bodies`), each
@@ -188,6 +180,14 @@ impl BodyFacts {
             }
         }
         released
+    }
+
+    /// Asks the native source of a checked body for its requests (`aot`).
+    #[cfg(feature = "aot")]
+    fn request_native_sources(&mut self, program: &Program<'_>, scoping: &oxc_semantic::Scoping, global_script_calls: &[(String, String)]) {
+        if let Some((specialized, requests)) = &mut self.native_source_requests {
+            requests.extend(crate::compile::Engine::native_source_requests(program, scoping, *specialized, global_script_calls));
+        }
     }
 
     /// Adds the facts of a checked body: its private names, its free names, and its
@@ -223,6 +223,44 @@ fn verify_early() -> bool {
     *VERIFY.get_or_init(|| crate::trace::Dev::EarlyVerify.on())
 }
 
+/// Whether OXC's early checks reject a checked body: a stack too deep for its walks, or, where
+/// the body may be a call assignment target, an invalid one.
+fn syntax_rejected(program: &Program<'_>, call_assignment_targets: bool) -> bool {
+    crate::compile::stack::validate(program).is_err() || call_assignment_targets && crate::compile::annex_b_targets::invalid_target(program).is_some()
+}
+
+/// Whether a body the parse skimmed or checked alone is rejected by its call assignment target
+/// check, which runs only where the body is one (`call_assignment_targets`).
+fn call_target_rejected(program: &Program<'_>, call_assignment_targets: bool) -> bool {
+    call_assignment_targets && (crate::compile::stack::validate(program).is_err() || crate::compile::annex_b_targets::invalid_target(program).is_some())
+}
+
+/// Traces the parse's verdict on a body (`QUENCH_DEV=early-verify`, `stat`).
+fn trace_early_stat(program: &Program<'_>, early: Option<&[&str]>, call_only_deferred: bool) {
+    if verify_early() && crate::trace::Dev::EarlyVerify.value() == Some("stat") {
+        eprintln!("early-stat: {} {} {} deferred={} at_load={}", if early.is_some() { "sure" } else { "unsure" }, program.span.start, program.span.end - program.span.start, call_only_deferred, crate::compile::call_only::compiles_at_load(program, false, false));
+    }
+}
+
+/// Reports a body the parse calls sure whose semantic analysis reports errors.
+fn trace_early_diagnostics(program: &Program<'_>, early: Option<&[&str]>, diagnostics: &[impl ToString]) {
+    if verify_early() && early.is_some() && !diagnostics.is_empty() {
+        eprintln!("early-verify: parse sure but semantic reports at {}: {:?}", program.span.start, diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>());
+    }
+}
+
+/// Reports a body whose free names the parse and the semantic analysis find differently.
+fn trace_free_names(program: &Program<'_>, early: Option<&[&str]>, scoping: &oxc_semantic::Scoping, inner: &Released) {
+    if verify_early()
+        && let Some(early) = early
+    {
+        let semantic = inner.bounded.then(|| crate::compile::first_call::free_names(program, scoping, &inner.free)).flatten();
+        let tracked = parse_free_names(program, early);
+        if semantic.as_ref().map(|names| &names.1) != tracked.as_ref().map(|names| &names.1) {
+            eprintln!("early-verify: free names differ at {}: semantic {:?} parse {:?}", program.span.start, semantic.map(|names| names.1), tracked.map(|names| names.1));
+        }
+    }
+}
 /// A body's free names from the parse's (`LazyBody::early`), as `first_call::free_names`
 /// gives them: with a declaration's own name, None where the body may reach its scopes by
 /// name.

@@ -72,7 +72,6 @@ impl<H: Host> Vm<H> {
     /// once, recording what the walk proves (`Vm::prove_load`). Keys no proof covers, and
     /// receivers no proof starts from, take the plain walk.
     pub(in crate::vm) fn ordinary_chain_read_proved(&mut self, object: Value, atom: Atom) -> Option<ChainRead> {
-        use super::super::symbol_load_proof::SymbolLoadAnswer;
         if !self.plain_named_key(atom) {
             return self.ordinary_chain_read(object, atom);
         }
@@ -87,45 +86,51 @@ impl<H: Host> Vm<H> {
             return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
         }
         let epoch = crate::heap::prototype_layout_epoch();
-        // A proof's shape is an ordinary one; side descriptors could name the key off it.
-        let inherits = !data.has_side_descriptors();
-        match self.symbol_load_proofs.answer(data.layout_id(), key, epoch) {
-            // SAFETY: the proof recorded this slot for an own data property of this shape.
-            Some(SymbolLoadAnswer::Own(slot)) => {
-                return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
-            }
-            Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
-                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
-                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
-                    _ => self.proof_holder(data, hops)?,
-                };
-                // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
-                if let Some(value) = unsafe { self.heap.property_get_shaped(holder, slot as usize) } {
-                    return Some(ChainRead::Value(value));
-                }
-            }
-            Some(SymbolLoadAnswer::Absent) if inherits => {
-                return Some(ChainRead::Absent);
-            }
-            // An inherited accessor (a class getter, as reactive state's computed reads are):
-            // its getter from the holder's slot, without the walk.
-            Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits => {
-                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
-                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
-                    _ => self.proof_holder(data, hops)?,
-                };
-                if let Some(attributes) = self.slot_attributes(holder, slot as usize)
-                    && attributes.accessor
-                {
-                    return Some(ChainRead::Getter(attributes.getter));
-                }
-            }
-            _ => {}
+        if let Some(read) = self.recorded_read(data, key, epoch)? {
+            return Some(read);
         }
         match self.prove_load(object, key, epoch) {
             super::ProvedLoad::Value(value) => Some(ChainRead::Value(value)),
             super::ProvedLoad::Absent => Some(ChainRead::Absent),
             super::ProvedLoad::Getter | super::ProvedLoad::Unproved => self.ordinary_chain_read(object, atom),
+        }
+    }
+
+    /// The read the proof recorded for `key` on `data` answers, when it settles the read without
+    /// the walk: `Some(None)` where the walk must run, and `None` when the read ends with no
+    /// answer at all. A proof's shape is an ordinary one, so side descriptors could name the key
+    /// off it: inherited answers need none.
+    fn recorded_read(&self, data: &crate::heap::Object, key: PropertyKey, epoch: u64) -> Option<Option<ChainRead>> {
+        use super::super::symbol_load_proof::SymbolLoadAnswer;
+        let inherits = !data.has_side_descriptors();
+        Some(match self.symbol_load_proofs.answer(data.layout_id(), key, epoch) {
+            // SAFETY: the proof recorded this slot for an own data property of this shape.
+            Some(SymbolLoadAnswer::Own(slot)) => Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) })),
+            Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
+                let holder = self.recorded_holder(data, key, hops)?;
+                // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
+                unsafe { self.heap.property_get_shaped(holder, slot as usize) }.map(ChainRead::Value)
+            }
+            Some(SymbolLoadAnswer::Absent) if inherits => Some(ChainRead::Absent),
+            // An inherited accessor (a class getter, as reactive state's computed reads are):
+            // its getter from the holder's slot, without the walk.
+            Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits => {
+                let holder = self.recorded_holder(data, key, hops)?;
+                match self.slot_attributes(holder, slot as usize) {
+                    Some(attributes) if attributes.accessor => Some(ChainRead::Getter(attributes.getter)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+    }
+
+    /// The object holding a proved inherited key: the holder the proof recorded (id `1 + index`),
+    /// else the object `hops` prototypes past `data`.
+    fn recorded_holder(&self, data: &crate::heap::Object, key: PropertyKey, hops: u8) -> Option<&crate::heap::Object> {
+        match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
+            Some(id) if id != 0 => Some(self.heap.object_record_by_id(id - 1)),
+            _ => self.proof_holder(data, hops),
         }
     }
 

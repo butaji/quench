@@ -136,42 +136,10 @@ impl ProgramEntry {
         }
         module_environment.snap(writer)?;
         import_meta.snap(writer)?;
-        writer.len(module_imports.len());
-        for (slot, import) in module_imports {
-            writer.u16(*slot);
-            match import {
-                ModuleImport::Value(value) => {
-                    writer.u8(0);
-                    writer.value(*value);
-                }
-                ModuleImport::Binding(program, slot, environment) => {
-                    writer.u8(1);
-                    writer.u32(program.raw());
-                    writer.u16(*slot);
-                    writer.value(*environment);
-                }
-            }
-        }
+        write_module_imports(writer, module_imports);
         writer.bool(*module);
         program_scope::write(writer, *scope);
-        match origin {
-            CompilationOrigin::Source => writer.u8(0),
-            CompilationOrigin::SharedScript { source } => {
-                writer.u8(1);
-                writer.u32(source.raw());
-            }
-            CompilationOrigin::Eval { caller } => {
-                writer.u8(2);
-                writer.bool(caller.is_some());
-                if let Some(caller) = caller {
-                    caller.write_snapshot(writer);
-                }
-            }
-            CompilationOrigin::FunctionConstructor { caller } => {
-                writer.u8(3);
-                caller.write_snapshot(writer);
-            }
-        }
+        write_origin(writer, origin);
         script_or_module.snap(writer)?;
         reclaimable.snap(writer)?;
         writer.u64(*pass);
@@ -205,24 +173,10 @@ impl ProgramEntry {
         })?.into_iter().collect();
         let module_environment = Snap::unsnap(reader)?;
         let import_meta = Snap::unsnap(reader)?;
-        let module_imports = read_list(reader, |reader| {
-            let slot = reader.u16()?;
-            let import = match reader.u8()? {
-                0 => ModuleImport::Value(reader.value()?),
-                1 => ModuleImport::Binding(ProgramId::from_raw(reader.u32()?), reader.u16()?, reader.value()?),
-                _ => return Err(SnapshotError("invalid snapshot module import".into())),
-            };
-            Ok((slot, import))
-        })?;
+        let module_imports = read_module_imports(reader)?;
         let module = reader.bool()?;
         let scope = program_scope::read(reader)?;
-        let origin = match reader.u8()? {
-            0 => CompilationOrigin::Source,
-            1 => CompilationOrigin::SharedScript { source: ProgramId::from_raw(reader.u32()?) },
-            2 => CompilationOrigin::Eval { caller: if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None } },
-            3 => CompilationOrigin::FunctionConstructor { caller: JsString::read_snapshot(reader)? },
-            _ => return Err(SnapshotError("invalid snapshot program origin".into())),
-        };
+        let origin = read_origin(reader)?;
         let script_or_module = Snap::unsnap(reader)?;
         let reclaimable: Option<usize> = Snap::unsnap(reader)?;
         let pass = reader.u64()?;
@@ -253,6 +207,72 @@ impl ProgramEntry {
             minor_root_traces: PromotionAge::OLDEST.minors(),
         })
     }
+}
+
+/// Writes a module's imports by slot, each a value or a binding into another program.
+fn write_module_imports(writer: &mut Writer, module_imports: &[(u16, ModuleImport)]) {
+    writer.len(module_imports.len());
+    for (slot, import) in module_imports {
+        writer.u16(*slot);
+        match import {
+            ModuleImport::Value(value) => {
+                writer.u8(0);
+                writer.value(*value);
+            }
+            ModuleImport::Binding(program, slot, environment) => {
+                writer.u8(1);
+                writer.u32(program.raw());
+                writer.u16(*slot);
+                writer.value(*environment);
+            }
+        }
+    }
+}
+
+/// Writes where a program's compilation came from.
+fn write_origin(writer: &mut Writer, origin: &CompilationOrigin) {
+    match origin {
+        CompilationOrigin::Source => writer.u8(0),
+        CompilationOrigin::SharedScript { source } => {
+            writer.u8(1);
+            writer.u32(source.raw());
+        }
+        CompilationOrigin::Eval { caller } => {
+            writer.u8(2);
+            writer.bool(caller.is_some());
+            if let Some(caller) = caller {
+                caller.write_snapshot(writer);
+            }
+        }
+        CompilationOrigin::FunctionConstructor { caller } => {
+            writer.u8(3);
+            caller.write_snapshot(writer);
+        }
+    }
+}
+
+/// Reads the imports `write_module_imports` wrote.
+fn read_module_imports(reader: &mut Reader<'_>) -> SnapshotResult<Vec<(u16, ModuleImport)>> {
+    read_list(reader, |reader| {
+        let slot = reader.u16()?;
+        let import = match reader.u8()? {
+            0 => ModuleImport::Value(reader.value()?),
+            1 => ModuleImport::Binding(ProgramId::from_raw(reader.u32()?), reader.u16()?, reader.value()?),
+            _ => return Err(SnapshotError("invalid snapshot module import".into())),
+        };
+        Ok((slot, import))
+    })
+}
+
+/// Reads the origin `write_origin` wrote.
+fn read_origin(reader: &mut Reader<'_>) -> SnapshotResult<CompilationOrigin> {
+    Ok(match reader.u8()? {
+        0 => CompilationOrigin::Source,
+        1 => CompilationOrigin::SharedScript { source: ProgramId::from_raw(reader.u32()?) },
+        2 => CompilationOrigin::Eval { caller: if reader.bool()? { Some(JsString::read_snapshot(reader)?) } else { None } },
+        3 => CompilationOrigin::FunctionConstructor { caller: JsString::read_snapshot(reader)? },
+        _ => return Err(SnapshotError("invalid snapshot program origin".into())),
+    })
 }
 
 impl ProgramStore {

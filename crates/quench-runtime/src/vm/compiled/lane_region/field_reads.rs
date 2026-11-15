@@ -99,16 +99,7 @@ impl Lowering<'_, '_> {
             Some(ty) => ty,
             None => self.prove_held_slot(state, instruction, (value, known.is_none()), exit),
         };
-        // A fused chain can consume an existing first-slot proof, but its guest
-        // result names the final slot. Do not retain a new anonymous intermediate
-        // solely for forwarding; the existing proof needs no duplicate update.
-        if let Some((owner, atom)) = field.filter(|_| single) {
-            let read = FieldValue { owner, atom, value, ty };
-            match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
-                Some(field) => *field = read,
-                None => state.proofs.fields.push(read),
-            }
-        }
+        record_field_read(state, field.filter(|_| single), value, ty);
         let destination = instruction.result_register();
         let described = if ty == Type::INT32 { Type::ANY } else { ty };
         self.define(state, destination, value, RegisterFact::definition(described, Representation::Tagged));
@@ -150,5 +141,18 @@ impl Lowering<'_, '_> {
         self.builder.def_var(variable, int);
         state.values[usize::from(destination)] = RegisterFact { tagged: TaggedView::Value(value),
             ..RegisterFact::definition(Type::INT32, Representation::Int32) };
+    }
+}
+
+/// Records the proof of a one-read lookup of `field` (its owner and atom) as `value` of type `ty`,
+/// replacing an earlier proof of the same slot. A fused chain can consume an existing first-slot
+/// proof, but its guest result names the final slot: no new anonymous intermediate is retained
+/// solely for forwarding, and the existing proof needs no duplicate update.
+fn record_field_read(state: &mut State, field: Option<(Option<Register>, Atom)>, value: ir::Value, ty: Type) {
+    let Some((owner, atom)) = field else { return };
+    let read = FieldValue { owner, atom, value, ty };
+    match state.proofs.fields.iter_mut().find(|field| field.owner == owner && field.atom == atom) {
+        Some(field) => *field = read,
+        None => state.proofs.fields.push(read),
     }
 }

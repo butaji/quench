@@ -14,12 +14,7 @@ macro_rules! with_binding_site_pc {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn module_import_value(
-        &self,
-        program: ProgramId,
-        function: u32,
-        slot: usize,
-    ) -> Option<Value> {
+    pub(super) fn module_import_value(&self, program: ProgramId, function: u32, slot: usize) -> Option<Value> {
         if function != super::ROOT_FUNCTION_ID {
             return None;
         }
@@ -84,13 +79,7 @@ impl<H: Host> Vm<H> {
             return self.try_settling_call(p, f, i, pc, callee, target);
         }
         #[cfg(feature = "profile-lane-exits")]
-        super::lane_exits::call_target(
-            self.active_program.raw(),
-            self.frames[f].function,
-            pc as u32,
-            callee,
-            target.1,
-        );
+        super::lane_exits::call_target(self.active_program.raw(), self.frames[f].function, pc as u32, callee, target.1);
         self.profile.call_source(CallSource::Dynamic);
         let window = i.call_window();
         // CallArray's input is an already materialized argument array. Copy its
@@ -650,11 +639,7 @@ impl<H: Host> Vm<H> {
                 self.initialize_this_binding(p, f, value)?;
             }
             Op::CacheTemplateObject => {
-                let key = (
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    i.template_site_index(),
-                );
+                let key = (self.frames[f].program, self.frames[f].function, i.template_site_index());
                 let value = if let Some(value) = self.realm.template_objects.get(&key).copied() {
                     value
                 } else {
@@ -665,11 +650,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.register_a(), value);
             }
             Op::LoadCachedTemplateObject => {
-                let key = (
-                    self.frames[f].program,
-                    self.frames[f].function,
-                    i.template_site_index(),
-                );
+                let key = (self.frames[f].program, self.frames[f].function, i.template_site_index());
                 let value = self
                     .realm
                     .template_objects
@@ -685,11 +666,7 @@ impl<H: Host> Vm<H> {
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
                 let v = if module_root {
                     let cached = self
-                        .cached_functions_in_environment(
-                            self.frames[f].program,
-                            i.closure_function_index(),
-                            env,
-                        )
+                        .cached_functions_in_environment(self.frames[f].program, i.closure_function_index(), env)
                         .next();
                     match cached {
                         Some(function) => function,
@@ -826,9 +803,7 @@ impl<H: Host> Vm<H> {
                     && self.own_property(object, atom).is_none()
                     && self.property_accessor(object, atom).is_none()
                 {
-                    return Err(
-                        self.type_error(p, "private member is not present on this object".into())
-                    );
+                    return Err(self.type_error(p, "private member is not present on this object".into()));
                 }
             }
             Op::PrivateIn => {

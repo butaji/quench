@@ -16,6 +16,9 @@ use std::time::Instant;
 use super::{LaneBody, LaneView};
 use super::super::compiled::tier_policy::PER_MILLE;
 
+/// The divisor that picks the middle of an audit's sorted epoch samples (its median).
+const MEDIAN_DIVISOR: usize = 2;
+
 /// The most epochs a side keeps (`audit_samples` is capped by it).
 const MAX_EPOCHS: usize = 32;
 
@@ -98,7 +101,7 @@ impl LaneView {
         let median = |side: usize| {
             let mut nanos = epochs.nanos[side][..samples].to_vec();
             nanos.sort_unstable();
-            u64::from(nanos[samples / 2])
+            u64::from(nanos[samples / MEDIAN_DIVISOR])
         };
         let verdict = Verdict::of(median(BODY), median(INTERPRETER), self.tiers.lane_body.audit_margin_permille);
         self.tier().body_stats.audit.set(Some(verdict));

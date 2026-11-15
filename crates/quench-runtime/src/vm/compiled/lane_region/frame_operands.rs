@@ -169,6 +169,10 @@ pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, regis
     int
 }
 
+/// The most number projections a block keeps proved: four inline capacities, so a common block
+/// never spills them, and a larger one drops the excess proofs rather than growing them.
+const NUMBER_PROOF_CAP: usize = 4 * INLINE_NUMBER_PROJECTIONS;
+
 /// `register`'s binary64 value, proving Number where the fact does not.
 pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, otherwise: ir::Block) -> ir::Value {
@@ -184,31 +188,45 @@ pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, re
             let int = builder.use_var(variable);
             super::super::super::object_slots::emit(builder).i32_to_f64(int)
         }
-        Representation::Int64 => {
-            let variable = register_long(builder, registers, index);
-            let word = builder.use_var(variable);
-            let number = emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
-            let variable = register_float(builder, registers, index);
-            builder.def_var(variable, number);
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(fact.ty, Representation::Float64) };
-            number
-        }
-        Representation::Tagged => {
-            let bits = register_tagged(builder, registers, state, register);
-            let bits = builder.func.dfg.resolve_aliases(bits);
-            let known = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number);
-            let number = if let Some(number) = known { number } else if fact.ty.is_subtype(Type::NUMBER) {
-                emit_known_number(builder, bits)
-            } else {
-                emit_js_tagged_number(builder, bits, otherwise)
-            };
-            if known.is_none() && state.proofs.numbers.len() < 4 * INLINE_NUMBER_PROJECTIONS { state.proofs.numbers.push((bits, number)); }
-            let variable = register_float(builder, registers, index);
-            builder.def_var(variable, number);
-            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
-                ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
-            number
-        }
+        Representation::Int64 => long_number_value(builder, registers, state, register, fact.ty),
+        Representation::Tagged => tagged_number_value(builder, registers, state, (register, fact.ty), otherwise),
     }
+}
+
+/// The binary64 view of the int64 word in `register`, defined as a Float64 register from now on.
+fn long_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+    register: Register, ty: Type) -> ir::Value {
+    let index = usize::from(register);
+    let variable = register_long(builder, registers, index);
+    let word = builder.use_var(variable);
+    let number = emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
+    let variable = register_float(builder, registers, index);
+    builder.def_var(variable, number);
+    state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+        ..RegisterFact::definition(ty, Representation::Float64) };
+    number
+}
+
+/// The binary64 view of the tagged value in `register`: a number the block already proved, a
+/// Number it is typed as, or a value tested at `otherwise`. The view is defined as a Float64
+/// register from now on.
+fn tagged_number_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
+    (register, ty): (Register, Type), otherwise: ir::Block) -> ir::Value {
+    let index = usize::from(register);
+    let bits = register_tagged(builder, registers, state, register);
+    let bits = builder.func.dfg.resolve_aliases(bits);
+    let known = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number);
+    let number = match known {
+        Some(number) => number,
+        None if ty.is_subtype(Type::NUMBER) => emit_known_number(builder, bits),
+        None => emit_js_tagged_number(builder, bits, otherwise),
+    };
+    if known.is_none() && state.proofs.numbers.len() < NUMBER_PROOF_CAP {
+        state.proofs.numbers.push((bits, number));
+    }
+    let variable = register_float(builder, registers, index);
+    builder.def_var(variable, number);
+    state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+        ..RegisterFact::definition(Type::NUMBER, Representation::Float64) };
+    number
 }

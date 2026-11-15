@@ -138,6 +138,20 @@ impl VectorRegion {
         note_allocation(vm);
     }
 
+    /// Whether the run's own back edge repeats it: unless a safepoint is due there (`may_loop`
+    /// false), the closing comparison holds and no fuel is out (`below_floor`).
+    #[inline(always)]
+    fn repeats(&self, r: Registers, may_loop: bool, below_floor: impl Fn() -> bool) -> bool {
+        let Some(looping) = self.looping.filter(|_| may_loop) else {
+            return false;
+        };
+        let right = match looping.right {
+            I32Right::Register(register) => r.i32(register),
+            I32Right::Immediate(value) => value,
+        };
+        looping.comparison.evaluate(r.i32(looping.left), right) == Ok(1) && !below_floor()
+    }
+
     /// Run the steps; `Err(at)` names the record the general path executes, once the
     /// registers it may read hold their values.
     #[inline(always)]
@@ -150,140 +164,198 @@ impl VectorRegion {
         may_loop: bool,
         below_floor: impl Fn() -> bool,
     ) -> Result<(), u32> {
-        let mut bank: Bank = [std::mem::MaybeUninit::uninit(); BANK_REGISTERS];
-        // SAFETY (bank reads): the builder enters every register before a step reads it
-        // from the bank, and names only registers below `BANK_REGISTERS`.
-        macro_rules! get {
-            ($register:expr) => {
-                unsafe { bank.get_unchecked(usize::from($register)).assume_init() }
-            };
-        }
-        macro_rules! put {
-            ($register:expr, $bits:expr) => {{
-                let bits: u128 = $bits;
-                unsafe { bank.get_unchecked_mut(usize::from($register)).write(bits) };
-            }};
-        }
-        // Whether this is a repeated iteration of the run's own loop (`RegionLoop`).
-        let mut repeated = false;
-        macro_rules! leave {
-            ($leave:expr, $at:expr) => {{
-                if repeated && let Some(looping) = &self.looping {
-                    self.box_out(looping.carried, &bank, vm, r);
-                }
-                self.box_out($leave, &bank, vm, r);
-                return Err($at);
-            }};
-        }
-        let place = |bank: &Bank, place: Place| match place {
-            // SAFETY: as for `get!`.
-            Place::Bank(register) => unsafe { bank.get_unchecked(usize::from(register)).assume_init() },
-            Place::I32(register) => u128::from(r.i32(register) as u32),
-        };
+        let mut exec = Exec { bank: [std::mem::MaybeUninit::uninit(); BANK_REGISTERS], repeated: false, vm, r, memory, integers };
         loop {
-        for step in &self.steps {
-            match *step {
-                // A repeated iteration's bank already holds every register the run unboxes,
-                // newest (`vector_regions` admits only such loops).
-                Step::Unbox { .. } if repeated => {}
-                Step::Unbox { register, at, leave } => match vm.heap.v128(r.get(register)) {
-                    Some(bytes) => put!(register, u128::from_le_bytes(bytes)),
-                    None => leave!(leave, at),
-                },
-                Step::Bits { kernel, a, b, c } => put!(a, kernel.apply(get!(b), get!(c))),
-                Step::Count { kernel, a, b, count } => put!(a, kernel.apply(get!(b), u128::from(count))),
-                Step::Lanes { kernel, lane, a, b, c } => {
-                    let left = place(&bank, b);
-                    let right = c.map_or(0, |c| place(&bank, c));
-                    let bits = kernel.apply_bits(left, right, lane);
-                    match a {
-                        Place::Bank(register) => put!(register, bits),
-                        Place::I32(register) => r.set(register, integers.encode(bits as u32 as i32)),
-                    }
+            for step in &self.steps {
+                exec.step(self, step)?;
+            }
+            if !self.repeats(r, may_loop, &below_floor) {
+                break;
+            }
+            exec.repeated = true;
+        }
+        if self.end.start != self.end.end {
+            self.box_out(self.end, &exec.bank, exec.vm, r);
+        }
+        Ok(())
+    }
+}
+
+/// A run's execution state: its bank of unboxed vectors, the registers and memory its steps
+/// read and write, and whether the run is on a repeated iteration of its loop.
+struct Exec<'a, H: Host> {
+    bank: Bank,
+    repeated: bool,
+    vm: &'a mut Vm<H>,
+    r: Registers,
+    memory: MemoryView,
+    integers: crate::value::IntegerEncoding,
+}
+
+impl<H: Host> Exec<'_, H> {
+    /// The bits of a bank register.
+    // SAFETY (bank reads): the builder enters every register before a step reads it from the
+    // bank, and names only registers below `BANK_REGISTERS`.
+    #[inline(always)]
+    fn get(&self, register: u16) -> u128 {
+        unsafe { self.bank.get_unchecked(usize::from(register)).assume_init() }
+    }
+
+    #[inline(always)]
+    fn put(&mut self, register: u16, bits: u128) {
+        let bits: u128 = bits;
+        unsafe { self.bank.get_unchecked_mut(usize::from(register)).write(bits) };
+    }
+
+    /// The bits of a lane operand, from the bank or a slot.
+    #[inline(always)]
+    fn place(&self, place: Place) -> u128 {
+        match place {
+            // SAFETY: as for `get`.
+            Place::Bank(register) => self.get(register),
+            Place::I32(register) => u128::from(self.r.i32(register) as u32),
+        }
+    }
+
+    /// Leaves the run at record `at`, boxing what the leave names; a repeated iteration also
+    /// boxes the registers its loop carries. Returns the record.
+    #[inline(always)]
+    fn leave(&mut self, region: &VectorRegion, leave: Leave, at: u32) -> u32 {
+        if self.repeated && let Some(looping) = &region.looping {
+            region.box_out(looping.carried, &self.bank, self.vm, self.r);
+        }
+        region.box_out(leave, &self.bank, self.vm, self.r);
+        at
+    }
+
+    /// Runs one step; `Err(at)` leaves the run at record `at`.
+    #[inline(always)]
+    fn step(&mut self, region: &VectorRegion, step: &Step) -> Result<(), u32> {
+        match *step {
+            // A repeated iteration's bank already holds every register the run unboxes,
+            // newest (`vector_regions` admits only such loops).
+            Step::Unbox { .. } if self.repeated => Ok(()),
+            Step::Unbox { register, at, leave } => match self.vm.heap.v128(self.r.get(register)) {
+                Some(bytes) => {
+                    self.put(register, u128::from_le_bytes(bytes));
+                    Ok(())
                 }
-                Step::Vector { bits, lane, a, b, c } => put!(a, bits(get!(b), get!(c), lane)),
-                Step::Shuffle { form, a, b, c } => put!(a, form.apply(get!(b), get!(c))),
-                Step::MultiplyWords { a, b, c, left, right } => {
-                    put!(a, crate::wasm::simd::multiply_words(get!(b), get!(c), left, right))
+                None => Err(self.leave(region, leave, at)),
+            },
+            Step::Bits { .. }
+            | Step::Count { .. }
+            | Step::Vector { .. }
+            | Step::Shuffle { .. }
+            | Step::MultiplyWords { .. }
+            | Step::VectorMove { .. }
+            | Step::VectorConstant { .. } => {
+                self.vector_step(step);
+                Ok(())
+            }
+            Step::Lanes { .. } | Step::Move { .. } | Step::Constant { .. } | Step::I32 { .. } | Step::Address { .. } => self.scalar_step(region, step),
+            Step::Load { .. } | Step::LoadAt { .. } | Step::StoreAt { .. } | Step::Store { .. } => self.memory_step(region, step),
+        }
+    }
+
+    /// A step that computes a vector in the bank from bank registers.
+    #[inline(always)]
+    fn vector_step(&mut self, step: &Step) {
+        match *step {
+            Step::Bits { kernel, a, b, c } => self.put(a, kernel.apply(self.get(b), self.get(c))),
+            Step::Count { kernel, a, b, count } => self.put(a, kernel.apply(self.get(b), u128::from(count))),
+            Step::Vector { bits, lane, a, b, c } => self.put(a, bits(self.get(b), self.get(c), lane)),
+            Step::Shuffle { form, a, b, c } => self.put(a, form.apply(self.get(b), self.get(c))),
+            Step::MultiplyWords { a, b, c, left, right } => {
+                self.put(a, crate::wasm::simd::multiply_words(self.get(b), self.get(c), left, right))
+            }
+            Step::VectorMove { a, b } => self.put(a, self.get(b)),
+            Step::VectorConstant { a, bits } => self.put(a, bits),
+            _ => {}
+        }
+    }
+
+    /// A step on scalars and lanes: moves and constants, lane operators, i32 operators that may
+    /// leave, and addresses.
+    #[inline(always)]
+    fn scalar_step(&mut self, region: &VectorRegion, step: &Step) -> Result<(), u32> {
+        match *step {
+            Step::Lanes { kernel, lane, a, b, c } => {
+                let left = self.place(b);
+                let right = c.map_or(0, |c| self.place(c));
+                let bits = kernel.apply_bits(left, right, lane);
+                match a {
+                    Place::Bank(register) => self.put(register, bits),
+                    Place::I32(register) => self.r.set(register, self.integers.encode(bits as u32 as i32)),
                 }
-                Step::VectorMove { a, b } => put!(a, get!(b)),
-                Step::Move { a, b } => r.set(a, r.get(b)),
-                Step::Constant { a, value } => r.set(a, value),
-                Step::VectorConstant { a, bits } => put!(a, bits),
-                Step::I32 { operator, a, b, right, at, leave } => {
-                    let right = match right {
-                        I32Right::Register(register) => r.i32(register),
-                        I32Right::Immediate(value) => value,
-                    };
-                    match operator.evaluate(r.i32(b), right) {
-                        Ok(value) => r.set(a, integers.encode(value)),
-                        Err(_) => leave!(leave, at),
-                    }
+            }
+            Step::Move { a, b } => self.r.set(a, self.r.get(b)),
+            Step::Constant { a, value } => self.r.set(a, value),
+            Step::I32 { operator, a, b, right, at, leave } => {
+                let right = match right {
+                    I32Right::Register(register) => self.r.i32(register),
+                    I32Right::Immediate(value) => value,
+                };
+                match operator.evaluate(self.r.i32(b), right) {
+                    Ok(value) => self.r.set(a, self.integers.encode(value)),
+                    Err(_) => return Err(self.leave(region, leave, at)),
                 }
-                Step::Address { a, index, offset } => {
-                    // A memory32 index zero-extends; with the static offset it stays below
-                    // 2^33, which a slot holds untagged as `Vm::encode_bits64` would.
-                    let address = u64::from(r.i32(index) as u32) + offset;
-                    r.set(a, Value::from_bits64(address).expect("an untagged memory32 address"));
-                }
-                Step::Load { a, address, at, leave } => {
-                    match r.get(address).bits64().and_then(|address| vector_bytes(memory, address)) {
-                        // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
-                        Some(bytes) => put!(a, u128::from_le_bytes(unsafe { bytes.read() })),
-                        None => leave!(leave, at),
-                    }
-                }
-                Step::LoadAt { a, address, index, offset, at, leave } => {
-                    let effective = u64::from(r.i32(index) as u32) + offset;
-                    match vector_bytes(memory, effective) {
-                        // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
-                        Some(bytes) => put!(a, u128::from_le_bytes(unsafe { bytes.read() })),
-                        None => {
-                            r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
-                            leave!(leave, at)
-                        }
-                    }
-                }
-                Step::StoreAt { value, address, index, offset, at, leave } => {
-                    let effective = u64::from(r.i32(index) as u32) + offset;
-                    match vector_bytes(memory, effective) {
-                        Some(bytes) => {
-                            let bits = get!(value);
-                            // SAFETY: as for `Step::Load`.
-                            unsafe { bytes.write(bits.to_le_bytes()) }
-                        }
-                        None => {
-                            r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
-                            leave!(leave, at)
-                        }
-                    }
-                }
-                Step::Store { value, address, at, leave } => {
-                    match r.get(address).bits64().and_then(|address| vector_bytes(memory, address)) {
-                        Some(bytes) => {
-                            let bits = get!(value);
-                            // SAFETY: as for `Step::Load`.
-                            unsafe { bytes.write(bits.to_le_bytes()) }
-                        }
-                        None => leave!(leave, at),
+            }
+            Step::Address { a, index, offset } => {
+                // A memory32 index zero-extends; with the static offset it stays below
+                // 2^33, which a slot holds untagged as `Vm::encode_bits64` would.
+                let address = u64::from(self.r.i32(index) as u32) + offset;
+                self.r.set(a, Value::from_bits64(address).expect("an untagged memory32 address"));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// A step that accesses memory: a vector load or store, direct or at an address the run
+    /// computed. An access outside the memory leaves the run.
+    #[inline(always)]
+    fn memory_step(&mut self, region: &VectorRegion, step: &Step) -> Result<(), u32> {
+        let memory = self.memory;
+        match *step {
+            Step::Load { a, address, at, leave } => match self.r.get(address).bits64().and_then(|address| vector_bytes(memory, address)) {
+                // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
+                Some(bytes) => self.put(a, u128::from_le_bytes(unsafe { bytes.read() })),
+                None => return Err(self.leave(region, leave, at)),
+            },
+            Step::LoadAt { a, address, index, offset, at, leave } => {
+                let effective = u64::from(self.r.i32(index) as u32) + offset;
+                match vector_bytes(memory, effective) {
+                    // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
+                    Some(bytes) => self.put(a, u128::from_le_bytes(unsafe { bytes.read() })),
+                    None => {
+                        self.r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
+                        return Err(self.leave(region, leave, at));
                     }
                 }
             }
-        }
-        // The run's own back edge, unless a safepoint is due there: then, as when the loop
-        // exits, the closing jump's record runs after the run.
-        let Some(looping) = self.looping.filter(|_| may_loop) else { break };
-        let right = match looping.right {
-            I32Right::Register(register) => r.i32(register),
-            I32Right::Immediate(value) => value,
-        };
-        if looping.comparison.evaluate(r.i32(looping.left), right) != Ok(1) || below_floor() {
-            break;
-        }
-        repeated = true;
-        }
-        if self.end.start != self.end.end {
-            self.box_out(self.end, &bank, vm, r);
+            Step::StoreAt { value, address, index, offset, at, leave } => {
+                let effective = u64::from(self.r.i32(index) as u32) + offset;
+                match vector_bytes(memory, effective) {
+                    Some(bytes) => {
+                        let bits = self.get(value);
+                        // SAFETY: as for `Step::Load`.
+                        unsafe { bytes.write(bits.to_le_bytes()) }
+                    }
+                    None => {
+                        self.r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
+                        return Err(self.leave(region, leave, at));
+                    }
+                }
+            }
+            Step::Store { value, address, at, leave } => match self.r.get(address).bits64().and_then(|address| vector_bytes(memory, address)) {
+                Some(bytes) => {
+                    let bits = self.get(value);
+                    // SAFETY: as for `Step::Load`.
+                    unsafe { bytes.write(bits.to_le_bytes()) }
+                }
+                None => return Err(self.leave(region, leave, at)),
+            },
+            _ => {}
         }
         Ok(())
     }
@@ -590,94 +662,19 @@ impl Builder<'_> {
         if [a, b, c].into_iter().any(|register| usize::from(register) >= BANK_REGISTERS) {
             return None;
         }
-        let vector = |ty| ty == crate::WasmType::V128;
         // A scalar read of a register the bank holds would need it boxed mid-run.
-        let scalar_reads: &[u16] = match admitted {
-            Admitted::Simd { kernel, .. } => match (vector(kernel.left), kernel.right.map(vector)) {
-                (false, Some(false)) => &[b, c],
-                (false, _) => &[b],
-                (true, Some(false)) => &[c],
-                (true, _) => &[],
-            },
-            Admitted::I32(_, None) => &[b, c],
-            Admitted::I32(_, Some(_)) | Admitted::Address(_) => &[b],
-            Admitted::Load | Admitted::Store => &[c],
-            _ => &[],
-        };
-        if scalar_reads.iter().any(|&register| self.in_bank(register)) {
+        if scalar_reads(admitted, b, c).into_iter().flatten().any(|register| self.in_bank(register)) {
             return None;
         }
         match admitted {
-            Admitted::Simd { kernel, lane } => {
-                let result = kernel.result_type(lane);
-                let count = kernel
-                    .right
-                    .filter(|&ty| ty == crate::WasmType::I32)
-                    .and_then(|_| self.constants[usize::from(c)]?.as_int());
-                let bits = (vector(kernel.left)
-                    && kernel.right.is_none_or(|ty| vector(ty) || count.is_some())
-                    && vector(result))
-                .then(|| BitKernel::of(instruction.imm(), count))
-                .flatten();
-                for (register, ty) in [(b, Some(kernel.left)), (c, kernel.right)] {
-                    match ty {
-                        Some(ty) if vector(ty) => self.vector(pc, register),
-                        // A folded count reads no slot.
-                        Some(_) if !matches!(bits, Some(BitKernel::Shift(_))) => self.scalar(register),
-                        _ => {}
-                    }
-                }
-                let place = |register, ty| if vector(ty) { Place::Bank(register) } else { Place::I32(register) };
-                let step = match (bits, count) {
-                    (Some(kernel @ BitKernel::Shift(_)), Some(count)) => {
-                        Step::Count { kernel, a, b, count: count as u32 }
-                    }
-                    (Some(kernel), _) => Step::Bits { kernel, a, b, c },
-                    (None, _) if vector(result) && vector(kernel.left) && kernel.right.is_none_or(vector) => Step::Vector {
-                        bits: kernel.bits,
-                        lane,
-                        a,
-                        b,
-                        c: if kernel.right.is_some() { c } else { b },
-                    },
-                    (None, _) => Step::Lanes {
-                        kernel,
-                        lane,
-                        a: place(a, result),
-                        b: place(b, kernel.left),
-                        c: kernel.right.map(|ty| place(c, ty)),
-                    },
-                };
-                match self.fused(pc, step) {
-                    Some(fused) => {
-                        self.steps.truncate(self.steps.len() - FUSED_STEPS);
-                        self.steps.push(fused);
-                    }
-                    None => self.steps.push(step),
-                }
-                self.write(a, vector(result), None);
-            }
+            Admitted::Simd { kernel, lane } => self.add_simd(pc, instruction, kernel, lane),
             Admitted::Shuffle(form) => {
                 self.vector(pc, b);
                 self.vector(pc, c);
                 self.steps.push(Step::Shuffle { form, a, b, c });
                 self.write(a, true, None);
             }
-            Admitted::Move => {
-                let constant = self.constants[usize::from(b)];
-                if self.in_bank(b) {
-                    self.steps.push(Step::VectorMove { a, b });
-                    self.write(a, true, None);
-                    self.vectors -= 1;
-                } else if register_in(self.pending, usize::from(b)) {
-                    // The copy is the constant, pending as its source is.
-                    self.write(a, false, constant);
-                    self.pending |= RegisterSet::bit(usize::from(a));
-                } else {
-                    self.steps.push(Step::Move { a, b });
-                    self.write(a, false, constant);
-                }
-            }
+            Admitted::Move => self.add_move(a, b),
             Admitted::Constant(value) => {
                 self.write(a, false, Some(value));
                 self.pending |= RegisterSet::bit(usize::from(a));
@@ -686,49 +683,171 @@ impl Builder<'_> {
                 self.steps.push(Step::VectorConstant { a, bits });
                 self.write(a, true, None);
             }
-            Admitted::I32(operator, immediate) => {
-                self.scalar(b);
-                if immediate.is_none() {
-                    self.scalar(c);
-                }
-                // Only a division can trap, which its operator shows dividing by zero; any
-                // other operator never leaves, so its step needs no registers boxed.
-                let leave = if operator.evaluate(1, 0).is_err() {
-                    self.leave(pc)
-                } else {
-                    Leave { start: 0, end: 0 }
-                };
-                let right = immediate.map_or(I32Right::Register(c), I32Right::Immediate);
-                self.steps.push(Step::I32 { operator, a, b, right, at: self.at(pc), leave });
-                self.write(a, false, None);
-            }
+            Admitted::I32(operator, immediate) => self.add_i32(pc, instruction, operator, immediate),
             Admitted::Address(offset) => {
                 self.scalar(b);
                 self.steps.push(Step::Address { a, index: b, offset });
                 self.write(a, false, None);
             }
-            Admitted::Load => {
-                self.scalar(c);
-                let leave = self.leave(pc);
-                let step = match self.folded_address(pc, c) {
-                    Some((index, offset)) => Step::LoadAt { a, address: c, index, offset, at: self.at(pc), leave },
-                    None => Step::Load { a, address: c, at: self.at(pc), leave },
-                };
-                self.steps.push(step);
-                self.write(a, true, None);
-            }
-            Admitted::Store => {
-                self.scalar(c);
-                self.vector(pc, a);
-                let leave = self.leave(pc);
-                let step = match self.folded_address(pc, c) {
-                    Some((index, offset)) => Step::StoreAt { value: a, address: c, index, offset, at: self.at(pc), leave },
-                    None => Step::Store { value: a, address: c, at: self.at(pc), leave },
-                };
-                self.steps.push(step);
-            }
+            Admitted::Load => self.add_load(pc, a, c),
+            Admitted::Store => self.add_store(pc, a, c),
         }
         Some(())
+    }
+
+    /// Add a Simd instruction: its operands are read as vectors or scalars, then one step (fused
+    /// with the steps before it where that computes the same) writes the result.
+    fn add_simd(&mut self, pc: usize, instruction: WideInstruction, kernel: &'static SimdKernel, lane: u8) {
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        let result = kernel.result_type(lane);
+        let count = kernel.right.filter(|&ty| ty == crate::WasmType::I32).and_then(|_| self.constants[usize::from(c)]?.as_int());
+        let bits = (is_vector(kernel.left) && kernel.right.is_none_or(|ty| is_vector(ty) || count.is_some()) && is_vector(result))
+            .then(|| BitKernel::of(instruction.imm(), count))
+            .flatten();
+        self.read_simd_operands(pc, kernel, b, c, bits);
+        let step = match (bits, count) {
+            (Some(kernel @ BitKernel::Shift(_)), Some(count)) => Step::Count { kernel, a, b, count: count as u32 },
+            (Some(kernel), _) => Step::Bits { kernel, a, b, c },
+            (None, _) if is_vector(result) && is_vector(kernel.left) && kernel.right.is_none_or(is_vector) => Step::Vector {
+                bits: kernel.bits,
+                lane,
+                a,
+                b,
+                c: if kernel.right.is_some() { c } else { b },
+            },
+            (None, _) => Step::Lanes {
+                kernel,
+                lane,
+                a: place_of(a, result),
+                b: place_of(b, kernel.left),
+                c: kernel.right.map(|ty| place_of(c, ty)),
+            },
+        };
+        match self.fused(pc, step) {
+            Some(fused) => {
+                self.steps.truncate(self.steps.len() - FUSED_STEPS);
+                self.steps.push(fused);
+            }
+            None => self.steps.push(step),
+        }
+        self.write(a, is_vector(result), None);
+    }
+
+    /// Read the operands of a Simd instruction: vectors enter the bank, and scalars are settled
+    /// (a folded count reads no slot).
+    fn read_simd_operands(&mut self, pc: usize, kernel: &SimdKernel, b: u16, c: u16, bits: Option<BitKernel>) {
+        for (register, ty) in [(b, Some(kernel.left)), (c, kernel.right)] {
+            match ty {
+                Some(ty) if is_vector(ty) => self.vector(pc, register),
+                Some(_) if !matches!(bits, Some(BitKernel::Shift(_))) => self.scalar(register),
+                _ => {}
+            }
+        }
+    }
+
+    /// Add a move of `b` to `a`: a vector moves in the bank, a pending constant stays pending,
+    /// and anything else is copied.
+    fn add_move(&mut self, a: u16, b: u16) {
+        let constant = self.constants[usize::from(b)];
+        if self.in_bank(b) {
+            self.steps.push(Step::VectorMove { a, b });
+            self.write(a, true, None);
+            self.vectors -= 1;
+        } else if register_in(self.pending, usize::from(b)) {
+            // The copy is the constant, pending as its source is.
+            self.write(a, false, constant);
+            self.pending |= RegisterSet::bit(usize::from(a));
+        } else {
+            self.steps.push(Step::Move { a, b });
+            self.write(a, false, constant);
+        }
+    }
+
+    /// Add an i32 operator. Only a division can trap, so only then are its operands boxed for
+    /// the leave.
+    fn add_i32(&mut self, pc: usize, instruction: WideInstruction, operator: I32BinaryOperator, immediate: Option<i32>) {
+        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
+        self.scalar(b);
+        if immediate.is_none() {
+            self.scalar(c);
+        }
+        // Only a division can trap, which its operator shows dividing by zero; any
+        // other operator never leaves, so its step needs no registers boxed.
+        let leave = if operator.evaluate(1, 0).is_err() { self.leave(pc) } else { Leave { start: 0, end: 0 } };
+        let right = immediate.map_or(I32Right::Register(c), I32Right::Immediate);
+        self.steps.push(Step::I32 { operator, a, b, right, at: self.at(pc), leave });
+        self.write(a, false, None);
+    }
+
+    /// Add a load of `a` from the address in `c`, folded into the `Address` step before it
+    /// where that step only computes the address.
+    fn add_load(&mut self, pc: usize, a: u16, c: u16) {
+        self.scalar(c);
+        let leave = self.leave(pc);
+        let step = match self.folded_address(pc, c) {
+            Some((index, offset)) => Step::LoadAt { a, address: c, index, offset, at: self.at(pc), leave },
+            None => Step::Load { a, address: c, at: self.at(pc), leave },
+        };
+        self.steps.push(step);
+        self.write(a, true, None);
+    }
+
+    /// Add a store of the vector `a` to the address in `c`, folded as a load's address is.
+    fn add_store(&mut self, pc: usize, a: u16, c: u16) {
+        self.scalar(c);
+        self.vector(pc, a);
+        let leave = self.leave(pc);
+        let step = match self.folded_address(pc, c) {
+            Some((index, offset)) => Step::StoreAt { value: a, address: c, index, offset, at: self.at(pc), leave },
+            None => Step::Store { value: a, address: c, at: self.at(pc), leave },
+        };
+        self.steps.push(step);
+    }
+}
+
+/// Whether a wasm type is a vector.
+fn is_vector(ty: crate::WasmType) -> bool {
+    ty == crate::WasmType::V128
+}
+
+/// The place a lane operand of type `ty` is read from or written to: the bank for a vector,
+/// the slot for a scalar.
+fn place_of(register: u16, ty: crate::WasmType) -> Place {
+    if is_vector(ty) { Place::Bank(register) } else { Place::I32(register) }
+}
+
+/// The registers an admitted instruction reads as scalars, which must not be in the bank.
+fn scalar_reads(admitted: Admitted, b: u16, c: u16) -> [Option<u16>; 2] {
+    match admitted {
+        Admitted::Simd { kernel, .. } => match (is_vector(kernel.left), kernel.right.map(is_vector)) {
+            (false, Some(false)) => [Some(b), Some(c)],
+            (false, _) => [Some(b), None],
+            (true, Some(false)) => [Some(c), None],
+            (true, _) => [None, None],
+        },
+        Admitted::I32(_, None) => [Some(b), Some(c)],
+        Admitted::I32(_, Some(_)) | Admitted::Address(_) => [Some(b), None],
+        Admitted::Load | Admitted::Store => [Some(c), None],
+        _ => [None, None],
+    }
+}
+
+impl<'a> Builder<'a> {
+    /// An empty run starting at record `start`.
+    fn new(live: &'a RegisterMasks, start: usize) -> Self {
+        Builder {
+            live,
+            start,
+            steps: Vec::new(),
+            spills: Vec::new(),
+            bank: RegisterSet::default(),
+            constants: [None; BANK_REGISTERS],
+            pending: RegisterSet::default(),
+            vectors: 0,
+            last_leave: None,
+            unboxed: RegisterSet::default(),
+            scalar_written: RegisterSet::default(),
+        }
     }
 }
 
@@ -750,19 +869,7 @@ pub(super) fn vector_regions(
     let mut regions = Vec::new();
     let mut pc = 0;
     while pc < decoded.len() {
-        let mut builder = Builder {
-            live,
-            start: pc,
-            steps: Vec::new(),
-            spills: Vec::new(),
-            bank: RegisterSet::default(),
-            constants: [None; BANK_REGISTERS],
-            pending: RegisterSet::default(),
-            vectors: 0,
-            last_leave: None,
-            unboxed: RegisterSet::default(),
-            scalar_written: RegisterSet::default(),
-        };
+        let mut builder = Builder::new(live, pc);
         let mut end = pc;
         while end < decoded.len()
             && (end == pc || !jump_targets.contains(end))
@@ -792,308 +899,4 @@ pub(super) fn vector_regions(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::super::Vm;
-    use crate::{WasmTrap, WasmValue};
-    use wasmparser::{MemArg, Operator, ValType};
-
-    const SOURCE: i32 = 64;
-    const TARGET: i32 = 256;
-    const PAGE: i32 = 65_536;
-    /// The lanes the source vectors hold: carries out of every lane, sign bits, and a low
-    /// word whose products overflow u32.
-    const LEFT: [u64; 2] = [u64::MAX, 0x8000_0000_0000_0001];
-    const RIGHT: [u64; 2] = [1, 0x8000_0000_ffff_ffff];
-
-    fn vector(offset: u64) -> MemArg {
-        MemArg { align: 4, max_align: 4, offset, memory: 0 }
-    }
-    fn word(offset: u64) -> MemArg {
-        MemArg { align: 2, max_align: 2, offset, memory: 0 }
-    }
-    fn local(index: u32) -> Operator<'static> {
-        Operator::LocalGet { local_index: index }
-    }
-    fn constant(value: i32) -> Operator<'static> {
-        Operator::I32Const { value }
-    }
-    fn lanes([low, high]: [u64; 2]) -> u128 {
-        u128::from(low) | (u128::from(high) << 64)
-    }
-    /// `_mm_mul_epu32`'s shuffle: the low u32 of each u64 lane, twice.
-    fn low_words() -> [u8; 16] {
-        std::array::from_fn(|byte| [0u8, 2][(byte / 4) % 2] * 4 + (byte % 4) as u8)
-    }
-
-    /// `body` storing the vector its operators leave at `TARGET + slot * 16`.
-    fn store_at(slot: u64, mut body: Vec<Operator<'static>>) -> Vec<Operator<'static>> {
-        let mut operators = vec![local(1)];
-        operators.append(&mut body);
-        operators.push(Operator::V128Store { memarg: vector(slot * 16) });
-        operators
-    }
-
-    /// Straight-line i64x2 arithmetic, shifts past the lane width (folded and dynamic),
-    /// rotations by 0, 64 and 24 in their shift-or form, and the shuffled extending
-    /// multiply: `lanes(source, target, count)`, the source vectors in locals 3 and 4.
-    fn lane_body() -> Vec<Operator<'static>> {
-        let (v, w) = (|| local(3), || local(4));
-        let rotation = |left: i32, right: i32| {
-            vec![v(), constant(left), Operator::I64x2Shl, v(), constant(right), Operator::I64x2ShrU, Operator::V128Or]
-        };
-        let mut body = vec![
-            local(0),
-            Operator::V128Load { memarg: vector(0) },
-            Operator::LocalSet { local_index: 3 },
-            local(0),
-            Operator::V128Load { memarg: vector(16) },
-            Operator::LocalSet { local_index: 4 },
-        ];
-        for (slot, operators) in [
-            vec![v(), w(), Operator::I64x2Add],
-            vec![v(), w(), Operator::I64x2Sub],
-            vec![v(), w(), Operator::I64x2Mul],
-            vec![v(), constant(69), Operator::I64x2Shl],
-            vec![v(), local(2), Operator::I64x2ShrS],
-            vec![v(), constant(64), Operator::I64x2ShrU],
-            rotation(0, 64),
-            rotation(64, 0),
-            rotation(40, 24),
-            vec![
-                v(),
-                v(),
-                Operator::I8x16Shuffle { lanes: low_words() },
-                w(),
-                w(),
-                Operator::I8x16Shuffle { lanes: low_words() },
-                Operator::I64x2ExtMulLowI32x4U,
-            ],
-            vec![v(), w(), Operator::I32x4Add],
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            body.extend(store_at(slot as u64, operators));
-        }
-        body.push(Operator::End);
-        body
-    }
-
-    /// What `lane_body` stores, slot by slot, for shift count `count`.
-    fn expected_lanes(count: i32) -> Vec<u128> {
-        let map = |operation: &dyn Fn(u64, u64) -> u64| {
-            lanes([operation(LEFT[0], RIGHT[0]), operation(LEFT[1], RIGHT[1])])
-        };
-        let words = |value: u64| [value as u32, (value >> 32) as u32];
-        let (left, right) = (lanes(LEFT), lanes(RIGHT));
-        let quads: [u32; 4] = std::array::from_fn(|lane| {
-            ((left >> (32 * lane)) as u32).wrapping_add((right >> (32 * lane)) as u32)
-        });
-        vec![
-            map(&|a, b| a.wrapping_add(b)),
-            map(&|a, b| a.wrapping_sub(b)),
-            map(&|a, b| a.wrapping_mul(b)),
-            map(&|a, _| a << (69 % 64)),
-            map(&|a, _| ((a as i64) >> (count as u32 % 64)) as u64),
-            map(&|a, _| a),
-            map(&|a, _| a),
-            map(&|a, _| a),
-            map(&|a, _| a.rotate_left(40)),
-            map(&|a, b| u64::from(words(a)[0]) * u64::from(words(b)[0])),
-            quads.iter().enumerate().fold(0, |bits, (lane, &value)| bits | (u128::from(value) << (32 * lane))),
-        ]
-    }
-
-    /// A vector doubled and stored, an i32 division whose trap leaves it stored, and the
-    /// vector, live across the division, stored again plus one:
-    /// `divide(target, dividend, divisor)`.
-    fn division_body() -> Vec<Operator<'static>> {
-        vec![
-            local(0),
-            Operator::V128Load { memarg: vector(0) },
-            Operator::LocalTee { local_index: 3 },
-            local(3),
-            Operator::I64x2Add,
-            Operator::LocalSet { local_index: 3 },
-            local(0),
-            local(3),
-            Operator::V128Store { memarg: vector(0) },
-            local(1),
-            local(2),
-            Operator::I32DivS,
-            Operator::LocalSet { local_index: 4 },
-            local(0),
-            local(3),
-            local(3),
-            Operator::I64x2Add,
-            Operator::V128Store { memarg: vector(16) },
-            local(0),
-            local(4),
-            Operator::I32Store { memarg: word(32) },
-            Operator::End,
-        ]
-    }
-
-    /// A vector loaded from `source` and stored at `target`: `copy(source, target)`.
-    fn copy_body() -> Vec<Operator<'static>> {
-        vec![
-            local(1),
-            local(0),
-            Operator::V128Load { memarg: vector(0) },
-            local(0),
-            Operator::V128Load { memarg: vector(0) },
-            Operator::I64x2Add,
-            Operator::V128Store { memarg: vector(0) },
-            Operator::End,
-        ]
-    }
-
-    struct Fixture {
-        vm: Vm<crate::SystemHost>,
-        instance: crate::WasmInstance,
-        module: crate::WasmModule,
-    }
-
-    const LANES: u32 = 0;
-    const STORE: u32 = 1;
-    const LOAD: u32 = 2;
-    const DIVIDE: u32 = 3;
-    const COPY: u32 = 4;
-
-    fn fixture(mode: crate::ExecutionMode) -> Fixture {
-        let body = |params: usize, locals: Vec<ValType>, result: bool, operators: Vec<Operator<'static>>| {
-            crate::WasmFunctionBody {
-                ty: crate::WasmCallableType::Embedded(crate::WasmSignature {
-                    params: vec![crate::WasmType::I32; params],
-                    results: if result { vec![crate::WasmType::I32] } else { vec![] },
-                }),
-                locals,
-                operators: operators.into_iter().map(Ok),
-            }
-        };
-        let module = crate::Engine::lower_wasm_module_with_state(
-            "vector-regions",
-            [
-                body(3, vec![ValType::V128, ValType::V128], false, lane_body()),
-                body(2, vec![], false, vec![local(0), local(1), Operator::I32Store { memarg: word(0) }, Operator::End]),
-                body(1, vec![], true, vec![local(0), Operator::I32Load { memarg: word(0) }, Operator::End]),
-                body(3, vec![ValType::V128, ValType::I32], false, division_body()),
-                body(2, vec![], false, copy_body()),
-            ],
-            &crate::WasmTypes::default(),
-            &[],
-            &[crate::WasmMemory {
-                ty: wasmparser::MemoryType {
-                    initial: 1,
-                    maximum: Some(1),
-                    memory64: false,
-                    shared: false,
-                    page_size_log2: None,
-                },
-                import: None,
-            }],
-            &[],
-        )
-        .unwrap();
-        let mut vm = Vm::new(crate::SystemHost);
-        vm.programs.compile_wasm_modules_at_first_entry();
-        vm.set_execution_mode(mode);
-        let instance = vm.instantiate_wasm_module(&module).unwrap();
-        Fixture { vm, instance, module }
-    }
-
-    impl Fixture {
-        fn call(&mut self, function: u32, args: &[i32]) -> Result<Option<WasmValue>, crate::JsError> {
-            let args: Vec<WasmValue> = args.iter().copied().map(WasmValue::I32).collect();
-            self.vm.invoke_wasm(&self.instance, function, &args)
-        }
-        fn write(&mut self, address: i32, bits: u128) {
-            for index in 0..4 {
-                self.call(STORE, &[address + index * 4, (bits >> (32 * index)) as u32 as i32]).unwrap();
-            }
-        }
-        fn read(&mut self, address: i32) -> u128 {
-            (0..4).fold(0, |bits, index| {
-                let Some(WasmValue::I32(word)) = self.call(LOAD, &[address + index * 4]).unwrap() else {
-                    unreachable!("an i32 load")
-                };
-                bits | (u128::from(word as u32) << (32 * index))
-            })
-        }
-        /// How many vector regions `function`'s lane view holds.
-        fn regions(&self, function: u32) -> usize {
-            let program = self.vm.programs.find_shared(&self.module.program).expect("the module's program");
-            let view = self.vm.lane_view_any(program, function).expect("a lane view");
-            // SAFETY: views live as long as their program entry.
-            unsafe { &*view }.vector_regions.len()
-        }
-    }
-
-    #[test]
-    fn vector_regions_compute_lanes_exactly() {
-        for count in [0, 5, 63, 64, 70, -1] {
-            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                let mut fixture = fixture(mode);
-                fixture.write(SOURCE, lanes(LEFT));
-                fixture.write(SOURCE + 16, lanes(RIGHT));
-                fixture.call(LANES, &[SOURCE, TARGET, count]).unwrap();
-                let stored: Vec<u128> = (0..11).map(|slot| fixture.read(TARGET + slot * 16)).collect();
-                assert_eq!(stored, expected_lanes(count), "count {count} in {mode:?}");
-            }
-        }
-        let fixture = fixture(crate::ExecutionMode::Interpreted);
-        assert!(fixture.regions(LANES) > 0, "the lane body runs as a vector region");
-    }
-
-    #[test]
-    fn vector_region_traps_leave_earlier_effects_and_boxed_vectors() {
-        let doubled = lanes([LEFT[0].wrapping_add(LEFT[0]), LEFT[1].wrapping_add(LEFT[1])]);
-        let quadrupled = lanes([(doubled as u64).wrapping_mul(2), ((doubled >> 64) as u64).wrapping_mul(2)]);
-        for (dividend, divisor, trap) in [
-            (7, 0, Some(WasmTrap::IntegerDivideByZero)),
-            (i32::MIN, -1, Some(WasmTrap::IntegerOverflow)),
-            (i32::MIN, 1, None),
-            (-7, 2, None),
-        ] {
-            let mut fixture = fixture(crate::ExecutionMode::Interpreted);
-            fixture.write(TARGET, lanes(LEFT));
-            fixture.write(TARGET + 16, 0);
-            let result = fixture.call(DIVIDE, &[TARGET, dividend, divisor]);
-            assert_eq!(fixture.read(TARGET), doubled, "the store before the division");
-            match trap {
-                Some(trap) => {
-                    assert_eq!(result.unwrap_err().wasm_trap(), Some(trap), "{dividend} / {divisor}");
-                    assert_eq!(fixture.read(TARGET + 16), 0, "nothing after the trap");
-                }
-                None => {
-                    result.unwrap();
-                    assert_eq!(fixture.read(TARGET + 16), quadrupled, "the vector live across the division");
-                    let Some(WasmValue::I32(quotient)) = fixture.call(LOAD, &[TARGET + 32]).unwrap() else {
-                        unreachable!("an i32 load")
-                    };
-                    assert_eq!(quotient, dividend.wrapping_div(divisor));
-                }
-            }
-        }
-        assert!(fixture(crate::ExecutionMode::Interpreted).regions(DIVIDE) > 0);
-    }
-
-    #[test]
-    fn vector_region_accesses_trap_out_of_bounds() {
-        let mut fixture = fixture(crate::ExecutionMode::Interpreted);
-        fixture.write(SOURCE, lanes(LEFT));
-        let last = PAGE - 16;
-        fixture.write(last, lanes(RIGHT));
-        // A store whose last bytes pass the end traps and writes nothing; a load does too.
-        for (source, target) in [(SOURCE, last + 1), (SOURCE, PAGE - 8), (SOURCE, -16), (last + 1, TARGET), (PAGE, TARGET)] {
-            let error = fixture.call(COPY, &[source, target]).unwrap_err();
-            assert_eq!(error.wasm_trap(), Some(WasmTrap::OutOfBoundsMemory), "copy {source} -> {target}");
-            assert_eq!(fixture.read(last), lanes(RIGHT), "memory past the trap is unchanged");
-        }
-        // The last whole vector of the memory is in bounds.
-        fixture.call(COPY, &[SOURCE, last]).unwrap();
-        let doubled = lanes([LEFT[0].wrapping_add(LEFT[0]), LEFT[1].wrapping_add(LEFT[1])]);
-        assert_eq!(fixture.read(last), doubled);
-        assert!(fixture.regions(COPY) > 0);
-    }
-}
+mod tests;

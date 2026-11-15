@@ -466,6 +466,13 @@ pub(super) enum ArgumentsUse {
     Escapes,
 }
 
+/// Whether an assignment is a plain `=` whose value is another plain assignment (`x = y = e`).
+fn is_chained_assignment(assignment: &AssignmentExpression<'_>) -> bool {
+    let plain = oxc_syntax::operator::AssignmentOperator::Assign;
+    assignment.operator == plain
+        && matches!(&assignment.right, Expression::AssignmentExpression(link) if link.operator == plain)
+}
+
 /// Whether `expression` names `arguments` itself.
 fn names_arguments(expression: &Expression<'_>) -> bool {
     matches!(expression.without_parentheses(), Expression::Identifier(identifier) if identifier.name == ARGUMENTS)
@@ -613,6 +620,21 @@ pub(super) fn fixed_register_local_facts<'a>(
         /// expression whose value nothing reads: every earlier part's reads are consumed
         /// before the next part runs (minifiers fold statements into these forms).
         fn statement_level_write(&mut self, expression: &Expression<'a>) -> bool {
+            if self.statement_level_composite(expression) {
+                return true;
+            }
+            let Some(target) = self.statement_level_assignment(expression) else {
+                return false;
+            };
+            self.safe &= target.name != ARGUMENTS;
+            self.bound_names.insert(target.name.as_str());
+            true
+        }
+
+        /// Visits the parts of a statement-level sequence, conditional or logical expression,
+        /// each as its own statement-level write when it is one; whether `expression` is such
+        /// a composite.
+        fn statement_level_composite(&mut self, expression: &Expression<'a>) -> bool {
             let statement_level = |facts: &mut Self, part: &Expression<'a>| {
                 if !facts.statement_level_write(part) {
                     facts.visit_expression(part);
@@ -621,55 +643,53 @@ pub(super) fn fixed_register_local_facts<'a>(
             match expression {
                 Expression::ParenthesizedExpression(parenthesized) => {
                     statement_level(self, &parenthesized.expression);
-                    return true;
                 }
                 Expression::SequenceExpression(sequence) => {
                     for part in &sequence.expressions {
                         statement_level(self, part);
                     }
-                    return true;
                 }
                 Expression::ConditionalExpression(conditional) => {
                     self.visit_expression(&conditional.test);
                     statement_level(self, &conditional.consequent);
                     statement_level(self, &conditional.alternate);
-                    return true;
                 }
                 Expression::LogicalExpression(logical) => {
                     self.visit_expression(&logical.left);
                     statement_level(self, &logical.right);
-                    return true;
                 }
-                _ => {}
-            }
-            let target = match expression {
-                Expression::AssignmentExpression(assignment) => match &assignment.left {
-                    oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) => {
-                        let chained = assignment.operator
-                            == oxc_syntax::operator::AssignmentOperator::Assign
-                            && matches!(
-                                &assignment.right,
-                                Expression::AssignmentExpression(link)
-                                    if link.operator
-                                        == oxc_syntax::operator::AssignmentOperator::Assign
-                            )
-                            && self.statement_level_write(&assignment.right);
-                        if !chained {
-                            self.visit_expression(&assignment.right);
-                        }
-                        target
-                    }
-                    _ => return false,
-                },
-                Expression::UpdateExpression(update) => match &update.argument {
-                    SimpleAssignmentTarget::AssignmentTargetIdentifier(target) => target,
-                    _ => return false,
-                },
                 _ => return false,
-            };
-            self.safe &= target.name != ARGUMENTS;
-            self.bound_names.insert(target.name.as_str());
+            }
             true
+        }
+
+        /// Visits the value of an assignment to an identifier, or the identifier of an update
+        /// (`x++`), returning that identifier; `None` when `expression` is neither, or its
+        /// target is not an identifier.
+        fn statement_level_assignment<'e>(
+            &mut self,
+            expression: &'e Expression<'a>,
+        ) -> Option<&'e oxc_ast::ast::IdentifierReference<'a>> {
+            match expression {
+                Expression::AssignmentExpression(assignment) => {
+                    let oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) =
+                        &assignment.left
+                    else {
+                        return None;
+                    };
+                    let chained = is_chained_assignment(assignment)
+                        && self.statement_level_write(&assignment.right);
+                    if !chained {
+                        self.visit_expression(&assignment.right);
+                    }
+                    Some(target)
+                }
+                Expression::UpdateExpression(update) => match &update.argument {
+                    SimpleAssignmentTarget::AssignmentTargetIdentifier(target) => Some(target),
+                    _ => None,
+                },
+                _ => None,
+            }
         }
 
         fn use_arguments(&mut self, kind: ArgumentsUse) {

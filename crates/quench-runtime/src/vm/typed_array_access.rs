@@ -1,5 +1,9 @@
 use super::*;
 
+mod embedding;
+mod view_cache;
+pub(in crate::vm) use view_cache::TypedViewCache;
+
 const MAX_TYPED_ARRAY_ELEMENT_WIDTH: usize = std::mem::size_of::<u64>();
 
 pub(super) enum TypedArrayElement {
@@ -8,281 +12,6 @@ pub(super) enum TypedArrayElement {
 }
 
 impl<H: Host> Vm<H> {
-    pub(crate) fn embedding_array_buffer_aligned_offset(
-        &mut self,
-        root: RootId,
-        alignment: usize,
-    ) -> Result<usize, JsError> {
-        let program = self.embedding_program()?;
-        if !alignment.is_power_of_two() {
-            return Err(
-                self.type_error(&program, "alignment must be a positive power of two".into())
-            );
-        }
-        let value = self
-            .heap
-            .root_value(root)
-            .ok_or_else(|| self.type_error(&program, "ArrayBuffer root expired".into()))?;
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            detached,
-            shared: false,
-            resizable,
-            ..
-        }) = self.heap.get_mut(value)
-        else {
-            return Err(self.type_error(&program, "Expected an ArrayBuffer".into()));
-        };
-        if *detached || bytes.is_empty() {
-            return Ok(0);
-        }
-        let byte_length = bytes.len();
-        let before = bytes.capacity();
-        let address = if *resizable {
-            bytes.as_ptr_bytes() as usize
-        } else {
-            bytes.pin_address()
-        };
-        let after = bytes.capacity();
-        self.heap.adjust_external_bytes(before, after);
-        let offset = address.wrapping_neg() & (alignment - 1);
-        if offset > byte_length {
-            return Err(self.range_error(&program, "Aligned offset exceeds backing buffer".into()));
-        }
-        Ok(offset)
-    }
-
-    /// Pin and describe the bytes an ArrayBuffer or view names (see
-    /// [`crate::NativeContext::buffer_storage_rooted`]); `None` for other values.
-    pub(crate) fn embedding_buffer_storage(
-        &mut self,
-        root: RootId,
-    ) -> Result<Option<(crate::BufferStorage, Value)>, JsError> {
-        use crate::BuiltinBrand as B;
-        let program = self.embedding_program()?;
-        let value = self
-            .heap
-            .root_value(root)
-            .ok_or_else(|| self.type_error(&program, "buffer root expired".into()))?;
-        let (kind, buffer, byte_offset, byte_length, length) = match self.heap.get(value) {
-            Some(Cell::ArrayBuffer { shared, .. }) => {
-                let kind = if *shared {
-                    B::SharedArrayBuffer
-                } else {
-                    B::ArrayBuffer
-                };
-                let byte_length = self.array_buffer_byte_length(value);
-                (kind, value, 0, byte_length, byte_length)
-            }
-            Some(Cell::TypedArray { object, buffer, .. }) => {
-                let (kind, buffer, offset, width) = (
-                    super::embedding::typed_array_brand(object.native.kind()),
-                    *buffer,
-                    object.offset,
-                    object.native.kind().width(),
-                );
-                let length = self.typed_array_length(value).unwrap_or(0);
-                (kind, buffer, offset, length * width, length)
-            }
-            Some(Cell::DataView { .. }) => {
-                let Some(Cell::DataView { object, buffer, .. }) = self.heap.get(value) else {
-                    unreachable!("matched DataView");
-                };
-                let (buffer, offset) = (*buffer, object.offset);
-                let byte_length = self.embedding_view_bytes_length(value);
-                (B::DataView, buffer, offset, byte_length, byte_length)
-            }
-            _ => return Ok(None),
-        };
-        // A naked pointer cannot carry the synchronized shared store's guard.
-        // Reject this host boundary explicitly rather than copy or expose bytes
-        // while other runtimes may access them concurrently.
-        if matches!(self.heap.get(buffer),Some(Cell::ArrayBuffer{bytes,shared:true,..}) if bytes.shared_backing().is_some())
-        {
-            return Err(self.type_error(&program,"Raw pointer access to synchronized shared backing requires a native lifetime protocol".into()));
-        }
-        let base = match self.heap.get_mut(buffer) {
-            Some(Cell::ArrayBuffer {
-                bytes,
-                detached: false,
-                resizable,
-                ..
-            }) if !bytes.is_empty() => {
-                let before = bytes.capacity();
-                let address = if *resizable {
-                    bytes.as_ptr_bytes() as usize
-                } else {
-                    bytes.pin_address()
-                };
-                let after = bytes.capacity();
-                self.heap.adjust_external_bytes(before, after);
-                address as *mut u8
-            }
-            _ => std::ptr::null_mut(),
-        };
-        let data = if base.is_null() {
-            base
-        } else {
-            base.wrapping_add(byte_offset)
-        };
-        Ok(Some((
-            crate::BufferStorage {
-                kind,
-                data,
-                byte_offset,
-                byte_length,
-                length,
-                buffer: root,
-            },
-            buffer,
-        )))
-    }
-
-    fn array_buffer_byte_length(&self, buffer: Value) -> usize {
-        match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer {
-                bytes,
-                detached: false,
-                ..
-            }) => bytes.len(),
-            _ => 0,
-        }
-    }
-
-    /// A DataView's current byte length, zero once detached or out of bounds.
-    fn embedding_view_bytes_length(&self, view: Value) -> usize {
-        let Some(Cell::DataView {
-            object,
-            buffer,
-            length,
-            ..
-        }) = self.heap.get(view)
-        else {
-            return 0;
-        };
-        if self.array_buffer_detached(*buffer) {
-            return 0;
-        }
-        length.within(object.offset, 1, self.array_buffer_byte_length(*buffer)).unwrap_or(0)
-    }
-
-    pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
-        self.embedding_uint8_array_from(bytes.to_vec())
-    }
-
-    /// A Uint8Array over a new ArrayBuffer that owns `bytes`, without copying them.
-    pub(crate) fn embedding_uint8_array_from(&mut self, bytes: Vec<u8>) -> Result<Value, JsError> {
-        let length = bytes.len();
-        let buffer = self.fixed_array_buffer_from(bytes.into(), false);
-        let buffer_root = self.heap.root(buffer);
-        let view = self.heap.alloc(Cell::TypedArray {
-            object: Box::new(crate::heap::BufferViewObject {
-                native: crate::heap::NativeView::typed(TypedArrayKind::Uint8),
-                object: Self::empty_object(self.typed_array_proto(TypedArrayKind::Uint8)),
-                offset: 0,
-            }),
-            buffer: self.heap.root_value(buffer_root).unwrap(),
-            length: crate::heap::ViewLength::fixed(length),
-        });
-        self.heap.release_root(buffer_root);
-        Ok(view)
-    }
-
-    pub(crate) fn embedding_view_bytes(&self, value: Value) -> Option<Vec<u8>> {
-        self.embedding_view_bytes_prefix(value, usize::MAX)
-    }
-
-    pub(crate) fn embedding_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
-        if let Some(Cell::ArrayBuffer {
-            bytes, detached, ..
-        }) = self.heap.get(value)
-        {
-            let length = bytes.len().min(maximum);
-            return Some(if *detached {
-                Vec::new()
-            } else {
-                bytes.read()[..length].to_vec()
-            });
-        }
-        self.embedding_view_bytes_prefix(value, maximum)
-    }
-
-    /// The backing buffer of an ArrayBuffer or view and the byte range it currently covers.
-    pub(super) fn embedding_buffer_range(&self, value: Value) -> Option<(Value, std::ops::Range<usize>)> {
-        let (buffer, offset, byte_length) = match self.heap.get(value)? {
-            Cell::ArrayBuffer { bytes, .. } => (value, 0, bytes.len()),
-            Cell::TypedArray { object, buffer, .. } => {
-                (*buffer, object.offset, self.typed_array_length(value)?.checked_mul(object.native.kind().width())?)
-            }
-            Cell::DataView { object, buffer, .. } => (*buffer, object.offset, self.embedding_view_bytes_length(value)),
-            _ => return None,
-        };
-        Some((buffer, offset..offset.checked_add(byte_length)?))
-    }
-
-    /// Run `f` over an ArrayBuffer's or view's current bytes without copying them;
-    /// empty once detached.
-    pub(crate) fn embedding_with_buffer_bytes<T>(&self, value: Value, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
-        let (buffer, range) = self.embedding_buffer_range(value)?;
-        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else {
-            return None;
-        };
-        if *detached {
-            return Some(f(&[]));
-        }
-        let bytes = bytes.read();
-        Some(f(bytes.get(range)?))
-    }
-
-    /// Run `f` over an ArrayBuffer's or view's current bytes for writing. `None` for
-    /// another value, or a detached or immutable buffer, which accept no writes.
-    pub(crate) fn embedding_with_buffer_bytes_mut<T>(&mut self, value: Value, f: impl FnOnce(&mut [u8]) -> T) -> Option<T> {
-        let (buffer, range) = self.embedding_buffer_range(value)?;
-        let Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. } = self.heap.buffer_bytes_mut(buffer)? else {
-            return None;
-        };
-        let mut bytes = bytes.make_mut();
-        Some(f(bytes.get_mut(range)?))
-    }
-
-    fn embedding_view_bytes_prefix(&self, value: Value, maximum: usize) -> Option<Vec<u8>> {
-        self.embedding_with_view_bytes(value, |bytes| bytes[..bytes.len().min(maximum)].to_vec())
-    }
-
-    /// Run `f` over the bytes a typed array or DataView currently views, without copying
-    /// them; empty once detached.
-    pub(crate) fn embedding_with_view_bytes<T>(&self, value: Value, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
-        if matches!(self.heap.get(value)?, Cell::ArrayBuffer { .. }) {
-            return None;
-        }
-        self.embedding_with_buffer_bytes(value, f)
-    }
-
-    /// Run `f` over the bytes `within` a view and a writable buffer's bytes at once: the input read
-    /// in place unless a write to the output could reach it; `None` past the view's end.
-    pub(crate) fn embedding_with_view_and_buffer_bytes_mut<T>(&mut self, input: Value, within: std::ops::Range<usize>, output: Value, f: impl FnOnce(&[u8], &mut [u8]) -> T) -> Option<T> {
-        if matches!(self.heap.get(input)?, Cell::ArrayBuffer { .. }) {
-            return None;
-        }
-        let (buffer, range) = self.embedding_buffer_range(input)?;
-        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else { return None };
-        let length = if *detached { 0 } else { range.len() };
-        if within.start > within.end || within.end > length {
-            return None;
-        }
-        let within = range.start + within.start..range.start + within.end;
-        if within.is_empty() {
-            return self.embedding_with_buffer_bytes_mut(output, |to| f(&[], to));
-        }
-        let Some(held) = bytes.unaliased_handle() else {
-            let copy = bytes.read().get(within)?.to_vec();
-            return self.embedding_with_buffer_bytes_mut(output, |to| f(&copy, to));
-        };
-        let from = held.read();
-        let from = from.get(within)?;
-        self.embedding_with_buffer_bytes_mut(output, |to| f(from, to))
-    }
-
     /// `plain_typed_element`'s common case, inline: a canonical integer key inside a fixed
     /// length typed array of Number elements over an owned buffer, of kind `KIND`
     /// (`TypedArrayKind as usize`, a site's one kind) or of any kind (`ANY_TYPED_KIND`).
@@ -300,29 +29,8 @@ impl<H: Host> Vm<H> {
         };
         let store = bytes.owned()?;
         let start = typed_element_start(kind, view.offset, length, key, store.len())?;
-        macro_rules! element {
-            ($type:ty) => {
-                // SAFETY: `typed_element_start` proved the element's bytes inside the store.
-                unsafe { store.as_ptr().add(start).cast::<$type>().read_unaligned() }
-            };
-        }
-        Some(match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(element!(u8))),
-            TypedArrayKind::Int8 => Value::integer(i32::from(element!(i8))),
-            TypedArrayKind::Uint16 => Value::integer(i32::from(element!(u16))),
-            TypedArrayKind::Int16 => Value::integer(i32::from(element!(i16))),
-            TypedArrayKind::Int32 => Value::integer(element!(i32)),
-            TypedArrayKind::Uint32 => {
-                let element = element!(u32);
-                match i32::try_from(element) {
-                    Ok(integer) => Value::integer(integer),
-                    Err(_) => Value::number(f64::from(element)),
-                }
-            }
-            TypedArrayKind::Float32 => Value::number(f64::from(element!(f32))),
-            TypedArrayKind::Float64 => Value::number(element!(f64)),
-            _ => return None,
-        })
+        // SAFETY: `typed_element_start` proved the element's bytes inside the store.
+        unsafe { read_element(kind, store.as_ptr().add(start)) }
     }
 
     /// `typed_array_set_number`'s common case, inline: a Number stored at a canonical integer
@@ -351,29 +59,8 @@ impl<H: Host> Vm<H> {
         let Some(start) = typed_element_start(kind, offset, length, key, store.len()) else {
             return false;
         };
-        macro_rules! store {
-            ($element:expr) => {{
-                let element = $element;
-                // SAFETY: `typed_element_start` proved the element's bytes inside the store.
-                unsafe { write_element(store.as_mut_ptr().add(start), element) }
-            }};
-        }
-        match (kind, value.as_int()) {
-            (TypedArrayKind::Uint8 | TypedArrayKind::Int8, Some(integer)) => store!(integer as u8),
-            (TypedArrayKind::Uint8Clamped, Some(integer)) => store!(integer.clamp(0, i32::from(u8::MAX)) as u8),
-            (TypedArrayKind::Uint16 | TypedArrayKind::Int16, Some(integer)) => store!(integer as u16),
-            (TypedArrayKind::Uint32 | TypedArrayKind::Int32, Some(integer)) => store!(integer as u32),
-            (TypedArrayKind::Float32, _) => match value.as_number() {
-                Some(number) => store!(number as f32),
-                None => return false,
-            },
-            (TypedArrayKind::Float64, _) => match value.as_number() {
-                Some(number) => store!(number),
-                None => return false,
-            },
-            _ => return false,
-        }
-        true
+        // SAFETY: `typed_element_start` proved the element's bytes inside the store.
+        unsafe { write_quick_element(kind, store.as_mut_ptr().add(start), value) }
     }
 
     /// The kind of the typed array `object`, which picks a site's kind variant
@@ -1079,6 +766,82 @@ fn typed_element_start(kind: TypedArrayKind, offset: usize, length: usize, key: 
         .then(|| offset + index * width)
 }
 
+/// Reads the element of `kind` at `at` as the Value a quick typed array read answers; `None`
+/// for a kind no quick read takes.
+///
+/// # Safety
+/// `at` is valid for a read of `kind`'s width.
+#[inline(always)]
+unsafe fn read_element(kind: TypedArrayKind, at: *const u8) -> Option<Value> {
+    macro_rules! element {
+        ($type:ty) => {
+            // SAFETY: the caller's `at` is valid for `kind`'s width.
+            unsafe { at.cast::<$type>().read_unaligned() }
+        };
+    }
+    Some(match kind {
+        TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(element!(u8))),
+        TypedArrayKind::Int8 => Value::integer(i32::from(element!(i8))),
+        TypedArrayKind::Uint16 => Value::integer(i32::from(element!(u16))),
+        TypedArrayKind::Int16 => Value::integer(i32::from(element!(i16))),
+        TypedArrayKind::Int32 => Value::integer(element!(i32)),
+        TypedArrayKind::Uint32 => {
+            let element = element!(u32);
+            match i32::try_from(element) {
+                Ok(integer) => Value::integer(integer),
+                Err(_) => Value::number(f64::from(element)),
+            }
+        }
+        TypedArrayKind::Float32 => Value::number(f64::from(element!(f32))),
+        TypedArrayKind::Float64 => Value::number(element!(f64)),
+        _ => return None,
+    })
+}
+
+/// Writes `value` as an element of `kind` at `target`, when it stores exactly as an
+/// integer into an integer kind or a Number into a float kind. False, with nothing written,
+/// for any other value.
+///
+/// # Safety
+/// `target` is valid for a write of `kind`'s width.
+#[inline(always)]
+unsafe fn write_quick_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
+    macro_rules! store {
+        ($element:expr) => {{
+            let element = $element;
+            // SAFETY: the caller's `target` is valid for `kind`'s width.
+            unsafe { write_element(target, element) };
+            true
+        }};
+    }
+    match (kind, value.as_int()) {
+        (TypedArrayKind::Uint8 | TypedArrayKind::Int8, Some(integer)) => store!(integer as u8),
+        (TypedArrayKind::Uint8Clamped, Some(integer)) => store!(integer.clamp(0, i32::from(u8::MAX)) as u8),
+        (TypedArrayKind::Uint16 | TypedArrayKind::Int16, Some(integer)) => store!(integer as u16),
+        (TypedArrayKind::Uint32 | TypedArrayKind::Int32, Some(integer)) => store!(integer as u32),
+        (TypedArrayKind::Float32, _) => value.as_number().is_some_and(|number| store!(number as f32)),
+        (TypedArrayKind::Float64, _) => value.as_number().is_some_and(|number| store!(number)),
+        _ => false,
+    }
+}
+
+/// The first element of a view of `length` elements of `width` bytes at `offset` in its
+/// buffer's store, and whether the view may be written: a store the buffer owns alone and
+/// that is mutable. `None` when the view lies outside the store, or the store is shared.
+fn view_pointer(bytes: &mut crate::heap::BufferBytes, offset: usize, length: usize, width: usize, immutable: bool) -> Option<(*mut u8, bool)> {
+    let end = offset.saturating_add(length.saturating_mul(width));
+    match bytes.lane_mut() {
+        // SAFETY: the view lies inside the store (checked just above).
+        Some(store) if end <= store.len() => Some((unsafe { store.as_mut_ptr().add(offset) }, !immutable)),
+        Some(_) => None,
+        None => match bytes.owned() {
+            // SAFETY: as above; read only (not writable).
+            Some(store) if end <= store.len() => Some((unsafe { store.as_ptr().add(offset) }.cast_mut(), false)),
+            _ => None,
+        },
+    }
+}
+
 /// Writes `element` at `target`, which need not be aligned.
 ///
 /// # Safety
@@ -1087,188 +850,6 @@ fn typed_element_start(kind: TypedArrayKind, offset: usize, length: usize, key: 
 unsafe fn write_element<T>(target: *mut u8, element: T) {
     // SAFETY: the caller's contract.
     unsafe { target.cast::<T>().write_unaligned(element) }
-}
-
-/// How many views `TypedViewCache` holds, a power of two: a view's slot index picks its entry.
-const TYPED_VIEW_ENTRIES: usize = 64;
-
-/// The element addresses of recently accessed typed array views, by view: what a lane
-/// element access reads after one compare of the view and one of the epoch, where the general
-/// access reads the view's cell and its buffer's cell (`Vm::typed_cached_element`). An entry
-/// holds while the view epoch it was made at is current (`heap::view_epoch`), which every
-/// event that could move, unshare, detach or resize a store, or reuse a slot, ends.
-pub(super) struct TypedViewCache([TypedViewEntry; TYPED_VIEW_ENTRIES]);
-
-impl Default for TypedViewCache {
-    fn default() -> Self {
-        Self([TypedViewEntry::EMPTY; TYPED_VIEW_ENTRIES])
-    }
-}
-
-#[derive(Clone, Copy)]
-struct TypedViewEntry {
-    /// The view's value bits.
-    view: u64,
-    /// The view epoch the entry was made at.
-    epoch: u64,
-    /// The view's first element.
-    elements: *mut u8,
-    /// The view's element count, below 2^31 (`Value::int_key_offset`); zero for an empty entry.
-    length: usize,
-    kind: TypedArrayKind,
-    /// Whether the view's buffer is owned alone and mutable, so stores write `elements`.
-    writable: bool,
-}
-
-impl TypedViewEntry {
-    const EMPTY: Self = Self {
-        view: 0,
-        epoch: u64::MAX,
-        elements: std::ptr::null_mut(),
-        length: 0,
-        kind: TypedArrayKind::Uint8,
-        writable: false,
-    };
-}
-
-impl TypedViewCache {
-    #[inline(always)]
-    fn entry(&self, view: Value) -> &TypedViewEntry {
-        &self.0[view.to_bits() as usize % TYPED_VIEW_ENTRIES]
-    }
-}
-
-impl<H: Host> Vm<H> {
-    /// The element of the typed array `object` at `key` from its cached entry
-    /// (`TypedViewCache`), when `object` has a current one of kind `KIND` (or any kind) and
-    /// `key` is an int32 inside it. `None` otherwise; the caller fills the entry
-    /// (`fill_typed_view`) on its slower path.
-    #[inline(always)]
-    pub(super) fn typed_cached_element<const KIND: usize>(&self, object: Value, key: Value) -> Option<Value> {
-        let entry = self.typed_views.entry(object);
-        if entry.view != object.to_bits() || entry.epoch != crate::heap::view_epoch() {
-            return None;
-        }
-        let kind = typed_kind::<KIND>(entry.kind)?;
-        let index = key.int_key_offset();
-        if index >= entry.length {
-            return None;
-        }
-        // SAFETY: the entry is current, so `elements` holds `length` elements of `kind`
-        // (`fill_typed_view`), and `index` is below `length`.
-        let element = unsafe { entry.elements.add(index * kind.width()) };
-        macro_rules! element {
-            ($type:ty) => {
-                // SAFETY: as above.
-                unsafe { element.cast::<$type>().read_unaligned() }
-            };
-        }
-        Some(match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(element!(u8))),
-            TypedArrayKind::Int8 => Value::integer(i32::from(element!(i8))),
-            TypedArrayKind::Uint16 => Value::integer(i32::from(element!(u16))),
-            TypedArrayKind::Int16 => Value::integer(i32::from(element!(i16))),
-            TypedArrayKind::Int32 => Value::integer(element!(i32)),
-            TypedArrayKind::Uint32 => {
-                let element = element!(u32);
-                match i32::try_from(element) {
-                    Ok(integer) => Value::integer(integer),
-                    Err(_) => Value::number(f64::from(element)),
-                }
-            }
-            TypedArrayKind::Float32 => Value::number(f64::from(element!(f32))),
-            TypedArrayKind::Float64 => Value::number(element!(f64)),
-            _ => return None,
-        })
-    }
-
-    /// `typed_set_quick` through the cached entry of `object` (as `typed_cached_element`), of
-    /// a writable view. False leaves the store to the caller's slower path.
-    #[inline(always)]
-    pub(super) fn typed_cached_store<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let entry = self.typed_views.entry(object);
-        if entry.view != object.to_bits() || entry.epoch != crate::heap::view_epoch() || !entry.writable {
-            return false;
-        }
-        let Some(kind) = typed_kind::<KIND>(entry.kind) else {
-            return false;
-        };
-        let index = key.int_key_offset();
-        if index >= entry.length {
-            return false;
-        }
-        // SAFETY: the entry is current and writable, so `elements` holds `length` elements of
-        // `kind` in a store this view's buffer owns alone (`fill_typed_view`).
-        let element = unsafe { entry.elements.add(index * kind.width()) };
-        macro_rules! store {
-            ($element:expr) => {
-                // SAFETY: as above.
-                unsafe { write_element(element, $element) }
-            };
-        }
-        match (kind, value.as_int()) {
-            (TypedArrayKind::Uint8 | TypedArrayKind::Int8, Some(integer)) => store!(integer as u8),
-            (TypedArrayKind::Uint8Clamped, Some(integer)) => store!(integer.clamp(0, i32::from(u8::MAX)) as u8),
-            (TypedArrayKind::Uint16 | TypedArrayKind::Int16, Some(integer)) => store!(integer as u16),
-            (TypedArrayKind::Uint32 | TypedArrayKind::Int32, Some(integer)) => store!(integer as u32),
-            (TypedArrayKind::Float32, _) => match value.as_number() {
-                Some(number) => store!(number as f32),
-                None => return false,
-            },
-            (TypedArrayKind::Float64, _) => match value.as_number() {
-                Some(number) => store!(number),
-                None => return false,
-            },
-            _ => return false,
-        }
-        true
-    }
-
-    /// Makes the cached entry of the typed array `object` (`TypedViewCache`) at the current
-    /// view epoch: a fixed length view of Number elements inside an attached buffer whose
-    /// store this heap owns, writable when the buffer owns it alone and is mutable. Any other
-    /// object leaves the cache as it is.
-    #[inline(never)]
-    pub(super) fn fill_typed_view(&mut self, object: Value) {
-        let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
-            return;
-        };
-        let (kind, offset, buffer) = (view.native.kind(), view.offset, *buffer);
-        let Some(length) = length.get() else {
-            return;
-        };
-        if kind.is_bigint() || kind == TypedArrayKind::Float16 {
-            return;
-        }
-        let Some(Cell::ArrayBuffer { bytes, detached: false, immutable, .. }) = self.heap.buffer_bytes_mut(buffer) else {
-            return;
-        };
-        let immutable = *immutable;
-        let width = kind.width();
-        let (elements, writable) = match bytes.lane_mut() {
-            Some(store) if offset.saturating_add(length.saturating_mul(width)) <= store.len() => {
-                // SAFETY: the view lies inside the store (checked just above).
-                (unsafe { store.as_mut_ptr().add(offset) }, !immutable)
-            }
-            Some(_) => return,
-            None => match bytes.owned() {
-                Some(store) if offset.saturating_add(length.saturating_mul(width)) <= store.len() => {
-                    // SAFETY: as above; read only (`writable` false).
-                    (unsafe { store.as_ptr().add(offset) }.cast_mut(), false)
-                }
-                _ => return,
-            },
-        };
-        let slot = object.to_bits() as usize % TYPED_VIEW_ENTRIES;
-        self.typed_views.0[slot] = TypedViewEntry {
-            view: object.to_bits(),
-            epoch: crate::heap::view_epoch(),
-            elements,
-            length: length.min(i32::MAX as usize),
-            kind,
-            writable,
-        };
-    }
 }
 
 /// A loop kernel's view of a typed array's elements (`Vm::typed_array_span`).

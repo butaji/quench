@@ -57,6 +57,9 @@ mod capture_scope;
 mod class; mod class_private;
 mod early;
 mod frame_registers;
+mod expected_shape;
+mod private_names;
+use private_names::{private_name_ids, private_name_labels};
 pub(crate) mod lazy_bodies;
 mod eval_reach;
 mod literal_singletons;
@@ -72,6 +75,7 @@ mod numeric;
 pub(crate) mod first_call;
 mod program_shape;
 pub(crate) use program_shape::EvalContext;
+use expected_shape::{alias_private_names, has_expected_shape, wrapped_class_private_ids};
 use program_shape::ParsedProgramShape;
 mod object_registers;
 pub(crate) mod regexp;
@@ -1062,20 +1066,9 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let compile = |lazy| {
             Self::specialize_parsing(
-                source,
-                name,
-                mode,
-                atom_prefix,
-                source_type,
-                module_goal,
-                capture_script_completion,
-                inherited_strict,
-                private_name_overrides,
-                annex_b_forbidden_names,
-                expected_shape,
-                lazy,
-                released,
-                DataLiterals::Admitted,
+                source, name, mode, atom_prefix, source_type, module_goal, capture_script_completion,
+                inherited_strict, private_name_overrides, annex_b_forbidden_names, expected_shape, lazy,
+                released, DataLiterals::Admitted,
             )
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
@@ -1215,35 +1208,7 @@ impl Engine {
             if context.home_atom.is_none() && context.in_function && !private_name_overrides.is_empty());
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
-        let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
-            ParsedProgramShape::Eval(_, expected_span) => {
-                !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
-                    .is_some_and(|body| Some(body.span) == expected_span)
-            }
-            ParsedProgramShape::DynamicFunction { parameter_list_end } => {
-                match parsed.program.body.as_mut_slice() {
-                    [Statement::ExpressionStatement(statement)] => match &mut statement.expression {
-                        Expression::ParenthesizedExpression(expression) => {
-                            match &mut expression.expression {
-                                Expression::FunctionExpression(function) => {
-                                    let valid = function.id.as_ref().is_some_and(|identifier| identifier.name == DYNAMIC_FUNCTION_PUBLIC_NAME)
-                                        && function.body.is_some()
-                                        && function.params.span.end as usize == parameter_list_end;
-                                    // The generated public source name is not a dynamic
-                                    // Function self binding. OXC still owns the grammar.
-                                    if valid { function.id = None; }
-                                    valid
-                                }
-                                _ => false,
-                            }
-                        }
-                        _ => false,
-                    },
-                    _ => false,
-                }
-            }
-        };
+        let dynamic_function_shape = has_expected_shape(&mut parsed.program, expected_shape, wrapped_eval, ordinary_private_context);
         if !dynamic_function_shape {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
@@ -1261,42 +1226,8 @@ impl Engine {
         let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
         #[cfg(feature = "verify-replay")]
         let free_names = free_names::free_names(&semantic.semantic, &parsed.program);
-        let inherited_private_ids = if wrapped_eval
-        {
-            let mut ids = FxHashSet::default();
-            if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
-                && let Expression::ClassExpression(class) =
-                    statement.expression.without_parentheses()
-            {
-                for element in &class.body.body {
-                    if let ClassElement::PropertyDefinition(field) = element {
-                        let span = field.key.span();
-                        if let Some(id) = private_name_ids.get(&(span.start, span.end)) {
-                            ids.insert(*id);
-                        }
-                    }
-                }
-            }
-            Some(ids)
-        } else {
-            None
-        };
-        let private_aliases = private_name_ids
-            .iter()
-            .filter_map(|(span, id)| {
-                if inherited_private_ids
-                    .as_ref()
-                    .is_some_and(|ids| !ids.contains(id))
-                {
-                    return None;
-                }
-                let label = private_name_labels.get(span)?;
-                let (_, identity) = private_name_overrides
-                    .iter()
-                    .find(|(name, _)| name == label)?;
-                Some((*id, identity.clone()))
-            })
-            .collect();
+        let inherited_private_ids = wrapped_eval.then(|| wrapped_class_private_ids(&parsed.program, &private_name_ids));
+        let private_aliases = alias_private_names(&private_name_ids, &private_name_labels, inherited_private_ids.as_ref(), private_name_overrides);
         // Validate in method grammar, then remove the context wrapper. Original
         // spans still address `normalized`, retaining exact nested function source.
         #[cfg(feature = "aot")]
@@ -1893,7 +1824,7 @@ struct Compiler<'a> {
     #[cfg(feature = "verify-replay")]
     free_names: free_names::FreeNames,
     private_name_labels: FxHashMap<(u32, u32), String>,
-    private_name_overrides: FxHashMap<u32, String>,
+    private_name_overrides: Vec<Option<String>>,
     constants: SiteTable<'a, Constant>,
     constant_index: replay::ConstantIndex<'a>,
     functions: replay::FunctionTable<'a>,
@@ -2051,66 +1982,6 @@ struct DeferredNameBindings {
     function_scope: Vec<Atom>,
 }
 
-fn private_name_ids(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u32), u32> {
-    let classes = semantic.classes();
-    let mut definitions = FxHashMap::default();
-    let mut next_id = 0;
-    for (class_id, _) in classes.iter_enumerated() {
-        for element in &classes.elements[class_id] {
-            if element.is_private {
-                definitions
-                    .entry((class_id, element.name.to_string()))
-                    .or_insert_with(|| {
-                        let id = next_id;
-                        next_id += 1;
-                        id
-                    });
-            }
-        }
-    }
-    let mut names = FxHashMap::default();
-    for (class_id, _) in classes.iter_enumerated() {
-        for element in &classes.elements[class_id] {
-            if element.is_private {
-                let id = definitions[&(class_id, element.name.to_string())];
-                names.insert((element.span.start, element.span.end), id);
-            }
-        }
-        for reference in classes.iter_private_identifiers(class_id) {
-            let resolved = classes.ancestors(class_id).find_map(|ancestor| {
-                definitions
-                    .get(&(ancestor, reference.name.to_string()))
-                    .copied()
-            });
-            if let Some(id) = resolved {
-                names.insert((reference.span.start, reference.span.end), id);
-            }
-        }
-    }
-    names
-}
-
-fn private_name_labels(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u32), String> {
-    let classes = semantic.classes();
-    let mut labels = FxHashMap::default();
-    for (class_id, _) in classes.iter_enumerated() {
-        for element in &classes.elements[class_id] {
-            if element.is_private {
-                labels.insert(
-                    (element.span.start, element.span.end),
-                    element.name.to_string(),
-                );
-            }
-        }
-        for reference in classes.iter_private_identifiers(class_id) {
-            labels.insert(
-                (reference.span.start, reference.span.end),
-                reference.name.to_string(),
-            );
-        }
-    }
-    labels
-}
 
 #[derive(Clone, Copy)]
 enum FunctionBody<'a> {
@@ -2453,18 +2324,15 @@ impl<'a> Compiler<'a> {
             capture_markers: FxHashMap::default(),
             private_name_references: 0,
             private_name_ids,
-            prototype_unobservable: FxHashSet::default(),
-            lazy_bodies: FxHashSet::default(),
+            prototype_unobservable: FxHashSet::default(), lazy_bodies: FxHashSet::default(),
             lazy_compiled: Vec::new(),
             lazy_arenas: Vec::new(),
-            streamed: FxHashSet::default(),
-            stream_candidates: FxHashSet::default(),
+            streamed: FxHashSet::default(), stream_candidates: FxHashSet::default(),
             body_stream: None,
             stream_run: None,
             #[cfg(feature = "verify-replay")]
             free_names: FxHashMap::default(),
-            private_name_labels: FxHashMap::default(),
-            private_name_overrides: FxHashMap::default(),
+            private_name_labels: FxHashMap::default(), private_name_overrides: Vec::new(),
             constants: SiteTable::default(),
             constant_index: replay::ConstantIndex::default(),
             functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites_pending: false,
@@ -2479,14 +2347,12 @@ impl<'a> Compiler<'a> {
             literal_templates: SiteTable::default(),
             data_literal: None,
             superinstructions: SiteTable::default(),
-            deferred_name_bindings: FxHashMap::default(),
-            captured_name_scopes: FxHashMap::default(),
+            deferred_name_bindings: FxHashMap::default(), captured_name_scopes: FxHashMap::default(),
             function_exits: Default::default(),
             function_facts: Default::default(),
             dynamic_binding_scopes: 0,
             early_replays: FxHashMap::default(),
-            invoked_functions: FxHashSet::default(),
-            replay_calls: FxHashMap::default(),
+            invoked_functions: FxHashSet::default(), replay_calls: FxHashMap::default(),
             replay_target: None,
             source_type: oxc_span::SourceType::default(),
             replay_program: None,
@@ -3411,7 +3277,7 @@ impl<'a> Compiler<'a> {
         }
         // A replayable function resolves every name statically and no dynamic lookup reaches
         // its bindings, so nothing outside its own compilation and layout decides its code.
-        let mut replays: FxHashMap<u32, replay::FunctionReplay> = std::mem::take(&mut self.early_replays);
+        let mut replays = std::mem::take(&mut self.early_replays);
         if self.replayable_source {
             for (id, (entry, call)) in std::mem::take(&mut self.replay_calls) {
                 if dynamic[id as usize] || reachable[id as usize] {
@@ -3635,7 +3501,7 @@ impl<'a> Compiler<'a> {
             Some(id) => {
                 let label = self.private_name_label(span, *id);
                 let identity = format!("\0quench:private:{}:{id}:{label}", self.source);
-                if let Some(override_name) = self.private_name_overrides.get(id) {
+                if let Some(override_name) = self.private_name_overrides.get(*id as usize).and_then(Option::as_ref) {
                     override_name.clone()
                 } else {
                     identity
@@ -3651,7 +3517,8 @@ impl<'a> Compiler<'a> {
 
     fn private_name_is_overridden(&self, atom: Atom) -> bool {
         self.private_name_overrides
-            .values()
+            .iter()
+            .flatten()
             .any(|name| self.atoms.find(name) == Some(atom))
     }
 
@@ -4111,16 +3978,8 @@ impl<'a> Compiler<'a> {
             // scripts too: names it does not declare resolve as they would without promotion.
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
-            promote_plain_locals,
-            options.async_function,
-            hidden_parameters.then_some(params.len()),
-            Some((root_strict, &params)),
-            body,
-            expression_body,
-            &locals,
-            &function_scope,
-            &lexical_atoms,
-            self_binding_slot,
+            promote_plain_locals, options.async_function, hidden_parameters.then_some(params.len()), Some((root_strict, &params)),
+            body, expression_body, &locals, &function_scope, &lexical_atoms, self_binding_slot,
         );
         let binds_dynamically =
             dynamic_eval || early::body_may_bind_dynamically(body, expression_body);

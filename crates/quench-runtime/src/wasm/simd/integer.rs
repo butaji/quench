@@ -1,9 +1,14 @@
 //! Integer lane projections and SIMD-specific saturation/grouping rules.
 
-use super::{WasmValue, lane, lane_mask, map_lanes, replace};
+use super::{V128_BYTES, WasmValue, lane, lane_mask, map_lanes, replace};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 
 const PAIR_LANES: u32 = 2;
+/// The bytes of an i16 and of an i32 lane, and the lanes of each in a v128.
+const I16_BYTES: usize = size_of::<i16>();
+const I32_BYTES: usize = size_of::<i32>();
+const I16_LANES: usize = V128_BYTES / I16_BYTES;
+const I32_LANES: usize = V128_BYTES / I32_BYTES;
 const Q15_FRACTION_BITS: u32 = i16::BITS - 1;
 const Q15_ROUNDING_BIAS: i128 = 1 << (Q15_FRACTION_BITS - 1);
 
@@ -342,16 +347,18 @@ pub(super) fn dot(left: u128, right: u128) -> WasmValue {
     // The i16 lanes as arrays, so each sum of two products is plain lane arithmetic.
     let lanes = |bits: u128| {
         let bytes = bits.to_le_bytes();
-        std::array::from_fn::<i32, 8, _>(|index| i32::from(i16::from_le_bytes([bytes[2 * index], bytes[2 * index + 1]])))
+        std::array::from_fn::<i32, I16_LANES, _>(|index| {
+            i32::from(i16::from_le_bytes([bytes[I16_BYTES * index], bytes[I16_BYTES * index + 1]]))
+        })
     };
     let (a, b) = (lanes(left), lanes(right));
-    let sums: [u32; 4] = std::array::from_fn(|index| {
+    let sums: [u32; I32_LANES] = std::array::from_fn(|index| {
         let (low, high) = (PAIR_LANES as usize * index, PAIR_LANES as usize * index + 1);
         (a[low] * b[low]).wrapping_add(a[high] * b[high]) as u32
     });
-    let mut bytes = [0u8; 16];
+    let mut bytes = [0u8; V128_BYTES];
     for (index, sum) in sums.into_iter().enumerate() {
-        bytes[4 * index..4 * index + 4].copy_from_slice(&sum.to_le_bytes());
+        bytes[I32_BYTES * index..I32_BYTES * (index + 1)].copy_from_slice(&sum.to_le_bytes());
     }
     WasmValue::V128(u128::from_le_bytes(bytes))
 }

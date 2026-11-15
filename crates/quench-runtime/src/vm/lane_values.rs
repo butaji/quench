@@ -7,6 +7,8 @@ use crate::Value;
 /// always has them free beneath it, so a window starts at `top` and the next at its end plus
 /// these, and a return stores the window's address back as the top.
 pub(super) const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
+/// The context blocks a fresh value stack reserves room for, at least.
+const INITIAL_WINDOWS: usize = 2;
 
 /// The low bit of an activation's `WINDOW` word when its window is not the lane stack's: a
 /// suspended frame's register file (a generator's, `FrameRecord`), which a return leaves
@@ -29,7 +31,7 @@ impl Default for LaneValues {
 
 impl LaneValues {
     pub(super) fn with_capacity(capacity: usize) -> Self {
-        let mut owner = Vec::<Value>::with_capacity(capacity.max(2 * CONTEXT));
+        let mut owner = Vec::<Value>::with_capacity(capacity.max(INITIAL_WINDOWS * CONTEXT));
         let base = owner.as_mut_ptr();
         // SAFETY: the allocation holds at least `CONTEXT` values; the first window's context
         // words start initialized, as every later window's are written by its push.

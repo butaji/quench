@@ -205,3 +205,5 @@ impl<H: Host> Vm<H> {
 
 include!("disposal.rs");
 include!("relational.rs");
+#[path = "instanceof.rs"]
+mod instanceof;

@@ -183,12 +183,7 @@ impl<H: Host> Vm<H> {
         if !self.is_constructable(constructor) {
             return Err(self.type_error(p, "typed array of receiver is not a constructor".into()));
         }
-        let target = self.array_from_target(
-            p,
-            constructor,
-            Some(args.len()),
-            ArrayFromTarget::TypedArray,
-        )?;
+        let target = self.array_from_target(p, constructor, Some(args.len()), ArrayFromTarget::TypedArray)?;
         let target_root = self.heap.root(target);
         let outcome = (|| {
             for (index, value) in args.iter().copied().enumerate() {
@@ -232,9 +227,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or_default();
             let result = self.construct_value(p, constructor, &args)?;
             if target == ArrayFromTarget::TypedArray && self.typed_array_kind(result).is_none() {
-                return Err(
-                    self.type_error(p, "typed array constructor returned invalid result".into())
-                );
+                return Err(self.type_error(p, "typed array constructor returned invalid result".into()));
             }
             if target == ArrayFromTarget::TypedArray {
                 self.validate_typed_array_result(p, result, length.unwrap_or_default(), true)?;
@@ -283,14 +276,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "iterator method is not callable".into()));
             }
             if target_kind == ArrayFromTarget::TypedArray {
-                return self.typed_array_from_iterable(
-                    p,
-                    constructor,
-                    source,
-                    iterator_method,
-                    mapfn,
-                    map_this,
-                );
+                return self.typed_array_from_iterable(p, constructor, source, iterator_method, mapfn, map_this);
             }
             // Constructing the intrinsic Array (or no constructor) runs no guest code, so the
             // source still iterates as `iterator_method` found it; filling an empty dense array
@@ -310,9 +296,7 @@ impl<H: Host> Vm<H> {
             let outcome = (|| {
                 let iterator = self.call_value(p, iterator_method, source, &[])?;
                 if !self.is_object_like(iterator) {
-                    return Err(
-                        self.type_error(p, "iterator method did not return an object".into())
-                    );
+                    return Err(self.type_error(p, "iterator method did not return an object".into()));
                 }
                 let iterator_root = self.heap.root(iterator);
                 let mut next_root = None;
@@ -357,6 +341,20 @@ impl<H: Host> Vm<H> {
             return outcome;
         }
 
+        self.array_from_array_like(p, constructor, source, mapfn, map_this, target_kind)
+    }
+
+    /// `Array.from` of an array-like source: its length, then each element read in order,
+    /// mapped and stored into the target, which is the result.
+    fn array_from_array_like(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        source: Value,
+        mapfn: Option<Value>,
+        map_this: Value,
+        target_kind: ArrayFromTarget,
+    ) -> Result<Value, JsError> {
         let length = self.array_like_length(p, source)?;
         let target = self.array_from_target(p, constructor, Some(length), target_kind)?;
         let root = self.heap.root(target);
@@ -364,8 +362,7 @@ impl<H: Host> Vm<H> {
             for index in 0..length {
                 let mut value = self.get_index(p, source, Value::number(index as f64))?;
                 if let Some(mapfn) = mapfn {
-                    value =
-                        self.call_value(p, mapfn, map_this, &[value, Value::number(index as f64)])?;
+                    value = self.call_value(p, mapfn, map_this, &[value, Value::number(index as f64)])?;
                 }
                 let target = self.heap.root_value(root).unwrap();
                 if target_kind == ArrayFromTarget::TypedArray {
@@ -401,12 +398,7 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             values = self.rooted_iterator_list(p, source, iterator_method)?;
             let constructor = self.heap.root_value(constructor).unwrap();
-            let result = self.array_from_target(
-                p,
-                constructor,
-                Some(values.len()),
-                ArrayFromTarget::TypedArray,
-            )?;
+            let result = self.array_from_target(p, constructor, Some(values.len()), ArrayFromTarget::TypedArray)?;
             let target_root = self.heap.root(result);
             target = Some(target_root);
             for (index, value) in values.iter().enumerate() {
@@ -503,10 +495,7 @@ impl<H: Host> Vm<H> {
             let number = self.to_number(p, length_value)?;
             let length = crate::units::to_length(number);
             if length > u32::MAX as usize {
-                return Err(self.range_error(
-                    p,
-                    "Array.fromAsync array-like length is out of range".into(),
-                ));
+                return Err(self.range_error(p, "Array.fromAsync array-like length is out of range".into()));
             }
             let result = self.construct_value(p, constructor, &[Value::number(length as f64)])?;
             let state = self.new_array_from_async_state(ArrayFromAsyncState {

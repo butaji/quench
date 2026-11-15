@@ -24,6 +24,25 @@ fn block(count: usize) -> usize {
 /// An operand naming a register (its low bits) rather than a row element offset.
 const REGISTER: u32 = 1 << 31;
 
+/// The node columns a machine maps to registers: one register slot per node id, below 256.
+const NODE_REGISTERS: usize = 256;
+
+/// Takes the next free register of a machine's file, advancing `next`.
+fn take_register(next: &mut usize) -> Option<u8> {
+    *next += 1;
+    u8::try_from(*next - 1).ok().filter(|&r| usize::from(r) < REGISTERS)
+}
+
+/// The register a scalar slot is read from, taking one on the slot's first use.
+fn scalar_register(scalars: &mut Vec<(u8, u8)>, slot: u8, next: &mut usize) -> Option<u8> {
+    if let Some(&(register, _)) = scalars.iter().find(|&&(_, s)| s == slot) {
+        return Some(register);
+    }
+    let register = take_register(next)?;
+    scalars.push((register, slot));
+    Some(register)
+}
+
 #[derive(Clone, Copy)]
 struct Step {
     /// The operator and operand forms (`kind`).
@@ -46,15 +65,21 @@ struct Kind(u8);
 
 /// Forms per arithmetic operator: whether `a`, then `b`, is a register.
 const ARITH_FORMS: u8 = 4;
-const GENERAL: u8 = 4 * ARITH_FORMS;
+/// The arithmetic operators' slots, each `ARITH_FORMS` apart.
+const OP_ADD: u8 = 0;
+const OP_SUBTRACT: u8 = 1;
+const OP_MULTIPLY: u8 = 2;
+const OP_DIVIDE: u8 = 3;
+/// The forms of the general operators: after the arithmetic slots.
+const GENERAL: u8 = (OP_DIVIDE + 1) * ARITH_FORMS;
 
 fn kind(code: Code, a: u32, b: u32) -> Kind {
-    let forms = u8::from(a & REGISTER != 0) * 2 + u8::from(b & REGISTER != 0);
+    let forms = (u8::from(a & REGISTER != 0) << 1) + u8::from(b & REGISTER != 0);
     let op = match code {
-        Code::Add => 0,
-        Code::Subtract => 1,
-        Code::Multiply => 2,
-        Code::Divide => 3,
+        Code::Add => OP_ADD,
+        Code::Subtract => OP_SUBTRACT,
+        Code::Multiply => OP_MULTIPLY,
+        Code::Divide => OP_DIVIDE,
         _ => return Kind(GENERAL + forms),
     };
     Kind(op * ARITH_FORMS + forms)
@@ -79,27 +104,16 @@ impl Machine {
         // The recurrences hold a fixed block of registers, so an iteration's end copies a
         // block of constant size (`block`).
         let mut next = block(count);
-        let mut registers = [u8::MAX; 256];
+        let mut registers = [u8::MAX; NODE_REGISTERS];
         let mut scalars: Vec<(u8, u8)> = Vec::new();
-        let take = |next: &mut usize| -> Option<u8> {
-            *next += 1;
-            u8::try_from(*next - 1).ok().filter(|&r| usize::from(r) < REGISTERS)
-        };
-        let mut operand = |arg: Arg, next: &mut usize, registers: &[u8; 256]| -> Option<u32> {
+        let mut operand = |arg: Arg, next: &mut usize, registers: &[u8; NODE_REGISTERS]| -> Option<u32> {
             Some(match arg {
                 Arg::Phi(phi) => REGISTER | u32::from(phi),
                 Arg::Col(n) if shape.nodes[usize::from(n)].seq => {
                     REGISTER | u32::from(*registers.get(usize::from(n)).filter(|&&r| r != u8::MAX)?)
                 }
                 Arg::Col(n) => u32::try_from(usize::from(n) * CHUNK).ok()?,
-                Arg::Scalar(slot) => REGISTER | u32::from(match scalars.iter().find(|&&(_, s)| s == slot) {
-                    Some(&(register, _)) => register,
-                    None => {
-                        let register = take(next)?;
-                        scalars.push((register, slot));
-                        register
-                    }
-                }),
+                Arg::Scalar(slot) => REGISTER | u32::from(scalar_register(&mut scalars, slot, next)?),
                 Arg::Affine(_) => return None,
             })
         };
@@ -107,7 +121,7 @@ impl Machine {
         for &id in shape.seq.iter().filter(|id| !side.contains(id)) {
             let node = shape.nodes[usize::from(id)];
             let (a, b) = (operand(node.a, &mut next, &registers)?, operand(node.b, &mut next, &registers)?);
-            let register = take(&mut next)?;
+            let register = take_register(&mut next)?;
             *registers.get_mut(usize::from(id))? = register;
             let out = if read_later(shape, side, id) { u32::try_from(usize::from(id) * CHUNK).ok()? } else { dump };
             let code = Code::of(node.op, true);

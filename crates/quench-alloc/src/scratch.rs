@@ -24,18 +24,18 @@ use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use super::MAX_SMALL_BYTES;
+use super::{MAX_SMALL_BYTES, PAGE_BYTES};
 
 /// log2 of the smallest scratch class: the first power of two above `MAX_SMALL_BYTES`.
 const MIN_SHIFT: u32 = MAX_SMALL_BYTES.trailing_zeros() + 1;
 /// log2 of the largest scratch class, 1 MiB: where the system allocator maps blocks itself
 /// and `large` takes over.
 const MAX_SHIFT: u32 = 20;
+/// log2 of a page: the smallest class whose blocks a phase release returns.
+const PAGE_SHIFT: u32 = PAGE_BYTES.trailing_zeros();
 const CLASSES: usize = (MAX_SHIFT - MIN_SHIFT + 1) as usize;
 /// The largest request served: its alignment is the smallest class's, which every block has.
 const MAX_ALIGN: usize = 1 << MIN_SHIFT;
-/// The system page, the unit `release` returns.
-const PAGE_BYTES: usize = 4096;
 /// Address space reserved for the arena, faulted by first touch: a compile's scratch peaked
 /// near 100 MB on the largest bodies; past this the system allocator serves the rest.
 const ARENA_BYTES: usize = 1 << 30;
@@ -180,7 +180,7 @@ pub fn release() {
 /// `release`, returning every free block of a page or more while blocks stay live: a phase
 /// that ends (`leave`) with a few of its blocks kept returns the rest of its pages.
 pub fn release_phase() {
-    release_from(12);
+    release_from(PAGE_SHIFT);
 }
 
 fn release_from(partial_release_shift: u32) {

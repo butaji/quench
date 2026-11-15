@@ -2427,9 +2427,7 @@ impl quench_runtime::Host for NodeHost {
     /// empty pages leave too, past what its recent intervals took, at most once per its purge
     /// delay (`quench_alloc::release_empty_pages`): a server's collections empty pages of every
     /// phase's short-lived objects, which otherwise stayed resident beside the heap's next
-    /// peak (board load, glibc production, same host, 3 runs each, 2026-10-27, final peak
-    /// RSS: fastify 41.7-45.3 -> 39.4-40.8 MB, hono 43.0-49.4 -> 38.4-41.1 MB, throughput
-    /// within noise). Every policy counts the collection for the release before output
+    /// peak. Every policy counts the collection for the release before output
     /// (`resident_pages::note_collection`).
     fn at_collection_boundary(&mut self, policy: quench_runtime::MemoryPolicy) {
         crate::host::resident_pages::release_at_collection(policy.returns_pages_at_collections());
@@ -2451,16 +2449,13 @@ impl quench_runtime::Host for NodeHost {
     /// The pages the program touched leave the resident set before the code generator's join
     /// it, as compiling a module's bytecode does (`compile_wasm`): loading, linking and
     /// instantiating a WebAssembly module, or the interpreter and the builtins a JavaScript
-    /// program ran. A JavaScript compile is the peak of a short numeric program (V8-v7
-    /// NavierStokes `--jit` under MemoryFirst, plain x86_64 build, 2026-10-22: max RSS
-    /// 10.84-10.94 -> 8.80-8.89 MB, Score within noise).
+    /// program ran. A JavaScript compile is the peak of a short numeric program.
     fn before_native_compilation(&mut self) {
         crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::Before);
     }
 
     /// The code generator's pages, and the allocator's pages its scratch memory freed, leave
-    /// the resident set before the program runs on (V8-v7 Crypto `--jit` under MemoryFirst,
-    /// plain x86_64 build, 2026-10-22: max RSS 6.82-6.84 -> 5.91 MB with the release before).
+    /// the resident set before the program runs on.
     fn after_native_compilation(&mut self) {
         crate::host::resident_pages::at_native_compilation(crate::host::resident_pages::NativeCompilation::After);
     }

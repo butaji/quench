@@ -161,10 +161,30 @@ impl<H: Host> Vm<H> {
         stop
     }
 
+    /// Writes the string `value` onto `text` when it is ASCII: read in place, a small string's
+    /// included (no view made); a rope is flattened.
+    fn extend_join_string(&self, value: Value, text: &mut Vec<u8>) -> bool {
+        use super::wtf16::Units;
+        let existing = self.heap.flat_text(value);
+        let units = match &existing {
+            Some(text) => text.units(),
+            None => match self.heap.string(value) {
+                Some(string) => string.flat().view(),
+                None => return false,
+            },
+        };
+        match units {
+            Units::Ascii(bytes) => {
+                text.extend_from_slice(bytes);
+                true
+            }
+            Units::Wide(_) => false,
+        }
+    }
+
     /// Writes the join piece of `value`, the element at `index` of `array`, onto `text` when
     /// it is ASCII and no guest code decides it; `false` leaves the element to the generic path.
     fn extend_join_piece(&self, array: Value, index: usize, value: Value, text: &mut Vec<u8>) -> bool {
-        use super::wtf16::Units;
         if value.is_deleted() {
             return self.inherited_index_absent(array, index);
         }
@@ -172,22 +192,7 @@ impl<H: Host> Vm<H> {
             return true;
         }
         if self.heap.is_string(value) {
-            // Text read in place, a small string's included (no view made); a rope is flattened.
-            let existing = self.heap.flat_text(value);
-            let units = match &existing {
-                Some(text) => text.units(),
-                None => match self.heap.string(value) {
-                    Some(string) => string.flat().view(),
-                    None => return false,
-                },
-            };
-            return match units {
-                Units::Ascii(bytes) => {
-                    text.extend_from_slice(bytes);
-                    true
-                }
-                Units::Wide(_) => false,
-            };
+            return self.extend_join_string(value, text);
         }
         match value.as_bool() {
             Some(flag) => text.extend_from_slice(if flag { b"true" } else { b"false" }),

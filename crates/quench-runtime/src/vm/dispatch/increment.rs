@@ -33,6 +33,9 @@ pub(in crate::vm) fn number_increment(input: Value, is_decrement: bool) -> Optio
         .map(|number| Value::number(number + increment_delta(is_decrement)))
 }
 
+/// The bound below which an int32 counter's stepped offset stays an int32 (`integer_increment`).
+const INT_COUNTER_BOUND: usize = 1 << (i32::BITS - 1);
+
 /// `number_increment` of an integer whose update stays one; `None` for any other value or
 /// an overflow, which `number_increment` answers.
 #[inline(always)]
@@ -43,7 +46,7 @@ pub(in crate::vm) fn integer_increment(input: Value, is_decrement: bool) -> Opti
     // overflow test. Negative counters and the step below zero take the checked form.
     let offset = input.int_key_offset();
     let stepped = if is_decrement { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    if stepped < 1 << 31 {
+    if stepped < INT_COUNTER_BOUND {
         return Some(Value::integer(stepped as i32));
     }
     let integer = input.as_int()?;

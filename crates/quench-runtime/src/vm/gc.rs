@@ -1,4 +1,6 @@
 mod collection_boundary;
+mod roots;
+use roots::{append_counted_shape_edges, append_cycle_shape_edges, zeroed_mark_words, GatheredRoots};
 use super::{module::ModuleRecord, promise::PromiseState};
 use super::*;
 use smallvec::SmallVec;
@@ -430,6 +432,24 @@ impl<H: Host> Vm<H> {
     /// constructors, owned edges) and the VM's weak caches, all held strongly from the
     /// snapshot, and no sweep until the cycle's remark.
     fn collect_inner(&mut self, _program: &ResidualProgram, full: bool, begin_cycle: bool) {
+        let full = self.begin_collection(full, begin_cycle);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let phase_started = std::time::Instant::now();
+        let owned_roots = self.owned_edge_index();
+        self.gc_owned_root_count = owned_roots.len();
+        let external_roots = self.external_owned_roots(&owned_roots, full);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(0, phase_started);
+        let gathered = self.gather_roots(full, begin_cycle, external_roots);
+        let Some((finalization_jobs, live_shapes)) = self.trace_and_sweep(gathered, &owned_roots, full, begin_cycle) else {
+            return;
+        };
+        self.finish_collection(full, finalization_jobs, live_shapes);
+    }
+
+    /// The work before a collection's roots are gathered: the boundary hooks, the frame
+    /// profile, and the per-collection tables the VM clears. Returns whether it is full.
+    fn begin_collection(&mut self, full: bool, begin_cycle: bool) -> bool {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.
@@ -447,8 +467,6 @@ impl<H: Host> Vm<H> {
         if crate::trace::Channel::FunctionUse.on() {
             self.report_function_use();
         }
-        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        let mut phase_started = std::time::Instant::now();
         self.constructed_shapes.fill(super::provenance::ConstructedShape::EMPTY);
         // Prepared regexp subjects share their strings' text: kept across a collection, they
         // would keep a dropped subject's text alive however large, as no string holds them.
@@ -458,420 +476,30 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
-            self.profile.gc_frame(
-                frame.program.raw(),
-                frame.function,
-                frame.pc as u32,
-                index + 1 == self.frames.len(),
-            );
+            self.profile.gc_frame(frame.program.raw(), frame.function, frame.pc as u32, index + 1 == self.frames.len());
         }
-        // Out-of-cell metadata belongs to its object. Derive the edge index for
-        // this collection and visit it only when the owner becomes reachable.
-        let mut owned_roots = OwnedRoots::with_capacity_and_hasher(
-            self.gc_owned_root_count,
-            Default::default(),
-        );
-        let mut own = |owner: Value, edge: Value| {
-            if edge.heap_index().is_some() {
-                owned_roots.entry(owner).or_default().push(edge);
-            }
-        };
-        for ((owner, key), attributes) in &self.descriptors {
-            for edge in key
-                .symbol_value()
-                .into_iter()
-                .chain([attributes.getter, attributes.setter].into_iter().flatten())
-            {
-                own(*owner, edge);
-            }
-        }
-        self.realm.promise.for_each_owned_edge(&mut own);
-        self.gc_owned_root_count = owned_roots.len();
-        let external_roots = if full {
-            Vec::new()
-        } else {
-            owned_roots
-                .iter()
-                .filter(|(owner, _)| self.heap.is_old(**owner))
-                .flat_map(|(_, edges)| edges.iter().copied())
-                .collect::<Vec<_>>()
-        };
+        full
+    }
+
+    /// Traces the heap from the gathered roots and sweeps it, returning the finalization jobs
+    /// and the live shapes. A cycle's snapshot returns None: its sweep waits for the remark.
+    fn trace_and_sweep(&mut self, gathered: GatheredRoots, owned_roots: &OwnedRoots, full: bool, begin_cycle: bool) -> Option<(Vec<(Value, Value)>, Vec<u32>)> {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        {
-            self.heap.record_vm_gc_phase(0, phase_started);
-            phase_started = std::time::Instant::now();
-        }
-        // Roots are gathered source by source: a single iterator chain over every source
-        // costs each root a step through every nesting level. They go into the previous
-        // collection's mark stack, which holds as many already.
-        let mut roots = self.heap.take_mark_stack();
-        // Under counts, a minor collection may free any old record nothing counted names. The
-        // edges the VM writes once (program constants, kept atom strings, startup roots, shape
-        // edges) are taken as a minor would take them, where they may name young records, and
-        // their records are pinned (`Heap::rc_pin`) so no epoch frees them; when counts
-        // restarted, which drops pins, every one is taken and pinned again.
-        let rc = self.heap.rc_active();
-        let repin = rc && self.rc_pin_epoch != self.heap.rc_pin_epoch();
-        let all_roots = full || repin;
-        let mut pins = Vec::new();
-        self.programs.extend_roots(if rc { &mut pins } else { &mut roots }, all_roots, self.heap.promotion_age());
-        self.heap.extend_folded_roots(&mut roots);
-        roots.extend(self.wasm_js.roots());
-        roots.extend(self.native_roots.live().iter().copied());
-        roots.extend([
-            self.realm.globals,
-            self.object_proto,
-            self.function_proto,
-            self.array_proto,
-            self.array_buffer_proto,
-            self.shared_array_buffer_proto,
-            self.array_iterator_proto,
-            self.typed_array_proto,
-            self.uint8_array_proto,
-            self.uint8_clamped_array_proto,
-            self.uint16_array_proto,
-            self.uint32_array_proto,
-            self.int8_array_proto,
-            self.int16_array_proto,
-            self.int32_array_proto,
-            self.bigint64_array_proto,
-            self.biguint64_array_proto,
-            self.float16_array_proto,
-            self.float32_array_proto,
-            self.float64_array_proto,
-            self.data_view_proto,
-            self.map_proto,
-            self.set_proto,
-            self.shadow_realm_proto,
-            self.map_iterator_proto,
-            self.set_iterator_proto,
-            self.weak_map_proto,
-            self.weak_set_proto,
-            self.weak_ref_proto,
-            self.finalization_registry_proto,
-            self.iterator_proto,
-            self.string_iterator_proto,
-            self.regexp_string_iterator_proto,
-            self.generator_proto,
-            self.iterator_helper_proto,
-            self.wrap_for_valid_iterator_proto,
-            self.async_iterator_proto,
-            self.async_generator_proto,
-            self.async_from_sync_iterator_proto,
-            self.regexp_proto,
-            self.reused_iterator_result,
-        ]);
-        // The active realm's top-level lexical bindings, then every inactive realm's.
-        roots.extend(self.realm.global_lexical_bindings.values().copied());
-        roots.extend(
-            self.realm
-                .global_lexical_states
-                .iter()
-                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
-                .flat_map(|(global, state)| {
-                    std::iter::once(*global).chain(state.bindings.values().copied())
-                }),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .builtin_prototypes
-                .iter()
-                .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .function_constructors
-                .iter()
-                .flat_map(|((realm, _), constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .promise_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(self.realm.intrinsics.error_intrinsics.iter().flat_map(
-            |(realm, intrinsics)| {
-                [
-                    *realm,
-                    intrinsics.constructor,
-                    intrinsics.stack_getter,
-                    intrinsics.stack_setter,
-                    intrinsics.call_site_constructor,
-                    intrinsics.call_site_prototype,
-                ].into_iter().chain(intrinsics.host_formatter)
-            },
-        ));
-        roots.extend(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
-            |(realm, intrinsics)| {
-                [*realm, intrinsics.constructor, intrinsics.prototype]
-                    .into_iter()
-                    .chain(intrinsics.result_template.map(|template| template.anchor)).chain(intrinsics.builtin_exec.get())
-            },
-        ));
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_number_format_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_number_format_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_number_format_fallback_symbols
-                .iter()
-                .flat_map(|(realm, symbol)| [*realm, *symbol]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_collator_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_collator_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_plural_rules_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_datetime_format_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_datetime_format_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_datetime_format_fallback_symbols
-                .iter()
-                .flat_map(|(realm, symbol)| [*realm, *symbol]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_display_names_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_display_names_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_duration_format_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_duration_format_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_list_format_constructors
-                .iter()
-                .flat_map(|(realm, constructor)| [*realm, *constructor]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_list_format_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_relative_time_format_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_segmenter_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_segment_iterator_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_segments_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(
-            self.realm
-                .intrinsics
-                .intl_locale_prototypes
-                .iter()
-                .flat_map(|(realm, prototype)| [*realm, *prototype]),
-        );
-        roots.extend(self.natives.roots());
-        let kept_atoms = self.heap.kept_atom_roots(all_roots);
-        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
-        roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
-            |(realm, prototypes)| {
-                [
-                    *realm,
-                    prototypes.helper,
-                    prototypes.wrapper,
-                    prototypes.generator,
-                    prototypes.async_generator,
-                ]
-            },
-        ));
-        roots.extend(self.test262_agent.roots());
-        roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
-        roots.extend(
-            self.realm
-                .promise
-                .active_native
-                .iter()
-                .flat_map(|activation| [activation.callable, activation.receiver]),
-        );
-        roots.extend(
-            self.realm.promise.rejection_notifications.iter().map(
-                |notification| match notification {
-                    super::promise::RejectionNotification::Unhandled(promise)
-                    | super::promise::RejectionNotification::Handled(promise) => *promise,
-                },
-            ),
-        );
-        roots.extend(
-            self.realm
-                .promise
-                .modules
-                .values()
-                .chain(self.realm.promise.module_replacements.values())
-                .flat_map(ModuleRecord::roots),
-        );
-        roots.extend(self.realm.promise.module_sources.values().copied());
-        roots.extend(
-            self.realm
-                .promise
-                .dynamic_import_jobs
-                .iter()
-                .flat_map(super::promise::DynamicImportJob::roots),
-        );
-        for job in &self.realm.jobs {
-            job.push_roots(&mut roots);
-        }
-        roots.extend(self.realm.template_objects.values().copied());
-        roots.extend(
-            self.realm
-                .intrinsics
-                .arguments_objects
-                .iter()
-                .flat_map(|((global, _), template)| [*global, template.anchor]),
-        );
-        roots.extend(self.with_stack.iter().copied());
-        self.lane_stack.extend_roots(&self.programs, &mut roots);
-        self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
-        roots.extend(std::iter::once(self.instanceof_has_instance_holder));
-        roots.extend(self.active_call_roots.iter().copied());
-        roots.extend(self.symbol_registry.values().copied());
-        roots.extend(self.well_known_symbols.values());
-        roots.extend(self.typeof_names);
-        // Old startup roots stay marked until a full collection, which takes them all. Under
-        // counts they are pinned when taken, as a minor collection may free old records too.
-        if all_roots || begin_cycle || !self.startup_roots_old() || self.heap.satb_active() {
-            let startup = self.startup_intrinsic_roots();
-            if rc { pins.extend(startup) } else { roots.extend(startup) }
-        }
-        for frame in &self.frames {
-            // A missing map means the function uses a register form the liveness pass cannot
-            // represent; keep the safe conservative scan for that activation.
-            roots.extend([frame.env, frame.this]);
-            roots.extend(frame.context.callee());
-            roots.extend(frame.original_arguments.iter().copied());
-            roots.extend(frame.locals.iter().copied());
-            roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
-                Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
-                None => roots.extend(frame.registers.iter().copied()),
-            }
-        }
-        roots.extend(external_roots);
-        #[cfg(feature = "profile-memory")]
-        if crate::trace::Channel::MemoryPeak.on() {
-            let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
-            self.report_memory_snapshot(&phase);
-        }
-        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        {
-            self.heap.record_vm_gc_phase(1, phase_started);
-            phase_started = std::time::Instant::now();
-        }
+        let phase_started = std::time::Instant::now();
+        let GatheredRoots { mut roots, mut pins, rc, repin } = gathered;
         let shape_count = self.shapes.len();
-        let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
-        let marked_shape_bits = (0..shape_word_count)
-            .map(|_| AtomicU64::new(0))
-            .collect::<Vec<_>>();
-        let marked_constructor_shape_bits = (0..shape_word_count).map(|_| AtomicU64::new(0)).collect::<Vec<_>>();
-        let constructors = &mut self.shape_constructors;
-        for shape in &self.shapes[constructors.len()..] {
-            let constructor = match shape.transition {
-                ShapeTransition::Constructed { constructor, .. } => constructor,
-                _ => shape.parent().map(|parent| constructors[parent as usize]).unwrap_or(Value::UNDEFINED),
-            };
-            constructors.push(constructor);
-        }
-        let constructors = &self.shape_constructors;
-        let owned_root_filter = OwnedRootFilter::new(&owned_roots);
+        let marked_shape_bits = zeroed_mark_words(shape_count);
+        let marked_constructor_shape_bits = zeroed_mark_words(shape_count);
+        self.fill_shape_constructors();
+        let owned_root_filter = OwnedRootFilter::new(owned_roots);
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
             accessors: &self.shape_accessors,
             marked_shapes: &marked_shape_bits,
             marked_constructor_shapes: &marked_constructor_shape_bits,
-            constructors,
-            owned_roots: &owned_roots,
+            constructors: &self.shape_constructors,
+            owned_roots,
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
@@ -881,30 +509,12 @@ impl<H: Host> Vm<H> {
         // made since the last minor collection are pinned instead, being written once, but an
         // owned dictionary's change in place, so they are roots every time.
         if begin_cycle {
-            for shape in 0..shape_count as u32 {
-                shape_trace.append_shape_edges(GcTraceKind::Collection, shape, false, &mut roots);
-            }
+            append_cycle_shape_edges(&shape_trace, shape_count, &mut roots);
         } else if !full && rc {
-            let pinned = if repin { 0 } else { self.rc_pinned_shapes.min(shape_count) };
-            for shape in 0..pinned {
-                if shape_lookup::is_owned_dictionary(&self.shapes[shape]) {
-                    shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut roots);
-                }
-            }
-            for shape in pinned..shape_count {
-                shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut pins);
-            }
-            self.rc_pinned_shapes = shape_count;
+            append_counted_shape_edges(&shape_trace, &self.shapes, &mut self.rc_pinned_shapes, repin, &mut roots, &mut pins);
         }
         if begin_cycle || !full && rc {
-            roots.extend(owned_roots.values().flatten().copied());
-            if let Some(strings) = &self.dynamic_strings {
-                roots.extend(strings.values().copied());
-            }
-            roots.extend(self.holder_hints.holder.iter().flat_map(|hint| [hint.holder, hint.value]));
-            roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
-            roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
-            self.private_site_homes.for_each_value(|value| roots.push(value));
+            self.extend_owned_cycle_roots(owned_roots, &mut roots);
         }
         if rc {
             self.heap.rc_pin(&pins);
@@ -913,12 +523,11 @@ impl<H: Host> Vm<H> {
         roots.append(&mut pins);
         if begin_cycle {
             self.heap.begin_cycle(roots);
-            return;
+            return None;
         }
-        let parallel_trace =
-            |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
-                shape_trace.append(trace_kind, owner, shape, prototype, roots);
-            };
+        let parallel_trace = |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
+            shape_trace.append(trace_kind, owner, shape, prototype, roots);
+        };
         // `ParallelShapeTrace::append`'s own early return, which markers then test inline.
         let parallel_object_roots = crate::heap::ParallelObjectRootTrace {
             trace: &parallel_trace,
@@ -926,10 +535,7 @@ impl<H: Host> Vm<H> {
         };
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(2, phase_started);
-        let closure_reads = ProgramClosureReads {
-            programs: &self.programs,
-            lexical_this: self.runtime_atoms.lexical_this,
-        };
+        let closure_reads = ProgramClosureReads { programs: &self.programs, lexical_this: self.runtime_atoms.lexical_this };
         let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, prototype, roots| {
@@ -939,6 +545,24 @@ impl<H: Host> Vm<H> {
             Some(&closure_reads),
             full,
         );
+        Some((finalization_jobs, shape_trace.live_shapes()))
+    }
+
+    /// The shapes' constructors, extended to the shapes made since the last collection.
+    fn fill_shape_constructors(&mut self) {
+        let constructors = &mut self.shape_constructors;
+        for shape in &self.shapes[constructors.len()..] {
+            let constructor = match shape.transition {
+                ShapeTransition::Constructed { constructor, .. } => constructor,
+                _ => shape.parent().map(|parent| constructors[parent as usize]).unwrap_or(Value::UNDEFINED),
+            };
+            constructors.push(constructor);
+        }
+    }
+
+    /// The work after a sweep: the program and function caches, the method caches, the dead
+    /// entries of the VM's tables, the finalization jobs, and the boundary hooks.
+    fn finish_collection(&mut self, full: bool, finalization_jobs: Vec<(Value, Value)>, mut live_shapes: Vec<u32>) {
         // Whether every startup root is old now, so the next minor collection may leave
         // them out (`StartupIntrinsics::roots_old`).
         if !self.startup_roots_old() {
@@ -948,12 +572,28 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
-        let mut live_shapes = shape_trace.live_shapes();
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
-        // Heap weak fields are pruned during collection. Prune the VM-owned
-        // weak function cache before any post-collection cleanup can allocate
-        // into newly freed slots.
+        self.prune_swept_programs(full);
+        self.compact_or_retain_method_caches(full, live_shapes);
+        self.prune_dead_callees();
+        self.enqueue_finalization_jobs(finalization_jobs);
+        self.prune_dead_tables();
+        self.prune_dead_promise_entries();
+        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        self.heap.record_vm_gc_phase(3, after_collection_started);
+        self.collection_boundary(full);
+        #[cfg(feature = "profile-memory")]
+        if crate::trace::Channel::MemoryPeak.on() {
+            let phase = format!("gc_{}_after", self.heap.collection_count());
+            self.report_memory_snapshot(&phase);
+        }
+    }
+
+    /// The program and function state a sweep may have left dead: native calls, script realms,
+    /// closures, exported wasm functions, private homes, and programs a full collection frees.
+    fn prune_swept_programs(&mut self, full: bool) {
         let heap = &self.heap;
         // SAFETY: native lane bodies cannot collect; sweep has finished and
         // no cleanup allocation can yet reuse a dead function locator.
@@ -965,8 +605,7 @@ impl<H: Host> Vm<H> {
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.
         let heap = &self.heap;
-        self.private_homes
-            .retain(|key, _| heap.is_live(key.environment));
+        self.private_homes.retain(|key, _| heap.is_live(key.environment));
         self.private_site_homes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
@@ -977,6 +616,11 @@ impl<H: Host> Vm<H> {
         if full {
             self.heap.set_reclaimable_programs_after_full(self.programs.settled_reclaimable_bytes());
         }
+    }
+
+    /// Compacts the shapes when a full collection's sweep left enough dead, else retains the
+    /// live method caches; then prunes the first chunks.
+    fn compact_or_retain_method_caches(&mut self, full: bool, live_shapes: Vec<u32>) {
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
@@ -993,21 +637,29 @@ impl<H: Host> Vm<H> {
             self.retain_live_method_caches();
         }
         self.prune_first_chunks();
+    }
+
+    /// Forgets the swept callees and holders of the lane stacks and the holder hints.
+    fn prune_dead_callees(&mut self) {
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
         self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));
-        self.realm.jobs.extend(
-            finalization_jobs
-                .into_iter()
-                .map(|(callback, held)| PendingJob::Call {
-                    callback,
-                    this: Value::UNDEFINED,
-                    args: vec![held],
-                }),
-        );
-        self.descriptors
-            .retain(|(object, _), _| self.heap.is_live(*object));
+    }
+
+    /// Queues the finalization callbacks of the swept finalization registries.
+    fn enqueue_finalization_jobs(&mut self, finalization_jobs: Vec<(Value, Value)>) {
+        self.realm.jobs.extend(finalization_jobs.into_iter().map(|(callback, held)| PendingJob::Call {
+            callback,
+            this: Value::UNDEFINED,
+            args: vec![held],
+        }));
+    }
+
+    /// Drops the swept owners of descriptors and the abandoned job and promise contexts, and
+    /// the dead dynamic strings.
+    fn prune_dead_tables(&mut self) {
+        self.descriptors.retain(|(object, _), _| self.heap.is_live(*object));
         let abandoned = self.heap.take_abandoned_contexts();
         for context in abandoned.jobs {
             self.release_job_context(context);
@@ -1015,40 +667,21 @@ impl<H: Host> Vm<H> {
         if !abandoned.promises.is_empty() {
             self.host.release_promise_contexts(&abandoned.promises);
         }
-        self.realm
-            .promise
-            .finally_handler_callbacks
-            .retain(|function, _| self.heap.is_live(*function));
-        self.realm
-            .promise
-            .finally_continuation_callbacks
-            .retain(|function, _| self.heap.is_live(*function));
-        self.realm
-            .promise
-            .aggregates
-            .retain(|aggregate, _| self.heap.is_live(*aggregate));
-        self.realm
-            .promise
-            .aggregate_jobs
-            .retain(|job, _| self.heap.is_live(*job));
-        self.realm
-            .promise
-            .reaction_capabilities
-            .retain(|promise, _| self.heap.is_live(*promise));
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
             strings.retain(|_, value| self.heap.is_live(*value));
         }
-        H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
-        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
-        self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.collection_boundary(full);
-        #[cfg(feature = "profile-memory")]
-        if crate::trace::Channel::MemoryPeak.on() {
-            let phase = format!("gc_{}_after", self.heap.collection_count());
-            self.report_memory_snapshot(&phase);
-        }
+    }
+
+    /// Drops the swept keys of the promise tables that name a promise, aggregate, job or
+    /// callback.
+    fn prune_dead_promise_entries(&mut self) {
+        self.realm.promise.finally_handler_callbacks.retain(|function, _| self.heap.is_live(*function));
+        self.realm.promise.finally_continuation_callbacks.retain(|function, _| self.heap.is_live(*function));
+        self.realm.promise.aggregates.retain(|aggregate, _| self.heap.is_live(*aggregate));
+        self.realm.promise.aggregate_jobs.retain(|job, _| self.heap.is_live(*job));
+        self.realm.promise.reaction_capabilities.retain(|promise, _| self.heap.is_live(*promise));
     }
 
     fn should_compact_live_shapes(&self, live_shapes: &[u32]) -> bool {
@@ -1294,123 +927,4 @@ impl<H: Host> Vm<H> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::shape_reclaim_threshold_met;
-    use crate::value::Value;
-    use crate::vm::{
-        DEFAULT_DATA_ATTRIBUTES, DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger,
-        PropertyAttributes, Shape, ShapeAttributes, ShapeTransition, property_key::PropertyKey,
-    };
-
-    #[test]
-    fn shape_compaction_preserves_creation_metadata_without_property_slots() {
-        use super::{append_compacted_shape, rebuild_shape, provenance};
-        let mut shapes = vec![Shape::root()];
-        let mut transitions = crate::vm::shape_transitions::ShapeTransitionIndex::default();
-        let named = append_compacted_shape(&mut shapes, &mut transitions, 0,
-            ShapeTransition::FunctionName { name: 7 }, 0);
-        let reconfigured = append_compacted_shape(&mut shapes, &mut transitions, named,
-            ShapeTransition::FunctionNameReconfigured, 0);
-        let length_reconfigured = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
-            ShapeTransition::FunctionLengthReconfigured, 0);
-        let created = append_compacted_shape(&mut shapes, &mut transitions, length_reconfigured,
-            ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
-        let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
-            ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
-        let mut rebuilt = vec![Shape::root()];
-        let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
-            &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
-        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
-        assert!(provenance::shape_function_length_reconfigured(&rebuilt, shape));
-        assert_eq!(rebuilt[shape as usize].storage_len(), 1);
-        assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);
-    }
-
-    #[test]
-    fn shape_compaction_waits_until_reclaim_is_material() {
-        assert!(!shape_reclaim_threshold_met(1_000, 25));
-        assert!(!shape_reclaim_threshold_met(1_000, 200));
-        assert!(!shape_reclaim_threshold_met(1_000, 499));
-        assert!(shape_reclaim_threshold_met(1_000, 500));
-    }
-
-    #[test]
-    fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
-        let root = Shape::root();
-        assert!(!root.facts.may_have_gc_roots());
-        let string_key = Shape::child(
-            Some(0),
-            ShapeTransition::Add {
-                key: PropertyKey::string(0),
-                slot: 0,
-                attributes: DEFAULT_DATA_ATTRIBUTES,
-            },
-            1,
-            None,
-            root.facts,
-        );
-        assert!(!string_key.facts.may_have_gc_roots());
-
-        let symbol_key = PropertyKey::symbol(Value::heap(1));
-        let symbol_shape = Shape::child(
-            Some(0),
-            ShapeTransition::Add {
-                key: symbol_key,
-                slot: 0,
-                attributes: DEFAULT_DATA_ATTRIBUTES,
-            },
-            1,
-            None,
-            root.facts,
-        );
-        assert!(symbol_shape.facts.may_have_gc_roots());
-        let deleted_symbol_shape = Shape::child(
-            Some(1),
-            ShapeTransition::Delete {
-                key: symbol_key,
-                slot: 0,
-            },
-            1,
-            None,
-            symbol_shape.facts,
-        );
-        assert!(deleted_symbol_shape.facts.may_have_gc_roots());
-
-        let accessor_shape = |getter, setter| {
-            let attributes = ShapeAttributes::record(
-                PropertyAttributes {
-                    accessor: true,
-                    getter,
-                    setter,
-                    ..DEFAULT_PROPERTY_ATTRIBUTES
-                },
-                &mut Vec::new(),
-            );
-            Shape::child(
-                Some(1),
-                ShapeTransition::Descriptor {
-                    slot: 0,
-                    attributes,
-                },
-                1,
-                Some(DictionaryTrigger::PropertyCount),
-                string_key.facts,
-            )
-        };
-        // A lone setter lives in the shape's accessor table, which the shape roots.
-        let table_accessor = accessor_shape(None, Some(Value::heap(3)));
-        assert!(table_accessor.facts.may_have_gc_roots());
-        assert!(!table_accessor.facts.slot_getters());
-        assert!(table_accessor.facts.accessor_pairs());
-        // A lone getter lives in its object's slot, traced with the object.
-        let slot_getter = accessor_shape(Some(Value::heap(2)), None);
-        assert!(!slot_getter.facts.may_have_gc_roots());
-        assert!(slot_getter.facts.slot_getters());
-        assert!(!slot_getter.facts.accessor_pairs());
-        // A getter and a setter live in the slot as one pair cell, told by its value.
-        let slot_pair = accessor_shape(Some(Value::heap(2)), Some(Value::heap(3)));
-        assert!(!slot_pair.facts.may_have_gc_roots());
-        assert!(!slot_pair.facts.slot_getters());
-        assert!(slot_pair.facts.accessor_pairs());
-    }
-}
+mod tests;

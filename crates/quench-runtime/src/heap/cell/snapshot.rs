@@ -207,12 +207,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     writer.u8(element_facts.0);
     writer.option_value(*boxed_primitive);
     structured_serialization::write(writer, *serialization);
-    writer.len(module_bindings.len());
-    for (atom, program, slot) in module_bindings {
-        writer.u32(*atom);
-        writer.u32(program.raw());
-        writer.u16(*slot);
-    }
+    write_module_bindings(writer, module_bindings);
     writer.bool(deferred_module.is_some());
     if let Some(module) = deferred_module {
         write_module_source(writer, module);
@@ -224,21 +219,31 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     Ok(())
 }
 
+/// The module bindings of a snapshot, each written as its atom, program and slot.
+fn write_module_bindings(writer: &mut Writer, module_bindings: &[(u32, ProgramId, u16)]) {
+    writer.len(module_bindings.len());
+    for (atom, program, slot) in module_bindings {
+        writer.u32(*atom);
+        writer.u32(program.raw());
+        writer.u16(*slot);
+    }
+}
+
+/// The element facts byte of a snapshot, which may set only the bits `ElementFacts::ALL` names.
+fn read_element_facts(reader: &mut Reader<'_>) -> SnapshotResult<ElementFacts> {
+    let facts = reader.u8()?;
+    (facts & !ElementFacts::ALL == 0).then_some(ElementFacts(facts)).ok_or_else(|| SnapshotError("invalid snapshot element facts".into()))
+}
+
 fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let prototype_lookup = prototype_lookup::read(reader)?;
     let inline = reader.values()?;
-    let inline_properties = DisplacedInline(
-        inline.try_into().map_err(|_| SnapshotError("invalid snapshot inline properties".into()))?,
-    );
+    let inline_properties = DisplacedInline(inline.try_into().map_err(|_| SnapshotError("invalid snapshot inline properties".into()))?);
     let arena_start = reader.u32()?;
     let arguments_map = if reader.bool()? { Some(reader.u16s()?) } else { None };
     let brand = ObjectBrand::from_u8(reader.u8()?).ok_or_else(|| SnapshotError("invalid snapshot object brand".into()))?;
     let structured_transfer_forbidden = reader.bool()?;
-    let element_facts = reader.u8()?;
-    if element_facts & !ElementFacts::ALL != 0 {
-        return Err(SnapshotError("invalid snapshot element facts".into()));
-    }
-    let element_facts = ElementFacts(element_facts);
+    let element_facts = read_element_facts(reader)?;
     let boxed_primitive = reader.option_value()?;
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;

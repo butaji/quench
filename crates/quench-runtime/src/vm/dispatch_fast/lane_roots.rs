@@ -128,6 +128,13 @@ impl ParkedLane {
     }
 }
 
+/// The fuel a lane run starts with: none while a collection is due at its interrupt floor, so
+/// the run exits at its first check; otherwise one batch.
+fn starting_fuel(floor: *const std::sync::atomic::AtomicUsize) -> u32 {
+    // SAFETY: the VM holds its interrupt state for the whole run.
+    if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH }
+}
+
 impl<H: Host> Vm<H> {
     /// The receiver and environment of the innermost activation of the live lane, which its
     /// context holds: the context of the native call it runs beside (`lane_deferred`) or of the
@@ -189,17 +196,14 @@ impl<H: Host> Vm<H> {
             instance_slots: (Value::DELETED, std::ptr::null()),
             backedges_left: self.lane_credits_backedges(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
-            // SAFETY: the VM holds its interrupt state for the whole run.
-            fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },
+            fuel: starting_fuel(floor),
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),
             resumed_acc: Slot::of(Value::UNDEFINED),
             callee_resume: std::ptr::null(),
             callee_acc: Value::UNDEFINED,
             callee_warming: false,
-            leaf: NO_LEAF_CALL,
-            outer: NO_OUTER_WALK,
-            frame_storage: NO_FRAME_STORAGE,
+            leaf: NO_LEAF_CALL, outer: NO_OUTER_WALK, frame_storage: NO_FRAME_STORAGE,
             proofs: crate::heap::ArrayStorageProofs::new(),
             region_payload: 0,
         }

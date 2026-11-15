@@ -164,6 +164,19 @@ impl Heap {
                 }
             }
         }
+        Self::settle_young_weak(young_weak, aged, &is_marked, full, age);
+        finalization_jobs
+    }
+
+    /// After a collection the young weak list keeps only the entries that survive and are not yet
+    /// aged: a full collection, or one that promotes everything, leaves none to track.
+    fn settle_young_weak(
+        young_weak: &mut Vec<u32>,
+        aged: &[u64],
+        is_marked: &impl Fn(Value) -> bool,
+        full: bool,
+        age: PromotionAge,
+    ) {
         if full || !age.ages() {
             young_weak.clear();
         } else {
@@ -172,7 +185,6 @@ impl Heap {
                 is_marked(Value::heap(index)) && aged.get(word).is_none_or(|ages| ages & bit == 0)
             });
         }
-        finalization_jobs
     }
 
     fn prune_weak_cell(

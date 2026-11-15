@@ -1,6 +1,8 @@
 //! Call-site descriptions read from one function's text, for an error raised before its
 //! source's call sites are frozen.
 use super::{frozen_call_sites, CallFinder, CallSites};
+use crate::compile::statement_stream::{RUN_BYTES, RUN_STATEMENTS, STREAM_ARENA};
+use oxc_ast::ast::{Comment, Statement};
 use oxc_ast_visit::Visit;
 use oxc_parser::{ParseOptions, Parser};
 use oxc_span::SourceType;
@@ -79,14 +81,7 @@ fn top_level_call_sites(source: &crate::bytecode::ProgramSource, offset: u32) ->
     let mut found = None;
     while found.is_none() {
         let step = stream.next(RUN_STATEMENTS, RUN_BYTES, &mut |_| {}, &mut |statements, comments| {
-            let holding = statements.iter().filter(|statement| oxc_span::GetSpan::span(*statement).contains_inclusive(oxc_span::Span::empty(offset)));
-            let mut finder = CallFinder { source: text, comments, found: CallSites::new() };
-            for statement in holding {
-                finder.visit_statement(statement);
-            }
-            if !finder.found.is_empty() {
-                found = Some(finder.found.into_values().collect());
-            }
+            found = found.take().or_else(|| run_call_sites(text, statements, comments, offset));
         });
         if step != oxc_parser::StreamStep::More {
             break;
@@ -95,7 +90,17 @@ fn top_level_call_sites(source: &crate::bytecode::ProgramSource, offset: u32) ->
     found
 }
 
-/// The statements, and the arena bytes, of one run of `top_level_call_sites`, and its arena.
-const RUN_STATEMENTS: usize = 4096;
-const RUN_BYTES: usize = 1 << 20;
-const STREAM_ARENA: usize = 2 << 20;
+/// The call sites that the statements of one run which hold `offset` make, if they make any.
+fn run_call_sites(
+    source: &str,
+    statements: &[Statement<'_>],
+    comments: &[Comment],
+    offset: u32,
+) -> Option<Vec<crate::bytecode::CallSiteDescription>> {
+    let mut finder = CallFinder { source, comments, found: CallSites::new() };
+    for statement in statements.iter().filter(|statement| oxc_span::GetSpan::span(*statement).contains_inclusive(oxc_span::Span::empty(offset))) {
+        finder.visit_statement(statement);
+    }
+    (!finder.found.is_empty()).then(|| finder.found.into_values().collect())
+}
+

@@ -285,6 +285,19 @@ impl<H: Host> Vm<H> {
         if self.startup_intrinsics.depth > 0 {
             return Ok(());
         }
+        if self.reseal_changed_holders() {
+            self.startup_intrinsics.shape_roots = self.shape_roots(&self.startup_intrinsics.holders);
+            self.startup_intrinsics.roots_old = false;
+        }
+        let outcome = self.restore_swapped(p);
+        if let Some(snapshot) = self.startup_intrinsics.regexp.take() {
+            self.restore_regexp_legacy(snapshot);
+        }
+        outcome
+    }
+
+    /// Reseals each holder whose shape changed during startup, answering whether any did.
+    fn reseal_changed_holders(&mut self) -> bool {
         let mut resealed = false;
         for index in 0..self.startup_intrinsics.holders.len() {
             if !self.holder_unchanged(index) {
@@ -296,10 +309,11 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        if resealed {
-            self.startup_intrinsics.shape_roots = self.shape_roots(&self.startup_intrinsics.holders);
-            self.startup_intrinsics.roots_old = false;
-        }
+        resealed
+    }
+
+    /// Puts back the swapped properties, newest first, and answers the first failure.
+    fn restore_swapped(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         // The swap list stays traced until every script value is back in place.
         let swapped = self.startup_intrinsics.swapped.clone();
         let mut outcome = Ok(());
@@ -317,9 +331,6 @@ impl<H: Host> Vm<H> {
             outcome = outcome.and(result);
         }
         self.startup_intrinsics.swapped.clear();
-        if let Some(snapshot) = self.startup_intrinsics.regexp.take() {
-            self.restore_regexp_legacy(snapshot);
-        }
         outcome
     }
 

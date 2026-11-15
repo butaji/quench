@@ -27,6 +27,12 @@ use wasmparser::{BinaryReaderError, BlockType, Operator, ValType};
 use super::{WasmMemory, WasmSignature, WasmSignatures, WasmType};
 use crate::Diagnostic;
 
+mod callees;
+mod operators;
+mod plan_build;
+use callees::Callees;
+use operators::{calls, default_value, disqualifies, nesting_after, numeric, numeric_value_type, union};
+
 /// Operators a leaf callee may have to be copied into each call site when
 /// the interpreter runs the module: a call costs it a frame and a dispatch,
 /// so copying a body pays up to this size. The budget bounds code growth per
@@ -132,19 +138,6 @@ impl From<Diagnostic> for Halt {
 /// A receiver inside the plan, which may stop its stream.
 type Receiver<'s, 'a> = dyn FnMut(Operator<'a>) -> Result<(), Halt> + 's;
 
-/// How `operator` changes the structured nesting it leaves for the operators after it.
-fn nesting_after(nesting: usize, operator: &Operator<'_>) -> usize {
-    match operator {
-        Operator::Block { .. }
-        | Operator::Loop { .. }
-        | Operator::If { .. }
-        | Operator::Try { .. }
-        | Operator::TryTable { .. } => nesting + 1,
-        Operator::End | Operator::Delegate { .. } => nesting.saturating_sub(1),
-        _ => nesting,
-    }
-}
-
 /// Declared locals whose first textual use is a `local.set`/`local.tee` at
 /// function-body nesting: straight-line body code runs in order, so every read
 /// of such a local follows that write. Observes a body's operators in order.
@@ -234,114 +227,6 @@ impl Leaf {
     }
 }
 
-fn numeric_value_type(ty: &WasmType) -> Option<ValType> {
-    Some(match ty {
-        WasmType::I32 => ValType::I32,
-        WasmType::I64 => ValType::I64,
-        WasmType::F32 => ValType::F32,
-        WasmType::F64 => ValType::F64,
-        _ => return None,
-    })
-}
-
-fn numeric(ty: &ValType) -> bool {
-    matches!(
-        ty,
-        ValType::I32 | ValType::I64 | ValType::F32 | ValType::F64
-    )
-}
-
-/// Operators that keep a body from being copied: tail calls, which would
-/// replace the caller's activation, and exception handling, whose handler
-/// ranges stay per function.
-fn disqualifies(operator: &Operator<'_>) -> bool {
-    matches!(
-        operator,
-        Operator::ReturnCall { .. }
-            | Operator::ReturnCallIndirect { .. }
-            | Operator::ReturnCallRef { .. }
-            | Operator::Try { .. }
-            | Operator::Catch { .. }
-            | Operator::CatchAll
-            | Operator::Delegate { .. }
-            | Operator::Rethrow { .. }
-            | Operator::Throw { .. }
-            | Operator::ThrowRef
-            | Operator::TryTable { .. }
-    )
-}
-
-fn calls(operator: &Operator<'_>) -> bool {
-    matches!(
-        operator,
-        Operator::Call { .. } | Operator::CallIndirect { .. } | Operator::CallRef { .. }
-    )
-}
-
-fn default_value<'a>(ty: ValType) -> Operator<'a> {
-    match ty {
-        ValType::I32 => Operator::I32Const { value: 0 },
-        ValType::I64 => Operator::I64Const { value: 0 },
-        ValType::F32 => Operator::F32Const {
-            value: wasmparser::Ieee32::from(0.0),
-        },
-        ValType::F64 => Operator::F64Const {
-            value: wasmparser::Ieee64::from(0.0),
-        },
-        ValType::V128 | ValType::Ref(_) => unreachable!("leaf locals are numeric"),
-    }
-}
-
-/// Adds the ascending indices of `from` to the ascending `into`.
-fn union(into: &mut Vec<u32>, from: &[u32]) {
-    if from.iter().all(|index| into.binary_search(index).is_ok()) {
-        return;
-    }
-    into.extend_from_slice(from);
-    into.sort_unstable();
-    into.dedup();
-}
-
-/// The defined functions' signatures and where they start in the function index space. The
-/// plan keeps its own copy: lowering adds block types to the module's signature pool.
-struct Callees {
-    imports: u32,
-    /// Each defined function's index into `shapes`, the pool's type index.
-    defined: Box<[u32]>,
-    /// The shapes of the type indices defined functions have; a module has far fewer
-    /// types than functions.
-    shapes: Box<[Option<WasmSignature>]>,
-}
-
-impl Callees {
-    fn new(signatures: &WasmSignatures) -> Self {
-        let imports = signatures.function_count() - signatures.defined_count();
-        let defined: Box<[u32]> = (0..signatures.defined_count())
-            .map(|index| signatures.function_type_index(imports + index).unwrap_or(u32::MAX))
-            .collect();
-        let mut shapes = Vec::new();
-        for &ty in defined.iter().filter(|ty| **ty != u32::MAX) {
-            let ty = ty as usize;
-            if shapes.len() <= ty {
-                shapes.resize(ty + 1, None);
-            }
-            if shapes[ty].is_none() {
-                shapes[ty] = signatures.type_signature(ty as u32).cloned();
-            }
-        }
-        Self { imports: imports as u32, defined, shapes: shapes.into() }
-    }
-
-    fn defined_index(&self, function: u32) -> Option<usize> {
-        let index = function.checked_sub(self.imports)? as usize;
-        (index < self.defined.len()).then_some(index)
-    }
-
-    fn defined_signature(&self, index: usize) -> Option<&WasmSignature> {
-        self.shapes.get(*self.defined.get(index)? as usize)?.as_ref()
-    }
-}
-
 /// The module state a form's accesses are counted against.
 pub(super) struct Bindings<'m> {
     pub(super) memories: &'m [WasmMemory],
@@ -359,10 +244,23 @@ enum LeafKind {
 /// One inlining round's leaves, by defined index: which functions are leaves, decided for
 /// the whole module, and the forms built so far. A module that lowers its functions on
 /// their first calls keeps the kinds and builds the form of a leaf its lowering copies
-/// (`LeafPlan::built_leaf`), so its life holds a byte per function, not every leaf's form.
+/// (`LeafPlan::built_leaf`), so its life holds a byte per function and a pointer for each
+/// form built, not every leaf's form.
 struct Round {
     kinds: Box<[LeafKind]>,
-    built: std::cell::RefCell<rustc_hash::FxHashMap<u32, std::rc::Rc<Leaf>>>,
+    built: std::cell::RefCell<BuiltLeaves>,
+}
+
+/// The forms a round has built, by defined index, and how many.
+struct BuiltLeaves {
+    forms: Box<[Option<std::rc::Rc<Leaf>>]>,
+    count: usize,
+}
+
+impl BuiltLeaves {
+    fn new(functions: usize) -> Self {
+        Self { forms: vec![None; functions].into(), count: 0 }
+    }
 }
 
 /// A module's inlining: the leaves of each round. A body that is not a leaf
@@ -388,77 +286,6 @@ pub(super) struct PlanFacts {
 }
 
 impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
-    pub(super) fn new(
-        name: &'m str,
-        sources: &'m dyn SourceTable<'a, I>,
-        bindings: Bindings<'m>,
-        signatures: &WasmSignatures,
-        budget: usize,
-    ) -> Result<Self, Diagnostic> {
-        let mut plan = Self {
-            name,
-            sources,
-            bindings,
-            signatures: std::rc::Rc::new(Callees::new(signatures)),
-            rounds: std::rc::Rc::default(),
-            budget,
-            marker: std::marker::PhantomData,
-        };
-        for round in 0..INLINE_ROUNDS {
-            // Only the kinds are kept: a lowering builds the forms it copies.
-            let kinds = (0..sources.count())
-                .map(|index| match plan.rounds.last() {
-                    Some(previous) if previous.kinds[index] == LeafKind::None => Ok(LeafKind::None),
-                    _ => plan.leaf(round, index, budget).map(|leaf| match leaf {
-                        None => LeafKind::None,
-                        Some(leaf) if leaf.form.calls => LeafKind::Calls,
-                        Some(_) => LeafKind::CallFree,
-                    }),
-                })
-                .collect::<Result<Box<[_]>, _>>()?;
-            if kinds.iter().all(|kind| *kind == LeafKind::None) {
-                break;
-            }
-            std::rc::Rc::get_mut(&mut plan.rounds)
-                .expect("a plan being made shares no rounds")
-                .push(Round { kinds, built: Default::default() });
-        }
-        Ok(plan)
-    }
-
-    /// The plan's decisions, for `resume`: which functions are leaves of each round, without
-    /// the forms this plan built.
-    pub(super) fn facts(&self) -> PlanFacts {
-        PlanFacts {
-            signatures: self.signatures.clone(),
-            rounds: std::rc::Rc::new(
-                self.rounds
-                    .iter()
-                    .map(|round| Round { kinds: round.kinds.clone(), built: Default::default() })
-                    .collect(),
-            ),
-            budget: self.budget,
-        }
-    }
-
-    /// The plan `facts` were taken from, reading the same bodies from `sources`.
-    pub(super) fn resume(
-        name: &'m str,
-        sources: &'m dyn SourceTable<'a, I>,
-        bindings: Bindings<'m>,
-        facts: &PlanFacts,
-    ) -> Self {
-        Self {
-            name,
-            sources,
-            bindings,
-            signatures: facts.signatures.clone(),
-            rounds: facts.rounds.clone(),
-            budget: facts.budget,
-            marker: std::marker::PhantomData,
-        }
-    }
-
     fn error(&self, message: &str) -> Diagnostic {
         Diagnostic::unsupported(self.name, message)
     }
@@ -517,7 +344,7 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
     /// The form of `callee`, a leaf of `round`, built again from its source when this plan
     /// has not built it: the same form the module's plan decided it was a leaf by.
     fn built_leaf(&self, round: usize, callee: usize) -> std::rc::Rc<Leaf> {
-        if let Some(leaf) = self.rounds[round].built.borrow().get(&(callee as u32)) {
+        if let Some(leaf) = &self.rounds[round].built.borrow().forms[callee] {
             return leaf.clone();
         }
         let leaf = self
@@ -529,10 +356,13 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
         let mut built = self.rounds[round].built.borrow_mut();
         // A module's compile lowers every function, which copies most leaves: the forms
         // held at once stay bounded, and a dropped one is built again when copied again.
-        if built.len() >= BUILT_LEAVES {
-            built.clear();
+        if built.count >= BUILT_LEAVES {
+            built.forms.fill(None);
+            built.count = 0;
         }
-        built.insert(callee as u32, leaf.clone());
+        if built.forms[callee].replace(leaf.clone()).is_none() {
+            built.count += 1;
+        }
         leaf
     }
 

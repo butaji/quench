@@ -59,6 +59,13 @@ pub(super) enum NodeOp {
     Iota { index: u8 },
 }
 
+impl NodeOp {
+    /// Whether the node applies an arithmetic or bitwise operator to its operands.
+    pub(super) fn is_operator(self) -> bool {
+        matches!(self, Self::Arith(_) | Self::Bits(_))
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Node {
     pub(super) op: NodeOp,

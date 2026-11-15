@@ -212,6 +212,9 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
 /// narrow run, and the store gate admits the write; false changes nothing (a value without a
 /// narrow form leaves to the general store, which widens the run).
 ///
+/// The narrow values one arena word holds: its two 32-bit halves.
+const NARROWS_PER_WORD: usize = std::mem::size_of::<u64>() / std::mem::size_of::<u32>();
+
 /// # Safety
 /// `record_id` names a live object record of `heap`, whose shape's slot the hint covers.
 #[inline(always)]
@@ -229,7 +232,7 @@ pub(crate) unsafe fn concrete_narrow_store(heap: &mut crate::heap::Heap, record_
         return false;
     }
     // SAFETY: the shape matched, so the run's halves hold `slot`; the gate admitted the write.
-    unsafe { heap.arena_values_base().cast::<u32>().cast_mut().add(2 * start + usize::from(slot)).write(narrow) };
+    unsafe { heap.arena_values_base().cast::<u32>().cast_mut().add(NARROWS_PER_WORD * start + usize::from(slot)).write(narrow) };
     true
 }
 

@@ -37,6 +37,32 @@ impl ConcatMemo {
     }
 }
 
+/// One part of an ASCII concatenation, as its bytes are copied in.
+enum AsciiPiece<'text> {
+    Text(&'text [u8]),
+    Small(std::rc::Rc<str>),
+    Number(crate::number_to_string::Short),
+}
+
+/// The places of a template of two strings and a Number between them: the Number's index among
+/// the parts, and the strings' count.
+const TEMPLATE_NUMBER_AT: usize = 1;
+const TEMPLATE_TEXTS: usize = 2;
+
+impl AsciiPiece<'_> {
+    fn len(&self) -> usize {
+        self.bytes().len()
+    }
+
+    fn bytes(&self) -> &[u8] {
+        match self {
+            AsciiPiece::Text(bytes) => bytes,
+            AsciiPiece::Small(text) => text.as_bytes(),
+            AsciiPiece::Number(text) => text.as_slice(),
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
     /// The memo key of a concatenation operand: its value's bits, for an integer or a string,
     /// whose slot names it until a collection (`ConcatMemo`); `None` for any other value.
@@ -107,23 +133,28 @@ impl<H: Host> Vm<H> {
         if bytes.len() > wtf16::SHORT_ASCII_CAPACITY {
             return None;
         }
+        Some(self.inline_ascii_concat(left, right, &bytes))
+    }
+
+    /// The string of the short ASCII concatenation `left + right` of `bytes`. Such a key usually
+    /// spells an atom whose string lives: it is the result, made and matched to its atom once
+    /// rather than per concatenation and per keyed access.
+    fn inline_ascii_concat(&mut self, left: Value, right: Value, bytes: &[u8]) -> Value {
         // SAFETY: every byte came from ASCII text or a Number's ASCII digits.
-        let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
-        // Such a key usually spells an atom whose string lives: it is the result, made and
-        // matched to its atom once rather than per concatenation and per keyed access.
+        let text = unsafe { std::str::from_utf8_unchecked(bytes) };
         // The inline string is made first: its hash reads its padded words, and neither it
         // nor the hash scans the bytes for ASCII again.
-        let inline = JsString::from_ascii_bytes(&bytes);
+        let inline = JsString::from_ascii_bytes(bytes);
         let hash = inline.inline_text_hash().expect("short ASCII text is held inline");
         let atom = self.find_atom(wtf16::table_hash(hash), |atom| self.atom_units_equal_str(atom, text));
         if let Some(string) = atom.and_then(|atom| self.heap.atom_string(atom, false)) {
             self.memoize_concat(left, right, string);
-            return Some(string);
+            return string;
         }
         let string = self.heap.alloc_string(inline);
         atom.inspect(|atom| self.heap.record_string_atom(string, *atom));
         self.memoize_concat(left, right, string);
-        Some(string)
+        string
     }
 
     /// Join two string values directly; primitive string identity is not observable.
@@ -182,7 +213,6 @@ impl<H: Host> Vm<H> {
     /// record, while that space has room.
     #[inline(always)]
     pub(super) fn string_of_parts(&mut self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<Value> {
-        use super::wtf16::{MAX_PARTS, MIN_PARTS, Parts};
         if !(MIN_PARTS..=MAX_PARTS).contains(&count) {
             return None;
         }
@@ -204,18 +234,29 @@ impl<H: Host> Vm<H> {
         if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
             return None;
         }
+        if let Some(string) = self.small_string_of_parts(ids, texts, number) {
+            return Some(string);
+        }
+        Some(self.parts_string_of(count, ids, number))
+    }
+
+    /// The small string of the string parts `ids` (`texts` of them) and the Number `number` with
+    /// its index, if one holds them: a template of two strings and a Number between them takes
+    /// the template form.
+    fn small_string_of_parts(&mut self, ids: [u32; MAX_PARTS], texts: usize, number: Option<(f64, usize)>) -> Option<Value> {
         let small = crate::heap::SmallParts::new(ids, texts, number).or_else(|| match number {
             // A Number between two strings that is no int32: the pair as a template.
-            Some((value, 1)) if texts == 2 => {
+            Some((value, TEMPLATE_NUMBER_AT)) if texts == TEMPLATE_TEXTS => {
                 self.heap.small_template(ids[0], ids[1]).map(|template| crate::heap::SmallParts::templated(template, value))
             }
             _ => None,
         });
-        if let Some(small) = small
-            && let Some(string) = self.heap.alloc_small_string(small)
-        {
-            return Some(string);
-        }
+        let small = small?;
+        self.heap.alloc_small_string(small)
+    }
+
+    /// The parts record of `count` string parts `ids` and the Number `number` with its index.
+    fn parts_string_of(&mut self, count: usize, ids: [u32; MAX_PARTS], number: Option<(f64, usize)>) -> Value {
         let mut parts = Parts::EMPTY;
         let mut text = ids.into_iter();
         for index in 0..count {
@@ -225,7 +266,7 @@ impl<H: Host> Vm<H> {
             };
             debug_assert!(pushed, "at most `MAX_PARTS` parts, one a Number");
         }
-        Some(self.heap.alloc_parts_string(parts))
+        self.heap.alloc_parts_string(parts)
     }
 
     /// `StringConcat` of `count` parts that `part` reads by position, each read when it is
@@ -277,40 +318,30 @@ impl<H: Host> Vm<H> {
     /// `None` for any other part, which `converted_string_concat` converts.
     #[inline(always)]
     pub(super) fn ascii_string_concat(&self, count: usize, part: impl Fn(&Self, usize) -> Value) -> Option<JsString> {
-        enum Piece<'text> {
-            Text(&'text [u8]),
-            Small(std::rc::Rc<str>),
-            Number(crate::number_to_string::Short),
-        }
-        let mut pieces = smallvec::SmallVec::<[Piece<'_>; STRING_CONCAT_INLINE_PARTS]>::new();
+        let mut pieces = smallvec::SmallVec::<[AsciiPiece<'_>; STRING_CONCAT_INLINE_PARTS]>::new();
         let mut length = 0;
         for index in 0..count {
-            let value = part(self, index);
-            let piece = match value.as_number() {
-                Some(number) => {
-                    let mut text = crate::number_to_string::Short::new();
-                    crate::number_to_string::write(number, &mut text);
-                    Piece::Number(text)
-                }
-                None => match self.heap.flat_text(value)? {
-                    crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => Piece::Text(bytes),
-                    crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => return None,
-                    crate::heap::FlatText::Small(text) => Piece::Small(text),
-                },
-            };
-            length += match &piece {
-                Piece::Text(bytes) => bytes.len(),
-                Piece::Small(text) => text.len(),
-                Piece::Number(text) => text.len(),
-            };
+            let piece = self.ascii_piece(part(self, index))?;
+            length += piece.len();
             pieces.push(piece);
         }
-        JsString::copies_whole(length).then(|| {
-            JsString::from_ascii_parts(length, pieces.iter().map(|piece| match piece {
-                Piece::Text(bytes) => *bytes,
-                Piece::Small(text) => text.as_bytes(),
-                Piece::Number(text) => text.as_slice(),
-            }))
+        JsString::copies_whole(length).then(|| JsString::from_ascii_parts(length, pieces.iter().map(AsciiPiece::bytes)))
+    }
+
+    /// The piece of `value` in an ASCII concatenation: its text read in place, a small string's
+    /// text or a Number's digits; `None` for wide text or a value that is none of these.
+    fn ascii_piece(&self, value: Value) -> Option<AsciiPiece<'_>> {
+        Some(match value.as_number() {
+            Some(number) => {
+                let mut text = crate::number_to_string::Short::new();
+                crate::number_to_string::write(number, &mut text);
+                AsciiPiece::Number(text)
+            }
+            None => match self.heap.flat_text(value)? {
+                crate::heap::FlatText::Record(super::wtf16::Units::Ascii(bytes)) => AsciiPiece::Text(bytes),
+                crate::heap::FlatText::Record(super::wtf16::Units::Wide(_)) => return None,
+                crate::heap::FlatText::Small(text) => AsciiPiece::Small(text),
+            },
         })
     }
 

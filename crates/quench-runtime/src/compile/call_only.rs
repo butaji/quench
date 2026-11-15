@@ -20,9 +20,9 @@ use oxc_ast::ast::{
     ExpressionStatement, Function, IdentifierReference, SequenceExpression, VariableDeclarator,
 };
 use oxc_ast_visit::{Visit, walk};
-use oxc_semantic::{ReferenceId, Semantic, SymbolId};
+use oxc_semantic::{ReferenceId, Scoping, Semantic, SymbolId};
 use oxc_span::Span;
-use oxc_syntax::scope::ScopeFlags;
+use oxc_syntax::scope::{ScopeFlags, ScopeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// How one identifier reference uses its binding.
@@ -50,21 +50,12 @@ pub(super) fn prototype_unobservable_functions<'a>(
     reached: &FxHashSet<Box<str>>,
 ) -> FxHashSet<u32> {
     let scoping = semantic.scoping();
-    // A direct `eval` reads any binding of the scopes around it.
-    let evaluated: FxHashSet<_> = scoping
-        .scope_descendants_from_root()
-        .filter(|scope| scoping.scope_flags(*scope).contains(ScopeFlags::DirectEval))
-        .flat_map(|scope| scoping.scope_ancestors(scope))
-        .collect();
+    let evaluated = directly_evaluated_scopes(semantic);
     let mut uses = References::default();
     uses.visit_program(program);
-    let root = scoping.root_scope_id();
     let mut found = FxHashSet::default();
     for (symbol, initial) in &uses.declarators {
-        let scope = scoping.symbol_scope_id(*symbol);
-        if scope == root || evaluated.contains(&scope) || !scoping.symbol_redeclarations(*symbol).is_empty()
-            || reached.contains(scoping.symbol_name(*symbol))
-        {
+        if !is_function_candidate(scoping, &evaluated, reached, *symbol) {
             continue;
         }
         let mut stored = match initial {
@@ -72,21 +63,44 @@ pub(super) fn prototype_unobservable_functions<'a>(
             Initial::Function(start) => vec![*start],
             Initial::Other => continue,
         };
-        let only_called = scoping.get_resolved_reference_ids(*symbol).iter().all(|reference| {
-            match uses.references.get(reference) {
-                Some(Use::Callee) => true,
-                Some(Use::StoresFunction(start)) => {
-                    stored.push(*start);
-                    true
-                }
-                Some(Use::Other) | None => false,
-            }
-        });
-        if only_called {
+        if only_called(scoping, &uses, *symbol, &mut stored) {
             found.extend(stored.into_iter().filter(|start| uses.plain_functions.contains(start)));
         }
     }
     found
+}
+
+/// The scopes a direct `eval` reads from: it reads any binding of the scopes around it.
+fn directly_evaluated_scopes(semantic: &Semantic<'_>) -> FxHashSet<ScopeId> {
+    let scoping = semantic.scoping();
+    scoping
+        .scope_descendants_from_root()
+        .filter(|scope| scoping.scope_flags(*scope).contains(ScopeFlags::DirectEval))
+        .flat_map(|scope| scoping.scope_ancestors(scope))
+        .collect()
+}
+
+/// Whether `symbol` is a local binding no evaluation or reached name can observe: not a root
+/// binding, not redeclared, and not read by name.
+fn is_function_candidate(scoping: &Scoping, evaluated: &FxHashSet<ScopeId>, reached: &FxHashSet<Box<str>>, symbol: SymbolId) -> bool {
+    let scope = scoping.symbol_scope_id(symbol);
+    scope != scoping.root_scope_id()
+        && !evaluated.contains(&scope)
+        && scoping.symbol_redeclarations(symbol).is_empty()
+        && !reached.contains(scoping.symbol_name(symbol))
+}
+
+/// Whether every reference to `symbol` only calls it, adding to `stored` each function the
+/// symbol is stored with.
+fn only_called(scoping: &Scoping, uses: &References, symbol: SymbolId, stored: &mut Vec<u32>) -> bool {
+    scoping.get_resolved_reference_ids(symbol).iter().all(|reference| match uses.references.get(reference) {
+        Some(Use::Callee) => true,
+        Some(Use::StoresFunction(start)) => {
+            stored.push(*start);
+            true
+        }
+        Some(Use::Other) | None => false,
+    })
 }
 
 /// One walk of the program: each identifier reference's use, each simple declarator's

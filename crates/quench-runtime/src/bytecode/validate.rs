@@ -5,6 +5,7 @@ use super::{
     REGISTER_MASK, Register, ResidualProgram,
 };
 use rustc_hash::FxHashSet;
+use crate::bitset::BitSet;
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
@@ -528,8 +529,8 @@ impl ResidualProgram {
         if !lazy_wasm {
             self.compile_released();
         }
-        let selective_capture_scope_unsafe = if lazy_wasm {
-            vec![false; self.functions.len()]
+        let scope_unsafe = if lazy_wasm {
+            BitSet::new(self.functions.len())
         } else {
             selective_capture_scope_unsafe(&self.functions, &self.atoms)
         };
@@ -540,388 +541,347 @@ impl ResidualProgram {
             if lazy_wasm && function.record().is_none() {
                 continue;
             }
-            if function.code.is_empty() || !super::control_flow::is_bounded(function) {
-                return Err(format!("function {index} can fall off its code"));
-            }
-            if function.registers > REGISTER_MASK {
-                return Err(format!("function {index} has too many registers"));
-            }
-            // A call plan decides how an activation is laid out, so a seeded one is the
-            // function's own derivation, as is every other fact an encoding keeps.
-            if !function.derived_facts_hold(self) {
-                return Err(format!("function {index} carries facts its code does not derive"));
-            }
-            // A lane lets the callee of a dead result skip building it, so each claim is the
-            // compiler's own derivation (`liveness::register_roots`).
-            // An activation fills only the registers below the live entry bound, so that bound
-            // is the compiler's own derivation too.
-            if !function.register_roots.dead_call_results().is_empty()
-                || function.register_roots.entry_fill(function.registers) < function.registers
-            {
-                let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
-                if derived.dead_call_results() != function.register_roots.dead_call_results() {
-                    return Err(format!("function {index} claims dead call results its liveness does not prove"));
-                }
-                if derived.entry_fill(function.registers) > function.register_roots.entry_fill(function.registers) {
-                    return Err(format!("function {index} claims an entry liveness its liveness does not prove"));
-                }
-            }
-            if function
-                .self_binding_slot
-                .is_some_and(|slot| slot >= function.locals)
-            {
-                return Err(format!("function {index} has an invalid self-binding slot"));
-            }
-            if let Some(slot) = function.self_binding_slot
-                && !function.name_bindings.direct().iter().any(|binding| {
-                    binding.kind == super::LexicalBindingKind::FunctionName
-                        && matches!(
-                            binding.location,
-                            super::EvalBindingLocation::Local(binding_slot)
-                                if binding_slot == slot
-                        )
-                })
-            {
-                return Err(format!("function {index} has an unbound self-binding slot"));
-            }
-            if function.is_arrow && (function.constructible || function.is_class_constructor) {
-                return Err(format!("function {index} has invalid arrow-function facts"));
-            }
-            if function
-                .global_var_atoms()
-                .iter()
-                .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
-            {
-                return Err(format!("function {index} has an invalid global var atom"));
-            }
-            if function
-                .environment_atoms
-                .iter()
-                .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
-            {
-                return Err(format!("function {index} has an invalid environment atom"));
-            }
-            if function
-                .parent
-                .is_some_and(|p| p as usize >= self.functions.len())
-            {
-                return Err(format!("function {index} has an invalid parent"));
-            }
-            let module_body = (self.kind == super::ProgramKind::Module && index == 0 && function.parent.is_none())
-                .then_some(self.module_link_plan.as_ref())
-                .flatten()
-                .map(|plan| (plan, &self.module_imports[..]));
-            if let Some(captured) = &function.selective_capture_slots
-                && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
-                    || captured.iter().any(|slot| *slot >= function.locals)
-                    || captured.windows(2).any(|pair| pair[0] >= pair[1]))
-            {
-                return Err(format!(
-                    "function {index} has an invalid selective capture layout"
-                ));
-            }
-            if function.selective_capture_slots.is_some()
-                && (selective_capture_scope_unsafe[index]
-                    || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
-            {
-                return Err(format!(
-                    "function {index} has an ineligible selective capture layout"
-                ));
-            }
-            if !promoted_local_layout_is_valid(function, &self.atoms) {
-                return Err(format!(
-                    "function {index} has an invalid promoted-local layout"
-                ));
-            }
-            // Wasm locals are frame slots by construction: no environment
-            // capture, TDZ, or name binding can observe them.
-            let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
-                crate::bitset::BitSet::from_fn(usize::from(function.locals), |_| true)
-            } else {
-function.plain_local_slots(&self.superinstructions)
-            };
-            if let Some(initializer) = function.instance_initializer {
-                let valid = self
-                    .functions
-                    .get(initializer as usize)
-                    .is_some_and(|plan| {
-                        function.derived_constructor
-                            && initializer as usize != index
-                            && plan.parent == function.parent
-                            && plan.class_initializer
-                            && !plan.constructible
-                            && plan.instance_initializer.is_none()
-                    });
-                if !valid {
-                    return Err(format!(
-                        "function {index} has an invalid instance initializer"
-                    ));
-                }
-            }
-            if !name_bindings_are_valid(
-                function,
-                &self.functions,
-                self.atoms.len(),
-                &mut checked_captured_names,
-            ) {
-                return Err(format!("function {index} has invalid name bindings"));
-            }
-            let code_len = function.code.len() as u32;
-            let positions = function.source_positions.iter();
-            if positions
-                .clone()
-                .zip(positions.clone().skip(1))
-                .any(|(first, second)| first.pc >= second.pc)
-                || positions.clone().any(|position| {
-                    position.pc >= code_len || position.line == 0 || position.column == 0
-                })
-                || positions.clone().last() != function.source_positions.last()
-            {
-                return Err(format!("function {index} has invalid source positions"));
-            }
-            if function
-                .binding_sites
-                .windows(2)
-                .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
-                || function.binding_sites.iter().any(|site| {
-                    site.resume_pc == 0
-                        || site.resume_pc > code_len
-                        || site
-                            .bindings
-                            .windows(2)
-                            .any(|pair| pair[0].atom >= pair[1].atom)
-                        || site.bindings.iter().any(|binding| {
-                            !eval_binding_is_valid(
-                                binding,
-                                function,
-                                &self.functions,
-                                self.atoms.len(),
-                            )
-                        })
-                })
-            {
-                return Err(format!(
-                    "function {index} has invalid binding-site metadata"
-                ));
-            }
-
-            if !function.environment_clones.valid(function.locals) {
-                return Err(format!(
-                    "function {index} has invalid environment clone slots"
-                ));
-            }
-            let bounds = ValidationBounds {
-                registers: function.registers,
-                locals: function.locals,
-                functions: self.functions.len(),
-                constants: self.constants.len(),
-                environment_clones: function.environment_clones.len(),
-                atoms: self.atoms.len(),
-                field_sites: self.field_sites.len(),
-                cache_sites: self.cache_sites.get(),
-                method_sites: self.method_sites.len(),
-                object_sites: self.object_sites.len(),
-                regexp_literal_sites: self.regexp_literal_sites.len(),
-                literal_templates: self.literal_templates.len(),
-                superinstructions: self.superinstructions.len(),
-                code_len,
-            };
-            if function
-                .arguments_slot
-                .is_some_and(|slot| slot >= function.locals)
-                || function.rest && function.simple_parameters
-            {
-                return Err(format!("function {index} has invalid argument metadata"));
-            }
-            if function.parameter_end_pc > code_len
-                || function.parameter_end_pc != 0 && !function.is_generator
-            {
-                return Err(format!(
-                    "function {index} has an invalid parameter boundary"
-                ));
-            }
-            if function
-                .undefined_register
-                .is_some_and(|register| register >= function.registers)
-            {
-                return Err(format!(
-                    "function {index} undefined register is out of bounds"
-                ));
-            }
-            for packed in &function.code {
-                let Some(instruction) = instruction_at(function, *packed) else {
-                    return Err(format!("function {index} wide instruction is invalid"));
-                };
-                if instruction.op().is_wide_marker() {
-                    return Err(format!("function {index} contains nested wide instruction"));
-                }
-                if instruction_uses_promoted_local(instruction, function) {
-                    return Err(format!(
-                        "function {index} accesses a promoted binding through its local slot"
-                    ));
-                }
-                if matches!(
-                    instruction.op(),
-                    super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
-                ) && !plain_local_slots.contains(instruction.local_slot())
-                {
-                    return Err(format!(
-                        "function {index} has an unproven plain-local operation"
-                    ));
-                }
-                if let Some(captured) = &function.selective_capture_slots {
-                    let local_slot = matches!(
-                        instruction.op(),
-                        super::Op::LoadLocal
-                            | super::Op::StoreLocal
-                            | super::Op::LoadLocalPlain
-                            | super::Op::StoreLocalPlain
-                            | super::Op::LoadEnvLocal
-                            | super::Op::StoreEnvLocal
-                    )
-                    .then(|| instruction.local_slot());
-                    let slot_is_captured = local_slot.is_some_and(|slot| {
-                        u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
-                    });
-                    let environment_op = matches!(
-                        instruction.op(),
-                        super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
-                    );
-                    if environment_op && !slot_is_captured {
-                        return Err(format!(
-                            "function {index} has an environment-local operation for an uncaptured slot"
-                        ));
-                    }
-                    if instruction
-                        .numeric_local_target()
-                        .is_some_and(|target| captured.binary_search(&target).is_ok())
-                        || function.dispatch == super::DispatchClass::Numeric
-                            && ((instruction.op() == super::Op::StoreLocal && slot_is_captured)
-                                || instruction.op() == super::Op::LoadLocal
-                                    && instruction.numeric_local_store_target().is_some()
-                                    && slot_is_captured)
-                        || function.dispatch == super::DispatchClass::Numeric
-                            && instruction.op() == super::Op::GetIndex
-                            && [instruction.operand_b(), instruction.operand_c()]
-                                .into_iter()
-                                .any(|operand| {
-                                    operand.kind() == Some(OperandKind::Local)
-                                        && captured.binary_search(&operand.payload()).is_ok()
-                                })
-                    {
-                        return Err(format!(
-                            "function {index} has a numeric local fast path for an environment-owned slot"
-                        ));
-                    }
-                }
-                if instruction.op() == super::Op::Binary
-                    && instruction.numeric_local_target().is_some_and(|slot| {
-                        function.dispatch != super::DispatchClass::Numeric
-                            && !plain_local_slots.contains(usize::from(slot))
-                    })
-                {
-                    return Err(format!(
-                        "function {index} has an unproven plain-local binary target"
-                    ));
-                }
-                if !instruction.result_flags_valid() {
-                    return Err(format!("function {index} result flags are invalid"));
-                }
-                if !instruction.unused_operands_are_zero() {
-                    return Err(format!(
-                        "function {index} {:?} has nonzero unused operands",
-                        instruction.op()
-                    ));
-                }
-                if !field_domains_in_bounds(instruction, bounds)
-                    || !immediate_domains_in_bounds(instruction, bounds)
-                    || !packed_layout_domains_in_bounds(instruction, bounds)
-                    || !object_site_instruction_valid(
-                        instruction,
-                        &self.object_sites,
-                        function.registers,
-                    )
-                {
-                    return Err(format!(
-                        "function {index} {:?} has an out-of-domain operand",
-                        instruction.op()
-                    ));
-                }
-                if instruction.op() == super::Op::WasmMemoryAddress
-                    && !matches!(
-                        self.constants.get(instruction.constant_index()),
-                        Some(super::Constant::WasmBits64(_))
-                    )
-                {
-                    return Err(format!(
-                        "function {index} has an invalid Wasm memory offset constant"
-                    ));
-                }
-                if instruction.op() == super::Op::WasmSimdShuffle
-                    && !matches!(self.constants.get(instruction.constant_index()), Some(super::Constant::WasmV128(indices)) if crate::wasm::simd::shuffle_indices_valid(indices))
-                {
-                    return Err(format!("function {index} has invalid SIMD shuffle indices"));
-                }
-            }
-            for handler in &function.handlers {
-                if handler.start > handler.end
-                    || handler.end > code_len
-                    || handler.target >= code_len
-                    || handler
-                        .return_target
-                        .is_some_and(|target| target >= code_len)
-                    || handler.return_target.is_some() != handler.return_slot.is_some()
-                {
-                    return Err(format!("function {index} has an invalid handler"));
-                }
-                if handler.slot.is_some_and(|slot| match slot {
-                    super::ThrownValueSlot::Local(slot) => slot >= function.locals,
-                    super::ThrownValueSlot::Register(register) => register >= function.registers,
-                }) {
-                    return Err(format!("function {index} handler slot is out of bounds"));
-                }
-                if handler
-                    .return_slot
-                    .is_some_and(|slot| slot >= function.locals)
-                {
-                    return Err(format!(
-                        "function {index} handler return slot is out of bounds"
-                    ));
-                }
-            }
+            self.validate_function(index, function, scope_unsafe.contains(index), &mut checked_captured_names)?;
         }
         self.validate_selective_capture_owners()?;
+        self.validate_method_sites()?;
+        self.validate_field_sites()?;
+        self.validate_object_sites()?;
+        self.validate_literal_sites()
+    }
+
+    /// Checks function `index`: its facts and layouts, its tables, then its code.
+    fn validate_function(
+        &self,
+        index: usize,
+        function: &super::Function,
+        scope_unsafe: bool,
+        checked_captured_names: &mut rustc_hash::FxHashSet<(usize, u16, Option<u32>)>,
+    ) -> Result<(), String> {
+        let code_len = function.code.len() as u32;
+        self.validate_function_facts(index, function, scope_unsafe)?;
+        self.validate_function_tables(index, function, code_len, checked_captured_names)?;
+        self.validate_function_code(index, function, code_len)
+    }
+
+    /// Checks what function `index` claims about itself: its code, registers, derived facts,
+    /// bindings, atoms and selective capture layout.
+    fn validate_function_facts(&self, index: usize, function: &super::Function, scope_unsafe: bool) -> Result<(), String> {
+        self.validate_code_shape(index, function)?;
+        self.validate_liveness_claims(index, function)?;
+        validate_self_binding(index, function)?;
+        self.validate_function_names(index, function)?;
+        self.validate_selective_capture(index, function, scope_unsafe)?;
+        if !promoted_local_layout_is_valid(function, &self.atoms) {
+            return Err(format!(
+                "function {index} has an invalid promoted-local layout"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that function `index` has code that cannot fall off its end, a register count
+    /// within the register mask, and only the facts its code derives.
+    fn validate_code_shape(&self, index: usize, function: &super::Function) -> Result<(), String> {
+        if function.code.is_empty() || !super::control_flow::is_bounded(function) {
+            return Err(format!("function {index} can fall off its code"));
+        }
+        if function.registers > REGISTER_MASK {
+            return Err(format!("function {index} has too many registers"));
+        }
+        // A call plan decides how an activation is laid out, so a seeded one is the
+        // function's own derivation, as is every other fact an encoding keeps.
+        if !function.derived_facts_hold(self) {
+            return Err(format!("function {index} carries facts its code does not derive"));
+        }
+        Ok(())
+    }
+
+    /// Checks the dead-call-result and entry-liveness claims of function `index` against the
+    /// liveness the compiler derives.
+    fn validate_liveness_claims(&self, index: usize, function: &super::Function) -> Result<(), String> {
+        // A lane lets the callee of a dead result skip building it, so each claim is the
+        // compiler's own derivation (`liveness::register_roots`).
+        // An activation fills only the registers below the live entry bound, so that bound
+        // is the compiler's own derivation too.
+        if function.register_roots.dead_call_results().is_empty()
+            && function.register_roots.entry_fill(function.registers) >= function.registers
+        {
+            return Ok(());
+        }
+        let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
+        if derived.dead_call_results() != function.register_roots.dead_call_results() {
+            return Err(format!("function {index} claims dead call results its liveness does not prove"));
+        }
+        if derived.entry_fill(function.registers) > function.register_roots.entry_fill(function.registers) {
+            return Err(format!("function {index} claims an entry liveness its liveness does not prove"));
+        }
+        Ok(())
+    }
+
+    /// Checks the arrow, global and environment atoms, and the parent of function `index`.
+    fn validate_function_names(&self, index: usize, function: &super::Function) -> Result<(), String> {
+        if function.is_arrow && (function.constructible || function.is_class_constructor) {
+            return Err(format!("function {index} has invalid arrow-function facts"));
+        }
+        if function
+            .global_var_atoms()
+            .iter()
+            .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
+        {
+            return Err(format!("function {index} has an invalid global var atom"));
+        }
+        if function
+            .environment_atoms
+            .iter()
+            .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
+        {
+            return Err(format!("function {index} has an invalid environment atom"));
+        }
+        if function
+            .parent
+            .is_some_and(|p| p as usize >= self.functions.len())
+        {
+            return Err(format!("function {index} has an invalid parent"));
+        }
+        Ok(())
+    }
+
+    /// The module link plan and imports that the module body of function `index` binds, when
+    /// it is that body.
+    fn module_body(&self, index: usize, function: &super::Function) -> Option<(&super::ModuleLinkPlan, &[super::ModuleImportBinding])> {
+        (self.kind == super::ProgramKind::Module && index == 0 && function.parent.is_none())
+            .then_some(self.module_link_plan.as_ref())
+            .flatten()
+            .map(|plan| (plan, &self.module_imports[..]))
+    }
+
+    /// Checks the selective capture layout of function `index`, and that the function may
+    /// have one.
+    fn validate_selective_capture(&self, index: usize, function: &super::Function, scope_unsafe: bool) -> Result<(), String> {
+        let module_body = self.module_body(index, function);
+        if let Some(captured) = &function.selective_capture_slots
+            && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
+                || captured.iter().any(|slot| *slot >= function.locals)
+                || captured.windows(NEIGHBOURS).any(|pair| pair[0] >= pair[1]))
+        {
+            return Err(format!(
+                "function {index} has an invalid selective capture layout"
+            ));
+        }
+        if function.selective_capture_slots.is_some()
+            && (scope_unsafe
+                || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
+        {
+            return Err(format!(
+                "function {index} has an ineligible selective capture layout"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks the instance initializer, name bindings, source positions, binding sites and
+    /// environment clones of function `index`.
+    fn validate_function_tables(
+        &self,
+        index: usize,
+        function: &super::Function,
+        code_len: u32,
+        checked_captured_names: &mut rustc_hash::FxHashSet<(usize, u16, Option<u32>)>,
+    ) -> Result<(), String> {
+        self.validate_instance_initializer(index, function)?;
+        if !name_bindings_are_valid(
+            function,
+            &self.functions,
+            self.atoms.len(),
+            checked_captured_names,
+        ) {
+            return Err(format!("function {index} has invalid name bindings"));
+        }
+        validate_source_positions(index, function, code_len)?;
+        self.validate_binding_sites(index, function, code_len)?;
+        if !function.environment_clones.valid(function.locals) {
+            return Err(format!(
+                "function {index} has invalid environment clone slots"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that the instance initializer of function `index`, when it has one, is a
+    /// class-initializer sibling of the same parent.
+    fn validate_instance_initializer(&self, index: usize, function: &super::Function) -> Result<(), String> {
+        let Some(initializer) = function.instance_initializer else {
+            return Ok(());
+        };
+        let valid = self
+            .functions
+            .get(initializer as usize)
+            .is_some_and(|plan| {
+                function.derived_constructor
+                    && initializer as usize != index
+                    && plan.parent == function.parent
+                    && plan.class_initializer
+                    && !plan.constructible
+                    && plan.instance_initializer.is_none()
+            });
+        if !valid {
+            return Err(format!(
+                "function {index} has an invalid instance initializer"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks the binding-site metadata of function `index`: resume points in order inside the
+    /// code, and bindings sorted by atom and valid.
+    fn validate_binding_sites(&self, index: usize, function: &super::Function, code_len: u32) -> Result<(), String> {
+        if function
+            .binding_sites
+            .windows(NEIGHBOURS)
+            .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
+            || function.binding_sites.iter().any(|site| {
+                site.resume_pc == 0
+                    || site.resume_pc > code_len
+                    || site
+                        .bindings
+                        .windows(NEIGHBOURS)
+                        .any(|pair| pair[0].atom >= pair[1].atom)
+                    || site.bindings.iter().any(|binding| {
+                        !eval_binding_is_valid(
+                            binding,
+                            function,
+                            &self.functions,
+                            self.atoms.len(),
+                        )
+                    })
+            })
+        {
+            return Err(format!(
+                "function {index} has invalid binding-site metadata"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks the frame of function `index` and its code: each instruction, then each handler.
+    fn validate_function_code(&self, index: usize, function: &super::Function, code_len: u32) -> Result<(), String> {
+        let bounds = self.validation_bounds(function, code_len);
+        validate_frame_metadata(index, function, code_len)?;
+        let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
+            crate::bitset::BitSet::from_fn(usize::from(function.locals), |_| true)
+        } else {
+            function.plain_local_slots(&self.superinstructions)
+        };
+        for packed in &function.code {
+            let Some(instruction) = instruction_at(function, *packed) else {
+                return Err(format!("function {index} wide instruction is invalid"));
+            };
+            self.validate_instruction(index, function, instruction, &plain_local_slots, bounds)?;
+        }
+        for handler in &function.handlers {
+            validate_handler(index, function, handler, code_len)?;
+        }
+        Ok(())
+    }
+
+    /// The table lengths and frame sizes that the operands of function `index` must stay within.
+    fn validation_bounds(&self, function: &super::Function, code_len: u32) -> ValidationBounds {
+        ValidationBounds {
+            registers: function.registers,
+            locals: function.locals,
+            functions: self.functions.len(),
+            constants: self.constants.len(),
+            environment_clones: function.environment_clones.len(),
+            atoms: self.atoms.len(),
+            field_sites: self.field_sites.len(),
+            cache_sites: self.cache_sites.get(),
+            method_sites: self.method_sites.len(),
+            object_sites: self.object_sites.len(),
+            regexp_literal_sites: self.regexp_literal_sites.len(),
+            literal_templates: self.literal_templates.len(),
+            superinstructions: self.superinstructions.len(),
+            code_len,
+        }
+    }
+
+    /// Checks one decoded instruction of function `index`: its local accesses, its capture
+    /// accesses, its binary target and its operands.
+    fn validate_instruction(
+        &self,
+        index: usize,
+        function: &super::Function,
+        instruction: super::WideInstruction,
+        plain_local_slots: &crate::bitset::BitSet,
+        bounds: ValidationBounds,
+    ) -> Result<(), String> {
+        validate_local_access(index, function, instruction, plain_local_slots)?;
+        validate_capture_access(index, function, instruction)?;
+        validate_binary_target(index, function, instruction, plain_local_slots)?;
+        self.validate_operand_domains(index, function, instruction, bounds)?;
+        self.validate_wasm_constants(index, instruction)
+    }
+
+    /// Checks that the Wasm memory offset and SIMD shuffle constants of an instruction are
+    /// well formed.
+    fn validate_wasm_constants(&self, index: usize, instruction: super::WideInstruction) -> Result<(), String> {
+        if instruction.op() == super::Op::WasmMemoryAddress
+            && !matches!(
+                self.constants.get(instruction.constant_index()),
+                Some(super::Constant::WasmBits64(_))
+            )
+        {
+            return Err(format!(
+                "function {index} has an invalid Wasm memory offset constant"
+            ));
+        }
+        if instruction.op() == super::Op::WasmSimdShuffle
+            && !matches!(self.constants.get(instruction.constant_index()), Some(super::Constant::WasmV128(indices)) if crate::wasm::simd::shuffle_indices_valid(indices))
+        {
+            return Err(format!("function {index} has invalid SIMD shuffle indices"));
+        }
+        Ok(())
+    }
+
+    /// Whether an atom and a cache of a site are both in bounds.
+    fn atom_cache_in_bounds(&self, (atom, cache): (u32, u16)) -> bool {
+        atom_in_bounds(atom, self.atoms.len()) && cache_in_bounds(cache, self.cache_sites.get())
+    }
+
+    /// Checks the method sites: atoms, caches and argument ranges in bounds.
+    fn validate_method_sites(&self) -> Result<(), String> {
         for site in &self.method_sites {
             if !atom_in_bounds(site.atom, self.atoms.len())
                 || !cache_in_bounds(site.cache, self.cache_sites.get())
                 || (site.argument_start as usize)
                     .checked_add(site.argument_count as usize)
                     .is_none_or(|end| end > self.method_arguments.len())
-                || site.receiver_path.is_some_and(|(atom, cache)| {
-                    !atom_in_bounds(atom, self.atoms.len())
-                        || !cache_in_bounds(cache, self.cache_sites.get())
-                })
+                || !site.receiver_path.is_none_or(|pair| self.atom_cache_in_bounds(pair))
             {
                 return Err("invalid method site".into());
             }
         }
+        Ok(())
+    }
+
+    /// Checks the field sites: positions, base register, atoms and caches in bounds.
+    fn validate_field_sites(&self) -> Result<(), String> {
         for site in &self.field_sites {
             if site.sources.iter().flatten().any(|(line, column)| *line == 0 || *column == 0)
                 || !field_base_in_bounds(site.base.0, REGISTER_MASK, 0)
                 || !atom_in_bounds(site.first.0, self.atoms.len())
                 || !cache_in_bounds(site.first.1, self.cache_sites.get())
-                || site.second.is_some_and(|(atom, cache)| {
-                    !atom_in_bounds(atom, self.atoms.len())
-                        || !cache_in_bounds(cache, self.cache_sites.get())
-                })
-                || site.sink.is_some_and(|(atom, cache)| {
-                    !atom_in_bounds(atom, self.atoms.len())
-                        || !cache_in_bounds(cache, self.cache_sites.get())
-                })
+                || !site.second.is_none_or(|pair| self.atom_cache_in_bounds(pair))
+                || !site.sink.is_none_or(|pair| self.atom_cache_in_bounds(pair))
             {
                 return Err("invalid field site".into());
             }
         }
+        Ok(())
+    }
+
+    /// Checks that every object site names only atoms of the program.
+    fn validate_object_sites(&self) -> Result<(), String> {
         for site in &self.object_sites {
             if site
                 .atoms
@@ -931,6 +891,11 @@ function.plain_local_slots(&self.superinstructions)
                 return Err("invalid object site".into());
             }
         }
+        Ok(())
+    }
+
+    /// Checks the literal templates, the RegExp literal sites and the method argument registers.
+    fn validate_literal_sites(&self) -> Result<(), String> {
         for template in &self.literal_templates {
             if !self.literal_template_is_valid(template) {
                 return Err("invalid literal template".into());
@@ -953,6 +918,37 @@ function.plain_local_slots(&self.superinstructions)
             .any(|register: &Register| *register > REGISTER_MASK)
         {
             return Err("invalid method argument register".into());
+        }
+        Ok(())
+    }
+
+    /// Checks an instruction's result flags, unused operands and operand domains against the
+    /// bounds and object sites of its program.
+    fn validate_operand_domains(
+        &self,
+        index: usize,
+        function: &super::Function,
+        instruction: super::WideInstruction,
+        bounds: ValidationBounds,
+    ) -> Result<(), String> {
+        if !instruction.result_flags_valid() {
+            return Err(format!("function {index} result flags are invalid"));
+        }
+        if !instruction.unused_operands_are_zero() {
+            return Err(format!(
+                "function {index} {:?} has nonzero unused operands",
+                instruction.op()
+            ));
+        }
+        if !field_domains_in_bounds(instruction, bounds)
+            || !immediate_domains_in_bounds(instruction, bounds)
+            || !packed_layout_domains_in_bounds(instruction, bounds)
+            || !object_site_instruction_valid(instruction, &self.object_sites, function.registers)
+        {
+            return Err(format!(
+                "function {index} {:?} has an out-of-domain operand",
+                instruction.op()
+            ));
         }
         Ok(())
     }
@@ -1032,34 +1028,260 @@ function.plain_local_slots(&self.superinstructions)
     }
 }
 
+/// Checks that the self-binding slot of function `index`, when it has one, is a local that the
+/// function's own name binds.
+fn validate_self_binding(index: usize, function: &super::Function) -> Result<(), String> {
+    if function.self_binding_slot.is_some_and(|slot| slot >= function.locals) {
+        return Err(format!("function {index} has an invalid self-binding slot"));
+    }
+    if let Some(slot) = function.self_binding_slot
+        && !function.name_bindings.direct().iter().any(|binding| {
+            binding.kind == super::LexicalBindingKind::FunctionName
+                && matches!(
+                    binding.location,
+                    super::EvalBindingLocation::Local(binding_slot)
+                        if binding_slot == slot
+                )
+        })
+    {
+        return Err(format!("function {index} has an unbound self-binding slot"));
+    }
+    Ok(())
+}
+
+/// Checks the source positions of function `index`: ordered by pc within its code, with
+/// positive lines and columns.
+fn validate_source_positions(index: usize, function: &super::Function, code_len: u32) -> Result<(), String> {
+    let positions = function.source_positions.iter();
+    if positions
+        .clone()
+        .zip(positions.clone().skip(1))
+        .any(|(first, second)| first.pc >= second.pc)
+        || positions.clone().any(|position| {
+            position.pc >= code_len || position.line == 0 || position.column == 0
+        })
+        || positions.clone().last() != function.source_positions.last()
+    {
+        return Err(format!("function {index} has invalid source positions"));
+    }
+    Ok(())
+}
+
+/// Checks the frame metadata of function `index`: the argument slot, the parameter boundary
+/// and the undefined register lie within its frame and code.
+fn validate_frame_metadata(index: usize, function: &super::Function, code_len: u32) -> Result<(), String> {
+    if function
+        .arguments_slot
+        .is_some_and(|slot| slot >= function.locals)
+        || function.rest && function.simple_parameters
+    {
+        return Err(format!("function {index} has invalid argument metadata"));
+    }
+    if function.parameter_end_pc > code_len
+        || function.parameter_end_pc != 0 && !function.is_generator
+    {
+        return Err(format!(
+            "function {index} has an invalid parameter boundary"
+        ));
+    }
+    if function
+        .undefined_register
+        .is_some_and(|register| register >= function.registers)
+    {
+        return Err(format!(
+            "function {index} undefined register is out of bounds"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks that an instruction of function `index` is not a nested wide marker, that it does
+/// not reach a promoted binding through its local slot, and that its plain-local operations
+/// are proven plain.
+fn validate_local_access(
+    index: usize,
+    function: &super::Function,
+    instruction: super::WideInstruction,
+    plain_local_slots: &crate::bitset::BitSet,
+) -> Result<(), String> {
+    if instruction.op().is_wide_marker() {
+        return Err(format!("function {index} contains nested wide instruction"));
+    }
+    if instruction_uses_promoted_local(instruction, function) {
+        return Err(format!(
+            "function {index} accesses a promoted binding through its local slot"
+        ));
+    }
+    if matches!(
+        instruction.op(),
+        super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
+    ) && !plain_local_slots.contains(instruction.local_slot())
+    {
+        return Err(format!(
+            "function {index} has an unproven plain-local operation"
+        ));
+    }
+    Ok(())
+}
+
+/// The width of the neighbouring pairs a sorted list is checked by.
+const NEIGHBOURS: usize = 2;
+
+/// Whether an instruction addresses a local slot that the selective capture layout captures.
+fn addresses_captured_slot(instruction: super::WideInstruction, captured: &[u16]) -> bool {
+    let local_slot = matches!(
+        instruction.op(),
+        super::Op::LoadLocal
+            | super::Op::StoreLocal
+            | super::Op::LoadLocalPlain
+            | super::Op::StoreLocalPlain
+            | super::Op::LoadEnvLocal
+            | super::Op::StoreEnvLocal
+    )
+    .then(|| instruction.local_slot());
+    local_slot.is_some_and(|slot| {
+        u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+    })
+}
+
+/// Whether a numeric local fast path of an instruction reaches an environment-owned slot.
+fn numeric_path_reaches_capture(
+    function: &super::Function,
+    instruction: super::WideInstruction,
+    captured: &[u16],
+    slot_is_captured: bool,
+) -> bool {
+    let numeric = function.dispatch == super::DispatchClass::Numeric;
+    instruction
+        .numeric_local_target()
+        .is_some_and(|target| captured.binary_search(&target).is_ok())
+        || numeric
+            && ((instruction.op() == super::Op::StoreLocal && slot_is_captured)
+                || instruction.op() == super::Op::LoadLocal
+                    && instruction.numeric_local_store_target().is_some()
+                    && slot_is_captured)
+        || numeric && instruction.op() == super::Op::GetIndex && index_operand_is_captured(instruction, captured)
+}
+
+/// Whether an index operand of an instruction is a local the capture layout captures.
+fn index_operand_is_captured(instruction: super::WideInstruction, captured: &[u16]) -> bool {
+    [instruction.operand_b(), instruction.operand_c()].into_iter().any(|operand| {
+        operand.kind() == Some(OperandKind::Local) && captured.binary_search(&operand.payload()).is_ok()
+    })
+}
+
+/// Checks an instruction of function `index` against its selective capture layout:
+/// environment operations reach only captured slots, and no numeric local fast path reaches
+/// an environment-owned slot.
+fn validate_capture_access(index: usize, function: &super::Function, instruction: super::WideInstruction) -> Result<(), String> {
+    let Some(captured) = &function.selective_capture_slots else {
+        return Ok(());
+    };
+    let slot_is_captured = addresses_captured_slot(instruction, captured);
+    let environment_op = matches!(
+        instruction.op(),
+        super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
+    );
+    if environment_op && !slot_is_captured {
+        return Err(format!(
+            "function {index} has an environment-local operation for an uncaptured slot"
+        ));
+    }
+    if numeric_path_reaches_capture(function, instruction, captured, slot_is_captured) {
+        return Err(format!(
+            "function {index} has a numeric local fast path for an environment-owned slot"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks that a binary operation of function `index` targets a plain local, unless the
+/// function dispatches numerically.
+fn validate_binary_target(
+    index: usize,
+    function: &super::Function,
+    instruction: super::WideInstruction,
+    plain_local_slots: &crate::bitset::BitSet,
+) -> Result<(), String> {
+    if instruction.op() == super::Op::Binary
+        && instruction.numeric_local_target().is_some_and(|slot| {
+            function.dispatch != super::DispatchClass::Numeric
+                && !plain_local_slots.contains(usize::from(slot))
+        })
+    {
+        return Err(format!(
+            "function {index} has an unproven plain-local binary target"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks a handler of function `index`: its range and targets lie in the code, and its slots
+/// in the frame.
+fn validate_handler(index: usize, function: &super::Function, handler: &super::Handler, code_len: u32) -> Result<(), String> {
+    if handler.start > handler.end
+        || handler.end > code_len
+        || handler.target >= code_len
+        || handler
+            .return_target
+            .is_some_and(|target| target >= code_len)
+        || handler.return_target.is_some() != handler.return_slot.is_some()
+    {
+        return Err(format!("function {index} has an invalid handler"));
+    }
+    if handler.slot.is_some_and(|slot| match slot {
+        super::ThrownValueSlot::Local(slot) => slot >= function.locals,
+        super::ThrownValueSlot::Register(register) => register >= function.registers,
+    }) {
+        return Err(format!("function {index} handler slot is out of bounds"));
+    }
+    if handler
+        .return_slot
+        .is_some_and(|slot| slot >= function.locals)
+    {
+        return Err(format!(
+            "function {index} handler return slot is out of bounds"
+        ));
+    }
+    Ok(())
+}
+
 fn selective_capture_scope_unsafe(
     functions: &[super::FunctionSlot],
     atoms: &super::AtomTable,
-) -> Vec<bool> {
+) -> BitSet {
     let is_with_enter =
         |atom: usize| atom < atoms.len() && &atoms[atom] == super::WITH_ENTER_BINDING;
-    let mut inherited_dynamic_scope = vec![false; functions.len()];
-    for (id, function) in functions.iter().enumerate() {
-        if let Some(parent) = function.parent.map(|parent| parent as usize) {
-            inherited_dynamic_scope[id] =
-                inherited_dynamic_scope[parent] || !functions[parent].binding_sites.is_empty();
-        }
-    }
-    let mut unsafe_layout = vec![false; functions.len()];
+    let inherited_dynamic_scope = inherited_dynamic_scopes(functions);
+    let mut unsafe_layout = BitSet::new(functions.len());
     for (id, function) in functions.iter().enumerate() {
         if !has_dynamic_scope_access(function)
-            && !inherited_dynamic_scope[id]
+            && !inherited_dynamic_scope.contains(id)
             && !function.contains_with_statement(is_with_enter)
         {
             continue;
         }
         let mut current = Some(id);
         while let Some(owner) = current {
-            unsafe_layout[owner] = true;
+            unsafe_layout.insert(owner);
             current = functions[owner].parent.map(|parent| parent as usize);
         }
     }
     unsafe_layout
+}
+
+/// The functions that inherit a dynamic scope from an ancestor: one whose parent holds a binding
+/// site, or inherits one itself.
+fn inherited_dynamic_scopes(functions: &[super::FunctionSlot]) -> BitSet {
+    let mut inherited = BitSet::new(functions.len());
+    for (id, function) in functions.iter().enumerate() {
+        if let Some(parent) = function.parent.map(|parent| parent as usize)
+            && (inherited.contains(parent) || !functions[parent].binding_sites.is_empty())
+        {
+            inherited.insert(id);
+        }
+    }
+    inherited
 }
 
 fn has_dynamic_scope_access(function: &super::Function) -> bool {
@@ -1132,412 +1354,5 @@ fn selective_capture_layout_is_eligible(
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
-
-    #[test]
-    fn rest_list_closure_layouts_are_validated() {
-        // The compiler splits a rest list that binds directly; the validator accepts what it emits.
-        let program = crate::Engine::specialize(
-            "function outer() { function log(first, ...rest) { let hidden = rest.length; return () => first + rest[0] + hidden; } return log(1, 2)(); } outer();",
-            "rest-layout.js",
-        )
-        .unwrap();
-        // Validation compiles every released function first.
-        assert_eq!(program.validate(), Ok(()));
-        assert!(program
-            .functions
-            .iter()
-            .any(|function| function.rest && function.selective_capture_slots.is_some()));
-    }
-
-    #[test]
-    fn non_suspending_async_promoted_locals_are_validated() {
-        // A non-suspending async body promotes its locals as an ordinary one does; one that
-        // awaits keeps them in frame slots. The validator accepts what the compiler emits, for
-        // default and trailing-comma parameter lists too (Test262 async dflt-params-*,
-        // params-trailing-comma-*).
-        let program = crate::Engine::specialize(
-            "async function trailing(a,) { return a; } async function defaults(a, b = a + 1) { let c = b; return c; } \
-             const arrow = async (x = 1, y,) => x + y; async function waits(a) { const b = await a; return b; } \
-             trailing(1); defaults(1); arrow(2, 3); waits(4);",
-            "async-promoted-locals.js",
-        )
-        .unwrap();
-        // Validation compiles every released function first.
-        assert_eq!(program.validate(), Ok(()));
-        let promoted = |name: &str| {
-            program.functions.iter().any(|function| {
-                function.is_async
-                    && !function.local_registers.is_empty()
-                    && function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)
-            })
-        };
-        assert!(promoted("trailing"));
-        assert!(
-            program.functions.iter().any(|function| function.is_async && function.is_arrow && !function.local_registers.is_empty()),
-            "a non-suspending async arrow with defaults and a trailing comma promotes its locals"
-        );
-        assert!(!promoted("waits"), "an awaiting body keeps its locals in frame slots");
-    }
-
-    #[test]
-    fn binding_site_domains_are_validated() {
-        let program = crate::Engine::specialize(
-            "{let value = 1; with ({}) {value; value = 2; typeof value; delete value;}}",
-            "binding-sites.js",
-        )
-        .unwrap();
-        assert!(program.validate().is_ok());
-        assert!(program.functions[0].binding_sites.len() >= 2);
-        for pc in [0, u32::MAX] {
-            let mut invalid = program.clone();
-            invalid.functions[0].binding_sites[0].resume_pc = pc;
-            assert!(invalid.validate().is_err());
-        }
-        let mut invalid = program.clone();
-        invalid.functions[0].binding_sites.reverse();
-        assert!(invalid.validate().is_err());
-        let mut invalid = program.clone();
-        invalid.functions[0].binding_sites[0].bindings[0].atom = u32::MAX;
-        assert!(invalid.validate().is_err());
-        let mut invalid = program.clone();
-        invalid.functions[0].binding_sites[0].bindings[0].location =
-            super::super::EvalBindingLocation::Local(u16::MAX);
-        assert!(invalid.validate().is_err());
-        let mut invalid = program;
-        let binding = invalid.functions[0].binding_sites[0].bindings[0];
-        invalid.functions[0].binding_sites[0].bindings.push(binding);
-        assert!(invalid.validate().is_err());
-    }
-
-    #[test]
-    fn name_binding_domains_are_validated() {
-        use crate::bytecode::EvalBindingLocation;
-        let program = crate::Engine::specialize(
-            "function outer() { const captured = 1; return function inner() { eval('0'); return captured; }; }",
-            "name-bindings.js",
-        ).unwrap();
-        assert!(program.validate().is_ok());
-        let owner = program
-            .functions
-            .iter()
-            .position(|function| function.name_bindings.resolved().len() >= 2)
-            .unwrap();
-        let with_bindings = |edit: &dyn Fn(&mut Vec<crate::bytecode::EvalBinding>)| {
-            let mut invalid = program.clone();
-            let mut bindings = invalid.functions[owner].name_bindings.resolved();
-            edit(&mut bindings);
-            invalid.functions[owner].name_bindings = crate::bytecode::NameBindings::flat(bindings);
-            invalid
-        };
-        assert!(with_bindings(&|_| {}).validate().is_ok());
-        for location in [
-            EvalBindingLocation::Local(u16::MAX),
-            EvalBindingLocation::Capture {
-                depth: u16::MAX,
-                slot: 0,
-            },
-            EvalBindingLocation::Capture {
-                depth: 0,
-                slot: u16::MAX,
-            },
-        ] {
-            assert!(
-                with_bindings(&|bindings| bindings[0].location = location)
-                    .validate()
-                    .is_err()
-            );
-        }
-        assert!(
-            with_bindings(&|bindings| bindings.reverse())
-                .validate()
-                .is_err()
-        );
-        assert!(
-            with_bindings(&|bindings| bindings[1] = bindings[0])
-                .validate()
-                .is_err()
-        );
-        assert!(
-            with_bindings(&|bindings| bindings[0].atom = u32::MAX)
-                .validate()
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn environment_clone_domains_are_validated() {
-        let program = crate::Engine::specialize(
-            "var readers = []; for (let i = 0; i < 2; i++) readers.push(() => i);",
-            "clones.js",
-        )
-        .unwrap();
-        assert!(program.validate().is_ok());
-        for slots in [vec![u16::MAX], vec![0, 0], vec![1, 0]] {
-            let mut invalid = program.clone();
-            invalid.functions[0].environment_clones[0].fresh = slots;
-            assert!(invalid.validate().is_err());
-        }
-        let mut invalid = program;
-        invalid.functions[0].environment_clones = Default::default();
-        assert!(invalid.validate().is_err());
-    }
-
-    fn function(code: Vec<Instr>, registers: u16, root: u32) -> Function {
-        Function {
-            parent: None,
-            name: None,
-            inferred_name: None,
-            is_arrow: false,
-            self_binding_slot: None,
-            source_span: None,
-            params: 0,
-            length: 0,
-            parameter_end_pc: 0,
-            parameter_atoms: vec![].into(),
-            rest: false,
-            is_async: false,
-            is_generator: false,
-            is_class_constructor: false,
-            derived_constructor: false,
-            instance_initializer: None,
-            super_home_atom: None,
-            constructible: true,
-            class_initializer: false,
-            parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
-            prototype_unobservable: false,
-            arguments_slot: None,
-            simple_parameters: true,
-            strict: false,
-            locals: 0,
-            local_atoms: vec![].into(),
-            environment_atoms: vec![].into(),
-            selective_capture_slots: None,
-            local_registers: vec![].into(),
-            inherited_with_scope: false,
-            lexical_atoms: vec![].into(),
-            global_declarations: None,
-            name_bindings: Default::default(),
-            binding_sites: vec![].into(),
-            source_positions: Default::default(),
-            environment_clones: vec![].into(),
-            code,
-            wide: vec![],
-            registers,
-            dispatch: DispatchClass::General,
-            decoded: Default::default(),
-            plain_locals: Default::default(),
-            declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
-            live_parameter_reflection: Default::default(),
-            static_name_scope: Default::default(),
-            dynamic_scope_access: Default::default(),
-            js_tier_candidate: Default::default(),
-            call_plan: Default::default(),
-            initializer: Default::default(),
-            handlers: vec![].into(),
-            register_roots: crate::bytecode::RegisterRoots::new(root != u32::MAX),
-            undefined_register: None,
-            parameter_registers: None,
-            initial_register: Default::default(),
-        }
-    }
-
-    fn program(function: Function) -> ResidualProgram {
-        ResidualProgram {
-            specialized: true,
-            kind: crate::bytecode::ProgramKind::Script,
-            module_requests: Vec::new(),
-            module_imports: Vec::new(),
-            module_link_plan: None,
-            source_name: String::new(),
-            source: None,
-            atoms: AtomTable::default(),
-            constants: vec![].into(),
-            functions: vec![function.into()].into(),
-            cache_sites: Default::default(),
-            method_sites: vec![].into(),
-            method_arguments: vec![].into(),
-            field_sites: vec![].into(),
-            object_sites: vec![].into(),
-            regexp_literal_sites: vec![].into(),
-            literal_templates: Vec::new().into(),
-            superinstructions: vec![].into(), rewrite_ranges: Default::default(),
-            replay: None, first_call_scopes: Default::default(),
-            encoded_records: None,
-            validated: Default::default(),
-            undefined_constant: Default::default(),
-            load_encoding: Default::default(),
-            closure_reads: None,
-            wasm_lazy: None,
-        }
-    }
-
-    #[test]
-    fn table_and_operand_references_are_checked_before_execution() {
-        for (op, minimum) in [
-            (
-                Op::WasmExceptionNew,
-                crate::wasm::tag::ExceptionInput::MIN_COUNT,
-            ),
-            (
-                Op::WasmStructNewDesc,
-                u16::from(crate::wasm::gc::StructConstruction::Described.described()),
-            ),
-            (
-                Op::WasmStructNewDefaultDesc,
-                u16::from(crate::wasm::gc::StructConstruction::DefaultDescribed.described()),
-            ),
-        ] {
-            for count in [0, minimum] {
-                let constructor = program(
-                    function(
-                        vec![
-                            Instr::new(op, 0, 0, count, 0),
-                            Instr::new(Op::Return, 0, 0, 0, 0),
-                        ],
-                        1,
-                        u32::MAX,
-                    ));
-                assert_eq!(constructor.validate().is_ok(), count != 0);
-            }
-        }
-        for operator in [
-            crate::wasm::atomic::AtomicOperator::I32AtomicLoad,
-            crate::wasm::atomic::AtomicOperator::I64AtomicStore,
-            crate::wasm::atomic::AtomicOperator::I32AtomicRmwAdd,
-            crate::wasm::atomic::AtomicOperator::I64AtomicRmw32CmpxchgU,
-            crate::wasm::atomic::AtomicOperator::MemoryAtomicNotify,
-            crate::wasm::atomic::AtomicOperator::MemoryAtomicWait32,
-            crate::wasm::atomic::AtomicOperator::MemoryAtomicWait64,
-        ] {
-            let expected = operator.input_count();
-            for count in [0, expected - 1, expected, expected + 1] {
-                let access = program(
-                    function(
-                        vec![
-                            Instr::new(Op::WasmAtomicAccess, 0, 0, count, operator as u32),
-                            Instr::new(Op::Return, 0, 0, 0, 0),
-                        ],
-                        expected + 1,
-                        u32::MAX,
-                    ));
-                assert_eq!(access.validate().is_ok(), count == expected);
-            }
-        }
-        let invalid_atomic = program(
-            function(
-                vec![
-                    Instr::new(Op::WasmAtomicAccess, 0, 0, 2, u32::from(u8::MAX)),
-                    Instr::new(Op::Return, 0, 0, 0, 0),
-                ],
-                4,
-                u32::MAX,
-            ));
-        assert!(invalid_atomic.validate().is_err());
-        let invalid_constant = program(
-            function(vec![Instr::new(Op::LoadConst, 0, 0, 0, 0)], 1, u32::MAX));
-        assert!(invalid_constant.validate().is_err());
-
-        let mut invalid_shuffle = program(
-            function(
-                vec![
-                    Instr::new(Op::WasmSimdShuffle, 0, 0, 0, 0),
-                    Instr::new(Op::Return, 0, 0, 0, 0),
-                ],
-                1,
-                u32::MAX,
-            ));
-        invalid_shuffle
-            .constants
-            .push(super::super::Constant::WasmV128(
-                [u8::MAX; crate::wasm::V128_BYTES],
-            ));
-        assert!(invalid_shuffle.validate().is_err());
-        invalid_shuffle.constants[0] =
-            super::super::Constant::WasmV128([0; crate::wasm::V128_BYTES]);
-        assert!(invalid_shuffle.validate().is_ok());
-        let mut invalid_selector = program(
-            function(
-                vec![
-                    Instr::new(Op::WasmSimd, 0, 0, 0, u32::from(u8::MAX)),
-                    Instr::new(Op::Return, 0, 0, 0, 0),
-                ],
-                1,
-                u32::MAX,
-            ));
-        assert!(invalid_selector.validate().is_err());
-        invalid_selector.functions[0].code[0] =
-            Instr::new(Op::WasmI31, 0, 0, 0, u32::from(u8::MAX));
-        assert!(invalid_selector.validate().is_err());
-        invalid_selector.functions[0].code[0] = Instr::new(
-            Op::WasmI31,
-            0,
-            0,
-            0,
-            crate::wasm::i31::I31Operator::New as u32,
-        );
-        assert!(invalid_selector.validate().is_ok());
-        invalid_selector.functions[0].code[0] =
-            Instr::new(Op::WasmRefAsNonNull, 0, 0, 0, u32::from(u8::MAX));
-        assert!(invalid_selector.validate().is_err());
-        for check in [
-            crate::wasm::reference::NonNullCheck::Reference,
-            crate::wasm::reference::NonNullCheck::Function,
-        ] {
-            invalid_selector.functions[0].code[0] =
-                Instr::new(Op::WasmRefAsNonNull, 0, 0, 0, check as u32);
-            assert!(invalid_selector.validate().is_ok());
-        }
-        invalid_selector.functions[0].code[0] =
-            Instr::new(Op::WasmRefCast, 0, 0, 0, crate::wasm::reference::EXACT);
-        assert!(invalid_selector.validate().is_err());
-        invalid_selector.functions[0].code[0] = Instr::new(
-            Op::WasmRefCast,
-            0,
-            0,
-            0,
-            crate::wasm::reference::ReferenceTarget::from_type(wasmparser::RefType::I31REF)
-                .unwrap()
-                .tag(),
-        );
-        assert!(invalid_selector.validate().is_ok());
-        invalid_selector.functions[0].code[0] = Instr::new(Op::WasmSimd, 0, 0, 0, 0);
-        assert!(invalid_selector.validate().is_ok());
-
-        let invalid_field = program(
-            function(vec![Instr::new(Op::GetField, 0, 0, 0, 0)], 1, u32::MAX));
-        assert!(invalid_field.validate().is_err());
-
-        let invalid_call = program(
-            function(
-                vec![Instr::new(
-                    Op::Call,
-                    0,
-                    0,
-                    0,
-                    super::super::ImmediateLayout::call_immediate(1, 1, false, false),
-                )],
-                1,
-                u32::MAX,
-            ));
-        assert!(invalid_call.validate().is_err());
-    }
-
-    #[test]
-    fn reachable_control_flow_cannot_fall_off_code() {
-        let fallthrough = program(
-            function(vec![Instr::new(Op::Nop, 0, 0, 0, 0)], 1, u32::MAX));
-        assert!(fallthrough.validate().is_err());
-
-        let branch_fallthrough = program(
-            function(vec![Instr::new(Op::JumpFalse, 0, 0, 0, 0)], 1, u32::MAX));
-        assert!(branch_fallthrough.validate().is_err());
-
-        let loop_forever = program(
-            function(vec![Instr::new(Op::Jump, 0, 0, 0, 0)], 1, u32::MAX));
-        assert!(loop_forever.validate().is_ok());
-    }
-}
+#[path = "validate_tests.rs"]
+mod tests;

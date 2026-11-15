@@ -423,6 +423,29 @@ pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject
 /// direct array `base` among the array records at `record_base`, a narrow or double backing's
 /// element decoded in place.
 #[inline(always)]
+/// The element `index` of a double backing (`ArrayElements::is_double`): the Number of its bits,
+/// canonical, or None at a hole.
+fn concrete_double_element(stage: &mut Concrete, values: u64, index: usize) -> Option<crate::Value> {
+    let address = values + (index * std::mem::size_of::<u64>()) as u64;
+    let word = stage.load_u64(Region::Elements.mutable(), address, 0);
+    if word == crate::Value::DELETED.to_bits() {
+        return None;
+    }
+    // `Value::number` of the double: a whole one in int32 range, not -0, takes the tag.
+    let number = f64::from_bits(word);
+    let integer = number as i32;
+    let whole = f64::from(integer) == number && (integer != 0 || number.is_sign_positive());
+    // Any NaN a kernel stored (x86 makes 0xfff8...) reads as the canonical one.
+    let bits = if whole {
+        crate::value::ValueLayout::INT_TAG | u64::from(integer as u32)
+    } else if number.is_nan() {
+        crate::value::ValueLayout::CANONICAL_NAN
+    } else {
+        word
+    };
+    Some(crate::Value::from_bits(bits))
+}
+
 pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
     use crate::heap::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN};
     let mut stage = Concrete::new(std::ptr::null());
@@ -435,26 +458,7 @@ pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObje
         return None;
     }
     if length & u64::from(DOUBLE_LEN) != 0 {
-        // A double backing (`ArrayElements::is_double`): the Number of the element's bits,
-        // canonical, or a hole.
-        let address = values + (index * std::mem::size_of::<u64>()) as u64;
-        let word = stage.load_u64(Region::Elements.mutable(), address, 0);
-        if word == crate::Value::DELETED.to_bits() {
-            return None;
-        }
-        // `Value::number` of the double: a whole one in int32 range, not -0, takes the tag.
-        let number = f64::from_bits(word);
-        let integer = number as i32;
-        let whole = f64::from(integer) == number && (integer != 0 || number.is_sign_positive());
-        // Any NaN a kernel stored (x86 makes 0xfff8...) reads as the canonical one.
-        let bits = if whole {
-            crate::value::ValueLayout::INT_TAG | u64::from(integer as u32)
-        } else if number.is_nan() {
-            crate::value::ValueLayout::CANONICAL_NAN
-        } else {
-            word
-        };
-        return Some(crate::Value::from_bits(bits));
+        return concrete_double_element(&mut stage, values, index);
     }
     // A narrow backing (`ArrayElements::is_narrow`), which `array_backing` misses: the element
     // decoded from its narrow form.

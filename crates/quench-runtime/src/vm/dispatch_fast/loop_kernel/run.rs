@@ -1,8 +1,9 @@
 //! Running a loop kernel: entry facts, the trip count, chunks of columns, the scalar pass
 //! over recurrences, the chunk's stores, and the registers written back.
-use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
 use super::shape::{Arg, NodeOp, Scalar, Stride};
 use super::typed;
+use super::operators::{Column, operate};
+use super::trips::{WORK_PER_ITERATION, fits, trip_count};
 use crate::heap::TypedArrayKind;
 use super::*;
 
@@ -61,112 +62,7 @@ impl State {
     };
 }
 
-/// One f64 operand of a column operation.
-#[derive(Clone, Copy)]
-enum Column<'a> {
-    Col(&'a [f64]),
-    Scalar(f64),
-}
 
-#[inline(always)]
-fn map2(out: &mut [f64], a: Column, b: Column, f: impl Fn(f64, f64) -> f64) {
-    match (a, b) {
-        (Column::Col(x), Column::Col(y)) => out.iter_mut().zip(x).zip(y).for_each(|((o, &x), &y)| *o = f(x, y)),
-        (Column::Col(x), Column::Scalar(y)) => out.iter_mut().zip(x).for_each(|(o, &x)| *o = f(x, y)),
-        (Column::Scalar(x), Column::Col(y)) => out.iter_mut().zip(y).for_each(|(o, &y)| *o = f(x, y)),
-        (Column::Scalar(x), Column::Scalar(y)) => out.fill(f(x, y)),
-    }
-}
-
-/// `op` over two column operands, one loop per operator.
-fn operate(op: NodeOp, out: &mut [f64], a: Column, b: Column) {
-    macro_rules! each {
-        ($($kind:ident :: $operation:ident => $f:ident),*) => {
-            match op {
-                $(NodeOp::$kind($kind::$operation) => map2(out, a, b, |x, y| $f($kind::$operation, x, y)),)*
-                NodeOp::Load { .. } | NodeOp::Iota { .. } => unreachable!("not an operator"),
-            }
-        };
-    }
-    type Arith = NumberArithmetic;
-    type Bits = NumberBitwise;
-    each!(
-        Arith::Add => arith, Arith::Subtract => arith, Arith::Multiply => arith, Arith::Divide => arith,
-        Bits::And => bits, Bits::Or => bits, Bits::Xor => bits,
-        Bits::ShiftLeft => bits, Bits::ShiftRight => bits, Bits::ShiftRightUnsigned => bits
-    )
-}
-
-#[inline(always)]
-pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
-    match operation {
-        NumberArithmetic::Add => a + b,
-        NumberArithmetic::Subtract => a - b,
-        NumberArithmetic::Multiply => a * b,
-        NumberArithmetic::Divide => a / b,
-    }
-}
-
-#[inline(always)]
-fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
-    let int32 = |value: f64| crate::value::number_to_u32(value) as i32;
-    super::super::super::operations::number_bitwise_f64_result(operation, int32(a), int32(b))
-}
-
-#[inline(always)]
-pub(super) fn apply(op: NodeOp, a: f64, b: f64) -> f64 {
-    match op {
-        NodeOp::Arith(operation) => arith(operation, a, b),
-        NodeOp::Bits(operation) => bits(operation, a, b),
-        NodeOp::Load { .. } | NodeOp::Iota { .. } => unreachable!("loads and iotas are column operations"),
-    }
-}
-
-/// The trip count of `counter REL bound` from `start`, stepping by `step`: how many
-/// iterations' tests hold before the first that fails (unbounded when the step moves the
-/// counter away from failing; the accesses' bounds then limit the run).
-fn trip_count(start: f64, step: f64, relation: NumberRelation, bound: f64) -> u64 {
-    let holds = |value: f64| match relation {
-        NumberRelation::LessThan => value < bound,
-        NumberRelation::LessEqual => value <= bound,
-        NumberRelation::GreaterThan => value > bound,
-        NumberRelation::GreaterEqual => value >= bound,
-        NumberRelation::Equal | NumberRelation::NotEqual => false,
-    };
-    if !holds(start) {
-        return 0;
-    }
-    let toward = matches!(relation, NumberRelation::LessThan | NumberRelation::LessEqual) == (step > 0.0);
-    if !toward {
-        return u64::MAX;
-    }
-    // An estimate from the distance, then exact steps around it.
-    let mut k = ((bound - start) / step).floor().clamp(0.0, 1e15) as u64;
-    while k > 0 && !holds(start + step * k as f64) {
-        k -= 1;
-    }
-    while holds(start + step * (k + 1) as f64) {
-        k += 1;
-    }
-    k + 1
-}
-
-/// The iterations an access at the affine index `first + step * k` stays below `length` for.
-fn fits(first: i64, step: i64, length: usize) -> u64 {
-    let length = length as i64;
-    if first < 0 || first >= length {
-        0
-    } else if step == 0 {
-        u64::MAX
-    } else if step > 0 {
-        ((length - 1 - first) / step + 1) as u64
-    } else {
-        (first / -step + 1) as u64
-    }
-}
-
-/// Work-clock units (typical-host nanoseconds) charged per kernel iteration.
-const WORK_PER_ITERATION: u64 = 4;
 
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
@@ -370,7 +266,7 @@ impl LoopKernel {
             }
         }
         for (id, node) in self.shape.nodes.iter().enumerate() {
-            if matches!(node.op, NodeOp::Arith(_) | NodeOp::Bits(_)) && !node.seq && !node.hoisted {
+            if node.op.is_operator() && !node.seq && !node.hoisted {
                 self.operator_column(state, scratch, id, len);
             }
         }

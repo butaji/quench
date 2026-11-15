@@ -85,6 +85,12 @@ impl<T> Table<T> {
 /// The allocator's step between small size classes.
 const ALLOCATOR_GRANULE: usize = quench_alloc::GRANULE_BYTES;
 
+/// How much a full table's capacity multiplies when it grows.
+const GROWTH_FACTOR: usize = 2;
+
+/// The fewest slots a table grows to from empty.
+const MIN_GROWTH_CAPACITY: usize = 2;
+
 impl<T> Table<T> {
     pub(super) fn with_capacity(capacity: usize) -> Self {
         let mut table = Self::new();
@@ -141,7 +147,7 @@ impl<T> Table<T> {
     #[cold]
     #[inline(never)]
     fn grow(&mut self) {
-        self.reallocate(Self::fitted((self.capacity() * 2).max(2)));
+        self.reallocate(Self::fitted((self.capacity() * GROWTH_FACTOR).max(MIN_GROWTH_CAPACITY)));
     }
 
 }

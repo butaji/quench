@@ -181,30 +181,37 @@ impl<H: Host> Vm<H> {
             && parts.prototype.is_some() == constructor.is_some()
             && let Some(shape) = template_shape
         {
-            self.closure_templates[closure_template_index(self.active_program, parts.id)] = Some(ClosureTemplate {
-                program: self.active_program,
-                function: parts.id,
-                realm: parts.realm,
-                function_prototype: parts.function_object_prototype,
-                header: crate::heap::InlineObjectHeader::of(parts.function_object_prototype, shape),
-                run_header: crate::heap::InlineObjectHeader::of_run(parts.function_object_prototype, shape),
-                length: parts.length_value,
-                name: parts.name_value,
-                kind: FunctionKind::User(self.active_program, parts.id),
-                prototype: constructor.map(|constructor| {
-                    crate::heap::InlineObjectHeader::of(self.realm_object_prototype(parts.realm), constructor)
-                }),
-                // A call-only closure (`Value::known_closure`) names its maker's activation.
-                maker_reads: if plan.prototype_unobservable {
-                    crate::bytecode::MakerReads::Maker
-                } else {
-                    p.closure_reads.as_deref().map_or(crate::bytecode::MakerReads::Maker, |reads| {
-                        reads.maker_reads(parts.id, crate::bytecode::arrow_chain_reads_implicit_bindings(p, parts.id))
-                    })
-                },
-                call_only: plan.prototype_unobservable,
-                outer_environment: None,
-            });
+            let template = self.closure_template_of(p, plan, parts, shape, constructor);
+            self.closure_templates[closure_template_index(self.active_program, parts.id)] = Some(template);
+        }
+    }
+
+    /// The template a closure's later siblings are made from: its header and prototype
+    /// header, and what its maker reads.
+    fn closure_template_of(&self, p: &ResidualProgram, plan: &crate::bytecode::FunctionHeader, parts: &ClosureParts, shape: u32, constructor: Option<u32>) -> ClosureTemplate {
+        ClosureTemplate {
+            program: self.active_program,
+            function: parts.id,
+            realm: parts.realm,
+            function_prototype: parts.function_object_prototype,
+            header: crate::heap::InlineObjectHeader::of(parts.function_object_prototype, shape),
+            run_header: crate::heap::InlineObjectHeader::of_run(parts.function_object_prototype, shape),
+            length: parts.length_value,
+            name: parts.name_value,
+            kind: FunctionKind::User(self.active_program, parts.id),
+            prototype: constructor.map(|constructor| {
+                crate::heap::InlineObjectHeader::of(self.realm_object_prototype(parts.realm), constructor)
+            }),
+            // A call-only closure (`Value::known_closure`) names its maker's activation.
+            maker_reads: if plan.prototype_unobservable {
+                crate::bytecode::MakerReads::Maker
+            } else {
+                p.closure_reads.as_deref().map_or(crate::bytecode::MakerReads::Maker, |reads| {
+                    reads.maker_reads(parts.id, crate::bytecode::arrow_chain_reads_implicit_bindings(p, parts.id))
+                })
+            },
+            call_only: plan.prototype_unobservable,
+            outer_environment: None,
         }
     }
 

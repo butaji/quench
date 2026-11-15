@@ -217,14 +217,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
         return Some(Resumed::Exit(exit(ip)));
     };
     let value = called?;
-    let (binding, resolved) = unsafe { (*cx).resolved };
-    let memory = if memory.bytes == resolved.bytes {
-        let fresh = memory_view(vm, binding);
-        unsafe { (*cx).resolved = (binding, fresh) };
-        fresh
-    } else {
-        MemoryView::NONE
-    };
+    let memory = rebound_memory(cx, vm, memory);
     // SAFETY: as above; guest code the callee ran may have made the activations frames,
     // whose registers the context then names.
     let r = unsafe {
@@ -234,6 +227,50 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     r.set(i.a, value);
     let view = Carried { memory, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
     Some(Resumed::At(r, following(ip), view))
+}
+
+/// The arguments of the call `i` makes to an import of `signature`, copied from the caller's
+/// registers before guest code runs; `None` when their count is not the signature's.
+fn js_import_window(r: Registers, i: &LaneInstruction, signature: &crate::wasm::WasmHostSignature) -> Option<smallvec::SmallVec<[Value; 8]>> {
+    // SAFETY: the window is the caller's registers, copied before guest code runs.
+    let window = unsafe { lane_call_window(r, i) };
+    if window.len() != signature.params.len() {
+        return None;
+    }
+    let mut args = smallvec::SmallVec::new();
+    args.extend_from_slice(window);
+    Some(args)
+}
+
+/// The JavaScript callee of the import function `env` names, with the view its Emscripten memcpy
+/// captures (if any) and its signature; `None` for a host import or a value that is none.
+fn js_import_callee<H: Host>(
+    vm: &Vm<H>,
+    env: Value,
+) -> Option<(Value, Option<(Value, usize)>, std::rc::Rc<crate::wasm::WasmHostSignature>)> {
+    match vm.heap.get(env) {
+        Some(Cell::WasmHostFunction { target, signature }) => match target {
+            crate::heap::WasmHostTarget::Js(target) => Some((*target, None, signature.clone())),
+            crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => {
+                Some((target.function, Some((target.view_environment, target.view_slot)), signature.clone()))
+            }
+            crate::heap::WasmHostTarget::Host(_) => None,
+        },
+        _ => None,
+    }
+}
+
+/// The memory a lane call leaves current: `memory` re-viewed from the lane's resolved binding
+/// when it is the memory that binding names, which is recorded for later calls; none otherwise.
+fn rebound_memory<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>, memory: MemoryView) -> MemoryView {
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    if memory.bytes == resolved.bytes {
+        let fresh = memory_view(vm, binding);
+        unsafe { (*cx).resolved = (binding, fresh) };
+        fresh
+    } else {
+        MemoryView::NONE
+    }
 }
 
 /// A Wasm reference call of a JavaScript-backed import, made from the lane beside its
@@ -252,21 +289,8 @@ fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, m
     let vm = unsafe { vm(cx) };
     let callee = r.get(i.b);
     let env = vm.heap.function(callee)?.env;
-    let (target, capture, signature) = match vm.heap.get(env) {
-        Some(Cell::WasmHostFunction { target, signature }) => match target {
-            crate::heap::WasmHostTarget::Js(target) => (*target, None, signature.clone()),
-            crate::heap::WasmHostTarget::JsEmscriptenMemcpy(target) => {
-                (target.function, Some((target.view_environment, target.view_slot)), signature.clone())
-            }
-            crate::heap::WasmHostTarget::Host(_) => return None,
-        },
-        _ => return None,
-    };
-    // SAFETY: the window is the caller's registers, copied before guest code runs.
-    let args: smallvec::SmallVec<[Value; 8]> = unsafe { lane_call_window(r, i) }.iter().copied().collect();
-    if args.len() != signature.params.len() {
-        return None;
-    }
+    let (target, capture, signature) = js_import_callee(vm, env)?;
+    let args = js_import_window(r, i, &signature)?;
     let program = unsafe { (*cx).program };
     let Some(called) = lane_in_place(cx, ip, |vm, code| {
         vm.call_compiled_js_wasm_import(
@@ -276,14 +300,7 @@ fn lane_call_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, m
     }) else {
         return Some(Resumed::Exit(exit(ip)));
     };
-    let (binding, resolved) = unsafe { (*cx).resolved };
-    let memory = if memory.bytes == resolved.bytes {
-        let fresh = memory_view(vm, binding);
-        unsafe { (*cx).resolved = (binding, fresh) };
-        fresh
-    } else {
-        MemoryView::NONE
-    };
+    let memory = rebound_memory(cx, vm, memory);
     // SAFETY: guest code the callee ran may have made the activations frames, whose
     // registers the context then names.
     let r = unsafe {
@@ -313,14 +330,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
         return None;
     }
     let wrapper = r.get(i.b);
-    let plan = match vm.lane_stack.js_import {
-        Some(plan) if plan.wrapper == wrapper => plan,
-        _ => {
-            let plan = js_import_plan(vm, wrapper)?;
-            vm.lane_stack.js_import = Some(plan);
-            plan
-        }
-    };
+    let plan = js_import_plan_cached(vm, wrapper)?;
     if plan.realm != vm.realm.globals {
         return None;
     }
@@ -330,48 +340,38 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     if window.len() != usize::from(plan.argc) {
         return None;
     }
-    let mut args = [Value::UNDEFINED; JS_IMPORT_ARGUMENTS];
-    for ((slot, &value), &kind) in args.iter_mut().zip(window).zip(&plan.kinds) {
-        *slot = match kind {
-            JS_IMPORT_I32 => Value::number(f64::from(value.as_int()?)),
-            JS_IMPORT_F32 => Value::number(f64::from(f32::from_bits(value.as_int()? as u32))),
-            _ => Value::number(f64::from_bits(vm.decode_bits64(value)?)),
-        };
-    }
+    let args = js_import_arguments(vm, plan, window)?;
     let argc = window.len();
     // The caller's view is of the run's resolved binding, which its return reads again.
-    let (binding, resolved) = unsafe { (*cx).resolved };
-    let memory_binding = if memory.bytes.is_null() {
-        None
-    } else if memory.bytes == resolved.bytes {
-        Some(binding)
-    } else {
-        return None;
-    };
+    let memory_binding = import_memory_binding(cx, memory)?;
     if lane_constructing(vm, callee) || vm.with_scope_entered {
         return None;
     }
-    let target = match vm.cross_call_entry(callee) {
-        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves.
-        Some(entry) => unsafe { *entry },
-        None => vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)?,
-    };
     let argc16 = argc as u16;
-    if target.program() == unsafe { (*cx).program }
-        || !target.entry.activates_across()
-        || target.forwards()
-        || !(argc16 <= target.params || target.drops_extra_arguments())
-        || !lane_activation_room(vm, &target)
-    {
-        return None;
-    }
+    let target = js_import_target(cx, vm, callee, argc16)?;
+    enter_js_import_script(cx, r, ip, vm, target, &args, argc16, memory_binding, result)
+}
+
+/// Activates the script `target` the import calls with `args` (`argc` of them, as passed) and
+/// switches the lane to it: the import's result returns to Wasm through `to_wasm`.
+fn enter_js_import_script<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    vm: &mut Vm<H>,
+    target: ScriptCallTarget,
+    args: &[Value; JS_IMPORT_ARGUMENTS],
+    argc: u16,
+    memory: Option<Value>,
+    result: Option<crate::WasmType>,
+) -> Option<Resumed> {
     let this = lane_call_this(vm, &target, Value::UNDEFINED)?;
     let instance = unsafe { (*cx).instance };
-    let (registers, start) = lane_push_passed::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
+    let (registers, start) = lane_push_passed::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc.min(target.params), this, false);
     if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
         script.completion = Completion::ToWasm;
     }
-    vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
+    vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory, result });
     unsafe {
         (*cx).inline_calls = false;
         (*cx).script_calls = true;
@@ -380,6 +380,65 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     let view = Carried::script(cx);
     unsafe { (*cx).memory = view.memory };
     Some(Resumed::At(registers, start, view))
+}
+
+/// The arguments the import's plan converts `window` to, as numbers; `None` when a value is not
+/// of the kind the plan records for its slot.
+fn js_import_arguments<H: Host>(vm: &Vm<H>, plan: JsImportPlan, window: &[Value]) -> Option<[Value; JS_IMPORT_ARGUMENTS]> {
+    let mut args = [Value::UNDEFINED; JS_IMPORT_ARGUMENTS];
+    for ((slot, &value), &kind) in args.iter_mut().zip(window).zip(&plan.kinds) {
+        *slot = match kind {
+            JS_IMPORT_I32 => Value::number(f64::from(value.as_int()?)),
+            JS_IMPORT_F32 => Value::number(f64::from(f32::from_bits(value.as_int()? as u32))),
+            _ => Value::number(f64::from_bits(vm.decode_bits64(value)?)),
+        };
+    }
+    Some(args)
+}
+
+/// The script function a lane activation of the import calls (`callee`), when the lane may
+/// activate it across programs with room for `argc` arguments; `None` otherwise.
+fn js_import_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, callee: Value, argc: u16) -> Option<ScriptCallTarget> {
+    let target = match vm.cross_call_entry(callee) {
+        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves.
+        Some(entry) => unsafe { *entry },
+        None => vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)?,
+    };
+    let fits = argc <= target.params || target.drops_extra_arguments();
+    if target.program() == unsafe { (*cx).program }
+        || !target.entry.activates_across()
+        || target.forwards()
+        || !fits
+        || !lane_activation_room(vm, &target)
+    {
+        return None;
+    }
+    Some(target)
+}
+
+/// The binding a lane activation of an import records for its memory: none without memory,
+/// the resolved binding when `memory` is the one it names, and `None` (no activation) otherwise.
+fn import_memory_binding<H: Host>(cx: *mut LaneContext<H>, memory: MemoryView) -> Option<Option<Value>> {
+    let (binding, resolved) = unsafe { (*cx).resolved };
+    if memory.bytes.is_null() {
+        Some(None)
+    } else if memory.bytes == resolved.bytes {
+        Some(Some(binding))
+    } else {
+        None
+    }
+}
+
+/// The plan of the import `wrapper`, kept in the lane stack for the import it last activated.
+fn js_import_plan_cached<H: Host>(vm: &mut Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
+    match vm.lane_stack.js_import {
+        Some(plan) if plan.wrapper == wrapper => Some(plan),
+        _ => {
+            let plan = js_import_plan(vm, wrapper)?;
+            vm.lane_stack.js_import = Some(plan);
+            Some(plan)
+        }
+    }
 }
 
 /// The call facts of the import `wrapper` (`JsImportPlan`): `None` for any other callee, a

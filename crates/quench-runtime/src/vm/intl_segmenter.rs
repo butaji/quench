@@ -193,14 +193,9 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn segment_data(
-        &mut self,
-        p: &ResidualProgram,
-        data: Value,
-        index: usize,
-    ) -> Result<Option<(Value, usize)>, JsError> {
-        // The private state tuple owns [segmenter, input, boundaries]; public
-        // Segments and cursors share it without retaining one another.
+    /// The private state tuple of a `Segments` receiver `data`: its segmenter, input and
+    /// boundaries. Public Segments and cursors share it without retaining one another.
+    fn segment_parts(&mut self, p: &ResidualProgram, data: Value) -> Result<(Value, Value, Value), JsError> {
         let Some(elements) = self.heap.array_elements(data) else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
@@ -208,35 +203,25 @@ impl<H: Host> Vm<H> {
         let [segmenter, input, boundaries] = &*held_values else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
-        let (segmenter, input, boundaries) = (*segmenter, *input, *boundaries);
-        let Some(text) = self.heap.string(input) else {
-            return Ok(None);
-        };
-        if index >= text.units().len() {
-            return Ok(None);
-        }
-        let Some(elements) = self.heap.array_elements(boundaries) else {
-            return Ok(None);
-        };
+        Ok((*segmenter, *input, *boundaries))
+    }
+
+    /// The `[start, end)` range of the segment at `index` among `boundaries`, a sorted array of
+    /// segment starts, when one holds `index`.
+    fn segment_bounds(&self, boundaries: Value, index: usize) -> Option<(usize, usize)> {
+        let elements = self.heap.array_elements(boundaries)?;
         let end = elements
             .values_cow()
             .partition_point(|boundary| boundary.as_number().unwrap_or(0.0) <= index as f64);
-        let Some((start, end)) = end
+        let (start, end) = end
             .checked_sub(1)
-            .and_then(|start| elements.get(start).zip(elements.get(end)))
-        else {
-            return Ok(None);
-        };
-        let start = start.as_number().unwrap_or(0.0) as usize;
-        let end = end.as_number().unwrap_or(0.0) as usize;
-        let Some(units) = text.units().get_range(start..end) else {
-            return Ok(None);
-        };
-        let text = JsString::from_unit_run(units);
-        let word = self
-            .hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT)
-            .as_deref()
-            == Some("word");
+            .and_then(|start| elements.get(start).zip(elements.get(end)))?;
+        Some((start.as_number().unwrap_or(0.0) as usize, end.as_number().unwrap_or(0.0) as usize))
+    }
+
+    /// The `Segments` result object of a segment `text` that starts at `start` in `input`: its
+    /// `segment`, `index` and `input`, and `isWordLike` for a word-granular segmenter.
+    fn segment_object(&mut self, p: &ResidualProgram, input: Value, text: JsString, start: usize, word: bool) -> Result<Value, JsError> {
         let word_like = text.host_string().chars().any(char::is_alphanumeric);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(
             self.realm_object_prototype(self.realm.globals),
@@ -253,6 +238,34 @@ impl<H: Host> Vm<H> {
                 if word_like { Value::TRUE } else { Value::FALSE },
             )?;
         }
+        Ok(object)
+    }
+
+    fn segment_data(
+        &mut self,
+        p: &ResidualProgram,
+        data: Value,
+        index: usize,
+    ) -> Result<Option<(Value, usize)>, JsError> {
+        let (segmenter, input, boundaries) = self.segment_parts(p, data)?;
+        let Some(text) = self.heap.string(input) else {
+            return Ok(None);
+        };
+        if index >= text.units().len() {
+            return Ok(None);
+        }
+        let Some((start, end)) = self.segment_bounds(boundaries, index) else {
+            return Ok(None);
+        };
+        let Some(units) = text.units().get_range(start..end) else {
+            return Ok(None);
+        };
+        let text = JsString::from_unit_run(units);
+        let word = self
+            .hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT)
+            .as_deref()
+            == Some("word");
+        let object = self.segment_object(p, input, text, start, word)?;
         Ok(Some((object, end)))
     }
 

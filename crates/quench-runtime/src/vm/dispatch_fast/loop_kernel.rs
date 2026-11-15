@@ -28,6 +28,8 @@
 use super::*;
 
 mod machine;
+mod operators;
+mod trips;
 mod recur;
 mod run;
 mod typed;

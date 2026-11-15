@@ -67,14 +67,21 @@ pub(super) fn cached_offset(timestamp: i64, lookup: fn(i64) -> Option<i32>) -> O
     if local_timezone().is_none() {
         return Some(found);
     }
+    let (first, last) = offset_span_after(current, (first, last), (offset, found), timestamp);
+    OFFSET_SPAN.set((generation, first, last, found));
+    Some(found)
+}
+
+/// The span `timestamp`'s offset `found` leaves cached: the cached `span` of `offset` extended
+/// to `timestamp` when it is current, holds the same offset and `timestamp` lies within a step
+/// of its end; otherwise `timestamp` alone.
+fn offset_span_after(current: bool, (first, last): (i64, i64), (offset, found): (i32, i32), timestamp: i64) -> (i64, i64) {
     let extends = current && found == offset;
-    let (first, last) = if extends && timestamp > last && timestamp - last <= OFFSET_SPAN_STEP_MS {
+    if extends && timestamp > last && timestamp - last <= OFFSET_SPAN_STEP_MS {
         (first, timestamp)
     } else if extends && timestamp < first && first - timestamp <= OFFSET_SPAN_STEP_MS {
         (timestamp, last)
     } else {
         (timestamp, timestamp)
-    };
-    OFFSET_SPAN.set((generation, first, last, found));
-    Some(found)
+    }
 }

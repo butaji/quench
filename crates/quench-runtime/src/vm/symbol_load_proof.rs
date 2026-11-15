@@ -18,6 +18,27 @@ use super::property_key::PropertyKey;
 /// undici's and Fastify's reads, at 4096 entries 4-10%.
 const SYMBOL_LOAD_PROOF_ENTRIES: usize = 1 << 12;
 
+/// Bits of one `u64` word's high half: the tag's key and the answer's epoch.
+const HALF_WORD: u32 = u32::BITS;
+/// Bits of the slot an answer names, which the answer word holds lowest.
+const SLOT_BITS: u32 = 24;
+/// Bits of the hops and kind fields, which the answer word holds above the slot, one after
+/// the other.
+const FIELD_BITS: u32 = 4;
+const FIELD_MASK: u64 = (1 << FIELD_BITS) - 1;
+const HOPS_SHIFT: u32 = SLOT_BITS;
+const KIND_SHIFT: u32 = SLOT_BITS + FIELD_BITS;
+/// The low half of a 64-bit epoch, which an entry keeps.
+const EPOCH_MASK: u64 = u32::MAX as u64;
+/// The multiplier of the entry index's hash: the 32-bit golden ratio, which spreads nearby
+/// layouts and keys over the table's high bits.
+const INDEX_MULTIPLIER: u32 = 0x9E37_79B1;
+/// Bits the entry index keeps: the table's own width, taken from the top of the hash.
+const INDEX_BITS: u32 = SYMBOL_LOAD_PROOF_ENTRIES.trailing_zeros();
+const INDEX_SHIFT: u32 = u32::BITS - INDEX_BITS;
+/// How far the key's half of an index hash rotates before it mixes with the layout.
+const KEY_ROTATION: u32 = u32::BITS / 2;
+
 /// Where a proved walk found the key, from a receiver of one layout (`Object::layout_id`:
 /// its shape and its prototype link together). The holder of an inherited answer is not
 /// kept: it is the object `hops` prototype links up from the receiver, which the chain epoch
@@ -57,6 +78,15 @@ pub(super) const KIND_GETTER: u64 = 5;
 pub(super) const KIND_GETTER_SLOT: u64 = 6;
 /// `KIND_GETTER` whose slot holds an accessor pair cell.
 pub(super) const KIND_GETTER_PAIR: u64 = 7;
+/// The getter kind a slot's accessor shape gives: the slot holds the getter, the accessor pair,
+/// or the attributes name it.
+pub(super) fn getter_kind(accessor: super::cache_types::SlotAccessor) -> u64 {
+    match accessor {
+        super::cache_types::SlotAccessor::Getter => KIND_GETTER_SLOT,
+        super::cache_types::SlotAccessor::Pair => KIND_GETTER_PAIR,
+        super::cache_types::SlotAccessor::Attributes => KIND_GETTER,
+    }
+}
 
 /// The parts of an answer word (`FactEntry`): its kind, slot and hops, and whether it holds
 /// under the chain epoch `epoch` (an own answer holds under any).
@@ -66,7 +96,7 @@ pub(super) struct FactWord(u64);
 impl FactWord {
     #[inline(always)]
     pub(super) fn kind(self) -> u64 {
-        (self.0 >> 28) & 0xf
+        (self.0 >> KIND_SHIFT) & FIELD_MASK
     }
     #[inline(always)]
     pub(super) fn slot(self) -> usize {
@@ -74,21 +104,21 @@ impl FactWord {
     }
     #[inline(always)]
     pub(super) fn hops(self) -> u8 {
-        ((self.0 >> 24) & 0xf) as u8
+        ((self.0 >> HOPS_SHIFT) & FIELD_MASK) as u8
     }
     #[inline(always)]
     pub(super) fn current(self, epoch: u64) -> bool {
-        (self.0 >> 32) as u32 == epoch as u32
+        (self.0 >> HALF_WORD) as u32 == epoch as u32
     }
 }
 /// Slots and hops an entry can name; a walk past either is not recorded.
-const SLOT_LIMIT: u32 = 1 << 24;
-const HOPS_LIMIT: u8 = 1 << 4;
+const SLOT_LIMIT: u32 = 1 << SLOT_BITS;
+const HOPS_LIMIT: u8 = 1 << FIELD_BITS;
 
 impl FactEntry {
     #[inline(always)]
     fn tag(layout: u32, key32: u32) -> u64 {
-        u64::from(layout) | u64::from(key32) << 32
+        u64::from(layout) | u64::from(key32) << HALF_WORD
     }
 
     fn encode(answer: SymbolLoadAnswer, epoch: u64) -> Option<u64> {
@@ -98,18 +128,23 @@ impl FactEntry {
             SymbolLoadAnswer::Absent => (KIND_ABSENT, 0, 0),
             SymbolLoadAnswer::Getter { hops, slot } => (KIND_GETTER, hops, slot),
         };
-        (slot < SLOT_LIMIT && hops < HOPS_LIMIT)
-            .then(|| u64::from(slot) | u64::from(hops) << 24 | kind << 28 | (epoch & 0xffff_ffff) << 32)
+        (slot < SLOT_LIMIT && hops < HOPS_LIMIT).then(|| answer_word(slot, hops, kind, epoch))
     }
 
-    /// The answer this entry's word holds while the chain epoch's low half is `epoch32`: an
+    /// The answer word of an entry: its slot, hops and kind, and the low half of its epoch.
+#[inline(always)]
+fn answer_word(slot: u32, hops: u8, kind: u64, epoch: u64) -> u64 {
+    u64::from(slot) | u64::from(hops) << HOPS_SHIFT | kind << KIND_SHIFT | (epoch & EPOCH_MASK) << HALF_WORD
+}
+
+/// The answer this entry's word holds while the chain epoch's low half is `epoch32`: an
     /// own answer whatever the epoch, since the layout fixes the receiver's shape.
     #[inline(always)]
     fn decode(word: u64, epoch32: u32) -> Option<SymbolLoadAnswer> {
         let slot = (word & u64::from(SLOT_LIMIT - 1)) as u32;
-        let hops = ((word >> 24) & 0xf) as u8;
-        let current = (word >> 32) as u32 == epoch32;
-        match (word >> 28) & 0xf {
+        let hops = ((word >> HOPS_SHIFT) & FIELD_MASK) as u8;
+        let current = (word >> HALF_WORD) as u32 == epoch32;
+        match (word >> KIND_SHIFT) & FIELD_MASK {
             KIND_OWN => Some(SymbolLoadAnswer::Own(slot)),
             KIND_INHERITED if current => Some(SymbolLoadAnswer::Inherited { hops, slot }),
             KIND_ABSENT if current => Some(SymbolLoadAnswer::Absent),
@@ -196,7 +231,7 @@ struct SiteOwnRead {
 impl SymbolLoadProofs {
     #[inline(always)]
     fn index(layout: u32, key32: u32) -> usize {
-        ((layout ^ key32.rotate_left(16)).wrapping_mul(0x9E37_79B1) >> 20) as usize
+        ((layout ^ key32.rotate_left(KEY_ROTATION)).wrapping_mul(INDEX_MULTIPLIER) >> INDEX_SHIFT) as usize
     }
 
     /// The answer a proof for `key` on a receiver of `layout` holds under the chain epoch `epoch`.
@@ -215,8 +250,8 @@ impl SymbolLoadProofs {
     #[inline(always)]
     pub(super) fn own_slot(&self, layout: u32, key32: u32) -> Option<u32> {
         let entry = self.entries.slot(Self::index(layout, key32))?.get();
-        (entry.tag == FactEntry::tag(layout, key32) && (entry.answer >> 28) & 0xf == KIND_OWN)
-            .then_some((entry.answer & u64::from(SLOT_LIMIT - 1)) as u32)
+        let word = FactWord(entry.answer);
+        (entry.tag == FactEntry::tag(layout, key32) && word.kind() == KIND_OWN).then(|| word.slot() as u32)
     }
 
     /// The answer word of the entry for `key32` on a receiver of `layout`, unchecked for its
@@ -246,13 +281,12 @@ impl SymbolLoadProofs {
     /// plus one (0 for none).
     pub(super) fn record_accessor(&self, layout: u32, key32: u32, epoch: u64, hops: u8, slot: u32, kind: u64, holder: u32) {
         if slot < SLOT_LIMIT && hops < HOPS_LIMIT {
-            let word = u64::from(slot) | u64::from(hops) << 24 | kind << 28 | (epoch & 0xffff_ffff) << 32;
-            self.store(layout, key32, epoch, word, holder);
+            self.store(layout, key32, epoch, answer_word(slot, hops, kind, epoch), holder);
         }
     }
 
     fn store(&self, layout: u32, key32: u32, epoch: u64, word: u64, holder: u32) {
-        let high = (epoch >> 32) as u32;
+        let high = (epoch >> HALF_WORD) as u32;
         if high != self.epoch_high.get() {
             self.clear_entries();
             self.epoch_high.set(high);
@@ -281,7 +315,7 @@ impl SymbolLoadProofs {
         // SAFETY: `index` is below the mapping's entry count.
         let entry = unsafe { &*base.as_ptr().add(index) };
         if entry.get().tag != tag {
-            entry.set(FactEntry { tag, answer: KIND_ABSENT_OWN << 28 });
+            entry.set(FactEntry { tag, answer: KIND_ABSENT_OWN << KIND_SHIFT });
         }
     }
 

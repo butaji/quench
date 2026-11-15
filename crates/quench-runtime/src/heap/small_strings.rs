@@ -9,10 +9,11 @@ use super::*;
 use super::records::{ParallelRecordMarks, STRING_RECORD_CAPACITY, STRING_RECORD_HOLE};
 use crate::vm::wtf16::Part;
 use crate::vm::wtf16::Units;
-use std::cell::UnsafeCell;
 use std::mem::ManuallyDrop;
-use std::ptr::NonNull;
 use std::rc::Rc;
+mod views;
+pub(super) use views::SmallViews;
+use views::VIEW_COLLECTION_LIMIT;
 
 /// The small string records, by local id (a string id less `STRING_RECORD_HOLE`).
 pub(super) type SmallStringSpace = records::RecordSpace<SmallParts, STRING_RECORD_HOLE>;
@@ -50,8 +51,15 @@ const VIEW_MASK: u64 = (1 << VIEW_BITS) - 1;
 const NO_VIEW: u32 = VIEW_MASK as u32;
 /// Low bits a text storage address always has clear (its `Rc` is word aligned).
 const TEXT_ALIGN_BITS: u32 = 3;
+/// Bits of a text storage address (the user-space pointer width the record keeps).
+const ADDRESS_BITS: u32 = 48;
+/// The number of string parts in a `Parts` string: at least two, at most three.
+const PARTS_MIN: usize = 2;
+const PARTS_MAX: usize = 3;
+/// Index of the last part of a three-part string, where a Number may sit.
+const PARTS_LAST: usize = PARTS_MAX - 1;
 const _: () = assert!(STRING_RECORD_CAPACITY as u32 <= NO_TEXT && SHAPE_WIDE_MIDDLE << SHAPE_SHIFT < WRITTEN);
-const _: () = assert!(VIEW_COLLECTION_LIMIT < NO_VIEW && 48 - TEXT_ALIGN_BITS + VIEW_BITS <= 64);
+const _: () = assert!(VIEW_COLLECTION_LIMIT < NO_VIEW && ADDRESS_BITS - TEXT_ALIGN_BITS + VIEW_BITS <= 64);
 
 /// The parts of a string of parts (`Parts`: two or three, at most one a Number) in 12 bytes:
 /// string ids in `head` (below its shape) and `tail`, and a third id or an int32 Number in
@@ -78,13 +86,13 @@ impl SmallParts {
     /// cannot be held, or a Number beside two strings is not an int32.
     #[inline(always)]
     pub(crate) fn new(ids: [u32; 3], texts: usize, number: Option<(f64, usize)>) -> Option<Self> {
-        debug_assert!((2..=3).contains(&(texts + usize::from(number.is_some()))));
+        debug_assert!((PARTS_MIN..=PARTS_MAX).contains(&(texts + usize::from(number.is_some()))));
         let id = |index: usize| if index < texts { ids[index] } else { NO_TEXT };
         if (0..texts).any(|index| ids[index] >= NO_TEXT) {
             return None;
         }
         let Some((number, at)) = number else {
-            return Some(Self { head: SHAPE_TEXTS << SHAPE_SHIFT | id(0), tail: id(1), extra: id(2) });
+            return Some(Self { head: SHAPE_TEXTS << SHAPE_SHIFT | id(0), tail: id(1), extra: id(PARTS_LAST) });
         };
         let Some(int) = exact_int(number) else {
             if texts != 1 {
@@ -92,12 +100,12 @@ impl SmallParts {
             }
             let shape = if at == 0 { SHAPE_WIDE_FIRST } else { SHAPE_WIDE_LAST };
             let bits = number.to_bits();
-            return Some(Self { head: shape << SHAPE_SHIFT | id(0), tail: bits as u32, extra: (bits >> 32) as u32 });
+            return Some(Self { head: shape << SHAPE_SHIFT | id(0), tail: bits as u32, extra: (bits >> u32::BITS) as u32 });
         };
         let (shape, head, tail) = match (at, texts) {
-            (0, 2) => (SHAPE_INT_FIRST, id(0), id(1)),
+            (0, PARTS_MIN) => (SHAPE_INT_FIRST, id(0), id(1)),
             (0, _) => (SHAPE_INT_MIDDLE, NO_TEXT, id(0)),
-            (2, _) => (SHAPE_INT_LAST, id(0), id(1)),
+            (PARTS_LAST, _) => (SHAPE_INT_LAST, id(0), id(1)),
             _ => (SHAPE_INT_MIDDLE, id(0), id(1)),
         };
         Some(Self { head: shape << SHAPE_SHIFT | head, tail, extra: int as u32 })
@@ -109,7 +117,7 @@ impl SmallParts {
     pub(crate) fn templated(template: u32, number: f64) -> Self {
         debug_assert!(template < NO_TEXT);
         let bits = number.to_bits();
-        Self { head: SHAPE_WIDE_MIDDLE << SHAPE_SHIFT | template, tail: bits as u32, extra: (bits >> 32) as u32 }
+        Self { head: SHAPE_WIDE_MIDDLE << SHAPE_SHIFT | template, tail: bits as u32, extra: (bits >> u32::BITS) as u32 }
     }
 
     /// A record that owns `text`, already made (`WRITTEN`).
@@ -117,15 +125,15 @@ impl SmallParts {
         let text = text.into_shared_ascii();
         let length = u32::try_from(text.len()).ok().filter(|length| length & WRITTEN == 0).expect("a short text");
         let address = Rc::into_raw(text).cast::<u8>() as u64;
-        debug_assert!(address.trailing_zeros() >= TEXT_ALIGN_BITS && address >> 48 == 0);
+        debug_assert!(address.trailing_zeros() >= TEXT_ALIGN_BITS && address >> ADDRESS_BITS == 0);
         let word = address >> TEXT_ALIGN_BITS << VIEW_BITS | u64::from(NO_VIEW);
-        Self { head: WRITTEN | length, tail: word as u32, extra: (word >> 32) as u32 }
+        Self { head: WRITTEN | length, tail: word as u32, extra: (word >> u32::BITS) as u32 }
     }
 
     /// `tail` and `extra` as one word: a wide Number's bits, or a written text's address and view.
     #[inline(always)]
     fn word(&self) -> u64 {
-        u64::from(self.tail) | u64::from(self.extra) << 32
+        u64::from(self.tail) | u64::from(self.extra) << u32::BITS
     }
 
     /// The slot of a written record's latest view, possibly stale (`NO_VIEW` for none).
@@ -185,7 +193,7 @@ impl SmallParts {
                 let (prefix, suffix) = templates.pairs[(self.head & ID_MASK) as usize];
                 [Some(Part::Text(prefix)), wide, Some(Part::Text(suffix))]
             }
-            _ => [None; 3],
+            _ => [None; PARTS_MAX],
         }
     }
 
@@ -279,108 +287,6 @@ pub(crate) const fn is_small_string(record_id: u32) -> bool {
 /// The string Value of the small string `local`.
 pub(super) fn small_string_value(local: RecordId) -> Value {
     Value::direct_string(local + STRING_RECORD_HOLE as u32)
-}
-
-/// Views per chunk of `SmallViews`.
-const VIEW_CHUNK: usize = 1024;
-/// A view and the local id of the small string it shows.
-type ViewChunk = [(u32, Option<JsString>); VIEW_CHUNK];
-/// Views made since the last collection past which the next safepoint collects, which drops
-/// them: about 2 MiB of views at most.
-const VIEW_COLLECTION_LIMIT: u32 = 1 << 16;
-/// Chunks a collection keeps for the views after it.
-const KEPT_VIEW_CHUNKS: usize = 1;
-
-/// The strings that answer reads of written small strings since the last collection, each a
-/// view sharing its record's text storage. A reference to one lives no longer than the shared
-/// borrow of the heap it came from, and every collection takes the heap mutably first, so a
-/// collection drops them all (`clear`); a record names its latest by slot, checked by owner.
-/// Chunks never move while views are handed out.
-#[derive(Default)]
-pub(super) struct SmallViewChunks {
-    chunks: Vec<NonNull<ViewChunk>>,
-    len: u32,
-}
-
-impl SmallViewChunks {
-    fn entry(&self, slot: u32) -> *mut (u32, Option<JsString>) {
-        let chunk = self.chunks[slot as usize / VIEW_CHUNK];
-        // SAFETY: the chunk is live and the index is within it.
-        unsafe { chunk.as_ptr().cast::<(u32, Option<JsString>)>().add(slot as usize % VIEW_CHUNK) }
-    }
-
-    /// The view at `slot` when it shows the small string `owner`.
-    fn get(&self, slot: u32, owner: u32) -> Option<&JsString> {
-        if slot >= self.len {
-            return None;
-        }
-        // SAFETY: slots below `len` hold views, none of which is being written.
-        let (shown, view) = unsafe { &*self.entry(slot) };
-        (*shown == owner).then(|| view.as_ref().expect("a slot below the length holds a view"))
-    }
-
-    fn push(&mut self, owner: u32, view: JsString) -> u32 {
-        let slot = self.len;
-        if slot as usize == self.chunks.len() * VIEW_CHUNK {
-            let chunk: Box<ViewChunk> = Box::new([const { (0, None) }; VIEW_CHUNK]);
-            self.chunks.push(NonNull::from(Box::leak(chunk)));
-        }
-        // SAFETY: the slot at `len` holds no view, and nothing refers to it.
-        unsafe { *self.entry(slot) = (owner, Some(view)) };
-        self.len += 1;
-        slot
-    }
-
-    /// Drops every view; keeps `KEPT_VIEW_CHUNKS` chunks for the next.
-    fn clear(&mut self) {
-        for slot in 0..self.len {
-            // SAFETY: the caller holds the heap mutably, so no view is referred to.
-            unsafe { (*self.entry(slot)).1 = None };
-        }
-        self.len = 0;
-        for chunk in self.chunks.drain(KEPT_VIEW_CHUNKS.min(self.chunks.len())..) {
-            // SAFETY: each chunk came from `Box::leak`, holds no view now, and is freed once.
-            drop(unsafe { Box::from_raw(chunk.as_ptr()) });
-        }
-    }
-
-    /// Bytes its chunks take.
-    pub(super) fn allocated_bytes(&self) -> usize {
-        self.chunks.len() * size_of::<ViewChunk>()
-    }
-}
-
-impl Drop for SmallViewChunks {
-    fn drop(&mut self) {
-        self.clear();
-        for chunk in self.chunks.drain(..) {
-            // SAFETY: as in `clear`.
-            drop(unsafe { Box::from_raw(chunk.as_ptr()) });
-        }
-    }
-}
-
-/// `SmallViewChunks` behind a shared heap: a read makes a view through `&Heap`.
-#[derive(Default)]
-pub(super) struct SmallViews(UnsafeCell<SmallViewChunks>);
-
-impl SmallViews {
-    /// Drops every view: at a collection, which holds the heap mutably.
-    pub(super) fn clear(&mut self) {
-        self.0.get_mut().clear();
-    }
-
-    fn get(&self) -> &SmallViewChunks {
-        // SAFETY: the views change only through `push_shared`, which forms no lasting reference.
-        unsafe { &*self.0.get() }
-    }
-
-    /// Keeps `view` of the small string `owner`, through a shared heap.
-    fn push_shared(&self, owner: u32, view: JsString) -> u32 {
-        // SAFETY: the heap is single-threaded and no `&mut SmallViewChunks` is live while it is
-        // shared; views already handed out sit in chunks this does not move or write.
-        unsafe { (*self.0.get()).push(owner, view) }
-    }
 }
 
 /// Marks the string part `part` of a small string where the trace finds it, as `trace_parts`

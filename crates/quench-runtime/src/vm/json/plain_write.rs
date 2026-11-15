@@ -266,26 +266,36 @@ impl<H: Host> Vm<H> {
             }
             return plan.clone();
         }
-        let plan = (!self.shape_may_have_accessors(data.shape())
-            && self.json_lacks_to_json(value, plain.to_json))
-        .then(|| self.shape_enumerable_slots(value))
-        .flatten()
-        .and_then(|slots| {
-            slots
-                .iter()
-                .map(|&(atom, slot)| {
-                    self.plain_named_key(atom).then(|| {
-                        let start = plain.key_text.len() as u32;
-                        plain.key_text.push(b',');
-                        self.write_json_key(atom, &mut plain.key_text);
-                        plain.key_text.push(b':');
-                        JsonMember { slot, key: (start, plain.key_text.len() as u32) }
-                    })
-                })
-                .collect::<Option<std::rc::Rc<[JsonMember]>>>()
-        });
+        let plan = self.derive_plain_members(value, data, plain);
         plain.object_plans.insert(key, plan.clone());
         plan
+    }
+
+    /// The members `json_plain_members` derives for `value`: none where the shape may hold an
+    /// accessor or `value` has a `toJSON`, else one member per enumerable slot whose key is plain,
+    /// with its key text (`,"key":`) appended to `plain.key_text`.
+    fn derive_plain_members(
+        &self,
+        value: Value,
+        data: &crate::heap::Object,
+        plain: &mut JsonPlainWrite,
+    ) -> Option<std::rc::Rc<[JsonMember]>> {
+        if self.shape_may_have_accessors(data.shape()) || !self.json_lacks_to_json(value, plain.to_json) {
+            return None;
+        }
+        let slots = self.shape_enumerable_slots(value)?;
+        slots
+            .iter()
+            .map(|&(atom, slot)| {
+                self.plain_named_key(atom).then(|| {
+                    let start = plain.key_text.len() as u32;
+                    plain.key_text.push(b',');
+                    self.write_json_key(atom, &mut plain.key_text);
+                    plain.key_text.push(b':');
+                    JsonMember { slot, key: (start, plain.key_text.len() as u32) }
+                })
+            })
+            .collect()
     }
 }
 

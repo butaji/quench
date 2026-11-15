@@ -17,6 +17,15 @@ pub(crate) enum PropertyKey {
     Private(Value, Atom),
 }
 
+/// The rotation that spreads a symbol's bits before its hash tag is mixed in.
+const SYMBOL_HASH_ROTATION: u32 = 17;
+/// The bit at which a private name's atom is mixed above its home's bits.
+const PRIVATE_ATOM_SHIFT: u32 = 32;
+/// The hash tag that keeps a symbol's word apart from a private name's word.
+const SYMBOL_HASH_TAG: u64 = 1;
+/// The hash tag that keeps a private name's word apart from a symbol's word.
+const PRIVATE_HASH_TAG: u64 = 2;
+
 /// One hash write per key: the shape and proof memos probe by (shape, key) on every
 /// generic lookup, where a derived hash wrote the discriminant and each field in turn. Equal
 /// keys write equal words; distinct keys may share one, as any hash allows.
@@ -25,8 +34,8 @@ impl std::hash::Hash for PropertyKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u64(match *self {
             Self::String(atom) => u64::from(atom),
-            Self::Symbol(value) => value.to_bits().rotate_left(17) ^ 1,
-            Self::Private(home, atom) => home.to_bits() ^ (u64::from(atom) << 32) ^ 2,
+            Self::Symbol(value) => value.to_bits().rotate_left(SYMBOL_HASH_ROTATION) ^ SYMBOL_HASH_TAG,
+            Self::Private(home, atom) => home.to_bits() ^ (u64::from(atom) << PRIVATE_ATOM_SHIFT) ^ PRIVATE_HASH_TAG,
         });
     }
 }

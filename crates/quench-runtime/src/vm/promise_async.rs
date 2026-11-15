@@ -300,10 +300,7 @@ impl<H: Host> Vm<H> {
         source: Value,
     ) -> Result<(), JsError> {
         let observes = self.host.observes_promise_lifecycle();
-        let source = if observes
-            && !self.is_promise(source)
-            && !self.is_object_like(source)
-        {
+        let source = if observes && !self.is_promise(source) && !self.is_object_like(source) {
             self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
                 let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
                 let awaited = vm.promise_object_with_parent(parent)?;

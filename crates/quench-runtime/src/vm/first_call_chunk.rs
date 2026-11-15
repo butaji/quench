@@ -9,6 +9,10 @@ use std::rc::{Rc, Weak};
 /// and checked on each read, as either id may name another program once its own is reclaimed.
 /// The least function text, in bytes, whose first call may run its body a run at a time.
 const STREAMED_RUNS_MIN: u32 = 256 << 10;
+/// Quarters in a table's capacity.
+const CAPACITY_QUARTERS: usize = 4;
+/// A sweep that keeps more than this many quarters of the capacity grows the table.
+const SWEEP_GROW_QUARTERS: usize = 3;
 
 /// The stubs whose first call ran their body a run at a time, which a later call compiles
 /// whole: a body that runs again keeps its code.
@@ -75,7 +79,7 @@ impl<H: Host> Vm<H> {
             if self.first_chunks.len() == self.first_chunks.capacity() {
                 self.first_chunks.retain(|_, (stub, chunk, _)| stub.strong_count() > 0 && chunk.strong_count() > 0);
                 let capacity = self.first_chunks.capacity();
-                if self.first_chunks.len() * 4 > capacity * 3 {
+                if self.first_chunks.len() * CAPACITY_QUARTERS > capacity * SWEEP_GROW_QUARTERS {
                     self.first_chunks.reserve(capacity);
                 }
             }
