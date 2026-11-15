@@ -18,8 +18,24 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
+    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
+
+/// The runs a loop-free function makes unlowered before a later call lowers it
+/// (`bytecode::tier0`): the runs a lane view waits for (`LANE_VIEW_DEFERRED_RUNS`), so the
+/// lowering lands before its view derives. Octane-code-load instructions against lowering
+/// at the first read: -9.8% at four, -8.2% at two; mobx-startup -0.5% at both.
+pub(in crate::vm) const TIER0_RUNS: u8 = 4;
+
+/// Whether a hot loop plans a lane body of its own (`dispatch_fast::loop_body`). Off until a
+/// loop body is measured against the region or interpreter it replaces, as function bodies are
+/// (P7: a tier runs only where it is cheaper): weighed by plan and compile cost alone, loop
+/// bodies lost on every row measured. JS3 default, 5 iterations, with -> without: regexp-octane
+/// 57.8 -> 132, crypto 119 -> 201, delta-blue 37.8 -> 61.1, Box2D 12.4 -> 22.0, navier-stokes
+/// 249 -> 365, hash-map 30.8 -> 39.4, richards 47.9 -> 44.3; V8-v7 default/no-JIT CPU: earley
+/// 1.76 -> 1.21, regexp 1.56 -> 1.08, raytrace 1.43 -> 1.19, crypto 1.10 -> 0.85, deltablue
+/// 1.12 -> 0.96, richards 1.09 -> 1.04.
+pub(in crate::vm) const LOOP_BODIES: bool = false;
 
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
@@ -32,8 +48,8 @@ pub(in crate::vm) struct Priors {
     /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
     /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
     pub(in crate::vm) body_share: u64,
-    /// Nanoseconds the code generator takes to compile one IR instruction, until the process's
-    /// own compiles replace it (`tier_model::CompileCost`).
+    /// Nanoseconds the code generator takes to compile one IR instruction: a fixed price on the
+    /// compile's work (the running ratio it replaced settled at 1.3-2.2 us on JS3 rows).
     pub(in crate::vm) compile_ns_per_ir: u64,
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
@@ -45,10 +61,10 @@ pub(in crate::vm) struct Priors {
     /// The divisor of the entries so far that gives the credible lower bound of the entries to
     /// come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
-    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
-    /// weight of its prior in IR instructions (eight compiles of a hundred).
-    pub(in crate::vm) compile_forgetting_permille: u64,
-    pub(in crate::vm) compile_prior_ir: u64,
+    /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
+    /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
+    /// work, none of which overlaps the program as a compile on the code generator's thread does.
+    pub(in crate::vm) plan_ns_per_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -117,13 +133,12 @@ pub(in crate::vm) struct LaneBody {
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
-    /// The entries between timed runs of a published body's function, which alternate the body
-    /// and the interpreter (`LaneView::audit_entry`): one in this many entries pays a clock
-    /// read pair, and half of those run interpreted.
+    /// The entries of one epoch of a published body's audit, whose epochs alternate the body and
+    /// the interpreter (`LaneView::audit_entry`): one clock read per epoch.
     pub(in crate::vm) audit_period: u32,
-    /// The timed runs each side needs before the verdict (`LaneView::audit_verdict`).
+    /// The epochs each side needs before the verdict (`LaneView::audit_verdict`).
     pub(in crate::vm) audit_samples: u16,
-    /// How much faster, per thousand, the body's mean timed run must be than the interpreter's
+    /// How much shorter, per thousand, the body's median epoch must be than the interpreter's
     /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
     pub(in crate::vm) audit_margin_permille: u64,
 }
@@ -243,13 +258,13 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         min_instructions: 40,
         compile_poll_interval: 64,
-        audit_period: 16,
+        audit_period: 64,
         audit_samples: 16,
-        audit_margin_permille: 50,
+        audit_margin_permille: 20,
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, plan_ns_per_ir: 1500 },
 };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)

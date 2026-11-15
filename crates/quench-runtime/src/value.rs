@@ -224,6 +224,13 @@ impl Value {
         (lower >> NARROW_INDEX_BITS == 0).then_some(lower << NARROW_INDEX_SHIFT | DIRECT_OBJECT_NARROW_CODE << NARROW_CODE_SHIFT)
     }
 
+    /// Whether `narrow` packs a heap reference (`is_heap`), read from its code alone: heap
+    /// families take the codes below `NARROW_HEAP_FAMILIES`, constants the codes above.
+    #[inline(always)] pub(crate) fn narrow_is_heap(narrow: u32) -> bool {
+        narrow & NARROW_INTEGER_FLAG == 0
+            && (narrow >> NARROW_CODE_SHIFT) & ((1 << NARROW_CODE_BITS) - 1) < NARROW_HEAP_FAMILIES as u32
+    }
+
     /// The value `narrow` packs (`to_narrow`).
     #[inline(always)] pub(crate) fn from_narrow(narrow: u32) -> Self {
         if narrow & NARROW_INTEGER_FLAG != 0 {
@@ -418,6 +425,17 @@ impl Value {
         Self(value.to_bits())
     }
 
+    /// `number` without branches, for loops over many values: the same encoding, chosen by
+    /// selects so that a column of mixed integral and fractional doubles costs the same per value.
+    #[inline(always)]
+    pub(crate) fn number_unpredictable(value: f64) -> Self {
+        let integer = truncate_to_i32(value);
+        // `&` and `|`, not `&&` and `||`: no branch between the tests.
+        let integral = (f64::from(integer) == value) & ((integer != 0) | (value.to_bits() == 0));
+        let double = std::hint::select_unpredictable(value.is_nan(), CANONICAL_NAN, value.to_bits());
+        Self(std::hint::select_unpredictable(integral, Self::integer(integer).0, double))
+    }
+
     /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
     /// never NaN, so `number` stores its bits as they are; inline, where `number` is a call.
     #[inline(always)] pub(crate) fn overflowed_integer(value: f64) -> Self {
@@ -575,6 +593,15 @@ impl Value {
         } else {
             None
         }
+    }
+
+    /// `as_number` without branches, for loops over many values: whether the value is a
+    /// Number, whether it is an int32 (whose payload is its low 32 bits), and its bits as a
+    /// double (the Number itself when it is a double).
+    #[inline(always)]
+    pub(crate) fn number_parts(self) -> (bool, bool, f64) {
+        let int = self.has_int_tag_field();
+        (int || !self.is_tagged(), int, f64::from_bits(self.0))
     }
 
     /// Both operands as Numbers.
@@ -740,7 +767,7 @@ impl Value {
         self.0 & TAG_MASK == TAG_DELETED
     }
 
-    #[inline(always)] fn is_tagged(self) -> bool { Self::tagged_field((self.0 >> TAG_SHIFT) as u32) }
+    #[inline(always)] pub(crate) fn is_tagged(self) -> bool { Self::tagged_field((self.0 >> TAG_SHIFT) as u32) }
 
     /// Whether a tag field (`bits >> TAG_SHIFT`) lies in the tag range: one small range test.
     #[inline(always)] fn tagged_field(field: u32) -> bool {

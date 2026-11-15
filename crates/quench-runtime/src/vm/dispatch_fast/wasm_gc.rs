@@ -19,7 +19,7 @@ lane_handler! {
         let op = const { gc_op::<OP>() };
         // SAFETY: the context outlives the lane run.
         let program = unsafe { (*cx).program };
-        let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { super::wasm_exports::running_env(cx) } else { Value::UNDEFINED };
+        let env = if const { wasm_gc_reads_instance(gc_op::<OP>()) } { lane_instance_env(cx) } else { Value::UNDEFINED };
         let instruction = WideInstruction::new(op, i.a, i.b, i.c, i.imm());
         // A field access allocates nothing and reads no instance state: a miss, which traps,
         // takes the general path, which raises it.
@@ -46,8 +46,37 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// A read of a value field (`GcFieldAccess::plain_read`): the interpreter's own access
+    /// (`Vm::wasm_field_access`) with the record's operands read in place, a struct's field
+    /// or, where `ARRAY`, an array's element. A trap takes the general path, which raises it.
+    #[inline(never)]
+    fn lane_wasm_field_read<ARRAY: bool>(cx, r, ip, i, view) {
+        use crate::wasm::gc::{GcField, GcFieldAccess};
+        use super::super::wasm_gc::GcFieldIndex;
+        let vm = unsafe { vm(cx) };
+        let field = GcField::from_tag(i.imm()).expect("validated field operand");
+        let location = if ARRAY {
+            let Some(index) = r.get(i.c).as_int() else { return exit(ip) };
+            GcFieldIndex::Array(index as u32)
+        } else {
+            GcFieldIndex::Struct(field.index())
+        };
+        let Some(Some(value)) = vm.wasm_field_access(r.get(i.b), location, field, GcFieldAccess::Read, None) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The handler of a `wasm_gc_value_op` (`lane_wasm_gc_step`), for `op` if it is one.
 pub(super) const fn wasm_gc_handler<H: Host>(op: Op) -> Option<Handler> {
+    match crate::wasm::gc::GcFieldAccess::plain_read(op) {
+        Some(false) => return Some(lane_wasm_field_read::<H, false>),
+        Some(true) => return Some(lane_wasm_field_read::<H, true>),
+        None => {}
+    }
     macro_rules! handlers {
         ($($name:ident)*) => { match op { $(Op::$name => Some(lane_wasm_gc_step::<H, { Op::$name as u16 }>),)* _ => None } };
     }

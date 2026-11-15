@@ -36,14 +36,31 @@ impl ProgramStore {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())
     }
 
-    /// Counts a compile of `key`'s function, whichever entry it starts at; whether the bound on
-    /// them allows it.
+    /// Counts a compile of `key`'s function from `key`'s entry; whether the bound on them allows
+    /// it. Each entry has its own bound: loop-entry bodies spending a shared one left the
+    /// function's own body no recompile after its first leaves (`find` in the C-parity tree kernel).
     pub(in crate::vm) fn admit_lane_compile(&self, key: &LaneKey, max: u8) -> bool {
         let mut compiles = self.lane_compiles.borrow_mut();
-        let count = compiles.entry((key.0, key.1)).or_insert(0);
+        let count = compiles.entry((key.0, key.1, key.2)).or_insert(0);
         let admitted = *count < max;
         *count = count.saturating_add(u8::from(admitted));
         admitted
+    }
+
+    /// Whether a compile of `site`'s function from its entry is still within `max`
+    /// (`admit_lane_compile`), without counting one: a plan past the bound is not made.
+    pub(in crate::vm) fn lane_compiles_left(&self, site: &(u32, u32, Option<u32>), max: u8) -> bool {
+        self.lane_compiles.borrow().get(site).is_none_or(|count| *count < max)
+    }
+
+    /// The IR size of `site`'s last lane plan, if one was made.
+    pub(in crate::vm) fn planned_lane_ir(&self, site: &(u32, u32, Option<u32>)) -> Option<usize> {
+        self.lane_plan_ir.borrow().get(site).copied()
+    }
+
+    /// Records that `site`'s lane plan made `ir` IR instructions.
+    pub(in crate::vm) fn note_planned_lane_ir(&self, site: (u32, u32, Option<u32>), ir: usize) {
+        self.lane_plan_ir.borrow_mut().insert(site, ir);
     }
 
     /// Records `published` as the body of `key`.

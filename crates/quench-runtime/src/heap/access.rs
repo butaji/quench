@@ -390,7 +390,9 @@ impl Heap {
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.object_records.get_live_mut(record_id, &self.properties) });
+            let object = unsafe { self.object_records.get_live_mut(record_id, &self.properties) };
+            widen_narrow_run(object, &mut self.properties);
+            return Some(object);
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
@@ -417,6 +419,8 @@ impl Heap {
     pub(crate) fn object_store_mut(&mut self, value: Value, stored: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            // A narrow run stays: the stores that borrow this way (`property_set`) take a
+            // narrow value in place and widen the run for any other.
             return Some(unsafe { self.object_records.get_live_mut_storing(record_id, stored, &self.properties) });
         }
         if let Some(record_id) = value.direct_array_index() {
@@ -648,10 +652,35 @@ impl Heap {
         Some(result)
     }
 
+    /// Appends the Number `value` to the direct array `array` where its backing is or becomes
+    /// double (`ArrayElements::push_double`); `false` changes nothing. A Number is no heap
+    /// reference, so the store needs no barrier.
+    #[inline(always)]
+    pub(crate) fn push_double_element(&mut self, array: Value, value: Value) -> bool {
+        let Some(record_id) = array.direct_array_index() else { return false };
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive; a Number
+        // writes no reference.
+        let object = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
+        if !object.elements().is_double() && (value.is_tagged() || object.elements().capacity() != 0 && !object.elements().holds_only_int32()) {
+            return false;
+        }
+        let mut grown = 0;
+        if !object.elements_mut().push_double(value, &mut grown) {
+            return false;
+        }
+        if grown != 0 {
+            self.charge_payload_growth(grown * size_of::<Value>());
+        }
+        true
+    }
+
     /// Appends `value` to the direct array `array`'s elements, as `grow_array_elements` grows
     /// them, through the write barrier of that one store (`record_array_store_mut`).
     #[inline(always)]
     pub(crate) fn push_array_element(&mut self, array: Value, value: Value) -> Option<()> {
+        if self.push_double_element(array, value) {
+            return Some(());
+        }
         let elements = self.record_array_store_mut(array, value)?.elements_mut().make_mut();
         let capacity = elements.capacity();
         elements.push(value);
@@ -854,4 +883,22 @@ impl Heap {
         self.remembered_marks[word] |= bit;
         self.remembered.push(index as u32);
     }
+}
+
+/// Widens a direct object's narrow run (`value_vec::NARROW_FORM`) before a general mutable
+/// borrow hands it out: its writers (`ValueArena::set`, `push`, extras) take wide values only.
+/// The exact-shape stores (`store_exact_slot`) keep a narrow run narrow.
+#[inline(always)]
+pub(super) fn widen_narrow_run(object: &mut super::Object, properties: &mut ValueArena) {
+    let vector = object.properties();
+    if vector.is_narrow() {
+        widen_narrow_run_cold(object, properties, vector);
+    }
+}
+
+#[inline(never)]
+#[cold]
+fn widen_narrow_run_cold(object: &mut super::Object, properties: &mut ValueArena, vector: crate::value_vec::ValueVec) {
+    let wide = properties.widen(vector);
+    object.set_properties(wide, properties);
 }

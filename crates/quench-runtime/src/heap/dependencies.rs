@@ -39,6 +39,10 @@ pub(crate) struct InheritedFieldCache {
     pub(crate) proved: bool,
     /// The receiver's prototype link the proof holds for, compared undecoded.
     pub(crate) proved_prototype: super::ProtoLink,
+    /// The layout id (`heap::layouts`) of a receiver the proof last answered, or
+    /// `NO_PROVED_LAYOUT`: its header word holds the receiver shape and the prototype link,
+    /// so a receiver of that layout matches both on one compare. Reset with each new proof.
+    pub(crate) proved_layout: u32,
     pub(crate) proved_holder: Value,
     /// The value a `Slot` answer read under the current proof, held while `constant_watch`
     /// is published (`heap::watch_prototype_values` of the holder): a use then reads it
@@ -49,6 +53,9 @@ pub(crate) struct InheritedFieldCache {
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
+/// An `InheritedFieldCache::proved_layout` no layout id reaches.
+pub(crate) const NO_PROVED_LAYOUT: u32 = u32::MAX;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
@@ -74,6 +81,16 @@ pub(crate) struct IndexFreeChainProof {
     pub(crate) first: Value,
     /// `first`'s prototype, whose chain the proof covers as well: a watched `first` keeps it.
     pub(crate) next: Value,
+    /// `first` and `next` as prototype links (`ProtoLink::bits`), which a holder's header
+    /// matches without decoding its link.
+    pub(crate) links: [u32; 2],
+}
+
+impl IndexFreeChainProof {
+    pub(crate) fn new(first: Value, next: Value) -> Self {
+        let links = [first, next].map(|proto| super::cell::ProtoLink::of(proto).bits());
+        Self { first, next, links }
+    }
 }
 
 /// The proofs the table holds, each cleared when a subject it read changes.
@@ -172,7 +189,7 @@ impl Dependencies {
     }
 
     /// The held index-free chain proof, if any (`ProofKind::IndexFreeChain`).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn index_free_chain(&self) -> Option<IndexFreeChainProof> {
         self.table().proofs.index_free_chain
     }

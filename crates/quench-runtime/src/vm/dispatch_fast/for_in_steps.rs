@@ -28,6 +28,29 @@ script_handler! {
     }
 }
 
+script_handler! {
+    /// `ForInStart` over an object whose keys the for-in memo's snapshot lists
+    /// (`Vm::listed_for_in_keys`): the loop's state over that snapshot, made without the
+    /// general step. Any other source takes the general step in place.
+    fn lane_for_in_start<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let source = r.get(i.b);
+        let Some(keys) = vm.listed_for_in_keys(source) else {
+            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        let state = vm.lane_for_in_state(source, keys);
+        // A state may be allocated; a due collection runs at the lane's next safepoint.
+        note_allocation(vm);
+        r.set(i.a, state);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+/// The handler of a `ForInStart` record.
+pub(super) const fn for_in_start_handler<H: Host>() -> Handler {
+    lane_for_in_start::<H>
+}
+
 /// The handler of a `ForInNext` record whose exit jump runs `BACKWARD` or not.
 pub(super) const fn for_in_next_handler<H: Host, const BACKWARD: bool>() -> Handler {
     lane_for_in_next::<H, BACKWARD>

@@ -113,7 +113,24 @@ pub(crate) unsafe fn concurrent_heap_values(raw: u64, mut visit: impl FnMut(Valu
         if AtomicU32::from_ptr(std::ptr::addr_of_mut!((*header).others)).load(Relaxed) == 0 {
             return;
         }
-        let len = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*header).len)).load(Relaxed) as usize;
+        let len = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*header).len)).load(Relaxed);
+        if len & DOUBLE_LEN != 0 {
+            // Numbers and holes only.
+            return;
+        }
+        if len & NARROW_LEN != 0 {
+            // A narrow backing's values change only by whole-word replacement
+            // (`replace_narrow_in_place`), each logged by the store barrier as a wide one is.
+            let values = header.cast::<u8>().add(VALUES_OFFSET).cast::<u32>();
+            for index in 0..(len & !NARROW_LEN) as usize {
+                let narrow = values.add(index).read();
+                if Value::narrow_is_heap(narrow) {
+                    visit(Value::from_narrow(narrow));
+                }
+            }
+            return;
+        }
+        let len = len as usize;
         let values = header.cast::<u8>().add(VALUES_OFFSET).cast::<u64>();
         for index in 0..len {
             let value = Value::from_bits(AtomicU64::from_ptr(values.add(index)).load(Relaxed));
@@ -150,6 +167,70 @@ static EMPTY: Header = Header {
 /// The `Header::capacity` flag of a backing whose header moved past dropped front values.
 /// Native code never reads the capacity word, so the flag changes no native layout.
 pub(super) const BIASED: u32 = 1 << 31;
+
+/// The `Header::capacity` flag of a wide backing made from a narrow one (`widened`): its
+/// array was read hot or written since it narrowed, so no collection narrows it again
+/// (`may_narrow`), and an array narrows and widens at most once. Front removals may drop it.
+const KEEP_WIDE: u32 = 1 << 30;
+
+/// The `Header::len` flag of a narrow backing: its values are 4-byte narrow forms
+/// (`Value::to_narrow`) from `VALUES_OFFSET`, read through `ArrayElements::get`. A
+/// replacement by a value with a narrow form stays narrow (`replace_in_place`); any other
+/// write widens it first (`make_mut`). Native element reads test the flag where they load
+/// the length (`staged::elements::array_backing`) and miss, except the interpreter's, which
+/// decodes (`concrete_record_element`); a length read as an int32 fails its sign test. Only
+/// a collection makes a narrow backing (`leave_nursery`, `narrow_in_place`), never one a
+/// running view holds.
+pub(crate) const NARROW_LEN: u32 = 1 << 31;
+
+/// The `Header::len` flag of a double backing: every value word is the IEEE-754 bits of a
+/// Number, whole or not (3 as 3.0's bits, never the int32 tag), and a hole is
+/// `Value::DELETED`'s word, which arithmetic never produces; `Header::others` then counts
+/// holes, and the backing holds no heap reference. Reads re-canonicalize (`Value::number`),
+/// so values are unchanged. A Number stored into a double backing it alone owns stays double
+/// (`replace_in_place`, `push_double`); any other write makes it generic first (`make_mut`),
+/// for good (`KEEP_WIDE`). An all-int32 backing becomes double where it takes its first
+/// other Number. Dense capacities stay below this bit (`grow_to`), and no backing is both
+/// narrow and double. Format: research/nojit/n2-n4/double-kind-format.txt. Native readers
+/// miss on it with the narrow flag (`ENCODED_LEN`), and only `QUENCH_DEV=double-elements`
+/// makes one until compiled tiers guard it.
+pub(crate) const DOUBLE_LEN: u32 = 1 << 30;
+
+/// Either flag of a backing whose values are not 8-byte `Value`s in place.
+pub(crate) const ENCODED_LEN: u32 = NARROW_LEN | DOUBLE_LEN;
+
+/// Whether backings may take the double kind (`DOUBLE_LEN`).
+#[inline(always)]
+fn double_elements() -> bool {
+    #[cfg(test)]
+    if TEST_DOUBLES.get() {
+        return true;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| crate::trace::Dev::DoubleElements.on())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The double kind on for this test thread alone (`double_elements`).
+    static TEST_DOUBLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The value a double backing's `word` holds.
+#[inline(always)]
+fn decode_double(word: u64) -> Value {
+    if word == Value::DELETED.to_bits() { Value::DELETED } else { Value::number(f64::from_bits(word)) }
+}
+
+/// The word a double backing holds for the Number `number`: its bits, NaN canonical.
+#[inline(always)]
+fn double_word(number: f64) -> u64 {
+    if number.is_nan() { f64::NAN.to_bits() } else { number.to_bits() }
+}
+
+/// The block step of the allocator backings come from (`quench_alloc`'s size classes): a
+/// narrow copy saves memory only where it fills a smaller block.
+const GRANULE_BYTES: usize = 16;
 
 /// The shortest backing whose front removal moves its header instead of its values: V8
 /// moves the values of short arrays too, where the copy costs less than the bookkeeping.
@@ -275,9 +356,52 @@ impl ArrayElements {
 
     /// Copies a young run to an allocation of this array's own, as the collection it
     /// survives must before the nursery takes the run back; any other backing stays.
+    /// Replaces a wide backing this array alone owns with a narrow copy (`NARROW_LEN`) where
+    /// every value has a narrow form and the copy is smaller, as a full collection does for
+    /// the arrays it keeps: the bytes it saves, or zero.
+    /// Replaces a narrow backing with a wide copy of one owner, as a hot array needs for the
+    /// native reads that do not decode narrow values: the same values.
+    #[cold]
+    pub(crate) fn widen(&mut self) {
+        if self.is_encoded() {
+            *self = self.widened();
+        }
+    }
+
+    pub(crate) fn may_narrow(&self) -> bool {
+        self.header().owners == 1 && self.len() != 0 && self.header().capacity & (KEEP_WIDE | BIASED) == 0 && !self.is_encoded()
+    }
+
+    pub(crate) fn narrow_in_place(&mut self) -> usize {
+        if self.header().owners != 1 || self.is_encoded() || self.bias() != 0 {
+            return 0;
+        }
+        let Some(narrow) = self.narrowed(self.allocated_bytes()) else {
+            // Not every value has a narrow form, or the copy saves no block: no collection
+            // tries again (a later write may change that; the array then stays wide).
+            // SAFETY: a backing of one owner with a length is this array's allocation.
+            unsafe { (*self.header.as_ptr()).capacity |= KEEP_WIDE };
+            return 0;
+        };
+        let saved = self.allocated_bytes() - narrow.allocated_bytes();
+        *self = narrow;
+        saved
+    }
+
     pub(crate) fn leave_nursery(&mut self) {
         if self.is_young() {
             self.detach();
+        }
+    }
+
+    /// `leave_nursery` of the backing of an array a collection keeps: a narrow copy where it
+    /// has one (`narrowed`), as unwritten young literals mostly stay unwritten.
+    pub(crate) fn survive_nursery(&mut self) {
+        if self.is_young() {
+            match self.narrowed(Self::layout(self.len()).size()) {
+                Some(narrow) => *self = narrow,
+                None => self.detach(),
+            }
         }
     }
 
@@ -292,7 +416,7 @@ impl ArrayElements {
     /// A backing of one owner with room for `capacity` values, the first `len` uninitialized.
     fn allocate(capacity: usize, len: usize) -> Self {
         debug_assert!(capacity > 0 && len <= capacity);
-        let capacity_word = u32::try_from(capacity).ok().filter(|word| word & BIASED == 0).expect("array backing capacity overflow");
+        let capacity_word = u32::try_from(capacity).ok().filter(|word| word & (BIASED | KEEP_WIDE) == 0).expect("array backing capacity overflow");
         let layout = Self::layout(capacity);
         // SAFETY: the layout has a non-zero size (the header).
         let pointer = unsafe { alloc(layout) }.cast::<Header>();
@@ -319,6 +443,9 @@ impl ArrayElements {
 
     #[inline(always)]
     fn values(&self) -> *mut Value {
+        // Every wide reader and writer comes through here: a narrow backing's words are not
+        // values, so reaching one here means a caller skipped `widen` or `wide_values`.
+        debug_assert!(!self.is_narrow(), "a narrow array backing read as wide values");
         // SAFETY: the values start right after the header in the same allocation; for the
         // shared empty header the pointer is aligned and never dereferenced.
         unsafe { self.header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<Value>() }
@@ -326,12 +453,173 @@ impl ArrayElements {
 
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
-        self.header().len as usize
+        (self.header().len & !ENCODED_LEN) as usize
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Whether this backing holds narrow values (`NARROW_LEN`).
+    #[inline(always)]
+    pub(crate) fn is_narrow(&self) -> bool {
+        self.header().len & NARROW_LEN != 0
+    }
+
+    /// Whether this backing holds raw doubles (`DOUBLE_LEN`).
+    #[inline(always)]
+    pub(crate) fn is_double(&self) -> bool {
+        self.header().len & DOUBLE_LEN != 0
+    }
+
+    /// Whether this backing's values are not `Value`s in place: narrow or double.
+    #[inline(always)]
+    pub(crate) fn is_encoded(&self) -> bool {
+        self.header().len & ENCODED_LEN != 0
+    }
+
+    /// A double backing's words, as doubles (holes are `Value::DELETED`'s NaN word); `None`
+    /// for any other backing.
+    #[inline]
+    pub(crate) fn double_values(&self) -> Option<&[f64]> {
+        // SAFETY: a double backing's first `len` words are initialized f64 bits.
+        self.is_double().then(|| unsafe { std::slice::from_raw_parts(self.double_words().cast::<f64>(), self.len()) })
+    }
+
+    #[inline(always)]
+    fn double_words(&self) -> *mut u64 {
+        // SAFETY: as in `values`: the words follow the header.
+        unsafe { self.header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<u64>() }
+    }
+
+    #[inline(always)]
+    fn narrow_values(&self) -> *const u32 {
+        // SAFETY: as in `values`.
+        unsafe { self.header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<u32>() }
+    }
+
+    /// The value at `index`, below the length.
+    #[inline(always)]
+    fn read(&self, index: usize) -> Value {
+        debug_assert!(index < self.len());
+        // SAFETY: the first `len` values are initialized, in the backing's form.
+        unsafe {
+            if !self.is_encoded() {
+                self.values().add(index).read()
+            } else if self.is_narrow() {
+                Value::from_narrow(self.narrow_values().add(index).read())
+            } else {
+                decode_double(self.double_words().add(index).read())
+            }
+        }
+    }
+
+    /// The value at `index`, or `None` past the length.
+    #[inline(always)]
+    pub(crate) fn get(&self, index: usize) -> Option<Value> {
+        (index < self.len()).then(|| self.read(index))
+    }
+
+    #[inline]
+    pub(crate) fn first(&self) -> Option<Value> {
+        self.get(0)
+    }
+
+    #[inline]
+    pub(crate) fn last(&self) -> Option<Value> {
+        self.len().checked_sub(1).map(|index| self.read(index))
+    }
+
+    /// The values in order.
+    #[inline]
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + Clone + '_ {
+        (0..self.len()).map(move |index| self.read(index))
+    }
+
+    /// The values of `range` in order.
+    #[inline]
+    pub(crate) fn range(&self, range: std::ops::Range<usize>) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator + '_ {
+        assert!(range.start <= range.end && range.end <= self.len(), "array range out of bounds");
+        range.map(move |index| self.read(index))
+    }
+
+    pub(crate) fn to_vec(&self) -> Vec<Value> {
+        self.iter().collect()
+    }
+
+    /// The values of a wide backing as a slice; `None` for a narrow one.
+    #[inline(always)]
+    pub(crate) fn wide_values(&self) -> Option<&[Value]> {
+        // SAFETY: the first `len` values of a wide backing are initialized.
+        (!self.is_encoded()).then(|| unsafe { std::slice::from_raw_parts(self.values(), self.len()) })
+    }
+
+    /// `values_cow`.
+    #[inline]
+    pub(crate) fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
+        self.values_cow()
+    }
+
+    /// The values as a slice: borrowed from a wide backing, decoded from a narrow one.
+    #[inline]
+    pub(crate) fn values_cow(&self) -> std::borrow::Cow<'_, [Value]> {
+        if self.is_encoded() {
+            std::borrow::Cow::Owned(self.to_vec())
+        } else {
+            // SAFETY: the first `len` values of a wide backing are initialized.
+            std::borrow::Cow::Borrowed(unsafe { std::slice::from_raw_parts(self.values(), self.len()) })
+        }
+    }
+
+    /// A narrow backing (`NARROW_LEN`) of `values`, when each has a narrow form and the
+    /// narrow allocation is smaller than a wide one.
+    /// `wide_bytes` is what the wide form takes: the narrow one must fill a smaller block of
+    /// the allocator's (`GRANULE_BYTES` steps), or it saves nothing.
+    fn narrowed(&self, wide_bytes: usize) -> Option<Self> {
+        let values = self.wide_values()?;
+        let len = values.len();
+        let layout = Self::narrow_layout(len);
+        if len == 0 || layout.size().next_multiple_of(GRANULE_BYTES) >= wide_bytes.next_multiple_of(GRANULE_BYTES) {
+            return None;
+        }
+        // SAFETY: the layout has a non-zero size (the header).
+        let pointer = unsafe { alloc(layout) }.cast::<Header>();
+        let Some(header) = NonNull::new(pointer) else {
+            handle_alloc_error(layout);
+        };
+        // SAFETY: the allocation is fresh and sized for a header and `len` narrow values; one
+        // without a narrow form for some value is freed unused.
+        unsafe {
+            let narrow = header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<u32>();
+            for (index, value) in values.iter().enumerate() {
+                let Some(word) = value.to_narrow() else {
+                    dealloc(pointer.cast(), layout);
+                    return None;
+                };
+                narrow.add(index).write(word);
+            }
+            header.as_ptr().write(Header {
+                owners: 1,
+                len: len as u32 | NARROW_LEN,
+                capacity: len as u32,
+                others: self.header().others,
+            });
+        }
+        Some(Self { header })
+    }
+
+    fn narrow_layout(capacity: usize) -> Layout {
+        Layout::from_size_align(
+            VALUES_OFFSET + capacity.checked_mul(size_of::<u32>()).expect("array backing overflow"),
+            align_of::<Header>(),
+        )
+        .expect("array backing overflow")
     }
 
     #[inline(always)]
     pub(crate) fn capacity(&self) -> usize {
-        (self.header().capacity & !BIASED) as usize
+        (self.header().capacity & !(BIASED | KEEP_WIDE)) as usize
     }
 
     /// The values a front removal dropped ahead of the header (`BIASED`).
@@ -346,10 +634,18 @@ impl ArrayElements {
 
     /// The start and layout of the allocation the header lives in.
     fn allocation(&self) -> (*mut u8, Layout) {
+        if self.is_narrow() {
+            return (self.header.as_ptr().cast(), Self::narrow_layout(self.capacity()));
+        }
         let bias = self.bias();
         // SAFETY: a biased header lies `bias` values into its allocation.
         let start = unsafe { self.header.as_ptr().cast::<Value>().sub(bias) };
         (start.cast(), Self::layout(self.capacity() + bias))
+    }
+
+    /// The bytes the values take (capacity times the value width: 4 narrow, 8 wide).
+    pub(crate) fn value_bytes(&self) -> usize {
+        self.capacity() * if self.is_narrow() { size_of::<u32>() } else { size_of::<Value>() }
     }
 
     /// Requested allocation extent; the shared static empty header owns no allocation.
@@ -364,17 +660,14 @@ impl ArrayElements {
     /// Whether every value is an int32 (so none is a hole, and none a heap reference).
     #[inline]
     pub(crate) fn holds_only_int32(&self) -> bool {
-        self.header().others == 0
+        // A double backing's count is of holes (`DOUBLE_LEN`).
+        self.header().others == 0 && !self.is_double()
     }
 
     /// Whether this array alone owns its backing, so writes reach no other array.
     #[inline(always)]
     fn is_unique(&self) -> bool {
-        self.header().owners == 1
-    }
-
-    pub(crate) fn as_slice(&self) -> &[Value] {
-        self
+        self.header().owners == 1 && !self.is_encoded()
     }
 
     /// The backing's identity, which arrays that share it have in common.
@@ -402,10 +695,57 @@ impl ArrayElements {
     #[inline(always)]
     pub(crate) fn replace_in_place(&mut self, index: usize, value: Value) -> bool {
         if !self.is_unique() {
-            return false;
+            return self.replace_encoded_in_place(index, value);
+        }
+        if self.header().others == 0 && !value.is_tagged() && self.takes_double() {
+            self.enter_double();
+            return self.replace_encoded_in_place(index, value);
         }
         // SAFETY: `UniqueElements` is a transparent wrapper; the backing is this array's own.
         unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }.set(index, value);
+        true
+    }
+
+    /// `replace_in_place` on an encoded backing this array alone owns: a double one takes a
+    /// Number and a narrow one a value with a narrow form, and stays so. `false` changes
+    /// nothing otherwise.
+    #[cold]
+    fn replace_encoded_in_place(&mut self, index: usize, value: Value) -> bool {
+        if self.header().owners != 1 {
+            return false;
+        }
+        if self.is_double() {
+            let Some(number) = value.as_number() else {
+                return false;
+            };
+            assert!(index < self.len(), "array store index out of bounds");
+            // SAFETY: a double backing this array alone owns holds `len` words.
+            unsafe {
+                let word = self.double_words().add(index);
+                if word.read() == Value::DELETED.to_bits() {
+                    (*self.header.as_ptr()).others -= 1;
+                }
+                word.write(double_word(number));
+            }
+            return true;
+        }
+        if !self.is_narrow() {
+            return false;
+        }
+        let Some(narrow) = value.to_narrow() else {
+            return false;
+        };
+        assert!(index < self.len(), "array store index out of bounds");
+        let old = self.read(index);
+        let (added, removed) = (other(value), other(old));
+        // SAFETY: a narrow backing this array alone owns holds `len` narrow values.
+        unsafe {
+            if added != removed {
+                let header = self.header.as_ptr();
+                (*header).others = recounted((*header).others, added, removed);
+            }
+            self.narrow_values().cast_mut().add(index).write(narrow);
+        }
         true
     }
 
@@ -419,6 +759,88 @@ impl ArrayElements {
     pub(crate) unsafe fn replace_through(values: NonNull<Value>, index: usize, value: Value) {
         // SAFETY: the caller's contract; the header precedes the values in the allocation.
         unsafe { crate::staged::elements::concrete_replace_element(values.as_ptr(), index, value) }
+    }
+
+    /// Whether this wide backing, which this array alone owns, may become double on its
+    /// first non-int32 Number: never one made generic from an encoded backing (`KEEP_WIDE`).
+    #[inline(always)]
+    fn takes_double(&self) -> bool {
+        self.header().capacity & (KEEP_WIDE | BIASED) == 0 && double_elements()
+    }
+
+    /// Turns a wide backing of int32 values alone (`holds_only_int32`), which this array
+    /// owns alone, into a double one in place: each value's word becomes its double's bits.
+    #[cold]
+    #[inline(never)]
+    fn enter_double(&mut self) {
+        debug_assert!(self.is_unique() && self.header().others == 0);
+        let words = self.double_words();
+        for index in 0..self.len() {
+            // SAFETY: the backing holds `len` initialized int32 values, this array's own.
+            unsafe {
+                let value = Value::from_bits(words.add(index).read());
+                words.add(index).write(double_word(value.as_number().unwrap_or(f64::NAN)));
+            }
+        }
+        // SAFETY: as above; no value is a hole.
+        unsafe {
+            let header = self.header.as_ptr();
+            (*header).len |= DOUBLE_LEN;
+            (*header).others = 0;
+        }
+    }
+
+    /// Appends the Number `value` to a double backing this array alone owns, or to an empty
+    /// or all-int32 one that `value` (not an int32) turns double, growing as `reserve` does.
+    /// `false` changes nothing: the caller appends as to any backing, which makes a double
+    /// one generic first. Answers the capacity it grew by through `grown`.
+    pub(crate) fn push_double(&mut self, value: Value, grown: &mut usize) -> bool {
+        if !self.is_double() {
+            if value.is_tagged() || !double_elements() {
+                return false;
+            }
+            if self.capacity() == 0 {
+                *self = Self::allocate(MIN_GROWN_CAPACITY, 0);
+                *grown = MIN_GROWN_CAPACITY;
+                // SAFETY: a fresh allocation of one owner, empty.
+                unsafe { (*self.header.as_ptr()).len = DOUBLE_LEN };
+            } else if self.is_unique() && self.header().others == 0 && self.takes_double() {
+                self.enter_double();
+            } else {
+                return false;
+            }
+        } else if self.header().owners != 1 {
+            return false;
+        }
+        let Some(number) = value.as_number() else {
+            return false;
+        };
+        let len = self.len();
+        if len == self.capacity() {
+            let before = self.capacity();
+            // SAFETY: `UniqueElements` is a transparent wrapper; growth copies the header with
+            // its flag and every word, and this array owns the backing alone.
+            unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }.grow_for(len + 1);
+            *grown += self.capacity() - before;
+        }
+        // SAFETY: below the capacity of a double backing this array alone owns.
+        unsafe {
+            self.double_words().add(len).write(double_word(number));
+            (*self.header.as_ptr()).len += 1;
+        }
+        true
+    }
+
+    /// Room for `additional` more words in a double backing this array alone owns, grown as
+    /// `UniqueElements::reserve` grows: the flag and the hole count stay, as a native
+    /// append into the room then needs (`Vm::reserve_native_array_append`).
+    pub(crate) fn reserve_double(&mut self, additional: usize) {
+        assert!(self.is_double() && self.header().owners == 1, "double room in a backing of its own");
+        let required = self.len().checked_add(additional).expect("array backing overflow");
+        if required > self.capacity() {
+            // SAFETY: as in `push_double`.
+            unsafe { &mut *(self as *mut Self).cast::<UniqueElements>() }.grow_for(required);
+        }
     }
 
     /// This array's values for writing: its own backing, copied first when shared or young
@@ -436,7 +858,22 @@ impl ArrayElements {
     #[cold]
     #[inline(never)]
     fn detach(&mut self) {
-        *self = Self::copied(self, self.header().others);
+        *self = self.widened();
+    }
+
+    /// A wide copy of this backing, of one owner.
+    fn widened(&self) -> Self {
+        if self.is_encoded() {
+            let mut copy = Self::from_fn(self.len(), |index| self.read(index));
+            if self.is_narrow() {
+                copy.make_mut().set_others(self.header().others);
+            }
+            // SAFETY: the copy is a fresh allocation of one owner (the length is not zero).
+            unsafe { (*copy.header.as_ptr()).capacity |= KEEP_WIDE };
+            return copy;
+        }
+        // SAFETY: the first `len` values of a wide backing are initialized.
+        Self::copied(unsafe { std::slice::from_raw_parts(self.values(), self.len()) }, self.header().others)
     }
 }
 
@@ -509,7 +946,7 @@ impl Clone for ArrayElements {
         match (self.header().owners, self.capacity()) {
             (0, 0) => {}
             // A young run has one owner, its array record: a copy owns an allocation.
-            (0, _) => return Self::copied(self, self.header().others),
+            (0, _) => return self.widened(),
             (owners, _) => {
                 // Only losing unique ownership can falsify a writable proof. A shared
                 // backing already admits reads only; another owner changes neither its
@@ -546,13 +983,15 @@ impl Drop for ArrayElements {
     }
 }
 
+
+/// Tests read wide backings as slices; the runtime reads through `get`, `iter` and
+/// `values_cow`, which also read narrow ones.
+#[cfg(test)]
 impl std::ops::Deref for ArrayElements {
     type Target = [Value];
 
-    #[inline(always)]
     fn deref(&self) -> &[Value] {
-        // SAFETY: the first `len` values are initialized.
-        unsafe { std::slice::from_raw_parts(self.values(), self.len()) }
+        self.wide_values().expect("a test slices a wide backing")
     }
 }
 
@@ -564,7 +1003,7 @@ impl std::fmt::Debug for ArrayElements {
 
 impl PartialEq for ArrayElements {
     fn eq(&self, other: &Self) -> bool {
-        **self == **other
+        self.len() == other.len() && self.iter().eq(other.iter())
     }
 }
 
@@ -588,7 +1027,7 @@ impl UniqueElements {
     #[inline(always)]
     pub(crate) fn set(&mut self, index: usize, value: Value) {
         assert!(index < self.0.len(), "array store index out of bounds");
-        self.recount(other(value), other(self.0[index]));
+        self.recount(other(value), other(self[index]));
         // SAFETY: the index is below the length of this unique backing.
         unsafe { self.0.values().add(index).write(value) };
     }
@@ -596,7 +1035,7 @@ impl UniqueElements {
     /// `value` at every index of `range`.
     pub(crate) fn fill(&mut self, range: std::ops::Range<usize>, value: Value) {
         assert!(range.start <= range.end && range.end <= self.0.len(), "array fill out of bounds");
-        self.recount(other(value) * range.len() as u32, others(&self.0[range.clone()]));
+        self.recount(other(value) * range.len() as u32, others(&self[range.clone()]));
         for index in range {
             // SAFETY: the range is within the length of this unique backing.
             unsafe { self.0.values().add(index).write(value) };
@@ -606,7 +1045,7 @@ impl UniqueElements {
     /// `values` at the indices from `start`.
     pub(crate) fn copy_from(&mut self, start: usize, values: &[Value]) {
         assert!(start + values.len() <= self.0.len(), "array copy out of bounds");
-        self.recount(others(values), others(&self.0[start..start + values.len()]));
+        self.recount(others(values), others(&self[start..start + values.len()]));
         // SAFETY: the range is within the length; `values` cannot alias this unique backing.
         unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), self.0.values().add(start), values.len()) };
     }
@@ -650,7 +1089,7 @@ impl UniqueElements {
     }
 
     fn grow_to(&mut self, capacity: usize) {
-        let capacity_word = u32::try_from(capacity).expect("array backing capacity overflow");
+        let capacity_word = u32::try_from(capacity).ok().filter(|word| word & (BIASED | KEEP_WIDE) == 0).expect("array backing capacity overflow");
         let old = self.0.capacity();
         if old == 0 {
             // The shared empty header: a fresh backing of its own.
@@ -679,8 +1118,8 @@ impl UniqueElements {
             handle_alloc_error(layout);
         };
         self.0.header = header;
-        // SAFETY: the reallocated header is this array's own.
-        unsafe { (*header.as_ptr()).capacity = capacity_word };
+        // SAFETY: the reallocated header is this array's own, its words copied from the old.
+        unsafe { (*header.as_ptr()).capacity = capacity_word | ((*header.as_ptr()).capacity & KEEP_WIDE) };
     }
 
     #[inline(always)]
@@ -704,7 +1143,7 @@ impl UniqueElements {
 
     pub(crate) fn truncate(&mut self, len: usize) {
         if len < self.0.len() {
-            self.recount(0, others(&self.0[len..]));
+            self.recount(0, others(&self[len..]));
             self.set_len(len);
         }
     }
@@ -765,7 +1204,7 @@ impl UniqueElements {
             self.reserve(values.len() - removed);
         }
         let new_len = len - removed + values.len();
-        self.recount(others(values), others(&self.0[range.clone()]));
+        self.recount(others(values), others(&self[range.clone()]));
         // SAFETY: the tail moves within the reserved allocation, then `values` fills the gap.
         unsafe {
             let base = self.0.values();
@@ -785,7 +1224,9 @@ impl std::ops::Deref for UniqueElements {
 
     #[inline(always)]
     fn deref(&self) -> &[Value] {
-        &self.0
+        debug_assert!(!self.0.is_encoded());
+        // SAFETY: a unique backing is wide; its first `len` values are initialized.
+        unsafe { std::slice::from_raw_parts(self.0.values(), self.0.len()) }
     }
 }
 

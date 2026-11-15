@@ -61,6 +61,8 @@ pub(super) const fn error_native_length(native: Native) -> Option<f64> {
     })
 }
 use crate::Value;
+mod thrown_primitive;
+pub(super) use thrown_primitive::primitive_detail;
 use crate::host::{CapabilityId, HostContext};
 use std::fmt;
 
@@ -90,6 +92,8 @@ struct ErrorSourceLocation {
 #[derive(Debug)]
 enum ErrorDescription {
     Text { message: String },
+    /// A thrown primitive, whose message is made only when read (`thrown_primitive`).
+    ThrownPrimitive,
     ExecutionTerminated,
     DataClone(String),
     WasmTrap(crate::WasmTrap),
@@ -121,6 +125,7 @@ impl fmt::Display for JsError {
             ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => {
                 f.write_str(message)
             }
+            ErrorDescription::ThrownPrimitive => f.write_str(&self.primitive_message()),
             ErrorDescription::DataClone(message) => write!(f, "DataCloneError: {message}"),
             ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
             ErrorDescription::WasmException => f.write_str("uncaught Wasm exception"),
@@ -130,14 +135,12 @@ impl fmt::Display for JsError {
 }
 
 impl JsError {
+    fn described(description: ErrorDescription, thrown: Option<Value>) -> Self {
+        Self(ErrorMessage { payload: Box::new(ErrorPayload { description, thrown, source_location: None }) })
+    }
+
     pub(crate) fn execution_terminated() -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::ExecutionTerminated,
-                thrown: None,
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::ExecutionTerminated, None)
     }
     /// A host termination is uncatchable, not a guest Error object or throw.
     /// A JavaScript exception: thrown by guest code or raised as a JavaScript error, as
@@ -145,20 +148,14 @@ impl JsError {
     pub fn is_javascript_exception(&self) -> bool {
         matches!(
             self.0.payload.description,
-            ErrorDescription::Text { .. } | ErrorDescription::DataClone(_)
+            ErrorDescription::Text { .. } | ErrorDescription::ThrownPrimitive | ErrorDescription::DataClone(_)
         )
     }
 
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
 
     pub(crate) fn thrown(value: Value, message: String) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::Text { message },
-                thrown: Some(value),
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::Text { message }, Some(value))
     }
 
     pub(crate) fn data_clone(value: Value, message: &str) -> Self {
@@ -228,35 +225,19 @@ impl JsError {
     }
 
     pub(crate) fn thrown_wasm_exception(value: Value) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmException,
-                thrown: Some(value),
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::WasmException, Some(value))
     }
 
     /// Inspect a typed WebAssembly trap without treating it as a JS throw.
     pub fn wasm_trap(&self) -> Option<crate::WasmTrap> {
         match self.0.payload.description {
             ErrorDescription::WasmTrap(trap) => Some(trap),
-            ErrorDescription::Text { .. }
-            | ErrorDescription::WasmLink(_)
-            | ErrorDescription::DataClone(_)
-            | ErrorDescription::WasmException
-            | ErrorDescription::ExecutionTerminated => None,
+            _ => None,
         }
     }
 
     pub(crate) fn wasm_trap_error(trap: crate::WasmTrap) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmTrap(trap),
-                thrown: None,
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::WasmTrap(trap), None)
     }
 
     /// Link failures are neither guest traps nor unsupported residual operations.
@@ -268,13 +249,7 @@ impl JsError {
     }
 
     pub(crate) fn wasm_link(message: impl Into<String>) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmLink(message.into()),
-                thrown: None,
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::WasmLink(message.into()), None)
     }
 
     pub(crate) fn validation(message: String) -> Self {
@@ -286,10 +261,13 @@ impl JsError {
     /// Whether this is a JavaScript error whose message is `text`.
     pub(super) fn has_message(&self, text: &str) -> bool {
         matches!(&self.0.payload.description, ErrorDescription::Text { message, .. } if message == text)
+            || matches!(self.0.payload.description, ErrorDescription::ThrownPrimitive) && self.primitive_message_is(text)
     }
 
     pub(super) fn into_message(self) -> String {
+        if matches!(self.0.payload.description, ErrorDescription::ThrownPrimitive) { return self.primitive_message(); }
         match self.0.payload.description {
+            ErrorDescription::ThrownPrimitive => unreachable!("answered above"),
             ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => message,
             ErrorDescription::DataClone(message) => format!("DataCloneError: {message}"),
             ErrorDescription::WasmTrap(trap) => trap.to_string(),

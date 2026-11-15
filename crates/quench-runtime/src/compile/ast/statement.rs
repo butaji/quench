@@ -299,23 +299,10 @@ impl FunctionCompiler<'_, '_> {
     fn return_logical(&mut self, value: &LogicalExpression<'_>) {
         let left = self.expression(&value.left);
         if value.operator.is_coalesce() {
-            let null = self.literal(Constant::Null);
-            let is_null = self.emit_binary(
-                BinaryOperator::StrictEquality as u32,
-                Operand::register(left),
-                Operand::register(null),
-            );
-            let check_undefined = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
+            let check_undefined = self.jump_strictly(left, Constant::Null, false);
             self.return_expression(&value.right);
             self.patch(check_undefined);
-
-            let undefined = self.literal(Constant::Undefined);
-            let is_undefined = self.emit_binary(
-                BinaryOperator::StrictEquality as u32,
-                Operand::register(left),
-                Operand::register(undefined),
-            );
-            let return_left = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
+            let return_left = self.jump_strictly(left, Constant::Undefined, false);
             self.return_expression(&value.right);
             self.patch(return_left);
             self.emit_return(left);

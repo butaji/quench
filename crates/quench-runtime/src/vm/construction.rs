@@ -25,12 +25,27 @@ pub(super) struct ClosureTemplate {
     function: u32,
     realm: Value,
     function_prototype: Value,
-    shape: u32,
+    /// The closure object's headers (`InlineObjectHeader`) under its named shape: inline, for
+    /// own properties that fit its inline slots (`finished_closure_fits`), else over a run.
+    header: crate::heap::InlineObjectHeader,
+    run_header: crate::heap::InlineObjectHeader,
     length: Value,
     name: Value,
     kind: FunctionKind,
-    prototype: Option<(Value, u32)>,
+    /// The prototype object's header: its parent, under the shape `constructor` gives it.
+    prototype: Option<crate::heap::InlineObjectHeader>,
+    /// What the closures read of the activation that makes them (`MakerReads`): an
+    /// environment activation makes those reading nothing of its own environment over
+    /// another (`Vm::maker_free_closure`).
+    maker_reads: crate::bytecode::MakerReads,
+    /// Whether the function's closures are call-only where the lane makes them
+    /// (`Value::known_closure`), which no template makes.
+    call_only: bool,
+    /// The environment of no slots that `MakerReads::Outer` closures of one maker share: the
+    /// maker's parent and it. Cleared at each collection (`forget_outer_environments`).
+    outer_environment: Option<(Value, Value)>,
 }
+
 
 /// The closure template slot of a program's function: functions of different programs share
 /// ids, so the program is mixed in by a multiplicative hash (the 32-bit golden ratio).
@@ -326,6 +341,71 @@ impl<H: Host> Vm<H> {
         self.closure_in_realm(p, id, env, self.realm.globals)
     }
 
+    /// The recorded template a lane closure of the active program's function `id` is made
+    /// from in the running realm: none under a `with` scope, nor for a call-only closure
+    /// (`Value::known_closure`), whose function has none.
+    #[inline(always)]
+    pub(super) fn lane_closure_template(&self, id: u32) -> Option<ClosureTemplate> {
+        if self.with_scope_entered {
+            return None;
+        }
+        self.recorded_closure_template(id, self.realm.globals).filter(|template| !template.call_only)
+    }
+
+    /// The environment a closure of `template` made by an activation of the active program's
+    /// function `maker` under `parent` takes when it reads nothing of the maker's own
+    /// (`ClosureTemplate::maker_reads`): `parent` itself, or for one reading further out an
+    /// environment of `maker` of no slots under it, shared by the maker's activations until a
+    /// collection. `None` for a closure that reads the maker's environment.
+    #[inline(always)]
+    pub(super) fn maker_free_environment(&mut self, template: &ClosureTemplate, parent: Value, maker: u32) -> Option<Value> {
+        match template.maker_reads {
+            crate::bytecode::MakerReads::Maker => None,
+            crate::bytecode::MakerReads::Nothing => Some(parent),
+            crate::bytecode::MakerReads::Outer => Some(match template.outer_environment {
+                Some((held, env)) if held == parent => env,
+                _ => {
+                    let env = self.outer_environment(parent, maker);
+                    let index = closure_template_index(template.program, template.function);
+                    if let Some(slot) = self.closure_templates[index].as_mut() {
+                        slot.outer_environment = Some((parent, env));
+                    }
+                    env
+                }
+            }),
+        }
+    }
+
+    /// An environment of the active program's function `maker` under `parent` holding none
+    /// of its bindings: one slot, never read, so its storage links to its parent's as an
+    /// activation's does (`EnvironmentSlots::link`).
+    #[cold]
+    fn outer_environment(&mut self, parent: Value, maker: u32) -> Value {
+        let slots = crate::heap::EnvironmentSlots::from_values(std::iter::once(Value::DELETED));
+        let scope = crate::heap::EnvironmentScopeRef::of_program(self.active_program.raw());
+        let (environment, storage) = self.heap.alloc_environment(parent, maker, slots, scope);
+        if let Some(Cell::Environment { function: owner, slots: parent_slots, .. }) = self.heap.get(parent)
+            && *owner != u32::MAX
+            && *owner != super::ROOT_FUNCTION_ID
+            && let Some(parent_storage) = parent_slots.dense_storage()
+            // SAFETY: the storage `alloc_environment` returned stays put while it lives.
+            && let Some(own) = unsafe { &*storage }.dense_storage()
+        {
+            // SAFETY: both storages are live dense ones, the parent's outliving its child's
+            // link until the next collection, whose epoch retires it.
+            unsafe { crate::heap::EnvironmentSlots::link(own, parent_storage, self.heap.collection_epoch()) };
+        }
+        environment
+    }
+
+    /// Forgets the outer environments the templates hold (`ClosureTemplate::outer_environment`):
+    /// at a collection, which they do not root.
+    pub(super) fn forget_outer_environments(&mut self) {
+        for template in self.closure_templates.iter_mut().flatten() {
+            template.outer_environment = None;
+        }
+    }
+
     /// The template recorded for closures of the active program's function `id` in `realm`.
     #[inline(always)]
     fn recorded_closure_template(&self, id: u32, realm: Value) -> Option<ClosureTemplate> {
@@ -362,24 +442,43 @@ impl<H: Host> Vm<H> {
 
     /// A closure of `template`'s function over `env`. The template's prototypes were flagged
     /// as prototypes by the closure it was recorded from, which needs no marking again.
-    fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
-        let prototype = template
-            .prototype
-            .map(|(parent, _)| self.heap.alloc_object_under_flagged_prototype(Self::empty_object(parent)));
-        let object = self.finished_closure_object(
-            template.function_prototype,
-            template.shape,
-            [template.length, template.name],
-            prototype,
-        );
-        let function = self.heap.alloc_function_under_flagged_prototype(FunctionRecord {
-            object,
-            realm: template.realm,
-            kind: template.kind,
-            env,
+    pub(super) fn closure_of_template(&mut self, template: ClosureTemplate, env: Value) -> Value {
+        // Both objects are allocated finished from headers derived once: the prototype under
+        // the shape its `constructor` add would reach, its slot filled once the closure exists.
+        // A closure whose record is claimed first is its prototype's `constructor` from the
+        // start; any other fills that slot once it exists.
+        let claimed = template.prototype.and_then(|_| self.heap.claim_function_record());
+        let mut unfilled = false;
+        let prototype = template.prototype.map(|header| {
+            claimed
+                .and_then(|function| self.heap.alloc_object_under_flagged_prototype_with_first(header, function))
+                .unwrap_or_else(|| {
+                    unfilled = true;
+                    self.heap.alloc_unfilled_object_under_flagged_prototype(header)
+                })
         });
-        if let (Some(prototype), Some((_, constructor))) = (prototype, template.prototype) {
-            self.heap.property_add(prototype, function, constructor);
+        let named = [template.length, template.name];
+        let object = if finished_closure_fits(prototype) {
+            crate::heap::Object::from_inline_header(template.header, finished_closure_slots(&named, prototype))
+        } else {
+            let [length, name] = named;
+            let values = [length, name, prototype.unwrap_or(Value::UNDEFINED), Value::UNDEFINED];
+            let len = FINISHED_CLOSURE_NAMED_SLOTS + usize::from(prototype.is_some());
+            self.heap.finished_run_object(template.run_header, &values, len)
+        };
+        let object = object.unwrap_or_else(|| {
+            self.finished_closure_object(template.function_prototype, template.header.shape(), named, prototype)
+        });
+        let record = FunctionRecord { object, realm: template.realm, kind: template.kind, env };
+        let function = match claimed {
+            Some(function) => {
+                self.heap.fill_claimed_function_record(function, record);
+                function
+            }
+            None => self.heap.alloc_function_under_flagged_prototype(record),
+        };
+        if unfilled && let Some(prototype) = prototype {
+            self.heap.fill_new_object_slot(prototype, 0, function);
         }
         function
     }
@@ -520,11 +619,24 @@ impl<H: Host> Vm<H> {
                     function: id,
                     realm,
                     function_prototype: function_object_prototype,
-                    shape,
+                    header: crate::heap::InlineObjectHeader::of(function_object_prototype, shape),
+                    run_header: crate::heap::InlineObjectHeader::of_run(function_object_prototype, shape),
                     length: length_value,
                     name: name_value,
                     kind,
-                    prototype: constructor.map(|constructor| (self.realm_object_prototype(realm), constructor)),
+                    prototype: constructor.map(|constructor| {
+                        crate::heap::InlineObjectHeader::of(self.realm_object_prototype(realm), constructor)
+                    }),
+                    // A call-only closure (`Value::known_closure`) names its maker's activation.
+                    maker_reads: if function_plan.prototype_unobservable {
+                        crate::bytecode::MakerReads::Maker
+                    } else {
+                        p.closure_reads.as_deref().map_or(crate::bytecode::MakerReads::Maker, |reads| {
+                            reads.maker_reads(id, crate::bytecode::arrow_chain_reads_implicit_bindings(p, id))
+                        })
+                    },
+                    call_only: function_plan.prototype_unobservable,
+                    outer_environment: None,
                 });
             }
             return Ok(function);
@@ -819,7 +931,7 @@ impl<H: Host> Vm<H> {
                     vm.heap.alloc(Cell::Object(object))
                 };
                 let previous_target = vm.construct_target;
-                vm.construct_target = Some(ConstructionTarget { callee, new_target });
+                vm.set_construct_target(Some(ConstructionTarget { callee, new_target }));
                 let result = if derived_constructor {
                     vm.call_user_for_construct(p, callee, args)
                         .map(|(value, this)| (value, Some(this)))
@@ -827,7 +939,7 @@ impl<H: Host> Vm<H> {
                     vm.call_value(p, callee, object, args)
                         .map(|value| (value, None))
                 };
-                vm.construct_target = previous_target;
+                vm.set_construct_target(previous_target);
                 let (result, this) = result?;
                 if vm.is_object_like(result) {
                     return Ok(result);

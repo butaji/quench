@@ -2,13 +2,12 @@
 //! its pointer tables (`.data.rel.ro`) at every start, dirtying about 1.3 MiB and reading 1 MiB
 //! of relocation records, which shows in every process's resident set.
 //!
-//! On x86-64 Linux the functions a run executes once its entry has compiled are laid out
-//! first (split at `quench_entry_compiled`), then those a start-up and a general workload
-//! execute, in execution order (`link/x86_64-linux.order`, derived by `quench-wasm-test`'s
-//! `symbol-order` from the start-up, `quench-bench/deegen-curriculum`, `quench-bench/micros`
-//! and a Test262 sample's profiles, never from a scored bench). A fault on a file-backed page
-//! maps its cached neighbours too, so executed code scattered among cold code keeps the cold
-//! pages resident. Symbols the order names but a build lacks are ignored, so code changes
+//! On x86-64 Linux the functions the layout corpus executes are laid out first, by how many
+//! corpus programs execute them and then by exactly which, each program profiled with an
+//! empty and with a warm compile cache (`link/x86_64-linux.order`, written by
+//! `tools/link-order.sh` through `quench-wasm-test`'s `symbol-order --sets`, never from a
+//! scored bench). A run touches whole pages, so executed code scattered among cold code keeps
+//! the cold neighbours' pages resident. Symbols the order names but a build lacks are ignored, so code changes
 //! erode the layout silently: retrain the order when start-up RSS rises. Symbol names
 //! carry crate hashes, which change with the exact compiler release: `rust-toolchain.toml`
 //! names one, and an order is trained with it.

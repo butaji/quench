@@ -240,6 +240,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         r#async: bool,
         allow_return_type_in_arrow_function: bool,
     ) -> Expression<'a> {
+        self.early.unreference(ident.name.as_str());
+        self.early.enter_function(None);
+        self.early.declare(ident.name, crate::early::DeclKind::Param);
         let pattern = BindingPattern::new_binding_identifier(ident.span, ident.name, self);
         let formal_parameter = FormalParameter::new_plain(ident.span, pattern, self);
         let params = FormalParameters::boxed(
@@ -272,6 +275,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     fn parse_parenthesized_arrow_function_head(&mut self) -> ArrowFunctionHead<'a> {
+        self.early.enter_function(None);
         let start = self.cur_start();
         let r#async = self.eat(Kind::Async);
 
@@ -301,6 +305,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             FormalParameterKind::ArrowFormalParameters,
         );
 
+        self.early.set_simple_params(crate::early::simple_parameters(&params));
         if let Some(this_param) = this_param {
             // const x = (this: number) => {};
             self.error(diagnostics::ts_arrow_function_this_parameter(
@@ -367,6 +372,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         };
 
         self.ctx = self.ctx.and_await(has_await).and_yield(has_yield);
+        self.early.exit_function();
 
         Expression::new_arrow_function_expression(
             self.end_span(start),

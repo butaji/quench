@@ -2043,7 +2043,9 @@ impl<H: Host> Vm<H> {
             return false;
         };
         debug_assert_eq!(program, self.active_program);
-        if !environment_admits_direct_store(p, program, *function, scope, slot) {
+        if !environment_admits_direct_store(p, program, *function, scope, slot)
+            && !root_binding_store(&self.programs, program, *function, scope, slot)
+        {
             return false;
         }
         let slot = usize::from(slot);
@@ -2078,7 +2080,9 @@ impl<H: Host> Vm<H> {
         else {
             return false;
         };
-        if !environment_admits_direct_store(p, program, *function, scope, slot) {
+        if !environment_admits_direct_store(p, program, *function, scope, slot)
+            && !root_binding_store(&self.programs, program, *function, scope, slot)
+        {
             return false;
         }
         match slots.owned_mut(usize::from(slot)) {
@@ -2660,6 +2664,24 @@ fn environment_admits_direct_store(
         !owner.is_self_binding_slot(slot)
             && super::arguments::mapped_arguments_slot(owner, slot).is_none()
     })
+}
+
+/// Whether a store to `slot` of a root environment of `function` with `scope` is a plain
+/// slot write in `program`: the root of `program` itself, whose slot holds its binding
+/// (`RootSlotRule::Binding`), as a module's top-level `let` does; no global var, global
+/// lexical or import projection reads through it. The slot's marker of an uninitialized
+/// binding still sends the store to the general path.
+#[inline(always)]
+fn root_binding_store(
+    programs: &super::program_store::ProgramStore,
+    program: super::ProgramId,
+    function: u32,
+    scope: &crate::heap::EnvironmentScopeRef,
+    slot: u16,
+) -> bool {
+    function == super::ROOT_FUNCTION_ID
+        && scope.program() == Some(program.raw())
+        && programs.root_slot(program, slot) == crate::bytecode::RootSlotRule::Binding
 }
 
 /// The function owning an environment of `function` with `scope` whose slots

@@ -159,6 +159,7 @@ cp tools/layout-corpus/package.json tools/layout-corpus/package-lock.json "$pack
 (cd "$package_dir" && npm ci --ignore-scripts --no-audit --no-fund --silent)
 export QUENCH_LAYOUT_NODE_MODULES="$package_dir/node_modules"
 cp tools/layout-corpus/npm-*.js "$corpus/"
+cp tools/layout-corpus/rt-*.js "$corpus/"
 
 # valgrind does not follow the static build's re-execution; give its allocator setting directly.
 export GLIBC_TUNABLES=glibc.malloc.tcache_count=0:glibc.malloc.top_pad=0

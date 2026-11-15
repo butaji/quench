@@ -21,6 +21,8 @@ pub(crate) struct NativeObjectLayout {
     pub(crate) dictionary_mask: u32,
     pub(crate) inline_form: u32,
     pub(crate) extras_form: u32,
+    pub(crate) narrow_form: u32,
+    pub(crate) narrow_run_tag: u64,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -51,6 +53,8 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     dictionary_mask: 2147483648,
     inline_form: 536870912,
     extras_form: 268435456,
+    narrow_form: 134217728,
+    narrow_run_tag: 4294967296,
     inline_property_count: 2,
     extras_tag: 9223090561878065152,
     extras_tag_mask: 18446462598732840960,
@@ -135,6 +139,9 @@ pub(crate) const NATIVE_FIELD_CACHE_LAYOUT: NativeFieldCacheLayout = NativeField
 };
 
 pub(crate) const OTHERS_UNKNOWN: u32 = 4294967295;
+pub(crate) const NARROW_LEN: u32 = 2147483648;
+pub(crate) const DOUBLE_LEN: u32 = 1073741824;
+pub(crate) const ENCODED_LEN: u32 = 3221225472;
 pub(crate) const LENGTH_FROM_VALUES: i32 = -12;
 pub(crate) const OTHERS_FROM_VALUES: i32 = -4;
 pub(crate) const INLINE_PROPERTIES: usize = 2;
@@ -189,6 +196,11 @@ pub(crate) const JS_STEP_NATIVE_TOP: usize = 240;
 pub(crate) const JS_STEP_NATIVE_END: usize = 248;
 pub(crate) const JS_STEP_SHADOW_TOP: usize = 256;
 pub(crate) const JS_STEP_SHADOW_END: usize = 264;
+
+/// The context words below every lane window's register 0 (the runtime's
+/// `register_file::FRAME_CONTEXT`): a pushed window leaves them free past its registers for the
+/// next. Checked against the runtime by `stencil_layout_matches`.
+pub(crate) const FRAME_CONTEXT_WORDS: usize = 3;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).

@@ -1,0 +1,198 @@
+//! Proved loop kernels: a counted loop whose body is straight-line Number work over record
+//! arrays runs as one record (`lane_loop_kernel`, on the loop's test record) that executes
+//! the body column-wise over chunks of iterations in Rust loops, instead of one dispatched
+//! record per operation per iteration.
+//!
+//! A kernel is the loop's own semantics with every per-iteration check moved to the loop's
+//! entry or to the end of a chunk (`shape` finds the loops, `run` executes them):
+//! - the loop is `H: JumpBinaryFalse counter REL bound -> exit; body; Jump H`, the exit right
+//!   after the jump, and the body straight-line `GetIndex`, `SetIndex`, Number operators,
+//!   `IncDec`, `Move` and `LoadConst`;
+//! - every register the body writes is an induction (stepped by a constant, an int32 at
+//!   entry) or a value the body computes; every index is an induction or an unwritten
+//!   register plus a constant; every base is an unwritten register holding a record array;
+//! - so the trip count comes from the test, the bounds of every access are checked once for
+//!   the whole run, and each operator's operands are Numbers (loaded elements are checked as
+//!   they are decoded), which makes every operator its f64 or int32 operation, exactly.
+//!
+//! The body's operations form a dataflow graph. Operations that do not depend on a value the
+//! previous iteration computed (a recurrence, such as `s += ...`) run column-wise over a
+//! chunk, each a tight loop the compiler vectorizes; the rest run in one scalar pass over the
+//! chunk in body order. A chunk commits its stores only after every element it read was a
+//! Number and every element it replaces was present; otherwise it is discarded, the
+//! registers are written as the previous chunk left them, the loop's own records run from
+//! there, and the kernel stands down for the rest of the view's life. A store and a load of
+//! the same array are ordered by their index distance, fixed at entry: a load reaching an
+//! element an earlier iteration of the same chunk stores shortens the chunk below that
+//! distance. Chunks also end at the run's safepoint (`script_below_floor`).
+use super::*;
+
+mod machine;
+mod recur;
+mod run;
+mod typed;
+mod shape;
+
+pub(super) use shape::Shape;
+
+/// Live kernels by slot: a kernel's test record names its slot in `call_link`, which a test
+/// record holds no call link in.
+#[thread_local]
+static KERNELS: std::cell::UnsafeCell<Vec<*const LoopKernel>> = std::cell::UnsafeCell::new(Vec::new());
+
+/// Entries declined for too few iterations before the kernel stands down for good.
+const SHORT_DECLINES: u32 = 64;
+
+/// A loop's kernel: its shape, the test record's own handler, and its run state.
+pub(super) struct LoopKernel {
+    shape: Shape,
+    recurrence: recur::Recurrence,
+    slot: u16,
+    /// The test record's handler before the kernel took it, which runs where the kernel runs
+    /// nothing.
+    original: std::cell::Cell<*const ()>,
+    declines: std::cell::Cell<u32>,
+    /// The run's columns (`run`), kept between runs.
+    scratch: std::cell::UnsafeCell<Vec<f64>>,
+}
+
+impl LoopKernel {
+    /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
+    /// its stencils run it slower (`install_loop_sites`).
+    pub(super) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
+        Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
+            .is_some_and(|shape| recur::Recurrence::of(&shape).is_some())
+    }
+
+    /// The registered kernel of the loop `header..=backedge`, if it has one.
+    fn of(
+        decoded: &[WideInstruction],
+        constants: &[Value],
+        function: &Function,
+        header: usize,
+        backedge: usize,
+        original: *const (),
+    ) -> Option<Box<Self>> {
+        let trace = crate::trace::Channel::LoopKernel.on();
+        let Some(shape) = Shape::of(decoded, constants, usize::from(function.registers), header, backedge) else {
+            if trace {
+                eprintln!("loop-kernel: loop {header}..{backedge}: no shape");
+            }
+            return None;
+        };
+        let recurrence = recur::Recurrence::of(&shape);
+        if trace {
+            eprintln!("loop-kernel: loop {header}..{backedge}: {}", if recurrence.is_some() { "kernel" } else { "no recurrence pass" });
+        }
+        let recurrence = recurrence?;
+        let mut kernel = Box::new(LoopKernel {
+            shape,
+            recurrence,
+            slot: NO_CALL_LINK,
+            original: std::cell::Cell::new(original),
+            declines: std::cell::Cell::new(0),
+            scratch: std::cell::UnsafeCell::new(Vec::new()),
+        });
+        kernel.slot = register(&kernel)?;
+        Some(kernel)
+    }
+
+    fn original<H: Host>(&self) -> Handler {
+        // SAFETY: `original` is the record's handler for this VM type (`install_loop_kernels`).
+        unsafe { std::mem::transmute::<*const (), Handler>(self.original.get()) }
+    }
+
+    /// Gives the record at `ip` back its own handler for good.
+    fn stand_down<H: Host>(&self, ip: Ip) {
+        // SAFETY: as `requicken`; the record holds this kernel.
+        unsafe { (*ip.cast_mut()).handler = self.original.get() };
+    }
+}
+
+impl Drop for LoopKernel {
+    fn drop(&mut self) {
+        // SAFETY: the registry is this thread's, and no kernel runs while its view drops.
+        let kernels = unsafe { &mut *KERNELS.get() };
+        if let Some(entry) = kernels.get_mut(usize::from(self.slot)) {
+            *entry = std::ptr::null();
+        }
+    }
+}
+
+/// Registers `kernel`, whose box keeps its address, in a free slot.
+fn register(kernel: &LoopKernel) -> Option<u16> {
+    // SAFETY: the registry is this thread's; no reference into it is held.
+    let kernels = unsafe { &mut *KERNELS.get() };
+    let slot = kernels.iter().position(|entry| entry.is_null()).unwrap_or_else(|| {
+        kernels.push(std::ptr::null());
+        kernels.len() - 1
+    });
+    let slot = u16::try_from(slot).ok().filter(|&slot| slot < NO_CALL_LINK)?;
+    kernels[usize::from(slot)] = kernel;
+    Some(slot)
+}
+
+/// Gives each loop that has a kernel its kernel record (`lane_loop_kernel`) on the loop's test
+/// record. Runs after every other pass: the kernel keeps the record's final handler and
+/// leaves the record's operand to it.
+pub(super) fn install_loop_kernels<H: Host>(
+    decoded: &[WideInstruction],
+    constants: &[Value],
+    function: &Function,
+    exits: &[bool],
+    records: &mut [LaneInstruction],
+) -> Box<[Box<LoopKernel>]> {
+    let mut kernels = Vec::new();
+    for backedge in 0..decoded.len() {
+        let jump = decoded[backedge];
+        let header = jump.jump_target() as usize;
+        if jump.op().class() != Class::Jump || header >= backedge {
+            continue;
+        }
+        if exits[header] || records[header].call_link.get() != NO_CALL_LINK {
+            continue;
+        }
+        let Some(kernel) = LoopKernel::of(decoded, constants, function, header, backedge, records[header].handler) else {
+            continue;
+        };
+        records[header].handler = lane_loop_kernel::<H> as Handler as *const ();
+        records[header].call_link.set(kernel.slot);
+        kernels.push(kernel);
+    }
+    kernels.into_boxed_slice()
+}
+
+/// `requicken` of a record holding a kernel: the record's own handler (which the kernel runs
+/// after itself) becomes `handler`, and the record keeps the kernel. `false` for any other
+/// record.
+///
+/// # Safety
+/// `ip` is a live record of the running view.
+#[inline(always)]
+pub(super) unsafe fn requicken_kernel<H: Host>(ip: Ip, handler: Handler) -> bool {
+    // SAFETY: the caller's contract.
+    let record = unsafe { &*ip };
+    if record.handler != lane_loop_kernel::<H> as Handler as *const () {
+        return false;
+    }
+    // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
+    let kernel = unsafe { &*(&*KERNELS.get())[usize::from(record.call_link.get())] };
+    kernel.original.set(handler as *const ());
+    true
+}
+
+script_handler! {
+    /// A loop's head record holding its kernel (`LoopKernel`): runs the loop as far as the
+    /// kernel can, then the record's own handler.
+    fn lane_loop_kernel<>(cx, r, ip, i, view) {
+        // SAFETY: the record names a live kernel of its view (`install_loop_kernels`).
+        let kernel = unsafe { &*(&*KERNELS.get())[usize::from(i.call_link.get())] };
+        // The loop's own records continue from where the kernel left the registers: its
+        // head runs, then its test, which fails where the kernel ran the whole loop.
+        unsafe { kernel.run(cx, r, ip) };
+        if kernel.declines.get() >= SHORT_DECLINES {
+            kernel.stand_down::<H>(ip);
+        }
+        sibling!(kernel.original::<H>(), r, ip, Carried::script_in(cx, view))
+    }
+}

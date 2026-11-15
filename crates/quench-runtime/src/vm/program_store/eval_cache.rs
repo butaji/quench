@@ -22,12 +22,22 @@ impl ProgramStore {
         self.direct_eval_programs.insert(key, program);
     }
 
+    /// The code of the latest live strict direct eval of `key`'s text and caller facts.
+    pub(in crate::vm) fn cached_strict_direct_eval_code(&self, key: &DirectEvalKey) -> Option<Rc<ResidualProgram>> {
+        self.get(*self.strict_direct_eval_code.get(key)?)
+    }
+
+    pub(in crate::vm) fn cache_strict_direct_eval_code(&mut self, key: DirectEvalKey, program: ProgramId) {
+        self.strict_direct_eval_code.insert(key, program);
+    }
+
     /// Forgets the eval programs and owned scripts whose program was reclaimed.
     pub(super) fn retain_live_eval_programs(&mut self) {
         let programs = &self.programs;
         let live = |id: &ProgramId| programs.get(id.index()).is_some_and(Option::is_some);
         self.global_eval_programs.retain(|_, id| live(id));
         self.direct_eval_programs.retain(|_, id| live(id));
+        self.strict_direct_eval_code.retain(|_, id| live(id));
         self.owned_scripts.retain(|source, _| live(source));
     }
 }

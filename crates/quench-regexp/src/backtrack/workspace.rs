@@ -11,6 +11,8 @@ struct Workspace {
     stack: Vec<Frame>,
     /// The frames of a native search (`Program::run_native`).
     native_stack: Vec<usize>,
+    /// A captures vector handed back (`recycle_captures`) for the next match's captures.
+    spare: Vec<Option<Range<usize>>>,
 }
 
 thread_local! {
@@ -44,6 +46,21 @@ fn return_workspace(workspace: Box<Workspace>) {
     }
 }
 
+/// Hands a match's captures vector back to the thread's parked workspace, whose next match
+/// with captures fills it in place of a new allocation (an exec whose legacy statics replace
+/// the last match's: one vector per match, allocated and freed, was 15% of a capture-heavy
+/// exec's search).
+pub(crate) fn recycle_captures(captures: Vec<Option<Range<usize>>>) {
+    if let Some(parked) = WORKSPACE.get() {
+        // SAFETY: a parked workspace is owned by the slot and nothing borrows it between
+        // searches; this thread is not inside a search that took it.
+        let workspace = unsafe { &mut *parked.as_ptr() };
+        if workspace.spare.capacity() < captures.capacity() {
+            workspace.spare = captures;
+        }
+    }
+}
+
 impl Program {
     /// The run of `search` from `start` in the thread's workspace, with the captures of a
     /// match built from its registers by `captures`.
@@ -53,7 +70,7 @@ impl Program {
         text: &T,
         start: usize,
         search: Search,
-        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+        captures: impl FnOnce(&[usize], &mut Vec<Option<Range<usize>>>) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
         let mut workspace = take_workspace();
         let found = self.run_in(&mut workspace, text, start, search, captures);
@@ -70,9 +87,9 @@ impl Program {
         text: &T,
         start: usize,
         search: Search,
-        captures: impl FnOnce(&[usize]) -> Vec<Option<Range<usize>>>,
+        captures: impl FnOnce(&[usize], &mut Vec<Option<Range<usize>>>) -> Vec<Option<Range<usize>>>,
     ) -> Option<Found> {
-        let Workspace { registers, stack, native_stack } = workspace;
+        let Workspace { registers, stack, native_stack, spare } = workspace;
         if registers.len() < self.register_count {
             registers.resize(self.register_count, UNSET);
         }
@@ -86,7 +103,7 @@ impl Program {
                 self.run(text, (pc, start, position), Some(search), registers, stack)
             }
         };
-        let found = ran.map(|(start, end)| Found { start, end, captures: captures(registers) });
+        let found = ran.map(|(start, end)| Found { start, end, captures: captures(registers, spare) });
         registers.fill(UNSET);
         found
     }
@@ -110,7 +127,7 @@ impl Program {
         loop {
             let range = match &mut workspace {
                 Some(workspace) => self.run_start(text, at, false).and_then(|(start, search)| {
-                    self.run_in(workspace, text, start, search, |_| Vec::new()).map(|found| found.start..found.end)
+                    self.run_in(workspace, text, start, search, |_, _| Vec::new()).map(|found| found.start..found.end)
                 }),
                 None => self.find_bounds(text, at, false),
             };

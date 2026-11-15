@@ -16,7 +16,7 @@ use crate::snapshot::{read_list, Reader, Snap, SnapshotError, SnapshotResult, Wr
 macro_rules! builtin_prototypes {
     ($apply:ident) => {
         $apply!(
-            object_proto, function_proto, array_proto, string_proto, array_buffer_proto,
+            object_proto, function_proto, array_proto, string_proto, number_proto, array_buffer_proto,
             shared_array_buffer_proto, array_iterator_proto, typed_array_proto, uint8_array_proto,
             uint8_clamped_array_proto, uint16_array_proto, uint32_array_proto, int8_array_proto,
             int16_array_proto, int32_array_proto, bigint64_array_proto, biguint64_array_proto,
@@ -89,8 +89,9 @@ impl Snap for property_key::PropertyKey {
                 writer.u8(property_key_tag::SYMBOL);
                 writer.value(symbol);
             }
-            Self::Private(atom) => {
+            Self::Private(home, atom) => {
                 writer.u8(property_key_tag::PRIVATE);
+                writer.value(home);
                 writer.u32(atom);
             }
         }
@@ -100,7 +101,7 @@ impl Snap for property_key::PropertyKey {
         Ok(match reader.u8()? {
             property_key_tag::STRING => Self::String(reader.u32()?),
             property_key_tag::SYMBOL => Self::Symbol(reader.value()?),
-            property_key_tag::PRIVATE => Self::Private(reader.u32()?),
+            property_key_tag::PRIVATE => Self::Private(reader.value()?, reader.u32()?),
             _ => return Err(SnapshotError("invalid snapshot property key".into())),
         })
     }
@@ -242,6 +243,10 @@ impl<H: Host> Vm<H> {
             typed_views: _,
             native_microtask_running,
             unobserved_jobs_entered: _,
+            chain_await_jobs: _,
+            await_chain: _,
+            lane_chain_error: _,
+            lane_chain_ended: _,
             host,
             specialized,
             heap,
@@ -250,6 +255,7 @@ impl<H: Host> Vm<H> {
             function_proto: _,
             array_proto: _,
             string_proto: _,
+            number_proto: _,
             array_buffer_proto: _,
             shared_array_buffer_proto: _,
             array_iterator_proto: _,
@@ -297,6 +303,7 @@ impl<H: Host> Vm<H> {
             native_root_lists: _,
             gc_owned_root_count: _,
             frame_pool: _,
+            lowered_tier0: _,
             pending_call_stacks: _,
             js_native_contexts: _,
             lane_stack: _,
@@ -321,7 +328,7 @@ impl<H: Host> Vm<H> {
             lane_returned,
             lane_native,
             lane_native_returned,
-            active_layout: _, active_constants: _, active_field_entries: _, field_entries_epoch: _,
+            active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
             shapes,
@@ -338,11 +345,14 @@ impl<H: Host> Vm<H> {
             symbol_load_proofs: _,
             private_site_homes: _,
             array_iteration_shape: _,
+            collection_iteration_shape: _,
             array_species_proof: _,
             for_in: _,
             json_plain: _,
             species_slot_proof: _,
+            iterator_absence_proof: _,
             promise_species_proof: _,
+            promise_then_memo: _,
             function_name_shapes: _,
             typeof_names: _,
             closure_templates: _,
@@ -354,10 +364,11 @@ impl<H: Host> Vm<H> {
             array_index_atoms: _,
             atom_sequence,
             regexp_subjects: _,
+            concat_memo: _,
             regexp_matchers: _,
             atom_classes: _,
             intrinsic_natives: _,
-            native_families: _, first_chunks: _,
+            native_families: _, first_chunks: _, streamed_stubs: _,
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,
@@ -374,6 +385,8 @@ impl<H: Host> Vm<H> {
             field_cache_writes: _,
             megamorphic_fields: _,
             holder_hints: _,
+            rc_pinned_shapes: _,
+            rc_pin_epoch: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
@@ -381,6 +394,7 @@ impl<H: Host> Vm<H> {
             instanceof_proofs: _,
             closure_shapes: _,
             resolver_function_shape: _,
+            bound_function_shape: _,
             iterator_result_header: _,
             reused_iterator_result: _,
             descriptor_shapes: _,
@@ -579,6 +593,7 @@ impl<H: Host> Vm<H> {
         Vec::<(Atom, Value)>::unsnap(&mut reader)?.into_iter().for_each(|(atom, string)| self.heap.register_string_atom(string, atom, true));
         self.startup_intrinsics = startup_intrinsics::StartupIntrinsics::read_snapshot(&mut reader)?;
         self.with_scope_entered = reader.bool()?;
+        self.refresh_call_refusal();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_realm");
         self.programs = ProgramStore::read_snapshot(&mut reader, &bytes, &self.atom_sequence)?;
@@ -773,6 +788,7 @@ impl<H: Host> Vm<H> {
                 }),
             }
         }
+        self.programs.bump_context_epoch();
     }
 }
 

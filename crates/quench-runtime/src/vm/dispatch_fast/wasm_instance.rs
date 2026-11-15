@@ -7,12 +7,17 @@ lane_handler! {
     /// resolves the memory view.
     pub(super) fn lane_instance_binding<MEMORY: bool>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let env = super::wasm_exports::running_env(cx);
-        // An instance's bindings are its own, never shared with another environment.
-        let Some(Cell::Environment { slots, .. }) = vm.heap.get(env) else {
-            return exit(ip);
+        let env = lane_instance_env(cx);
+        let (known, storage) = unsafe { (*cx).instance_slots };
+        let slot = i.imm();
+        // SAFETY: `storage` is the dense storage of `known`, found this run, which no
+        // collection has run since (`lane_after_nested_collection` drops it).
+        let cached = if known == env && slot <= u32::from(u16::MAX) {
+            unsafe { crate::heap::EnvironmentSlots::read_storage(storage, slot as u16) }
+        } else {
+            None
         };
-        let Some(value) = slots.owned(i.imm() as usize) else {
+        let Some(value) = cached.or_else(|| lane_instance_slot_miss(cx, env, slot as usize)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -178,4 +183,18 @@ lane_handler! {
         *value = r.get(i.a);
         next!(cx, r, following(ip), view)
     }
+}
+
+/// `lane_instance_binding`'s first read of `env` this run (or of a slot its storage does not
+/// hold as a plain value): the heap's read, after which the run keeps `env`'s dense storage.
+#[cold]
+#[inline(never)]
+fn lane_instance_slot_miss<H: Host>(cx: *mut LaneContext<H>, env: Value, slot: usize) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    if let Some(Cell::Environment { slots, .. }) = vm.heap.get(env)
+        && let Some(storage) = slots.dense_storage()
+    {
+        unsafe { (*cx).instance_slots = (env, storage) };
+    }
+    vm.heap.environment_slot(env, slot)
 }

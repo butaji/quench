@@ -28,7 +28,7 @@ impl<H: Host> Vm<H> {
                 Ok(written)
             }
             PropertyKey::Symbol(key) => self.set_symbol_property_with_receiver(p, target, key, value, receiver),
-            PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Set"),
+            PropertyKey::Private(..) => unreachable!("private keys cannot reach Proxy Set"),
         }
     }
 

@@ -54,8 +54,10 @@ pub(super) fn record_mru_entry<P: MruPool>(pool: &mut P, head: u32, ways: usize,
 }
 
 impl MruEntry for AccessorFieldCache {
+    // An entry stands for a receiver layout, which holds its shape: two layouts of one shape
+    // (a frozen instance beside a plain one) keep an entry each.
     fn receiver(&self) -> u32 {
-        self.receiver
+        self.layout
     }
     fn next(&self) -> u32 {
         self.next

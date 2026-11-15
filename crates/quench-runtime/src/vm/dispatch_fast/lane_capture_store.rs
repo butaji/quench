@@ -7,7 +7,7 @@ use super::*;
 /// direct store does not take (a `const`, an uninitialized `let`) does not.
 pub(super) fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, value: Value) -> bool {
     let vm = unsafe { vm(cx) };
-    let env = unsafe { (*cx).env };
+    let env = unsafe { (*cx).registers }.env();
     // A frame run's first depth-0 store finds its slots, tagged when they admit every
     // store (reads leave them untagged: most frame runs store none), then stores through
     // them.
@@ -15,7 +15,7 @@ pub(super) fn lane_capture_store<H: Host>(cx: *mut LaneContext<H>, depth: u16, s
         && env.is_deleted()
         && let Some(capture) = lane_frame_capture(cx)
     {
-        unsafe { (*cx).capture = capture };
+        unsafe { (*cx).registers.set_capture(capture) };
         if let Some(slots) = capture_stores(capture)
             // SAFETY: the running function's dense capture slots, which admit this write
             // (`CAPTURE_STORES`); no collection runs in the lane.

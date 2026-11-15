@@ -240,7 +240,7 @@ fn default_osr_keeps_self_contained_loop_regions() {
                 .and_then(super::program_store::derived_lane_view).unwrap();
             let osr = view.osr_diagnostics();
             assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            assert!(view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -306,7 +306,7 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(2)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
+            let report = view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
             assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
         }
     }
@@ -2273,7 +2273,7 @@ fn minor_collections_trace_changed_program_roots_until_promoted() {
         vm.collect_slow(&program, true);
         let constant = vm.heap.alloc_string("young constant".into());
         let weak = vm.heap.weak_handle(constant).unwrap();
-        vm.programs.set_constants(id, vec![constant]);
+        vm.programs.set_constants(id, vec![constant], 0);
         for _ in 0..=PromotionAge::OLDEST.minors() {
             vm.collect_slow(&program, false);
             assert_eq!(vm.heap.weak_value(weak), Some(constant), "{age:?}");
@@ -2828,7 +2828,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         .array_elements(values)
         .unwrap()
         .iter()
-        .copied()
         .filter(|value| vm.is_promise(*value))
         .collect();
     assert_eq!(promises.len(), 6);
@@ -3246,6 +3245,29 @@ fn private_names_resolve_per_class_across_collections() {
 }
 
 #[test]
+fn private_elements_live_in_shape_slots_hidden_from_every_key_walk() {
+    // Private fields and method brands are shape slots under private keys: no key list,
+    // copy or integrity level sees them; a frozen or non-extensible object keeps and gains
+    // them; foreign brands still throw; values survive collections.
+    let source = "class A { #x = 1; #y; #m() { return this.#x + 10; } get #g() { return this.#x * 2; } set #g(v) { this.#x = v; }\n\
+           constructor(v) { this.#y = v; this.pub = 3; } sum() { return this.#x + this.#y + this.#m() + this.#g; }\n\
+           bump() { this.#g = this.#x + 1; return this.#x; } static has(o) { return #x in o; } static hasm(o) { return #m in o; } }\n\
+         class Base { constructor(o) { return o; } } class Stamp extends Base { #t = 9; static t(o) { return o.#t; } }\n\
+         var a = new A(2), out = [a.sum(), a.bump(), A.has(a), A.has({}), A.hasm(a)];\n\
+         out.push(JSON.stringify(a), Object.keys(a).join(), Reflect.ownKeys(a).length, Object.getOwnPropertySymbols(a).length);\n\
+         Object.freeze(a); out.push(a.bump(), Object.isFrozen(a), A.has({ ...a }));\n\
+         var plain = { q: 1 }; new Stamp(plain);\n\
+         for (let i = 0; i < 50000; i++) ({ i });\n\
+         out.push(Stamp.t(plain), Object.keys(plain).join(), a.sum());\n\
+         try { new Stamp(plain); } catch (error) { out.push(error.constructor.name); }\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "16,2,true,false,true,{\"pub\":3},pub,1,0,3,true,false,9,q,24,TypeError"
+    );
+}
+
+#[test]
 fn json_and_object_keys_read_enumerable_keys_in_own_property_order() {
     // Shape-backed objects skip descriptor objects; order, enumerability, wrapper unboxing
     // and the keys handed to toJSON and replacers stay those of the generic path.
@@ -3417,7 +3439,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(result));
     assert_eq!(
         vm.promise_record(promise)
-            .map(|record| record.result),
+            .map(|record| record.result()),
         Some(result)
     );
     let (resolve, _) = vm.promise_resolving_functions(promise);
@@ -3903,7 +3925,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let original = vm
         .heap
         .alloc(crate::heap::Cell::Error("original argument".into()));
-    let mut registers = vec![Value::UNDEFINED; 65];
+    let mut registers = super::register_file::RegisterFile::from_registers(&[Value::UNDEFINED; 65]);
     registers[64] = live;
     vm.frames.push(Box::new(super::Frame {
         context: super::activation::CallContext::Internal,
@@ -4745,7 +4767,7 @@ fn class_field_record_roots_release_after_each_completion() {
             let atom = vm.intern_atom("entry");
             let key = match phase {
                 "symbol" => PropertyKey::symbol(values[2]),
-                "private" => PropertyKey::private(atom),
+                "private" => PropertyKey::private(values[1], atom),
                 _ => PropertyKey::string(atom),
             };
             let value = vm
@@ -6870,7 +6892,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.promise_record(*promise).expect("promise record").state,
+                vm.promise_record(*promise).expect("promise record").state(),
                 PromiseState::Fulfilled
             );
         }
@@ -7052,7 +7074,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         locals: vec![],
         dynamic_bindings: vec![],
         captured: false,
-        registers: vec![Value::heap(11), Value::heap(12)],
+        registers: super::register_file::RegisterFile::from_registers(&[Value::heap(11), Value::heap(12)]),
         initialized_registers: 0,
         capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
@@ -9338,7 +9360,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 locals: vec![local],
                 dynamic_bindings: vec![(atom, binding)],
                 captured: true,
-                registers: vec![register, iterator, Value::FALSE],
+                registers: super::register_file::RegisterFile::from_registers(&[register, iterator, Value::FALSE]),
                 initialized_registers: 0,
                 capture_cache: super::CaptureCache::default(),
                 active_iterators: vec![super::ActiveIterator {
@@ -23981,4 +24003,52 @@ fn forwarded_calls_cross_into_cell_bodies() {
       for (let round = 0; round < 8000; round++) { total = (total + step.call(null, round & 7, round & 3)) & 1048575; }
       globalThis.answer = total;
     })();"#);
+}
+
+/// A function body of straight-line statements past the streaming size compiles a run of
+/// statements at a time (`compile::statement_stream`) and runs as the whole body would: calls,
+/// member writes, positions in errors.
+#[test]
+fn streamed_root_function_runs_a_run_at_a_time_then_whole_when_called_again() {
+    // `big`'s first call compiles and runs its body a run of statements at a time; its second
+    // compiles it whole. Both read the script's lexical `k` and the caller's `this`-free scope.
+    let mut source = String::from("let k = 3; var acc = 0; function add(x) { acc += x; }\nfunction big(p) {\n");
+    for _ in 0..24_000 {
+        source.push_str("add(p + k);\n");
+    }
+    source.push_str("}\nbig(1); var first = acc; big(2); print(first + ' ' + acc + ' ' + big.length + ' ' + big.name);\n");
+    let program = Engine::specialize(&source, "streamed-runs.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["96000 216000 1 big".to_string()]);
+}
+
+#[test]
+fn straight_line_body_past_the_stream_size_runs_as_written() {
+    let mut source = String::from("var acc = []; var o = { a: 0, b: { c: 0 } }; function emit(x, y) { acc.push(x + (y === undefined ? 0 : y)); }\nfunction big(p) {\n");
+    let mut expected_sum = 0i64;
+    let mut count = 0;
+    for i in 0..24_000i64 {
+        match i % 4 {
+            0 => {
+                source.push_str(&format!("emit({i}, p);\n"));
+                expected_sum += i + 7;
+                count += 1;
+            }
+            1 => source.push_str(&format!("o.a = o.a + {i} % 13;\n")),
+            2 => source.push_str("o.b.c++;\n"),
+            _ => {
+                source.push_str(&format!("emit(Math.max({i}, 1), void 0);\n"));
+                expected_sum += i;
+                count += 1;
+            }
+        }
+    }
+    source.push_str("p.missing.deep;\n}\ntry { big(7); } catch (error) { print(error.name); }\nvar sum = 0; for (var v of acc) sum += v; print(acc.length + ' ' + sum + ' ' + o.b.c);\n");
+    let program = Engine::specialize(&source, "straight-line.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError".to_string(), format!("{count} {expected_sum} 6000")]);
 }

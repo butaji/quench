@@ -30,7 +30,7 @@
 //! nested interpreter until an emitting stage inlines it. Matching behaviour is unchanged.
 
 use super::{
-    assertion_holds, equal, AssertionTest, Frame, Inst, Program, Text, UnitTest, UNBOUNDED, UNSET,
+    assertion_holds, equal, AssertionTest, Frame, Inst, Program, Text, UnitTest, NO_START, UNBOUNDED, UNSET,
 };
 
 /// A machine position: the next instruction and the subject position it reads at.
@@ -209,7 +209,7 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
 #[inline(always)]
 fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
-        Inst::CaptureOpen { temporary, restores } => capture_open(stage, (temporary, restores), at),
+        Inst::CaptureOpen { temporary, count, restores } => capture_open(stage, (temporary, count, restores), at),
         Inst::CaptureClose { capture, temporary } => {
             let start = stage.register(temporary);
             set_capture(stage, capture, (start, at.position));
@@ -242,8 +242,10 @@ fn dispatch<S: Stage>(stage: &mut S, table: u32, at: Cursor) -> Step {
 
 /// Records where a capture opens, keeping the old value on the stack when backtracking must undo it.
 #[inline(always)]
-fn capture_open<S: Stage>(stage: &mut S, (temporary, restores): (u32, bool), at: Cursor) -> Step {
-    if restores { set(stage, temporary, at.position) } else { stage.assign(temporary, at.position) }
+fn capture_open<S: Stage>(stage: &mut S, (temporary, count, restores): (u32, u32, bool), at: Cursor) -> Step {
+    for register in temporary..temporary + count {
+        if restores { set(stage, register, at.position) } else { stage.assign(register, at.position) }
+    }
     Step::Continue(at.next())
 }
 
@@ -318,7 +320,7 @@ fn loop_head<S: Stage>(stage: &mut S, (counter, min, max, greedy, exit): (u32, u
 #[inline(always)]
 fn loop_tail<S: Stage>(stage: &mut S, (counter, start, min, head): (u32, u32, u32, u32), at: Cursor) -> Step {
     let count = stage.register(counter);
-    if count >= min as usize && at.position == stage.register(start) {
+    if start != NO_START && count >= min as usize && at.position == stage.register(start) {
         return Step::Fail;
     }
     set(stage, counter, count + 1);

@@ -1,4 +1,4 @@
-//! JavaScript's calls of Wasm exports from the lane (`quench_runtime`'s `wasm_exports`): results,
+//! JavaScript's calls of Wasm exports from the lane (`quench_runtime`'s `lane_wasm_export_frame`): results,
 //! coercions, traps, exceptions in both directions, reentrancy and memory growth match Node's.
 use quench_runtime::{ExecutionMode, ExecutionRequest, Host, Runtime, WasmModule};
 use std::cell::RefCell;

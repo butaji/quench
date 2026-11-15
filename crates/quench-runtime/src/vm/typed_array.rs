@@ -15,6 +15,8 @@ const TYPED_ARRAY_GEOMETRY_ENTRIES: usize = 8;
 /// prototype change or collection advances.
 #[derive(Clone, Copy)]
 struct TypedArrayGeometryProof {
+    /// The receiver's own shape, which proved itself neither a dictionary nor holding the name.
+    shape: u32,
     prototype: Value,
     atom: Atom,
     epoch: u64,
@@ -25,43 +27,48 @@ struct TypedArrayGeometryProof {
 pub(super) struct TypedArrayGeometryProofs([std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES]);
 
 impl<H: Host> Vm<H> {
-    /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array `object`
-    /// that runs no guest code: the intrinsic accessor its chain resolves the name to, as
-    /// a pure native read (`pure_native_getter_value`). `None` leaves the read to the
+    /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array, DataView,
+    /// Map or Set `object` that runs no guest code: the intrinsic accessor its chain resolves
+    /// the name to, as a pure native read (`pure_native_getter_value`). `None` leaves the read to the
     /// general path: an own property of the name, an exotic or dictionary link, a data
     /// property or a script getter on the way.
     pub(super) fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
-        let (Some(Cell::TypedArray { object: view, .. }) | Some(Cell::DataView { object: view, .. })) = self.heap.get(object) else {
-            return None;
-        };
-        let data = &view.object;
-        if data.has_side_descriptors()
-            || self.shape_is_dictionary(data.shape())
-            || self.shape_slot(data.shape(), atom).is_some()
-        {
+        let data = self.virtual_field_view(object)?;
+        if data.has_side_descriptors() {
             return None;
         }
-        let prototype = data.proto();
+        let (shape, prototype) = (data.shape(), data.proto());
         let epoch = crate::heap::prototype_layout_epoch();
         let index = (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES;
         let getter = match self.typed_array_geometry.0[index].get() {
-            Some(proof) if proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => proof.getter,
-            _ => {
-                let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
-                // Every link up to the holder becomes a prototype first, so a later change to
-                // one advances the epoch and retires the proof.
-                let mut link = prototype;
-                for _ in 0..depth {
-                    self.heap.mark_prototype(link);
-                    link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-                }
-                if crate::heap::prototype_layout_epoch() == epoch {
-                    self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { prototype, atom, epoch, getter }));
-                }
-                getter
+            Some(proof) if proof.shape == shape && proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => {
+                proof.getter
             }
+            _ => self.prove_geometry_getter(shape, prototype, atom, epoch)?,
         };
         self.pure_native_getter_value(getter, object)
+    }
+
+    /// The getter `typed_array_geometry_read` reads `atom` through from a receiver of own
+    /// shape `shape` and prototype `prototype`, proved and recorded under `epoch`; `None`
+    /// where the shape is a dictionary or holds the name, or no intrinsic accessor answers.
+    fn prove_geometry_getter(&mut self, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Value> {
+        if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() {
+            return None;
+        }
+        let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
+        // Every link up to the holder becomes a prototype first, so a later change to one
+        // advances the epoch and retires the proof.
+        let mut link = prototype;
+        for _ in 0..depth {
+            self.heap.mark_prototype(link);
+            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+        }
+        if crate::heap::prototype_layout_epoch() == epoch {
+            let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
+            self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, getter }));
+        }
+        Some(getter)
     }
 
     /// The getter of the accessor `atom` names first along the ordinary prototypes from

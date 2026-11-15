@@ -384,7 +384,22 @@ enum WasmModuleTier {
     /// The whole-module compile was claimed, eagerly or by escalation; its result is the
     /// program's `compiled`.
     Whole,
+    /// The whole-module compile held code for less than `WASM_MODULE_MIN_COVERAGE` of the
+    /// module's bytecodes: the module runs interpreted for good, its calls pay no tier
+    /// lookups and its functions compile no roots (K-TIER T4a).
+    Declined,
 }
+
+/// The share of a module's bytecodes, in per mille, its whole compile must hold code for to be
+/// kept. Below it most calls cross between native code and the interpreter, and each crossing
+/// (a general-path activation, a callout) costs more than the native function saves: the Wasm
+/// GC modules of JetStream 3 (j2cl-box2d, Dart-flute) compile a few tiny leaves and run 10-40%
+/// slower than with no JIT.
+const WASM_MODULE_MIN_COVERAGE: usize = 500;
+
+/// The fewest functions a module has for its whole compile's coverage to be weighed: a smaller
+/// module compiles in microseconds and makes few crossings, whatever it holds.
+const WASM_MODULE_WEIGHED_FUNCTIONS: usize = 64;
 
 impl Default for WasmModuleTier {
     fn default() -> Self {
@@ -586,7 +601,7 @@ impl JitTierManager {
                 }
                 policy.due(*observed, std::time::Duration::ZERO)
             }
-            Some(WasmModuleTier::Whole) | None => false,
+            Some(WasmModuleTier::Whole | WasmModuleTier::Declined) | None => false,
         }
     }
 
@@ -597,7 +612,11 @@ impl JitTierManager {
     /// package's one source-map parse) runs faster in the interpreter than through root
     /// compiles, and a long one would throw them away at its whole compile.
     fn wasm_promotes_roots(&self, policy: WasmModuleCompile) -> bool {
-        policy == WasmModuleCompile::NEVER || !self.wasm_module_selective()
+        !self.wasm_module_declined() && (policy == WasmModuleCompile::NEVER || !self.wasm_module_selective())
+    }
+
+    fn wasm_module_declined(&self) -> bool {
+        matches!(self, Self::Wasm(tiers) if tiers.module == WasmModuleTier::Declined)
     }
 
     fn wasm_module_selective(&self) -> bool {
@@ -617,7 +636,7 @@ impl JitTierManager {
             Self::Wasm(tiers) => tiers,
             Self::Empty | Self::JavaScript(_) => return None,
         };
-        if tiers.module == WasmModuleTier::Whole {
+        if matches!(tiers.module, WasmModuleTier::Whole | WasmModuleTier::Declined) {
             return None;
         }
         tiers.module = WasmModuleTier::Whole;
@@ -644,9 +663,16 @@ struct ProgramEntry {
     #[cfg(feature = "native-execution")]
     native_js: Option<Rc<super::native_program::NativeJsCode>>,
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
-    constants: Vec<Value>,
-    const_arrays: Vec<Option<crate::heap::ArrayElements>>,
-    function_sources: Vec<Option<Value>>,
+    /// Its materialized constants, with room for those its first-call chunks append, which
+    /// never move them (`AppendVec`).
+    constants: crate::bytecode::append_vec::AppendVec<Value>,
+    /// The elements of the constant array literals that ran, by their first constant: few
+    /// programs run any, so a table dense over every constant touched a page per 256 of them
+    /// for nothing (an indirect eval of a 2 MB bundle, every load).
+    const_arrays: FxHashMap<u32, crate::heap::ArrayElements>,
+    /// The source texts `Function.prototype.toString` made, by function: few functions are
+    /// printed, so the table holds those alone, not a slot for each function and its room.
+    function_sources: FxHashMap<u32, Value>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
     module_environment: Option<Value>,
@@ -769,17 +795,28 @@ pub(crate) struct ProgramStore {
     native_call_bindings: std::cell::RefCell<Vec<lane_publication::NativeCallBinding>>,
     /// The bodies published by what they compile from (`lane_publication::LaneKey`).
     /// The compiles each body or loop entry has had (`lane_publication::LaneKey`'s first three).
-    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32), u8>>,
+    lane_compiles: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), u8>>,
+    /// The IR size of the last lane plan from each entry of each function (`Vm::start_lane_method`):
+    /// what deciding the next compile's worth from costs, before planning it again.
+    lane_plan_ir: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, Option<u32>), usize>>,
     lane_installed: std::cell::RefCell<std::collections::BTreeMap<lane_publication::LaneKey, Weak<crate::vm::compiled::PublishedLaneMethod>>>,
     /// The ahead-of-time bodies the loaded files hold.
     ahead: std::cell::RefCell<Vec<Rc<crate::vm::compiled::AheadImages>>>,
     /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
     /// id never names another program.
     programs: Vec<Option<Box<ProgramEntry>>>,
+    /// Advanced by every change to a program the store holds or to the set it holds, and by
+    /// the VM's changes to cache layouts and tables (`bump_context_epoch`): a program context
+    /// derived at another epoch is derived again (`Vm::program_context`).
+    context_epoch: u64,
     /// Weak compiled-script identities for global eval; contexts are supplied per call.
     global_eval_programs: FxHashMap<super::eval::eval_source::EvalSource, ProgramId>,
     /// Compiled direct evals by text and the caller facts the compilation reads.
     direct_eval_programs: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
+    /// Strict direct evals by text and caller facts: a strict eval's program is its own Script
+    /// per evaluation (its eval origin is not shared), so a later eval of the same text makes a
+    /// new program over the latest one's code (`eval_cache.rs`).
+    strict_direct_eval_code: FxHashMap<super::eval::eval_source::DirectEvalKey, ProgramId>,
     owned_scripts: FxHashMap<ProgramId, OwnedScript>,
     /// Completed reclamation passes; see `reclaim_unreferenced`.
     reclaim_passes: u64,
@@ -818,9 +855,17 @@ impl Default for ProgramStore {
             lane_installed: Default::default(),
             ahead: Default::default(),
             lane_compiles: Default::default(),
+            lane_plan_ir: Default::default(),
             programs: Vec::new(),
+            // Each store's epochs start apart from every other's, so a context derived from
+            // a store a snapshot or reset replaced never matches its successor's.
+            context_epoch: {
+                static STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                STORES.fetch_add(1 << 40, std::sync::atomic::Ordering::Relaxed)
+            },
             global_eval_programs: FxHashMap::default(),
             direct_eval_programs: FxHashMap::default(),
+            strict_direct_eval_code: FxHashMap::default(),
             owned_scripts: FxHashMap::default(),
             reclaim_passes: 0,
             unchecked_reclaimable: 0,
@@ -887,6 +932,7 @@ impl ProgramStore {
 
     /// Every mutation goes through here, so it also marks the program's roots pending.
     fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
+        self.context_epoch += 1;
         let entry = self.programs.get_mut(id.index())?.as_deref_mut()?;
         entry.minor_root_traces = PromotionAge::OLDEST.minors();
         Some(entry)
@@ -1004,6 +1050,7 @@ impl ProgramStore {
                 reclaimed_wasm_baselines.1 += compiled.mapped_bytes();
             }
             *slot = None;
+            self.context_epoch += 1;
             reclaimed.extend(ProgramId::from_index(index));
         }
         self.settled_reclaimable_bytes = settled;
@@ -1038,8 +1085,10 @@ impl ProgramStore {
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.global_eval_programs.clear();
         self.direct_eval_programs.clear();
+        self.strict_direct_eval_code.clear();
         self.owned_scripts.clear();
         self.programs.clear();
+        self.context_epoch += 1;
         self.unchecked_reclaimable = 0;
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
@@ -1257,18 +1306,20 @@ impl ProgramStore {
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
             program.release_replayable_records();
         }
-        let regexp_literals = vec![None; program.regexp_literal_sites.capacity()];
-        let function_sources = vec![None; program.functions.capacity()];
+        // Sized by the sites the program has: a chunk's sites, appended later, grow it.
+        let regexp_literals = vec![None; program.regexp_literal_sites.len()];
+        let function_sources = FxHashMap::default();
         let lane_views = LaneViews::default();
-        let lane_deferred = vec![std::cell::Cell::new(0); program.functions.capacity()];
+        let lane_deferred = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
+        self.context_epoch += 1;
         self.programs.push(Some(Box::new(ProgramEntry {
             residual: Residual::decoded(program),
             #[cfg(feature = "native-execution")]
             native_js: None,
             wasm_signatures: None,
-            constants: Vec::new(),
-            const_arrays: Vec::new(),
+            constants: Vec::new().into(),
+            const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
             module_environment: None,
@@ -1309,7 +1360,8 @@ impl ProgramStore {
         {
             return false;
         }
-        for function in &entry.residual.functions {
+        // A function its module lowers on its first call reads only the module's own pool.
+        for function in entry.residual.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             for instruction in &function.code {
                 let instruction = if instruction.is_wide() {
                     function.wide[instruction.wide_index()]
@@ -1559,6 +1611,11 @@ impl ProgramStore {
     }
 
     /// Borrows the residual without the reference-count traffic of `get`.
+    /// The decoded residuals of the stored programs, a shared one once per program sharing it.
+    pub(crate) fn decoded_residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
+        self.programs.iter().flatten().filter_map(|entry| entry.residual.if_decoded().map(|program| &**program))
+    }
+
     #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
         self.entry(id).map(|entry| &**entry.residual)
     }
@@ -1575,10 +1632,11 @@ impl ProgramStore {
         }
     }
 
-    pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
+    /// Sets program `id`'s materialized constants, with room for `headroom` more.
+    pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>, headroom: usize) {
         if let Some(entry) = self.entry_mut(id) {
-            entry.const_arrays = vec![None; constants.capacity()];
-            entry.constants = constants;
+            entry.const_arrays.clear();
+            entry.constants = crate::bytecode::append_vec::AppendVec::with_headroom(constants, headroom);
             // Lane views carry constants, so they derive from the new set.
             entry.lane_views = LaneViews::default();
         }
@@ -1624,10 +1682,14 @@ impl ProgramStore {
             self.jit_code_cache
                 .release(JitArtifactKind::BaselineWasm, 1, previous_bytes);
         }
+        let declined = compiled.as_ref().is_some_and(|compiled| self.wasm_module_coverage_short(id, compiled));
         let compiled = compiled.filter(|compiled| {
-            self.jit_code_cache
+            !declined && self.jit_code_cache
                 .retain(JitArtifactKind::BaselineWasm, compiled.mapped_bytes())
         });
+        if declined && let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
+            tiers.module = WasmModuleTier::Declined;
+        }
         if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
@@ -1709,9 +1771,29 @@ impl ProgramStore {
     /// Record that the program's whole-module compile was claimed at its first call (eager
     /// tiering, or a diagnostic root mode), so selective escalation never repeats it.
     pub(super) fn settle_wasm_module_tier(&mut self, id: ProgramId) {
-        if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut()) {
+        if let Some(tiers) = self.entry_mut(id).and_then(|entry| entry.jit_tiers.wasm_tiers_mut())
+            && tiers.module != WasmModuleTier::Declined
+        {
             tiers.module = WasmModuleTier::Whole;
         }
+    }
+
+    /// Whether `compiled`, a whole compile of the Wasm module `id`, holds code for less than
+    /// `WASM_MODULE_MIN_COVERAGE` of its bytecodes. JavaScript programs are never short.
+    fn wasm_module_coverage_short(&self, id: ProgramId, compiled: &super::compiled::CompiledProgram) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm || entry.residual.functions.len() < WASM_MODULE_WEIGHED_FUNCTIONS {
+            return false;
+        }
+        let (mut held, mut total) = (0usize, 0usize);
+        for index in 0..entry.residual.functions.len() {
+            let Some(function) = entry.residual.function_get(index) else { continue };
+            total += function.code.len();
+            if compiled.has_function(index) {
+                held += function.code.len();
+            }
+        }
+        held * 1000 < total * WASM_MODULE_MIN_COVERAGE
     }
 
     /// Claim a due whole-module compile (`WasmModuleTier::Whole`), releasing the
@@ -2438,6 +2520,23 @@ impl ProgramStore {
         self.jit_code_cache.mapped_bytes + self.jit_code_cache.baseline_mapped_bytes
     }
 
+    /// The epoch program contexts are derived at (`context_epoch`).
+    #[inline(always)]
+    pub(super) fn context_epoch(&self) -> u64 {
+        self.context_epoch
+    }
+
+    /// Makes every program context derive again: the VM changed what they read beside the
+    /// store (a cache layout, the field cache table).
+    pub(super) fn bump_context_epoch(&mut self) {
+        self.context_epoch += 1;
+    }
+
+    /// Program `id`'s lane view table if it was made (`lane_program` makes it).
+    pub(super) fn made_lane_views(&self, id: ProgramId) -> Option<&[LaneViewCell]> {
+        self.entry(id)?.lane_views.table.get().map(|table| &table[..])
+    }
+
     /// What a lane running program `id` reads of it, from one look at its entry: its
     /// residual, lane views (`lane_views`) and constants (`constants`).
     #[inline(always)]
@@ -2446,7 +2545,7 @@ impl ProgramStore {
         id: ProgramId,
     ) -> Option<(&ResidualProgram, &[LaneViewCell], &[Value])> {
         let entry = self.entry(id)?;
-        Some((&entry.residual, entry.lane_views.of(&entry.residual), entry.constants.as_slice()))
+        Some((&entry.residual, entry.lane_views.of(&entry.residual), &entry.constants[..]))
     }
 
     /// Invalidates every lane view's bindings to shape IDs: compaction renumbered
@@ -2500,7 +2599,7 @@ impl ProgramStore {
             return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
-        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) {
+        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
             return None;
         }
         Some(derive_lane_view(entry, function, code, view, derive))
@@ -2520,6 +2619,7 @@ impl ProgramStore {
                 .lane_deferred
                 .get(function as usize)
                 .is_some_and(deferred_run_completes)
+                && !entry.residual.runs_tier0(function as usize)
     }
 
     pub(super) fn lane_view<'s>(
@@ -2546,7 +2646,7 @@ impl ProgramStore {
 
     pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
         self.entry(id)
-            .map_or(&[], |entry| entry.constants.as_slice())
+            .map_or(&[], |entry| &entry.constants[..])
     }
 
     #[cfg(feature = "native-execution")]
@@ -2576,19 +2676,17 @@ impl ProgramStore {
     ) -> Option<crate::heap::ArrayElements> {
         let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
-        let cached = entry.const_arrays.get_mut(start)?;
-        if cached.is_none() {
-            *cached = Some(crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?));
+        let key = u32::try_from(start).ok()?;
+        if let Some(cached) = entry.const_arrays.get(&key) {
+            return Some(cached.clone());
         }
-        cached.clone()
+        let elements = crate::heap::ArrayElements::from_slice(entry.constants.get(start..end)?);
+        entry.const_arrays.insert(key, elements.clone());
+        Some(elements)
     }
 
     pub(crate) fn function_source(&self, id: ProgramId, function: u32) -> Option<Value> {
-        self.entry(id)?
-            .function_sources
-            .get(function as usize)
-            .copied()
-            .flatten()
+        self.entry(id)?.function_sources.get(&function).copied()
     }
 
     pub(crate) fn cache_function_source(
@@ -2597,11 +2695,9 @@ impl ProgramStore {
         function: u32,
         source: Value,
     ) -> Option<Value> {
-        let cached = self
-            .entry_mut(id)?
-            .function_sources
-            .get_mut(function as usize)?;
-        Some(*cached.get_or_insert(source))
+        let entry = self.entry_mut(id)?;
+        (function < entry.residual.functions.capacity() as u32).then_some(())?;
+        Some(*entry.function_sources.entry(function).or_insert(source))
     }
 
     pub(crate) fn regexp_literal_meta(
@@ -2621,6 +2717,9 @@ impl ProgramStore {
         let Some(entry) = self.entry_mut(id) else {
             return false;
         };
+        if site >= entry.regexp_literals.len() && site < entry.residual.regexp_literal_sites.capacity() {
+            entry.regexp_literals.resize(site + 1, None);
+        }
         let Some(cached) = entry.regexp_literals.get_mut(site) else {
             return false;
         };
@@ -2655,7 +2754,7 @@ impl ProgramStore {
                 entry.minor_root_traces = entry.minor_root_traces.min(age.minors()) - 1;
             }
             roots.extend_from_slice(&entry.constants);
-            roots.extend(entry.function_sources.iter().flatten());
+            roots.extend(entry.function_sources.values().copied());
             roots.extend(entry.module_environment);
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
@@ -2761,7 +2860,7 @@ fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
 /// the peak).
 #[derive(Default)]
 pub(super) struct LaneViews {
-    table: std::cell::OnceCell<Box<[LaneViewCell]>>,
+    table: std::cell::OnceCell<LaneViewTable>,
     /// The derived views in chunks that never grow past their capacity, so a view's address is
     /// fixed while its program holds it. Each chunk holds as many as all earlier chunks together
     /// (`LANE_VIEW_FIRST_CHUNK` first), so a program's views take a few allocations with at
@@ -2773,6 +2872,60 @@ pub(super) struct LaneViews {
 /// a handful of views, which this keeps in one allocation of 704 bytes.
 const LANE_VIEW_FIRST_CHUNK: usize = 8;
 
+
+/// A program's lane view cells, one per function slot its table can reach. A large table lies
+/// on fresh zero pages, an empty cell being zero bits, so only the pages of functions that
+/// derive a view become resident: each eval of first-inspector-code-load builds a program of
+/// 31K functions whose top level alone derives a view, and kept a 250 KB table written whole.
+enum LaneViewTable {
+    Boxed(Box<[LaneViewCell]>),
+    Mapped { base: std::ptr::NonNull<LaneViewCell>, len: usize, bytes: usize },
+}
+
+/// The smallest table that takes its own mapping, which costs two system calls.
+const MAPPED_LANE_VIEW_TABLE_BYTES: usize = 4 * super::site_table::MAPPING_GRANULE_BYTES;
+
+// An empty cell is zero bits, which a fresh mapping holds.
+const _: () = assert!(
+    // SAFETY: a cell is one pointer-sized `Option<NonNull>`, whose `None` this reads.
+    unsafe { std::mem::transmute::<LaneViewCell, usize>(std::cell::OnceCell::new()) } == 0
+);
+
+impl LaneViewTable {
+    fn new(len: usize) -> Self {
+        let bytes = len * size_of::<LaneViewCell>();
+        if bytes < MAPPED_LANE_VIEW_TABLE_BYTES {
+            return Self::Boxed((0..len).map(|_| std::cell::OnceCell::new()).collect());
+        }
+        let bytes = bytes.next_multiple_of(super::site_table::MAPPING_GRANULE_BYTES);
+        let base = super::site_table::storage::map_zeroed(bytes).cast();
+        Self::Mapped { base, len, bytes }
+    }
+}
+
+impl std::ops::Deref for LaneViewTable {
+    type Target = [LaneViewCell];
+
+    #[inline(always)]
+    fn deref(&self) -> &[LaneViewCell] {
+        match self {
+            Self::Boxed(cells) => cells,
+            // SAFETY: the mapping holds `len` cells, zero bits being empty ones, for the table's
+            // life.
+            Self::Mapped { base, len, .. } => unsafe { std::slice::from_raw_parts(base.as_ptr(), *len) },
+        }
+    }
+}
+
+impl Drop for LaneViewTable {
+    fn drop(&mut self) {
+        if let Self::Mapped { base, bytes, .. } = *self {
+            // SAFETY: the mapping came from `map_zeroed` with these bytes, and the table is its
+            // only reader.
+            unsafe { super::site_table::storage::unmap(base.cast(), bytes) };
+        }
+    }
+}
 
 /// One function's derived lane view, in its program's arena (`LaneViews::arena`).
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
@@ -2800,6 +2953,7 @@ fn derive_lane_view<'s>(
     view.get_or_init(|| {
         // Only a loop tier reads the masks; a collection derives them otherwise.
         let live = || entry.residual.shared_register_root_masks(function);
+        entry.residual.pin_tier0(function as usize);
         let view = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
         #[cfg(feature = "profile-lane-exits")]
         {
@@ -2828,7 +2982,7 @@ impl LaneViews {
 
     #[cold]
     fn make_table(&self, residual: &ResidualProgram) -> &[LaneViewCell] {
-        self.table.get_or_init(|| (0..residual.functions.capacity()).map(|_| std::cell::OnceCell::new()).collect())
+        self.table.get_or_init(|| LaneViewTable::new(residual.functions.capacity()))
     }
 
     /// `function`'s view if it has one, without making the table.
@@ -3015,4 +3169,13 @@ fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
     } else if named(&ORDER) {
         census.3 = census.3.saturating_add(1);
     }
+}
+
+/// `len` zero counts on zero pages: a program's per-function counts take a slot for each
+/// function it may append, which a filled table would touch at its load.
+pub(super) fn zeroed_counts(len: usize) -> Vec<std::cell::Cell<u8>> {
+    let mut zeros = std::mem::ManuallyDrop::new(vec![0u8; len]);
+    // SAFETY: `Cell<u8>` has the layout of `u8`, so the zeroed buffer is `len` counts of 0,
+    // owned by the new vector alone.
+    unsafe { Vec::from_raw_parts(zeros.as_mut_ptr().cast::<std::cell::Cell<u8>>(), zeros.len(), zeros.capacity()) }
 }

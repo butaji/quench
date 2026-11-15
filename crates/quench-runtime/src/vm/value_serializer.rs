@@ -1059,7 +1059,7 @@ impl<H: Host> Vm<H> {
             let element = self
                 .heap
                 .array_elements(array)
-                .and_then(|elements| elements.get(index).copied())
+                .and_then(|elements| elements.get(index))
                 .filter(|element| !element.is_deleted());
             result = match element {
                 None if !self.has_own_array_index(array, index) => {

@@ -42,7 +42,7 @@ impl Heap {
         if let Some(hash) = self.string_atoms.hashes.known(record_id) {
             return Some(hash);
         }
-        let hash = text.units().text_hash();
+        let hash = text.read_units(|units| units.text_hash());
         self.remember_string_hash(value, hash);
         Some(hash)
     }

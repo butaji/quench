@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
         let value = match key {
             PropertyKey::String(atom) => self.own_property(object, atom),
             PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
-            PropertyKey::Private(_) => return DiagnosticProperty::Blocked,
+            PropertyKey::Private(..) => return DiagnosticProperty::Blocked,
         };
         value.map_or(DiagnosticProperty::Absent, DiagnosticProperty::Data)
     }
@@ -196,7 +196,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        if self.handler_lacks_trap(handler, ProxyTrap::Set) && !matches!(property, PropertyKey::Private(_)) {
+        if self.handler_lacks_trap(handler, ProxyTrap::Set) && !matches!(property, PropertyKey::Private(..)) {
             return self.proxy_set_target(p, target, receiver, property, value, strict);
         }
         let key = self.proxy_key_value(p, property)?;
@@ -436,8 +436,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn site_keyed_own_read(&self, site: usize, object: Value, key: Value) -> Option<Value> {
         let data = self.heap.ordinary_object(object)?;
-        let epoch = crate::heap::prototype_layout_epoch();
-        let slot = self.symbol_load_proofs.site_own_slot(site, data.shape(), key, epoch)?;
+        let slot = self.symbol_load_proofs.site_own_slot(site, data.layout_id(), key)?;
         if data.is_arguments_object() {
             return None;
         }
@@ -459,7 +458,7 @@ impl<H: Host> Vm<H> {
         };
         if let Some(data) = self.heap.ordinary_object(object) {
             let epoch = crate::heap::prototype_layout_epoch();
-            self.symbol_load_proofs.record_site_own_slot(site, data.shape(), key, property, epoch);
+            self.symbol_load_proofs.record_site_own_slot(site, data.layout_id(), key, property, epoch);
         }
     }
 
@@ -477,9 +476,22 @@ impl<H: Host> Vm<H> {
     /// typed array's, iterator's or collection's `@@iterator`). An array's reads walk unproved
     /// (`plain_keyed_get`).
     #[inline(always)]
-    fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
+    pub(in crate::vm) fn proved_read_receiver(&self, object: Value, key: PropertyKey) -> Option<&Object> {
         if let Some(data) = self.heap.ordinary_object(object) {
             return Some(data);
+        }
+        // A name no exotic object answers off its shape: a collection, date, regexp, promise or
+        // iterator holds every own name on its shape, and an array every one but its indices
+        // and `length`, which `plain_named_key` leaves out.
+        if let PropertyKey::String(atom) = key
+            && self.plain_named_key(atom)
+        {
+            if let Some(data) = self.heap.ordinary_builtin_object(object) {
+                return Some(data);
+            }
+            if self.heap.array(object).is_some() {
+                return self.heap.object(object);
+            }
         }
         if !matches!(key, PropertyKey::Symbol(_))
             || self.heap.array(object).is_some()
@@ -501,34 +513,45 @@ impl<H: Host> Vm<H> {
     /// `plain_property_get` of a symbol key or a key `plain_named_key` admits, answered by
     /// the proof of where the walk from a receiver of the same shape found it
     /// (`symbol_load_proofs`), or by `prove_symbol_load`.
-    #[inline]
+    #[inline(always)]
     fn plain_proved_get(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
-        use super::symbol_load_proof::SymbolLoadAnswer;
+        if let Some(data) = self.heap.ordinary_object(object)
+            && let Some(key32) = key.key32()
+            && let Some(slot) = self.symbol_load_proofs.own_slot(data.layout_id(), key32)
+        {
+            // SAFETY: the proof recorded this slot for an own data property of this layout's shape.
+            return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
+        }
+        self.plain_proved_get_past_own(object, key)
+    }
+
+    /// `plain_proved_get` past an own-slot hit: the other answers, else the proving walk.
+    #[inline(never)]
+    fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
+        use super::symbol_load_proof::{KIND_ABSENT, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
         let data = self.proved_read_receiver(object, key)?;
         let epoch = crate::heap::prototype_layout_epoch();
-        let answer = self.symbol_load_proofs.answer(data.shape(), key, epoch);
-        // A proof's shape is an ordinary one, so the receiver is no namespace, deferred module
-        // or arguments object; side descriptors could name the key outside its shape.
-        let inherits = !data.has_side_descriptors();
-        match answer {
-            // SAFETY: the proof recorded this slot for an own data property of this shape.
-            Some(SymbolLoadAnswer::Own(slot)) => {
-                return Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) });
+        if let Some(key32) = key.key32()
+            && let Some(word) = self.symbol_load_proofs.word(data.layout_id(), key32)
+        {
+            // A proof's layout is an ordinary one, so the receiver is no namespace, deferred
+            // module or arguments object; side descriptors could name the key outside its shape.
+            let inherits = word.current(epoch) && !data.has_side_descriptors();
+            match word.kind() {
+                // SAFETY: the proof recorded this slot for an own data property of this shape.
+                KIND_OWN => return Some(unsafe { self.heap.property_get_unchecked(data, word.slot()) }),
+                KIND_INHERITED if inherits => {
+                    let holder = match self.symbol_load_proofs.holder(data.layout_id(), key32) {
+                        Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                        _ => self.proof_holder(data, word.hops())?,
+                    };
+                    // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
+                    return unsafe { self.heap.property_get_shaped(holder, word.slot()) };
+                }
+                KIND_ABSENT if inherits => return Some(Value::UNDEFINED),
+                KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if inherits || word.hops() == 0 => return None,
+                _ => {}
             }
-            Some(SymbolLoadAnswer::Inherited { prototype, holder, slot })
-                if inherits && data.proto() == prototype =>
-            {
-                let holder = self.heap.ordinary_object(holder)?;
-                // SAFETY: the proof keeps the holder and the shape its slot was recorded in.
-                return unsafe { self.heap.property_get_shaped(holder, slot as usize) };
-            }
-            Some(SymbolLoadAnswer::Absent { prototype }) if inherits && data.proto() == prototype => {
-                return Some(Value::UNDEFINED);
-            }
-            Some(SymbolLoadAnswer::Getter { prototype, .. }) if inherits && data.proto() == prototype => {
-                return None;
-            }
-            _ => {}
         }
         self.prove_symbol_load(object, key, epoch)
     }
@@ -540,10 +563,24 @@ impl<H: Host> Vm<H> {
     #[cold]
     #[inline(never)]
     fn prove_symbol_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<Value> {
+        match self.prove_load(object, key, epoch) {
+            ProvedLoad::Value(value) => Some(value),
+            ProvedLoad::Absent => Some(Value::UNDEFINED),
+            ProvedLoad::Getter => None,
+            ProvedLoad::Unproved => self.plain_property_get(object, key),
+        }
+    }
+
+    /// The walk of `prove_symbol_load`, recording what it proves: the value, an absent key, a
+    /// getter (which only the general path calls), or a chain no proof covers.
+    pub(in crate::vm) fn prove_load(&mut self, object: Value, key: PropertyKey, epoch: u64) -> ProvedLoad {
+        self.prove_load_walk(object, key, epoch).unwrap_or(ProvedLoad::Unproved)
+    }
+
+    fn prove_load_walk(&mut self, object: Value, key: PropertyKey, epoch: u64) -> Option<ProvedLoad> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let symbol = key;
         let data = self.proved_read_receiver(object, key)?;
-        let (shape, prototype) = (data.shape(), data.proto());
+        let (layout, prototype) = (data.layout_id(), data.proto());
         let mut current = object;
         let mut depth = 0u8;
         let (answer, value) = loop {
@@ -553,7 +590,7 @@ impl<H: Host> Vm<H> {
                 self.heap.object_record(current)
             };
             let Some(link) = link else {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             };
             let link_shape = link.shape();
             if link.is_module_namespace()
@@ -561,16 +598,17 @@ impl<H: Host> Vm<H> {
                 || link.is_arguments_object()
                 || self.shape_is_dictionary(link_shape)
             {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             }
-            if let Some(slot) = self.property_shape_slot(link_shape, symbol) {
+            if let Some(slot) = self.property_shape_slot(link_shape, key) {
                 let accessors = self.shape_may_have_accessors(link_shape);
                 if accessors && self.slot_attributes(link, slot)?.accessor {
                     if depth > 0 && let Ok(slot) = u32::try_from(slot) {
-                        let getter = SymbolLoadAnswer::Getter { prototype, holder: current, slot };
-                        self.prove_symbol_chain(shape, key, epoch, prototype, depth, getter);
+                        let getter = SymbolLoadAnswer::Getter { hops: depth, slot };
+                        self.prove_symbol_chain(layout, key, epoch, prototype, depth, getter, current);
+                        self.refine_getter_fact(layout, key, epoch, depth, slot, current);
                     }
-                    return None;
+                    return Some(ProvedLoad::Getter);
                 }
                 let value = self.heap.property_get(link, slot)?;
                 let slot = u32::try_from(slot).ok()?;
@@ -579,42 +617,69 @@ impl<H: Host> Vm<H> {
                 let answer = if depth == 0 {
                     SymbolLoadAnswer::Own(slot)
                 } else {
-                    SymbolLoadAnswer::Inherited { prototype, holder: current, slot }
+                    SymbolLoadAnswer::Inherited { hops: depth, slot }
                 };
                 break (answer, value);
             }
             if link.has_side_descriptors() {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             }
             let next = link.proto();
             if next.is_null() {
-                break (SymbolLoadAnswer::Absent { prototype }, Value::UNDEFINED);
+                break (SymbolLoadAnswer::Absent, Value::UNDEFINED);
             }
             let Some(deeper) = depth.checked_add(1) else {
-                return self.plain_property_get(object, symbol);
+                return Some(ProvedLoad::Unproved);
             };
             depth = deeper;
             current = next;
         };
-        self.prove_symbol_chain(shape, key, epoch, prototype, depth, answer);
-        Some(value)
+        self.prove_symbol_chain(layout, key, epoch, prototype, depth, answer, current);
+        Some(match answer {
+            SymbolLoadAnswer::Absent => ProvedLoad::Absent,
+            _ => ProvedLoad::Value(value),
+        })
     }
 
-    /// Records `answer` for `key` on receivers of `shape` once the `depth` prototypes from
+    /// Records `answer` for `key` on receivers of `layout` once the `depth` prototypes from
     /// `prototype` the walk passed are marked prototypes.
     fn prove_symbol_chain(
         &mut self,
-        shape: u32,
+        layout: u32,
         key: PropertyKey,
         epoch: u64,
         prototype: Value,
         depth: u8,
         answer: super::symbol_load_proof::SymbolLoadAnswer,
+        holder: Value,
     ) {
         self.mark_prototype_links(prototype, depth);
         // Marking a link that was no prototype yet leaves the epoch where it was.
         if crate::heap::prototype_layout_epoch() == epoch {
-            self.symbol_load_proofs.record(shape, key, epoch, answer);
+            // A holder up the chain is an object record (`prove_load_walk`): its id, plus one.
+            let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
+            self.symbol_load_proofs.record_with_holder(layout, key, epoch, answer, holder);
+        }
+    }
+
+    /// Rewrites the getter fact `prove_symbol_chain` just recorded with where its holder's
+    /// shape keeps the getter (`SlotAccessor`), so a hit reads it without the slot attributes.
+    fn refine_getter_fact(&self, layout: u32, key: PropertyKey, epoch: u64, depth: u8, slot: u32, holder: Value) {
+        use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
+        let (Some(key32), Some(data)) = (key.key32(), self.heap.object_record(holder)) else {
+            return;
+        };
+        if crate::heap::prototype_layout_epoch() != epoch {
+            return;
+        }
+        let kind = match self.slot_accessor(data.shape(), slot as usize) {
+            super::SlotAccessor::Getter => KIND_GETTER_SLOT,
+            super::SlotAccessor::Pair => KIND_GETTER_PAIR,
+            super::SlotAccessor::Attributes => KIND_GETTER,
+        };
+        if kind != KIND_GETTER {
+            let holder_id = holder.direct_object_index().map_or(0, |id| id + 1);
+            self.symbol_load_proofs.record_accessor(layout, key32, epoch, depth, slot, kind, holder_id);
         }
     }
 
@@ -642,7 +707,7 @@ impl<H: Host> Vm<H> {
             PropertyKey::String(atom) => {
                 atom != self.length_atom && !self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
             }
-            PropertyKey::Private(_) => false,
+            PropertyKey::Private(..) => false,
         };
         let mut current = object;
         loop {
@@ -781,7 +846,7 @@ impl<H: Host> Vm<H> {
             {
                 let value = elements
                     .get(index as usize)
-                    .copied()
+                    
                     .filter(|value| !value.is_deleted())
                     .or_else(|| self.heap.sparse_get(object, index as usize));
                 if let Some(value) = value.filter(|value| !value.is_deleted()) {
@@ -912,7 +977,7 @@ impl<H: Host> Vm<H> {
     /// `None`, leaving the access to the general path, which throws or calls it.
     pub(super) fn private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)?.private_field(PrivateBrand { home, name: atom })
+        self.private_field(target, PrivateBrand { home, name: atom })
     }
 
     /// The private brand of `atom` that function `function` of the running program, whose
@@ -990,7 +1055,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let brand = self.memoized_private_brand(p, environment, function, atom)?;
-        self.object_data(target)?.private_field(brand)
+        self.private_field(target, brand)
     }
 
     /// The store of private field `atom` of `target` under the running frame's home for the
@@ -998,7 +1063,7 @@ impl<H: Host> Vm<H> {
     /// accessor, which the general path throws for or calls.
     pub(super) fn set_private_field_value(&mut self, p: &ResidualProgram, target: Value, atom: Atom, value: Value) -> bool {
         let Some(home) = self.private_name_home(p, atom) else { return false; };
-        self.object_data_mut(target).is_some_and(|object| object.set_private_field(PrivateBrand { home, name: atom }, value))
+        self.set_private_field(target, PrivateBrand { home, name: atom }, value)
     }
 
     /// Whether `object` may gain a private element: always, unless the host applies
@@ -1014,9 +1079,7 @@ impl<H: Host> Vm<H> {
         if !addable {
             return Err(self.type_error(p, "Cannot add private field to a non-extensible object".into()));
         }
-        if let Some(object) = self.object_data_mut(target)
-            && object.initialize_private_field(PrivateBrand { home, name: atom }, value)
-        {
+        if self.add_private_field(target, PrivateBrand { home, name: atom }, value) {
             return Ok(());
         }
         let name = crate::bytecode::private_identity_label(self.atom_name(atom)).unwrap_or_else(|| self.atom_name(atom)).to_owned();
@@ -1029,7 +1092,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn mark_private_name(&mut self, p: &ResidualProgram, object: Value, home: Value, atom: Atom) -> Result<(), JsError> {
         let brand = PrivateBrand { home, name: atom };
         if object != home {
-            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), data.has_private_name(brand))) else {
+            let Some((addable, branded)) = self.object_data(object).map(|data| (self.private_element_addable(data), self.has_private_name(object, brand))) else {
                 return Err(self.type_error(p, "Cannot add private method to a non-extensible object".into()));
             };
             if !addable {
@@ -1039,9 +1102,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "Cannot add private method to an object that already has it".into()));
             }
         }
-        if let Some(object) = self.object_data_mut(object) {
-            object.add_private_name(brand);
-        }
+        self.add_private_name(object, brand);
         Ok(())
     }
 
@@ -1106,9 +1167,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<Value> {
         let home = self.private_name_home(p, atom)?;
-        self.object_data(target)
-            .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }))
-            .then_some(home)
+        self.has_private_name(target, PrivateBrand { home, name: atom }).then_some(home)
     }
 
     /// The home object that declares private name `atom` for the running frame: the nearest
@@ -1202,14 +1261,10 @@ impl<H: Host> Vm<H> {
             }
             environment = *parent;
         }
-        let home = homes.into_iter().map(|(_, home)| home).find(|home| {
-            self.object_data(*home).is_some_and(|object| {
-                object.has_private_name(PrivateBrand {
-                    home: *home,
-                    name: atom,
-                })
-            })
-        })?;
+        let home = homes
+            .into_iter()
+            .map(|(_, home)| home)
+            .find(|home| self.has_private_name(*home, PrivateBrand { home: *home, name: atom }))?;
         // Eval-introduced private bindings live only in environments made for that eval, so
         // a cached chain never gains a nearer one.
         self.private_homes.insert(key, home);
@@ -1244,4 +1299,16 @@ impl<H: Host> Vm<H> {
             self.type_error(p, "private member is not present on this object".into())
         })
     }
+}
+
+/// What a proving walk (`Vm::prove_load`) found.
+pub(in crate::vm) enum ProvedLoad {
+    /// The key's data value.
+    Value(Value),
+    /// No link holds the key.
+    Absent,
+    /// The key is an accessor.
+    Getter,
+    /// A link no proof covers: exotic, dictionary or descriptor-held.
+    Unproved,
 }

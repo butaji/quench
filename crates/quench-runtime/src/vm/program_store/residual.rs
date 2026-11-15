@@ -33,6 +33,13 @@ impl Residual {
     }
 }
 
+impl Residual {
+    /// The decoded program, without decoding a restored one.
+    pub(super) fn if_decoded(&self) -> Option<&Rc<ResidualProgram>> {
+        self.decoded.get()
+    }
+}
+
 impl std::ops::Deref for Residual {
     type Target = Rc<ResidualProgram>;
 

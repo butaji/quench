@@ -40,6 +40,7 @@ impl<H: Host> Vm<H> {
         // (`run_nested_lane_method`).
         #[cfg(test)]
         let bound = unsafe { (*frame).run_words() };
+        let outer_locals = unsafe { (*frame).dispatch.native_locals };
         let context = unsafe { self.bind_body_entry(frame, run) };
         #[cfg(test)]
         LANE_RUN_REWRITES.with(|count| count.set(count.get() + usize::from(bound != unsafe { (*frame).run_words() })));
@@ -47,6 +48,9 @@ impl<H: Host> Vm<H> {
         // SAFETY: the body was compiled for this function, never allocates or collects, and
         // reads only the registers, constants and heap bases bound above.
         let BodyReturn { status, value: word } = unsafe { self.call_body(run, context, captures) };
+        // A body re-reads its locals' address after each call-out, and a run its call-outs make
+        // binds its own: the run it returns into gets back the address it entered with.
+        unsafe { (*frame).dispatch.native_locals = outer_locals };
         // SAFETY: as above; a completing body wrote the record before it returned.
         LaneExit::read(status, word, || unsafe { (*frame).dispatch.returned_pc })
     }
@@ -74,6 +78,8 @@ impl<H: Host> Vm<H> {
             // run, and the frame's word follows the table from then on.
             (*frame).bind_run(bound, &self.execution_interrupt, || self.program_field_entries(run.program).unwrap_or(0));
             (*dispatch).native_registers = run.registers;
+            // The activation's locals, which a body's `LoadLocalPlain` and `StoreLocalPlain` address.
+            (*dispatch).native_locals = crate::vm::dispatch_fast::lane_body_locals::<H>(run.lane_context, run.registers, run.pending != NO_PENDING_ACTIVATIONS);
             (*dispatch).refresh_object_bases_at_entry(self);
             let vm = self as *mut Self;
             (*dispatch).bind_lane_storage(vm);

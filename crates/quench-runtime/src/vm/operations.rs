@@ -405,7 +405,7 @@ impl NumberBitwiseStage<i32> for I32BitwiseStage {
 }
 
 #[inline(always)]
-fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
+pub(super) fn number_bitwise_f64_result(operation: NumberBitwise, left: i32, right: i32) -> f64 {
     let bits = operation.apply(&mut I32BitwiseStage, left, right);
     if operation == NumberBitwise::ShiftRightUnsigned {
         f64::from(bits as u32)
@@ -1008,6 +1008,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.check_execution_interrupt()?;
+        crate::clock::note_step();
         // A Number-only unary Math call neither allocates nor enters guest code. Its
         // ignored receiver and trailing arguments need no roots on that path.
         let result = if let Some(value) =
@@ -1140,6 +1141,7 @@ impl<H: Host> Vm<H> {
                 let object = self.box_object(value)?;
                 self.with_stack.push(object);
                 self.with_scope_entered = true;
+                self.refresh_call_refusal();
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {
@@ -2249,7 +2251,11 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if let Some(value) = self.intern_dynamic_concat(left, right).or_else(|| self.short_ascii_concat(left, right)) {
+        if let Some(value) = self
+            .memoized_concat(left, right)
+            .or_else(|| self.intern_dynamic_concat(left, right))
+            .or_else(|| self.short_ascii_concat(left, right))
+        {
             #[cfg(feature = "profile-aggregate")]
             self.profile.string_concat(true);
             return Ok(value);

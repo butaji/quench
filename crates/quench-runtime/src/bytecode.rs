@@ -1256,6 +1256,8 @@ pub struct SourceSpan {
 
 /// Membership views of a function's declared-name lists, which stay the authority for
 /// their order and serialization: a name's declaration kind is one lookup, not a scan.
+/// Made only for a function with a list longer than `LOCAL_SLOT_SCAN`: a short list is
+/// scanned, where a box of sets per called function held 9.6 MB of jsdom-d3-startup's peak.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeclaredAtomSets {
     global_lexical: rustc_hash::FxHashSet<Atom>,
@@ -1426,7 +1428,7 @@ pub struct Function {
 // once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
-const _: () = assert!(size_of::<Function>() == 400);
+const _: () = assert!(size_of::<Function>() == 368);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1469,6 +1471,92 @@ impl FunctionHeader {
     }
 }
 
+/// A slot's `FunctionHeader` in 24 bytes, not 48: each optional word is stored with
+/// `u32::MAX` for none (no program reaches that many functions, atoms or source bytes), and
+/// the seven flags share one byte. `FunctionSlot::header` unpacks it, field by field where
+/// the caller reads one.
+#[derive(Clone, Copy, Debug)]
+struct PackedHeader {
+    parent: u32,
+    name: u32,
+    inferred_name: u32,
+    span_start: u32,
+    span_end: u32,
+    length: u16,
+    dispatch: DispatchClass,
+    flags: u8,
+}
+
+const _: () = assert!(size_of::<PackedHeader>() == 24);
+const _: () = assert!(size_of::<FunctionSlot>() == 64);
+
+const NO_WORD: u32 = u32::MAX;
+
+impl PackedHeader {
+    const ARROW: u8 = 1 << 0;
+    const ASYNC: u8 = 1 << 1;
+    const GENERATOR: u8 = 1 << 2;
+    const CLASS_CONSTRUCTOR: u8 = 1 << 3;
+    const CONSTRUCTIBLE: u8 = 1 << 4;
+    const PROTOTYPE_UNOBSERVABLE: u8 = 1 << 5;
+    const INHERITED_WITH_SCOPE: u8 = 1 << 6;
+
+    fn word(value: Option<u32>) -> u32 {
+        let word = value.unwrap_or(NO_WORD);
+        assert!(value.is_none() || word != NO_WORD, "a header word reaches u32::MAX");
+        word
+    }
+
+    #[inline(always)]
+    fn option(word: u32) -> Option<u32> {
+        (word != NO_WORD).then_some(word)
+    }
+
+    fn pack(header: &FunctionHeader) -> Self {
+        let flag = |on: bool, bit: u8| if on { bit } else { 0 };
+        let (span_start, span_end) = match header.source_span {
+            Some(span) => (Self::word(Some(span.start)), span.end),
+            None => (NO_WORD, 0),
+        };
+        Self {
+            parent: Self::word(header.parent),
+            name: Self::word(header.name),
+            inferred_name: Self::word(header.inferred_name),
+            span_start,
+            span_end,
+            length: header.length,
+            dispatch: header.dispatch,
+            flags: flag(header.is_arrow, Self::ARROW)
+                | flag(header.is_async, Self::ASYNC)
+                | flag(header.is_generator, Self::GENERATOR)
+                | flag(header.is_class_constructor, Self::CLASS_CONSTRUCTOR)
+                | flag(header.constructible, Self::CONSTRUCTIBLE)
+                | flag(header.prototype_unobservable, Self::PROTOTYPE_UNOBSERVABLE)
+                | flag(header.inherited_with_scope, Self::INHERITED_WITH_SCOPE),
+        }
+    }
+
+    #[inline(always)]
+    fn unpack(self) -> FunctionHeader {
+        let flag = |bit: u8| self.flags & bit != 0;
+        FunctionHeader {
+            parent: Self::option(self.parent),
+            name: Self::option(self.name),
+            inferred_name: Self::option(self.inferred_name),
+            source_span: Self::option(self.span_start).map(|start| SourceSpan { start, end: self.span_end }),
+            length: self.length,
+            dispatch: self.dispatch,
+            is_arrow: flag(Self::ARROW),
+            is_async: flag(Self::ASYNC),
+            is_generator: flag(Self::GENERATOR),
+            is_class_constructor: flag(Self::CLASS_CONSTRUCTOR),
+            constructible: flag(Self::CONSTRUCTIBLE),
+            prototype_unobservable: flag(Self::PROTOTYPE_UNOBSERVABLE),
+            inherited_with_scope: flag(Self::INHERITED_WITH_SCOPE),
+        }
+    }
+}
+
 /// What a record built from its program (`ResidualProgram::built_record`) is for: kept as the
 /// function's record, which its first call makes, or read once and dropped.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1487,59 +1575,86 @@ enum RecordUse {
 /// or released, its first read compiling the record again from source or decoding it.
 #[derive(Clone, Debug)]
 pub struct FunctionSlot {
-    header: FunctionHeader,
+    header: PackedHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
-    unlowered: std::cell::RefCell<Option<std::rc::Rc<Function>>>,
+    unlowered: std::cell::RefCell<Option<Unlowered>>,
+    /// The unlowered record its first runs execute until it lowers (`tier0`).
+    tier0: tier0::Tier0Cell,
+}
+
+/// A slot's unlowered record: as compiled, for a function about to run (a first-call chunk's),
+/// or packed (`binary::pack_unlowered`) for one a whole load left unread, which most such
+/// functions stay (a 3.4 MB bundle: 12K functions, 2K ever called).
+#[derive(Clone, Debug)]
+enum Unlowered {
+    Record(std::rc::Rc<Function>),
+    Packed(Box<binary::PackedUnlowered>),
+}
+
+impl Unlowered {
+    fn function(&self) -> Function {
+        match self {
+            Self::Record(function) => Function::clone(function),
+            Self::Packed(packed) => binary::unpack_unlowered(packed),
+        }
+    }
+
+    fn into_function(self) -> Function {
+        match self {
+            Self::Record(function) => std::rc::Rc::unwrap_or_clone(function),
+            Self::Packed(packed) => binary::unpack_unlowered(&packed),
+        }
+    }
 }
 
 impl FunctionSlot {
+    fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
+        let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
+        Self { header: PackedHeader::pack(&header), record, unlowered: unlowered.into(), tier0: Default::default() }
+    }
+
     pub(crate) fn compiled(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
-            unlowered: Default::default(),
-        }
+        Self::new(FunctionHeader::of(&function), Some(function), None)
     }
 
     /// A function whose record its program compiles again on the function's first read.
     pub(crate) fn released(header: FunctionHeader) -> Self {
-        Self {
-            header,
-            record: std::cell::OnceCell::new(),
-            unlowered: Default::default(),
-        }
+        Self::new(header, None, None)
     }
 
     /// A function whose load settled its dispatch class, the header's last fact, and left
     /// the rest of its lowering to its first read.
     pub(crate) fn unlowered(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::new(),
-            unlowered: std::cell::RefCell::new(Some(std::rc::Rc::new(function))),
-        }
+        Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Record(std::rc::Rc::new(function))))
+    }
+
+    /// An unlowered function its load leaves unread: its record kept packed until its first read.
+    pub(crate) fn unlowered_packed(function: Function) -> Self {
+        Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Packed(binary::pack_unlowered(&function))))
     }
 
     /// Whether the slot holds no record, compiled or unlowered: its first read compiles
     /// the record again or decodes it.
     #[cfg(test)]
     pub(crate) fn is_released(&self) -> bool {
-        self.record.get().is_none() && self.unlowered.borrow().is_none()
+        self.record.get().is_none() && self.unlowered.borrow().is_none() && self.tier0.get().is_none()
     }
 
-    #[inline(always)] pub(crate) fn header(&self) -> &FunctionHeader {
-        &self.header
+    #[inline(always)] pub(crate) fn header(&self) -> FunctionHeader {
+        self.header.unpack()
     }
 
-    /// The compiled record, when it exists.
+    /// The compiled record, when it exists: the lowered one, else the one its first runs
+    /// execute unlowered (`tier0`).
     #[inline(always)] pub(crate) fn record(&self) -> Option<&Function> {
-        self.record.get().map(|function| &**function)
+        self.record.get().map(|function| &**function).or_else(|| self.tier0.get().map(|tier0| tier0.record()))
     }
 
     /// Drops the record, which its program compiles again on the function's next read.
     fn release(&mut self) {
         self.record.take();
         self.unlowered.get_mut().take();
+        self.tier0.take();
     }
 }
 
@@ -1555,6 +1670,8 @@ impl std::ops::Deref for FunctionSlot {
 
 impl std::ops::DerefMut for FunctionSlot {
     fn deref_mut(&mut self) -> &mut Function {
+        // A change to a record still running unlowered makes it the compiled one.
+        self.settle_tier0();
         std::rc::Rc::make_mut(
             self.record
                 .get_mut()
@@ -1757,11 +1874,21 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// finds the function on the stack. Most of a program's functions never run during a
 /// collection, so their masks are never built. The loop tier's regions share them
 /// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    /// The registers below which every register live at entry lies (`entry_fill`), or
+    /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
+    entry_live: u16,
     dead_call_results: crate::heap::ThinBoxSlice<u32>,
-    masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+}
+
+/// Uncovered, which bounds no register live at entry.
+impl Default for RegisterRoots {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 impl RegisterRoots {
@@ -1769,9 +1896,31 @@ impl RegisterRoots {
         Self::with_dead_call_results(covered, Default::default())
     }
 
-    /// `dead_call_results` in increasing pc order.
+    /// `dead_call_results` in increasing pc order, with no bound on the live entry registers.
     pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
-        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
+        Self::with_entry_live(covered, Self::ALL_LIVE_AT_ENTRY, dead_call_results)
+    }
+
+    /// `with_dead_call_results`, every register live at entry below `entry_live`.
+    pub(crate) fn with_entry_live(covered: bool, entry_live: u16, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
+        Self { covered, entry_live, dead_call_results, masks: std::cell::OnceCell::new() }
+    }
+
+    /// An `entry_live` that bounds nothing.
+    pub(crate) const ALL_LIVE_AT_ENTRY: u16 = u16::MAX;
+
+    /// The registers an activation of a function of `registers` registers starts with its
+    /// initial value: those below every register live at its entry. No instruction reads
+    /// another before writing it, and a collection reads a covered function's registers only
+    /// where its masks prove them live, so the rest may hold any value a window held before.
+    #[inline(always)]
+    pub(crate) fn entry_fill(&self, registers: u16) -> u16 {
+        self.entry_live.min(registers)
+    }
+
+    /// The `entry_live` bound as recorded.
+    pub(crate) fn entry_live(&self) -> u16 {
+        self.entry_live
     }
 
     pub(crate) fn covered(&self) -> bool {
@@ -2008,6 +2157,13 @@ impl Function {
 
     /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
     pub(crate) fn slot_declaration(&self, slot: usize) -> SlotDeclaration {
+        let (var, lexical) = (self.global_var_atoms(), self.global_lexical_atoms());
+        if var.len() <= LOCAL_SLOT_SCAN && lexical.len() <= LOCAL_SLOT_SCAN {
+            return self.local_atoms.get(slot).map_or_else(SlotDeclaration::default, |atom| SlotDeclaration {
+                global_var: var.contains(atom),
+                global_lexical: lexical.contains(atom),
+            });
+        }
         self.declared_atoms()
             .slots
             .get(slot)
@@ -2017,21 +2173,37 @@ impl Function {
 
     /// Whether `atom` is among `global_lexical_atoms`.
     pub(crate) fn declares_global_lexical(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_lexical_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_lexical.contains(&atom)
     }
 
     /// Whether `atom` is among `global_var_atoms`.
     pub(crate) fn declares_global_var(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_var_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_var.contains(&atom)
     }
 
     /// Whether `atom` is among `global_immutable_atoms`.
     pub(crate) fn declares_global_immutable(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_immutable_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_immutable.contains(&atom)
     }
 
     /// Whether `atom` is among `environment_atoms`.
-    #[inline(always)] pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+    pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = &self.environment_atoms[..];
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().environment.contains(&atom)
     }
 
@@ -2211,8 +2383,10 @@ impl Function {
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
-        self.instructions()
-            .any(|instruction| instruction.op().suspends())
+        // By opcode alone: a wide record's opcode is in the side table.
+        self.code.iter().any(|packed| {
+            if packed.is_wide() { self.wide[packed.wide_index()].op().suspends() } else { packed.op().suspends() }
+        })
     }
 
     /// The function's `CallPlan`, derived on first use.
@@ -3401,6 +3575,48 @@ pub(crate) enum SourceText {
     Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
+    /// The text of an eval's guest string that was a rope of ASCII text: the program keeps the
+    /// rope, whose pieces other strings share, and makes the text flat only when read, never
+    /// inside the string (`RopeText`).
+    Rope(RopeText),
+}
+
+/// A rope's text, made flat on first read into a buffer of its own. Inspector code-load
+/// evaluates `function testN() { ${payload} }` per iteration: each program kept its own
+/// 2 MB flat copy for the function `testN` it defines, never read again, where the rope's
+/// pieces share the payload.
+#[derive(Clone)]
+pub(crate) struct RopeText {
+    string: crate::vm::wtf16::JsString,
+    flat: std::rc::Rc<std::cell::OnceCell<std::rc::Rc<str>>>,
+}
+
+impl RopeText {
+    /// The text's length in bytes, which for ASCII is its units, read without making it flat.
+    pub(crate) fn len_units(&self) -> usize {
+        self.string.len()
+    }
+
+    /// `string`'s text kept as its rope, when it is an unflattened rope of ASCII text.
+    pub(crate) fn of(string: &crate::vm::wtf16::JsString) -> Option<Self> {
+        string.is_unflattened_ascii_rope().then(|| Self { string: string.clone(), flat: Default::default() })
+    }
+}
+
+impl std::ops::Deref for RopeText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.flat.get_or_init(|| {
+            let units = self.string.flat_unkept();
+            std::rc::Rc::from(units.ascii_str().expect("an ASCII rope flattens to ASCII text"))
+        })
+    }
+}
+
+impl std::fmt::Debug for RopeText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RopeText").field("len", &self.string.len()).field("flat", &self.flat.get().is_some()).finish()
+    }
 }
 
 /// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
@@ -3445,6 +3661,27 @@ impl AsRef<[u8]> for KeptPrefix {
     }
 }
 
+/// What the host does with a deferred record's bytes once they are decoded, set once by the
+/// embedding: the decoded function lives on the heap, so the bytes are read again only if the
+/// record is released and decoded anew, and a mapped compile-cache entry need not keep them
+/// resident (Air: 94 of a 123-page entry resident at its peak, its records decoded).
+static RECORD_READ: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_READ`; the first call wins.
+pub fn set_record_read(action: fn(&[u8])) {
+    let _ = RECORD_READ.set(action);
+}
+
+/// What the host does each time a function's record is built on its first use (lowered, decoded
+/// or compiled again), set once by the embedding: new code joining a run is the work its
+/// code-page policy follows (a work clock that runs without collections).
+static RECORD_BUILT: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_BUILT`; the first call wins.
+pub fn set_record_built(action: fn()) {
+    let _ = RECORD_BUILT.set(action);
+}
+
 /// A compile-cache entry split into its encoding and the source text
 /// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
 /// checksum holds; the entry itself otherwise.
@@ -3461,6 +3698,17 @@ pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(
 
 pub(crate) use binary::append_kept_source;
 
+impl SourceText {
+    /// The text's length in bytes, read without making a rope flat.
+    #[allow(clippy::len_without_is_empty)]
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Rope(rope) => rope.len_units(),
+            text => str::len(text),
+        }
+    }
+}
+
 impl std::ops::Deref for SourceText {
     type Target = str;
     fn deref(&self) -> &str {
@@ -3469,6 +3717,7 @@ impl std::ops::Deref for SourceText {
             Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
+            Self::Rope(text) => text,
         }
     }
 }
@@ -3716,6 +3965,9 @@ pub struct ResidualProgram {
     /// What each function's closures read of the environments they close over, when the
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
+    /// The kept code of a Wasm module whose functions lower on their first calls: a
+    /// released slot's record is lowered from it (`WasmLazy::lower`).
+    pub(crate) wasm_lazy: Option<std::rc::Rc<crate::wasm::WasmLazy>>,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -3823,9 +4075,8 @@ impl ResidualProgram {
     #[cold]
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
-        self.functions[index]
-            .record
-            .get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)))
+        let lowered = || &**self.functions[index].record.get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)));
+        self.tier0_record(index).unwrap_or_else(lowered)
     }
 
     /// `write` applied to `index`'s record: the record itself when it is compiled, else one
@@ -3833,19 +4084,29 @@ impl ResidualProgram {
     /// record once; compiling its released ones all again for that held them all at once
     /// (typescript.js: 21.7K functions, +38 MB at a cold compile's peak).
     pub(crate) fn with_record<R>(&self, index: usize, write: impl FnOnce(&Function) -> R) -> R {
-        match self.functions[index].record() {
+        // A record running unlowered (`tier0`) is not the lowered one encoding reads.
+        match self.functions[index].record.get() {
             Some(function) => write(function),
             None => write(&self.built_record(index, RecordUse::Transient)),
         }
     }
 
-    /// `index`'s record, from its unlowered form, its encoded entry or its source.
+    /// `index`'s record, from its unlowered form, its encoded entry or its source; the host
+    /// counts each as work (`set_record_built`).
     fn built_record(&self, index: usize, purpose: RecordUse) -> Function {
+        let function = self.build_record(index, purpose);
+        if let Some(action) = RECORD_BUILT.get() {
+            action();
+        }
+        function
+    }
+
+    fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
             let mut unlowered = self.functions[index].unlowered.borrow_mut();
             match purpose {
-                RecordUse::Kept => unlowered.take(),
-                RecordUse::Transient => unlowered.clone(),
+                RecordUse::Kept => unlowered.take().map(Unlowered::into_function),
+                RecordUse::Transient => unlowered.as_ref().map(Unlowered::function),
             }
         };
         if let Some(unlowered) = unlowered {
@@ -3856,11 +4117,25 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
+        if let Some(lazy) = &self.wasm_lazy {
+            let function = lazy.lower(index, &self.constants);
+            function.decoded.prime_loop(&function.code, &function.wide);
+            return function;
+        }
         let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
-            Some(decoded) => decoded.unwrap_or_else(|error| {
-                panic!("function {index} of {} does not decode: {error}", self.source_name)
-            }),
+            Some(decoded) => {
+                let function = decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                });
+                if let (Some(action), Some(bytes)) = (
+                    RECORD_READ.get(),
+                    self.encoded_records.as_deref().and_then(|records| binary::deferred_record_bytes(records, index)),
+                ) {
+                    action(bytes);
+                }
+                function
+            }
             None => {
                 if !crate::DYNAMIC_EXECUTION_ENABLED {
                     panic!("native function {index} of {} has no archived record", self.source_name);
@@ -3881,8 +4156,7 @@ impl ResidualProgram {
     /// would have lowered it (`compile::lower_settled`), with its register roots.
     #[cold]
     #[inline(never)]
-    fn lower_unlowered(&self, index: usize, unlowered: std::rc::Rc<Function>) -> Function {
-        let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
+    fn lower_unlowered(&self, index: usize, mut function: Function) -> Function {
         if self.rewrite_ranges.kept_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
             let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
@@ -4120,6 +4394,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
+mod tier0;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]
@@ -4127,7 +4402,7 @@ pub use native_metadata::NativeProgramNamespace;
 mod chunk_append;
 pub(crate) use chunk_append::{SiteCount, ChunkDelta, TableLengths};
 mod closure_reads;
-pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
+pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts, MakerReads};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
 mod flow_view;
@@ -4135,3 +4410,30 @@ pub use flow_view::{FlowFunction, FlowInstruction};
 #[cfg(test)]
 mod tests;
 mod validate;
+
+/// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,
+/// reads an implicit binding of the activation it would resolve in: `this`, `arguments`,
+/// `new.target`, a home object or any by-name binding (bounded at eight levels, past which
+/// it answers `true`). A non-arrow binds its own.
+pub(crate) fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u32) -> bool {
+    fn reads(code: &ResidualProgram, id: u32, depth: u8) -> bool {
+        let Some(depth) = depth.checked_sub(1) else { return true };
+        let Some(function) = code.function_get(id as usize) else { return true };
+        if !function.is_arrow {
+            return false;
+        }
+        function.instructions().any(|instruction| {
+            let op = instruction.op();
+            op.immediate_role() == ImmediateRole::SuperinstructionIndex
+                || op.reads_arguments()
+                || match op {
+                    Op::LoadThis | Op::InitializeThis | Op::SuperCallCheck | Op::LoadCallee | Op::LoadName
+                    | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
+                    | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding => true,
+                    Op::MakeClosure => reads(code, instruction.closure_function_index(), depth),
+                    _ => false,
+                }
+        })
+    }
+    reads(code, id, 8)
+}

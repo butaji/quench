@@ -53,7 +53,42 @@ impl<H: Host> Vm<H> {
         let Some(second) = second else {
             return value;
         };
-        self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::new(Self::empty_object(self.array_proto), vec![value, second]) })
+        let pair = [value, second];
+        self.heap.alloc_literal_array(self.array_proto, 2, |index| pair[index])
+    }
+
+    /// One %ArrayIteratorPrototype%.next step of a keys or entries iterator over a plain
+    /// array where it runs no guest code, as `step_present_array_value` makes a values step:
+    /// the index, or `[index, element]` of a present data element (`Some(Some(_))`), or the
+    /// iterator done past the end (`Some(None)`). `None` for a hole, an exotic or sparse
+    /// array, or a done iterator, whose step the native makes.
+    pub(in crate::vm) fn step_array_entry(&mut self, iterator: Value) -> Option<Option<Value>> {
+        let IteratorRecord { source, kind, index, done: false, ext, .. } = self.heap.iterator(iterator)? else {
+            return None;
+        };
+        let (source, kind, position) = (*source, *kind, ext.position(*index));
+        let array = self.heap.array(source)?;
+        if array.has_indexed_descriptors() || array.is_arguments_object() || self.heap.sparse_length(source).is_some() {
+            return None;
+        }
+        let Some(element) = array.elements().get(position) else {
+            if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
+                *done = true;
+                *source = Value::UNDEFINED;
+            }
+            return Some(None);
+        };
+        if element.is_deleted() {
+            return None;
+        }
+        if let Some(IteratorRecord { index, ext, .. }) = self.heap.iterator_mut(iterator) {
+            ext.store_position(index, position + 1);
+        }
+        let key = Value::number(position as f64);
+        Some(Some(match kind {
+            IteratorKind::ArrayKeys => key,
+            _ => self.iterator_item_value((key, Some(element))),
+        }))
     }
 
     /// One `next` step of a String, Map or Set iterator that has an item, where the step
@@ -74,6 +109,9 @@ impl<H: Host> Vm<H> {
     /// `step_collection_value` where an iterator with nothing left is done, as the native's
     /// step leaves it: `Some(None)`. `None` for an iterator that was already done.
     pub(in crate::vm) fn step_collection(&mut self, iterator: Value) -> Option<Option<Value>> {
+        if self.heap.iterator(iterator).is_some_and(|record| matches!(record.kind, IteratorKind::ArrayKeys | IteratorKind::ArrayEntries)) {
+            return self.step_array_entry(iterator);
+        }
         if let Some(value) = self.step_collection_value(iterator) {
             return Some(Some(value));
         }

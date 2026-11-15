@@ -168,11 +168,14 @@ impl CodeReaders {
     /// A widening visits only this owner's readers, before the incompatible effect. An owner
     /// without readers, every owner of a run without native code, is the test alone; the
     /// walk is out of line (`retire_readers`).
+    /// Whether the owner had readers.
     #[inline(always)]
-    pub(crate) fn retire(&mut self, owner: u32) {
-        if self.heads.get(owner as usize).is_some_and(Option::is_some) {
+    pub(crate) fn retire(&mut self, owner: u32) -> bool {
+        let readers = self.heads.get(owner as usize).is_some_and(Option::is_some);
+        if readers {
             self.retire_readers(owner);
         }
+        readers
     }
 
     #[inline(never)]
@@ -289,6 +292,7 @@ impl Fuses {
         for record in &mut self.0 {
             if record.subject == subject && record.slot as usize == slot && record.state == FuseState::Intact {
                 record.state = FuseState::Popped;
+                crate::heap::note_intrinsic_change();
             }
         }
     }
@@ -299,6 +303,7 @@ impl Fuses {
         for record in &mut self.0 {
             if record.subject == subject && record.state == FuseState::Intact {
                 record.state = FuseState::Unproved;
+                crate::heap::note_intrinsic_change();
             }
         }
     }
@@ -307,6 +312,9 @@ impl Fuses {
     pub(crate) fn forget(&mut self, subject: u32) {
         for record in &mut self.0 {
             if record.subject == subject {
+                if record.state == FuseState::Intact {
+                    crate::heap::note_intrinsic_change();
+                }
                 *record = FuseRecord::default();
             }
         }
@@ -315,6 +323,7 @@ impl Fuses {
     /// Every proof is made again: no subject names the change (a restored heap).
     pub(crate) fn forget_all(&mut self) {
         self.0 = Default::default();
+        crate::heap::note_intrinsic_change();
     }
 }
 

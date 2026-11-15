@@ -19,7 +19,13 @@ fn get_trap_call<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::
     if handler.is_null() || vm.is_private_name(atom) {
         return None;
     }
-    let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get))??;
+    // The handler's `get` through the fact table (`Vm::ordinary_chain_read_proved`), else
+    // the plain walk, which declines an accessor.
+    let trap = match vm.ordinary_chain_read_proved(handler, vm.runtime_atoms.get) {
+        Some(ChainRead::Value(trap)) => trap,
+        Some(ChainRead::Absent) => return None,
+        _ => vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get))??,
+    };
     vm.shape_leaves_atom_unconstrained(target, atom).then_some((trap, handler, [target, vm.atom_string(atom), object]))
 }
 
@@ -43,10 +49,10 @@ fn lane_read_forwarded<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, b
         }
         target = inner;
     }
-    match vm.ordinary_chain_read(target, atom) {
+    match vm.ordinary_chain_read_proved(target, atom) {
         Some(ChainRead::Value(value)) => lane_complete_read(r, ip, i, value),
         Some(ChainRead::Absent) => lane_complete_read(r, ip, i, Value::UNDEFINED),
-        Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(cx, r, ip, getter, base),
+        Some(ChainRead::Getter(Some(getter))) if !getter.is_undefined() => lane_activate_getter(cx, r, ip, getter, base, None),
         _ => Err(exit(ip)),
     }
 }
@@ -73,24 +79,92 @@ pub(super) fn lane_read_get_trap<H: Host>(
         return Err(exit(ip));
     };
     let Some((trap, handler, arguments)) = get_trap_call(vm, base, atom) else {
+        #[cfg(feature = "profile-lane-exits")]
+        if let Some((target, handler)) = vm.proxy_parts(base) {
+            let trap = vm.plain_property_lookup(handler, crate::vm::PropertyKey::string(vm.runtime_atoms.get));
+            super::super::lane_exits::record_detail(format!(
+                "get trap decline trap={} unconstrained={} name={}",
+                match trap { None => "unanswered", Some(None) => "absent", Some(Some(_)) => "found" },
+                vm.shape_leaves_atom_unconstrained(target, atom),
+                vm.atom_name(atom)
+            ));
+        }
         return lane_read_forwarded(cx, r, ip, base, atom);
     };
     lane_materialize_running_leaf(cx);
-    let Some(target) = lane_script_target(cx, trap).filter(|target| !target.forwards()) else {
+    let Some(target) = lane_trap_target(cx, trap) else {
+        #[cfg(feature = "profile-lane-exits")]
+        super::super::lane_exits::record_detail("get trap decline target".into());
         return Err(exit(ip));
     };
-    let Some(this) = lane_call_this(vm, &target, handler) else {
-        return Err(exit(ip));
-    };
-    let passed = ActivationArguments::Kept(arguments.as_ptr(), GET_TRAP_ARGUMENTS);
-    let activated = lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)?;
-    owe_invariants(vm, Completion::ReadsTrapped, TrapCheck { target: arguments[0], atom, access: TrapAccess::Read });
+    let activated = lane_activate_trap(cx, r, ip, target, handler, &arguments)?;
+    owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
     Ok(activated)
 }
 
+/// The frameless target of the trap function `trap` and whether it is another program's,
+/// which its activation enters and its return leaves (`lane_complete_activation`): a trap of
+/// a library loaded as its own script, as Vue's and MobX's handlers are, activates as one of
+/// the running program's does. `None` for a trap the lane does not activate.
+pub(super) fn lane_trap_target<H: Host>(cx: *mut LaneContext<H>, trap: Value) -> Option<(ScriptCallTarget, bool)> {
+    if let Some(target) = lane_script_target(cx, trap) {
+        return (!target.forwards()).then_some((target, false));
+    }
+    let vm = unsafe { vm(cx) };
+    // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
+    let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
+    (target.entry.activates() && !target.forwards() && !lane_constructing(vm, trap)).then_some((target, true))
+}
+
+/// The activation of the trap `target` (`lane_trap_target`) called on `handler` with
+/// `arguments` for the access record at `ip`. `Err` carries the record to continue at.
+fn lane_activate_trap<H: Host, const N: usize>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (target, crosses): (ScriptCallTarget, bool), handler: Value, arguments: &[Value; N]) -> Result<(Registers, Ip), Ip> {
+    let Some(this) = lane_call_this(unsafe { vm(cx) }, &target, handler) else {
+        return Err(exit(ip));
+    };
+    let passed = ActivationArguments::Kept(arguments.as_ptr(), N);
+    if crosses {
+        lane_activate_keeping::<H, true>(cx, r, ip, &target, passed, this, false, None)
+    } else {
+        lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None)
+    }
+}
+
+/// The atom of a computed key a proxy's trap receives as a string: a string's own, or the
+/// canonical decimal text of an array index. `None` for any other key (a symbol, a negative
+/// or fractional number, an object whose ToPropertyKey runs guest code).
+fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
+    if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) {
+        return Some(vm.lookup_array_index_atom(index).unwrap_or_else(|| vm.intern_atom(&index.to_string())));
+    }
+    vm.string_key_atom(key)
+}
+
+/// A lane `GetIndex` of `base[key]` at the record `ip` where `base` is a proxy whose `get`
+/// trap a named read would activate (`lane_read_get_trap`): the same activation with the
+/// key's string. `None`, before any effect, for any other read, which goes on along its
+/// path; `Err` carries the record to continue at.
+pub(super) fn lane_keyed_get_trap<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, base: Value, key: Value) -> Option<Result<(Registers, Ip), Ip>> {
+    let vm = unsafe { vm(cx) };
+    vm.proxy_parts(base)?;
+    let atom = keyed_trap_atom(vm, key)?;
+    let (trap, handler, arguments) = get_trap_call(vm, base, atom)?;
+    lane_materialize_running_leaf(cx);
+    let target = lane_trap_target(cx, trap)?;
+    Some(lane_activate_trap(cx, r, ip, target, handler, &arguments).map(|activated| {
+        owe_invariants(vm, Completion::ReadsTrapped, arguments[0], atom, TrapAccess::Read);
+        activated
+    }))
+}
+
 /// Records that the trap activation `lane_activate_keeping` just pushed completes as
-/// `completion` says and owes `check` its target's invariants.
-fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, check: TrapCheck) {
+/// `completion` says and owes `target` its invariants for `atom` (`TrapCheck`).
+fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value, atom: crate::bytecode::Atom, access: TrapAccess) {
+    // An array's `length` and elements are answered by its element facts too, which its
+    // layout does not name; any other name by its shape, which its layout does.
+    let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
+    let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
+    let check = TrapCheck { target, atom, access, layout };
     let depth = vm.lane_stack.activations.len() - 1;
     if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
         script.completion = completion;
@@ -117,7 +191,9 @@ pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Op
     match check.access {
         TrapAccess::StrictStore if !vm.truthy(value) => true,
         TrapAccess::Store | TrapAccess::StrictStore if !vm.truthy(value) => false,
-        _ => !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
+        // A target whose layout the trap left as it was leaves the key unconstrained still.
+        _ => !(check.layout != 0 && vm.object_data(check.target).is_some_and(|data| data.layout_id() == check.layout))
+            && !vm.shape_leaves_atom_unconstrained(check.target, check.atom),
     }
 }
 
@@ -175,13 +251,12 @@ pub(super) fn lane_store_set_trap<H: Host>(
     let Some((trap, handler, arguments)) = set_trap_call(vm, object, atom, value) else {
         return lane_store_forwarded(cx, r, ip, object, atom, value);
     };
-    let target = lane_script_target(cx, trap).filter(|target| !target.forwards())?;
-    let this = lane_call_this(vm, &target, handler)?;
-    let passed = ActivationArguments::Kept(arguments.as_ptr(), SET_TRAP_ARGUMENTS);
-    Some(match lane_activate_keeping::<H, false>(cx, r, ip, &target, passed, this, false, None) {
+    let target = lane_trap_target(cx, trap)?;
+    lane_call_this(vm, &target.0, handler)?;
+    Some(match lane_activate_trap(cx, r, ip, target, handler, &arguments) {
         Ok((registers, next)) => {
             let access = if strict { TrapAccess::StrictStore } else { TrapAccess::Store };
-            owe_invariants(vm, Completion::AssignsTrapped, TrapCheck { target: arguments[0], atom, access });
+            owe_invariants(vm, Completion::AssignsTrapped, arguments[0], atom, access);
             Resumed::At(registers, next, Carried::script(cx))
         }
         Err(next) => Resumed::Exit(next),

@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
         };
         self.heap
             .array_elements(arguments)
-            .and_then(|elements| elements.get(index).copied())
+            .and_then(|elements| elements.get(index))
             .filter(|value| !value.is_deleted())
             .unwrap_or(fallback)
     }

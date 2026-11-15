@@ -26,6 +26,9 @@ impl Demand {
 
     pub(super) fn tagged(self) -> bool { self.0 & Self::TAGGED.0 != 0 }
 
+    /// Whether the next uses read a Number's double or int32 view and never its tagged bits.
+    pub(super) fn numeric_only(self) -> bool { self.0 & Self::FLOAT64.0 != 0 && !self.tagged() }
+
     fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
 }
 
@@ -37,6 +40,8 @@ fn read_demand(instruction: WideInstruction) -> Demand {
     match op.class() {
         Class::JumpBinaryFalse if NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
             && equality_operator(instruction.binary_operator_field()).is_none() => Demand::NUMBER,
+        // A strict (in)equality reads a Number operand's double (`Lowering::number_strict_equality`).
+        Class::JumpBinaryFalse if equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
         _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => {
             let operator = instruction.binary_operator();
             if NumberBitwise::from_js_instruction(op, operator).is_some() { Demand::INT32 }

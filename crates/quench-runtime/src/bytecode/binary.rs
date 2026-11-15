@@ -302,7 +302,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     for (index, function) in program.functions.iter().enumerate() {
         let deferred = index != ROOT_FUNCTION;
         out.u8(u8::from(deferred));
-        write_function_header(&mut out, function.header());
+        write_function_header(&mut out, &function.header());
         let names_static = match load_records.get(&(index as u32)) {
             Some(range) => {
                 debug_assert!(deferred, "a load never releases its root");
@@ -756,6 +756,7 @@ fn decode_program(
         undefined_constant: Default::default(),
         load_encoding: Default::default(),
         closure_reads,
+        wasm_lazy: None,
     };
     Ok(program)
 }
@@ -867,6 +868,42 @@ impl std::fmt::Debug for LoadRecords {
     }
 }
 
+/// An unlowered record in the compact form its slot keeps until the function's first read
+/// (`FunctionSlot::unlowered`): LEB128 integers under the program's own atom ids, without the
+/// memos a lowered record's encoding carries. Most loaded functions never run, and this form
+/// takes about half the bytes of the record.
+pub(crate) fn pack_unlowered(function: &Function) -> Box<PackedUnlowered> {
+    let mut out = BinaryWriter::new();
+    out.packed = true;
+    out.bytes.reserve(64 + 6 * (function.code.len() + function.wide.len()));
+    write_function(&mut out, function, &[], 0);
+    Box::new(PackedUnlowered { bytes: out.bytes.into_boxed_slice(), name_bindings: function.name_bindings.clone() })
+}
+
+/// `pack_unlowered`'s record.
+pub(crate) fn unpack_unlowered(packed: &PackedUnlowered) -> Function {
+    let mut input = BinaryReader::new(&packed.bytes);
+    input.packed = true;
+    let mut function = read_function(&mut input).unwrap_or_else(|error| panic!("a packed unlowered record decodes: {error}"));
+    function.name_bindings = packed.name_bindings.clone();
+    function
+}
+
+/// An unlowered record's packed bytes and its name bindings, which share their captured scopes
+/// with the records of the functions around it.
+#[derive(Clone)]
+pub(crate) struct PackedUnlowered {
+    bytes: Box<[u8]>,
+    name_bindings: super::NameBindings,
+}
+
+impl std::fmt::Debug for PackedUnlowered {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("PackedUnlowered").field("bytes", &self.bytes.len()).finish_non_exhaustive()
+    }
+}
+
+
 /// Where `write_function` writes a record's inferred name: after its parent and its name,
 /// one u32 each.
 const RECORD_INFERRED_NAME_AT: usize = 2 * size_of::<u32>();
@@ -927,7 +964,8 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for atom in &function.environment_atoms {
             out.atom(*atom);
         }
-        let name_bindings = function.name_bindings.resolved();
+        // A packed record's bindings stay beside it, shared with its scope (`PackedUnlowered`).
+        let name_bindings = if out.packed { Vec::new() } else { function.name_bindings.resolved() };
         out.u32(name_bindings.len() as u32);
         for binding in &name_bindings {
             write_eval_binding(out, binding);
@@ -976,6 +1014,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
         out.u8(u8::from(function.register_roots.covered()));
+        out.u16(function.register_roots.entry_live());
         let dead_call_results = function.register_roots.dead_call_results();
         out.u32(dead_call_results.len() as u32);
         for &pc in dead_call_results {
@@ -1013,6 +1052,9 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             out.u16(handler.with_depth);
         }
         out.source_positions(&function.source_positions);
+        if out.packed {
+            return;
+        }
         let plain = match function.plain_locals.get() {
             Some(words) => words.to_vec(),
             None => function.plain_local_slots(superinstructions).words().to_vec(),
@@ -1179,11 +1221,15 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let registers = input.u16()?;
         let dispatch = input.dispatch_class()?;
         let covered = input.flag("register root coverage")?;
+        let entry_live = input.u16()?;
         let dead_call_results = input.list(BinaryReader::u32)?;
         if !dead_call_results.is_sorted_by(|before, after| before < after) || !covered && !dead_call_results.is_empty() {
             return Err("invalid residual dead call results".into());
         }
-        let register_roots = super::RegisterRoots::with_dead_call_results(covered, dead_call_results.into());
+        if !covered && entry_live != super::RegisterRoots::ALL_LIVE_AT_ENTRY {
+            return Err("invalid residual entry liveness".into());
+        }
+        let register_roots = super::RegisterRoots::with_entry_live(covered, entry_live, dead_call_results.into());
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
@@ -1251,9 +1297,10 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let plain_bytes = (0..usize::from(locals).div_ceil(u8::BITS as usize)).map(|_| input.u8()).collect::<Result<Vec<_>, _>>()?;
-        let plain_locals: crate::heap::ThinBoxSlice<u64> = crate::bitset::words_from_le_bytes(usize::from(locals), &plain_bytes).into();
-        let derived_facts = input.u32()?;
+        let packed = input.packed;
+        let plain_bytes = if packed { Vec::new() } else { (0..usize::from(locals).div_ceil(u8::BITS as usize)).map(|_| input.u8()).collect::<Result<Vec<_>, _>>()? };
+        let plain_locals: crate::heap::ThinBoxSlice<u64> = if packed { Default::default() } else { crate::bitset::words_from_le_bytes(usize::from(locals), &plain_bytes).into() };
+        let derived_facts = if packed { 0 } else { input.u32()? };
         let function = Function {
             parent,
             name,
@@ -1304,7 +1351,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             registers,
             dispatch,
             decoded: Default::default(),
-            plain_locals: std::cell::OnceCell::from(plain_locals),
+            plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
             declared_atom_sets: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
@@ -1319,7 +1366,9 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             parameter_registers,
             initial_register,
         };
-        function.seed_derived_facts(derived_facts);
+        if !packed {
+            function.seed_derived_facts(derived_facts);
+        }
         Ok(function)
 }
 
@@ -1364,13 +1413,22 @@ pub(super) fn decode_deferred_function(
     if compact_checksum(bytes) != record.checksum {
         return Some(Err("deferred record checksum mismatch".into()));
     }
-    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone() };
+    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false };
     Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
+}
+
+/// The bytes of function `index`'s deferred record, when it has one.
+pub(super) fn deferred_record_bytes(records: &super::EncodedRecords, index: usize) -> Option<&[u8]> {
+    let record = (*records.ranges.get(index)?)?;
+    let start = record.start as usize;
+    records.bytes.as_ref().as_ref().get(start..start + record.length as usize)
 }
 
 pub(super) struct BinaryWriter {
     pub(super) bytes: Vec<u8>,
     atoms: AtomEncoding,
+    /// LEB128 integers, for records kept in memory (`pack_unlowered`), not in the cache.
+    packed: bool,
 }
 
 /// The function a program runs first, whose record a decoder always decodes.
@@ -1395,7 +1453,8 @@ struct CompactAtoms {
 #[rustfmt::skip]
 impl BinaryWriter {
     pub(super) fn new() -> Self { Self::with_atoms(AtomEncoding::Program) }
-    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms } }
+    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms, packed: false } }
+    fn leb(&mut self, mut value: u32) { while value >= 0x80 { self.bytes.push(value as u8 | 0x80); value >>= 7; } self.bytes.push(value as u8); }
     fn atom(&mut self, atom: u32) {
         let encoded = self.encoded_atom(atom);
         self.u32(encoded);
@@ -1415,6 +1474,19 @@ impl BinaryWriter {
     fn optional_atom_pair(&mut self, value: Option<(u32, u16)>) { self.u8(value.is_some() as u8); if let Some(value) = value { self.atom_pair(value); } }
     /// An instruction, whose immediate is an atom when it names one.
     fn instruction(&mut self, op: Op, a: u16, b: u16, c: u16, imm: u32) {
+        if self.packed {
+            let imm = if op.immediate_names_atom(b) { self.encoded_atom(imm) } else { imm };
+            let mut record = [0u8; 2 * 3 + 3 * 3 + 5];
+            let mut at = 0;
+            for value in [op as u32, u32::from(a), u32::from(b), u32::from(c), imm] {
+                let mut value = value;
+                while value >= 0x80 { record[at] = value as u8 | 0x80; at += 1; value >>= 7; }
+                record[at] = value as u8;
+                at += 1;
+            }
+            self.bytes.extend_from_slice(&record[..at]);
+            return;
+        }
         self.u16(op as u16); self.u16(a); self.u16(b); self.u16(c);
         if op.immediate_names_atom(b) { self.atom(imm) } else { self.u32(imm) }
     }
@@ -1431,8 +1503,8 @@ impl BinaryWriter {
             None => self.u8(0),
         }
     }
-    pub(super) fn u16(&mut self, value: u16) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
-    pub(super) fn u32(&mut self, value: u32) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
+    pub(super) fn u16(&mut self, value: u16) { if self.packed { self.leb(u32::from(value)) } else { self.bytes.extend_from_slice(&value.to_le_bytes()) } }
+    pub(super) fn u32(&mut self, value: u32) { if self.packed { self.leb(value) } else { self.bytes.extend_from_slice(&value.to_le_bytes()) } }
     pub(super) fn u64(&mut self, value: u64) { self.bytes.extend_from_slice(&value.to_le_bytes()); }
     pub(super) fn string(&mut self, value: &str) { self.u32(value.len() as u32); self.bytes.extend_from_slice(value.as_bytes()); }
     pub(super) fn strings(&mut self, values: &AtomTable) { self.u32(values.len() as u32); for value in values.iter() { self.string(value); } }
@@ -1445,13 +1517,15 @@ pub(super) struct BinaryReader<'a> {
     cursor: usize,
     /// A compact encoding's atom ids, by table position; none when ids are the program's.
     atoms: Option<std::rc::Rc<[u32]>>,
+    /// LEB128 integers (`BinaryWriter::packed`).
+    packed: bool,
 }
 
 #[rustfmt::skip]
 impl<'a> BinaryReader<'a> {
-    pub(super) fn new(bytes: &'a [u8]) -> Self { Self { bytes, cursor: 0, atoms: None } }
+    pub(super) fn new(bytes: &'a [u8]) -> Self { Self { bytes, cursor: 0, atoms: None, packed: false } }
     /// A reader of `bytes`, a part of this reader's input, under the same atom ids.
-    fn sub_reader<'b>(&self, bytes: &'b [u8]) -> BinaryReader<'b> { BinaryReader { bytes, cursor: 0, atoms: self.atoms.clone() } }
+    fn sub_reader<'b>(&self, bytes: &'b [u8]) -> BinaryReader<'b> { BinaryReader { bytes, cursor: 0, atoms: self.atoms.clone(), packed: self.packed } }
     /// A one-byte boolean, named by `what` in its error.
     fn flag(&mut self, what: &str) -> Result<bool, String> {
         match self.u8()? { 0 => Ok(false), 1 => Ok(true), _ => Err(format!("invalid residual {what} flag")) }
@@ -1489,6 +1563,13 @@ impl<'a> BinaryReader<'a> {
     /// and immediate, which is the reader's atom id when it names an atom. Reading the record
     /// field by field checked its bounds five times.
     fn instruction(&mut self) -> Result<(Op, u16, u16, u16, u32), String> {
+        if self.packed {
+            let op = Op::from_index(usize::from(self.u16()?)).ok_or_else(|| String::from("invalid residual opcode"))?;
+            let (a, b, c) = (self.u16()?, self.u16()?, self.u16()?);
+            let encoded = self.u32()?;
+            let imm = if op.immediate_names_atom(b) { self.atom_id(encoded)? } else { encoded };
+            return Ok((op, a, b, c, imm));
+        }
         const FIELD: usize = size_of::<u16>();
         const RECORD: usize = 4 * FIELD + size_of::<u32>();
         let record = self.array::<RECORD>()?;
@@ -1546,8 +1627,28 @@ impl<'a> BinaryReader<'a> {
             _ => Err("invalid residual boolean".into()),
         }
     }
-    pub(super) fn u16(&mut self) -> Result<u16, String> { Ok(u16::from_le_bytes(self.array()?)) }
-    pub(super) fn u32(&mut self) -> Result<u32, String> { Ok(u32::from_le_bytes(self.array()?)) }
+    pub(super) fn u16(&mut self) -> Result<u16, String> {
+        if self.packed { return u16::try_from(self.leb()?).map_err(|_| String::from("invalid packed u16")); }
+        Ok(u16::from_le_bytes(self.array()?))
+    }
+    pub(super) fn u32(&mut self) -> Result<u32, String> { if self.packed { self.leb() } else { Ok(u32::from_le_bytes(self.array()?)) } }
+    #[inline(always)]
+    fn leb(&mut self) -> Result<u32, String> {
+        if let Some(&byte) = self.bytes.get(self.cursor) && byte < 0x80 {
+            self.cursor += 1;
+            return Ok(u32::from(byte));
+        }
+        self.leb_long()
+    }
+    fn leb_long(&mut self) -> Result<u32, String> {
+        let mut value = 0u32;
+        for shift in (0..35).step_by(7) {
+            let byte = self.u8()?;
+            value |= u32::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 { return Ok(value); }
+        }
+        Err("invalid packed integer".into())
+    }
     pub(super) fn u64(&mut self) -> Result<u64, String> { Ok(u64::from_le_bytes(self.array()?)) }
     pub(super) fn string(&mut self) -> Result<String, String> {
         let len = self.u32()? as usize;

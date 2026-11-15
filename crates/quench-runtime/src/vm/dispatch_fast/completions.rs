@@ -28,12 +28,37 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
         Some(Completion::Cross) => lane_complete_cross_activation(cx, value),
         Some(Completion::SettlesPromise) => lane_return_from::<H, false, false, false, true>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
         Some(Completion::Constructs) => lane_return_from::<H, false, false, true, false>(cx, value).map(|(r, next)| Resumed::At(r, next, Carried::script(cx))),
+        Some(Completion::ReadsTrapped) => lane_complete_trapped_read(cx, ip, value),
         _ => None,
     };
     if common.is_some() {
         return common;
     }
     lane_complete_activation(cx, ip, value)
+}
+
+/// `lane_complete_returning` of a proxy `get` trap's activation (`Completion::ReadsTrapped`)
+/// whose read keeps its result: the read's register takes the trap's result, in the
+/// caller's program, which a trap of another program's library leaves for. A result the
+/// target's invariants may refuse returns from the trap's frame, whose pending call checks
+/// it; a read that returns its value (`RETURN_REGISTER`) takes `lane_complete_activation`.
+#[inline(always)]
+fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let top = vm.lane_stack.activations.last();
+    if proxy_traps::trap_result_needs_general_path(vm, top, value) {
+        return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
+    }
+    // SAFETY: the call record belongs to the caller's live view.
+    if unsafe { (*top?.call).a } & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let activation = vm.lane_stack.pop_activation()?;
+    let (caller_memory, _) = lane_restore_caller(cx, &activation);
+    if activation.caller_program != unsafe { (*cx).program } {
+        lane_enter_program(cx, activation.caller_program);
+    }
+    Some(lane_resume_after_call(&activation, caller_memory, value))
 }
 
 /// `lane_complete_activation`'s commonest completion: a JavaScript activation of the
@@ -133,7 +158,7 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
     let top = &vm.lane_stack.activations[outermost];
     let completion = match &top.kind {
         ActivationKind::Script(script) => script.completion,
-        ActivationKind::Wasm { .. } | ActivationKind::WasmExport { .. } => unreachable!("a chain holds script activations"),
+        ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => unreachable!("a chain holds script activations"),
     };
     if completion == Completion::ReturnsToBody {
         return lane_end_body_callee(cx, value);
@@ -221,7 +246,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
 
 /// Restore the lane state `activation`'s caller runs with, as its return does: the lane
 /// stack below its window, the caller's registers, records and memory, and a JavaScript
-/// caller's receiver, environment and captures. Returns the caller's memory and the
+/// caller's context words stay below its registers. Returns the caller's memory and the
 /// returning activation's receiver, which the context held while it ran.
 #[inline(always)]
 pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: &Activation) -> (MemoryView, Value) {
@@ -229,18 +254,12 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
     // SAFETY: an activation's window starts within the values, which hold no drop glue.
     unsafe { vm.lane_stack.values.set_top(activation.native.window as *mut Value) };
     let caller_memory = activation.caller_memory(cx);
-    let this = unsafe { (*cx).this };
+    // The returning activation's receiver, its window's context word.
+    let this = Registers(activation.native.window as *mut Value).this();
     unsafe {
         (*cx).registers = activation.caller_registers;
         (*cx).base = activation.caller_base;
         (*cx).memory = caller_memory;
-    }
-    if let ActivationKind::Script(script) = &activation.kind {
-        unsafe {
-            (*cx).this = script.caller_this;
-            (*cx).env = script.caller_env;
-            (*cx).capture = script.caller_capture;
-        }
     }
     (caller_memory, this)
 }

@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
             && let Some(value) = array_object
                 .elements()
                 .get(index)
-                .copied()
+                
                 .filter(|value| !value.is_deleted())
         {
             #[cfg(feature = "profile-aggregate")]

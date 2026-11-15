@@ -98,6 +98,7 @@ pub(crate) enum Class {
     DefinePropertyRecord,
     Delete,
     InitializeTdz,
+    GetIterator, IteratorClose, AppendArray,
     IteratorCleanupPop,
     IteratorCleanupPush,
     LoadCallee,
@@ -120,6 +121,7 @@ pub(crate) enum Class {
     StringCaseIndex,
     SuperConstArrayObject2,
     ToPropertyKey,
+    ForInStart,
     WasmBranchTable,
     WasmGlobalGet,
     WasmGlobalSet,
@@ -132,8 +134,7 @@ pub(crate) enum Class {
 
 impl Class {
     /// Equality usable in a `const` context (the derived `PartialEq` is not const).
-    pub(crate) const fn eq(self, other: Self) -> bool { self as u8 == other as u8 }
-}
+    pub(crate) const fn eq(self, other: Self) -> bool { self as u8 == other as u8 } }
 
 /// The class of each opcode, the catalog's one home for the family.
 macro_rules! class_of {
@@ -211,7 +212,6 @@ macro_rules! class_of {
     (WasmDescriptorCast) => { Class::WasmDescriptorCast };
     (WasmRefTest) => { Class::WasmRefTest };
     (WasmRefCast) => { Class::WasmRefCast };
-
     (WasmMemoryLoad) => { Class::WasmMemoryLoad };
     (WasmMemoryStore) => { Class::WasmMemoryStore };
     (CallArray) => { Class::CallArray };
@@ -226,6 +226,8 @@ macro_rules! class_of {
     (DefinePropertyRecord) => { Class::DefinePropertyRecord };
     (Delete) => { Class::Delete };
     (InitializeTdz) => { Class::InitializeTdz };
+    (GetIterator) => { Class::GetIterator };
+    (IteratorClose) => { Class::IteratorClose }; (AppendArray) => { Class::AppendArray };
     (IteratorCleanupPop) => { Class::IteratorCleanupPop };
     (IteratorCleanupPush) => { Class::IteratorCleanupPush };
     (LoadCallee) => { Class::LoadCallee };
@@ -248,6 +250,7 @@ macro_rules! class_of {
     (StringCaseIndex) => { Class::StringCaseIndex };
     (SuperConstArrayObject2) => { Class::SuperConstArrayObject2 };
     (ToPropertyKey) => { Class::ToPropertyKey };
+    (ForInStart) => { Class::ForInStart };
     (WasmBranchTable) => { Class::WasmBranchTable };
     (WasmGlobalGet) => { Class::WasmGlobalGet };
     (WasmGlobalSet) => { Class::WasmGlobalSet };
@@ -404,7 +407,6 @@ macro_rules! traits_of {
     (WasmIndirectTarget) => { Traits::UNROLL_EXCLUDED };
     ($other:ident) => { Traits::NONE };
 }
-
 
 pub(crate) use super::denotation::JsDenotation;
 

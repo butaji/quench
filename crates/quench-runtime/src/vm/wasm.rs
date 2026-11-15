@@ -490,7 +490,7 @@ impl<H: Host> Vm<H> {
                 .try_reserve_exact(segment.items.len())
                 .map_err(|_| JsError::validation("Wasm element allocation failed".into()))?;
             for value in segment.items.iter() {
-                values.push(self.wasm_reference_initializer(module, value, environment)?);
+                values.push(self.wasm_reference_initializer(module, &value, environment)?);
             }
             // Materializing references can allocate. The instance root owns each
             // completed segment until it is installed in a table or kept passive.
@@ -1490,7 +1490,7 @@ impl<H: Host> Vm<H> {
                 elements
                     .iter()
                     .zip(types)
-                    .map(|(value, ty)| self.decode_wasm_value_in(*value, *ty, declarations))
+                    .map(|(value, ty)| self.decode_wasm_value_in(value, *ty, declarations))
                     .collect()
             }
         }
@@ -4721,9 +4721,10 @@ mod tests {
             .iter_mut()
             .find(|instruction| instruction.op() == crate::bytecode::Op::WasmRefFunc)
             .unwrap();
-        *reference = crate::bytecode::Instr::new(crate::bytecode::Op::WasmRefFunc, 0, 0, 0, 9);
+        // Its registers stay, so the function's liveness claims still hold.
+        *reference = crate::bytecode::Instr::new(crate::bytecode::Op::WasmRefFunc, reference.a(), reference.b(), reference.c(), 9);
         // Residual validation knows the operand layout; pool attachment owns source indices.
-        assert!(corrupt.validate().is_ok());
+        assert_eq!(corrupt.validate(), Ok(()));
         let first = vm.instantiate_wasm_module(&owner).unwrap();
         let owner_env = vm.root_value(first.environment).unwrap();
         let mut signature_validation_vm = Vm::new(crate::SystemHost);

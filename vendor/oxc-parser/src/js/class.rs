@@ -87,6 +87,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             start = d.span.start;
         }
 
+        let binding_kind = self.binding_kind.take();
         let id = if self.cur_kind().is_binding_identifier()
             && !(self.at(Kind::Implements)
                 && self.lexer.peek_token().kind().is_identifier_or_keyword())
@@ -95,6 +96,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         } else {
             None
         };
+        self.binding_kind = binding_kind;
+        if let Some(id) = &id
+            && r#type == ClassType::ClassDeclaration
+        {
+            self.early.declare(id.name, crate::early::DeclKind::Lexical);
+        }
+        self.early.enter(crate::early::ScopeKind::Block);
+        if let Some(id) = &id {
+            self.early.declare(id.name, crate::early::DeclKind::OwnName);
+        }
         // A class name may not be a reserved type name, but only in TypeScript
         // (`class string {}` is valid JavaScript).
         if self.is_ts
@@ -123,7 +134,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 self.error(diagnostics::classes_can_only_extend_single_class(span));
             }
         }
+        self.early.enter_class_body(heritage.is_some());
         let body = self.parse_class_body();
+        self.early.exit_class_body();
+        self.early.exit();
 
         self.verify_modifiers(
             modifiers,
@@ -204,7 +218,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     #[expect(clippy::type_complexity)]
-    fn parse_class_heritage_clause(
+    pub(super) fn parse_class_heritage_clause(
         &mut self,
     ) -> (
         Option<
@@ -274,7 +288,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         ClassBody::boxed(self.end_span(start), class_elements, self)
     }
 
-    fn parse_class_element(&mut self) -> ClassElement<'a> {
+    pub(super) fn parse_class_element(&mut self) -> ClassElement<'a> {
         let elem = self.parse_class_element_impl();
         if let ClassElement::MethodDefinition(def) = &elem
             && def.value.body.is_none()
@@ -456,11 +470,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ///    `StatementList`[~Yield, +Await, ~Return]
     fn parse_class_static_block(&mut self, start: u32) -> ClassElement<'a> {
         self.bump_any(); // bump `static`
+        self.early.enter_function(Some(crate::early::Home::StaticBlock));
         let block = self.context(
             Context::In | Context::Await | Context::NewTarget,
             Context::Yield | Context::Return,
             Self::parse_block,
         );
+        self.early.exit_function();
         ClassElement::new_static_block(self.end_span(start), block.unbox().body, self)
     }
 
@@ -480,11 +496,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             None
         };
         let value = self.eat(Kind::Eq).then(|| {
-            self.context(
+            self.early.enter_field();
+            let value = self.context(
                 Context::In | Context::NewTarget,
                 Context::Yield | Context::Await,
                 Self::parse_assignment_expression_or_higher,
-            )
+            );
+            self.early.exit_field();
+            value
         });
         self.asi();
         let r#type = if modifiers.contains(ModifierKind::Abstract) {
@@ -597,6 +616,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         modifiers: &Modifiers,
         decorators: ArenaVec<'a, Decorator<'a>>,
     ) -> ClassElement<'a> {
+        self.early.constructor();
         self.verify_modifiers(
             modifiers,
             ModifierKinds::all_except([
@@ -805,11 +825,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // Initializer[+In, ?Yield, ?Await]opt
         // `new.target` is allowed in a class field initializer.
         let initializer = self.eat(Kind::Eq).then(|| {
-            self.context(
+            self.early.enter_field();
+            let initializer = self.context(
                 Context::In | Context::NewTarget,
                 Context::Yield | Context::Await,
                 Self::parse_assignment_expression_or_higher,
-            )
+            );
+            self.early.exit_field();
+            initializer
         });
 
         // Handle trailing `;` or newline

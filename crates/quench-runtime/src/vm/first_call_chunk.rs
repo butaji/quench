@@ -7,6 +7,13 @@ use std::rc::{Rc, Weak};
 
 /// The chunk of each stub, by the stub's program and function: the programs are held weakly
 /// and checked on each read, as either id may name another program once its own is reclaimed.
+/// The least function text, in bytes, whose first call may run its body a run at a time.
+const STREAMED_RUNS_MIN: u32 = 256 << 10;
+
+/// The stubs whose first call ran their body a run at a time, which a later call compiles
+/// whole: a body that runs again keeps its code.
+pub(super) type StreamedStubs = FxHashSet<(ProgramId, u32)>;
+
 pub(super) type FirstChunks = FxHashMap<(ProgramId, u32), (Weak<ResidualProgram>, Weak<ResidualProgram>, FunctionKind)>;
 
 impl<H: Host> Vm<H> {
@@ -20,6 +27,12 @@ impl<H: Host> Vm<H> {
         let callee = context.callable().ok_or_else(|| JsError::validation("a first-call stub runs without a callee".into()))?;
         let args = self.array_values(self.read(f, i.register_b()))?;
         if self.heap.function(callee).is_some_and(|record| matches!(record.kind, FunctionKind::User(program, function) if (program, function) == stub)) {
+            if !context.is_constructor()
+                && let Some(value) = self.call_streamed_runs(p, stub, callee, this, &args)?
+            {
+                self.write(f, i.result_register(), value);
+                return Ok(());
+            }
             let chunk = self.compile_first_chunk(p, stub)?;
             if let Some(record) = self.heap.function_mut(callee) {
                 record.kind = chunk;
@@ -46,7 +59,13 @@ impl<H: Host> Vm<H> {
         {
             return Ok(*kind);
         }
-        let kind = self.compile_first_chunk_anew(p, (program, function))?;
+        let kind = self.compile_first_chunk_anew(p, (program, function), None)?;
+        self.remember_first_chunk((program, function), kind);
+        Ok(kind)
+    }
+
+    /// Records `kind` as the chunk of stub `function` of `program`.
+    fn remember_first_chunk(&mut self, (program, function): (ProgramId, u32), kind: FunctionKind) {
         if let FunctionKind::User(id, _) = kind
             && let (Some(stub), Some(chunk)) = (self.programs.get(program), self.programs.get(id))
         {
@@ -62,7 +81,6 @@ impl<H: Host> Vm<H> {
             }
             self.first_chunks.insert((program, function), (Rc::downgrade(&stub), Rc::downgrade(&chunk), kind));
         }
-        Ok(kind)
     }
 
     /// Forgets the chunks whose programs are gone, which a collection finds out.
@@ -70,14 +88,56 @@ impl<H: Host> Vm<H> {
         self.first_chunks.retain(|_, (stub, chunk, _)| stub.strong_count() > 0 && chunk.strong_count() > 0);
     }
 
-    fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32)) -> Result<FunctionKind, JsError> {
-        if let Some(appended) = self.append_first_chunk(p, (program, function)) {
+    /// The first call of stub `stub` of program `p` (`stub.0`), callee `callee`, when its
+    /// function's body streams (`StreamRun`): each run of its statements compiles as a chunk
+    /// of its own, which a function of the callee's environment runs once, and is dropped.
+    /// The function's code is never resident whole, as a body that runs once needs it not;
+    /// a later call compiles the function whole (`compile_first_chunk`). `None` where the
+    /// body does not stream, the callee then pointed at its chunk.
+    fn call_streamed_runs(&mut self, p: &ResidualProgram, stub: (ProgramId, u32), callee: Value, this: Value, args: &[Value]) -> Result<Option<Value>, JsError> {
+        use crate::compile::statement_stream::StreamRun;
+        let Some(span) = p.functions[stub.1 as usize].header().source_span else { return Ok(None) };
+        if span.end - span.start < STREAMED_RUNS_MIN || self.streamed_stubs.contains(&stub) {
+            return Ok(None);
+        }
+        let run = StreamRun::first(span.start);
+        let mut kind = self.compile_first_chunk_anew(p, stub, Some(&run))?;
+        let Some((body, mut next)) = run.found.get().filter(|(_, next)| next.is_some()) else {
+            self.remember_first_chunk(stub, kind);
+            if let Some(record) = self.heap.function_mut(callee) {
+                record.kind = kind;
+            }
+            return Ok(None);
+        };
+        self.streamed_stubs.insert(stub);
+        let (realm, env, proto) = match self.heap.function(callee) {
+            Some(record) => (record.realm, record.env, record.object.proto()),
+            None => return Err(JsError::validation("a first-call stub runs without its function".into())),
+        };
+        loop {
+            let function = self.heap.alloc_function(crate::heap::FunctionRecord { object: Self::empty_object(proto), realm, env, kind });
+            self.call_value(p, function, this, args)?;
+            let Some(from) = next else { return Ok(Some(Value::UNDEFINED)) };
+            let run = StreamRun::after(span.start, from, body);
+            kind = self.compile_first_chunk_anew(p, stub, Some(&run))?;
+            next = run.found.get().ok_or_else(|| JsError::validation("a streamed run does not compile".into()))?.1;
+        }
+    }
+
+    fn compile_first_chunk_anew(&mut self, p: &ResidualProgram, (program, function): (ProgramId, u32), run: Option<&crate::compile::statement_stream::StreamRun>) -> Result<FunctionKind, JsError> {
+        if run.is_none()
+            && let Some(appended) = self.append_first_chunk(p, (program, function))
+        {
             return Ok(appended);
         }
         let span = p.functions[function as usize].header().source_span
             .ok_or_else(|| JsError::validation("a first-call stub keeps no source".into()))?;
-        let residual = crate::Engine::specialize_first_call_chunk(p, function, span, &*self)
-            .map_err(|_| JsError::validation("a first-call chunk does not compile".into()))?;
+        // A body too deep for the stack reports it here, where it compiles, as V8 does.
+        let residual = match crate::Engine::specialize_first_call_chunk(p, function, span, &*self, run) {
+            Ok(residual) => residual,
+            Err(errors) if errors.iter().any(crate::compile::Diagnostic::is_stack_exhausted) => return Err(self.stack_exhaustion_error()),
+            Err(_) => return Err(JsError::validation("a first-call chunk does not compile".into())),
+        };
         let target = residual
             .functions
             .iter()

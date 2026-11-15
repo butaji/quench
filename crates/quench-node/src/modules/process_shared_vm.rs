@@ -2600,7 +2600,7 @@ fn run_due_timers(
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) -> Result<bool, String> {
-    let now = std::time::Instant::now();
+    let now = quench_runtime::clock::instant_now();
     let mut ran = false;
     while has_referenced_shared_work(shared_state) {
         let due = shared_state.borrow_mut().scheduler.take_due_shared_timer(now);
@@ -2642,7 +2642,7 @@ fn run_timer(
     if callback_result.is_err() {
         shared_state.borrow_mut().scheduler.cancel_shared_timer(timer.id);
     }
-    let released = shared_state.borrow_mut().scheduler.complete_shared_timer(timer, std::time::Instant::now());
+    let released = shared_state.borrow_mut().scheduler.complete_shared_timer(timer, quench_runtime::clock::instant_now());
     if let Some(callback) = released {
         let settled = mark_timer_destroyed(runtime, callback.receiver).and_then(|()| {
             let undefined = runtime.root(Value::UNDEFINED);
@@ -2707,7 +2707,12 @@ fn run_check_phase(
 fn wait_for_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) {
     let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
     let poll_interval = crate::modules::net_shared_vm::poll_interval().min(crate::modules::child_process_shared_vm::poll_interval());
-    let until_timer = next_timer.map(|due| due.saturating_duration_since(std::time::Instant::now()));
+    if let Some(due) = next_timer {
+        if !has_polled_shared_work(shared_state) && quench_runtime::clock::skip_to(due) {
+            return;
+        }
+    }
+    let until_timer = next_timer.map(|due| due.saturating_duration_since(quench_runtime::clock::instant_now()));
     let wait = match until_timer {
         Some(delay) if !has_polled_shared_work(shared_state) => delay,
         Some(delay) => delay.min(poll_interval),

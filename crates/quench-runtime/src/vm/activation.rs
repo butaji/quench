@@ -61,6 +61,16 @@ pub(crate) enum CallCompletion {
     /// target's invariants (`Vm::trap_result_error`): a read yields what the trap returned, a
     /// store the value stored.
     Trapped(TrapCheck),
+    /// A JavaScript call of an exported Wasm function whose frame the lane pushed
+    /// (`dispatch_fast::lane_wasm_export_frame`): the frame returns its result encoded, which
+    /// converts to its JavaScript value by the result's scalar type (`None`: no result,
+    /// `undefined`); a trap leaving the frame becomes the `RuntimeError` the caller sees.
+    WasmExport(Option<crate::WasmType>),
+    /// A Wasm call of a JavaScript-backed import whose JavaScript callee the lane activated
+    /// (`dispatch_fast::wasm_calls::lane_activate_js_import`): the frame's result takes its
+    /// Wasm form by the import's result type (`None`: no result), ToWebAssemblyValue, which
+    /// may run guest code or throw at the Wasm caller's call (`Vm::wasm_import_result`).
+    ToWasm(Option<crate::WasmType>),
 }
 
 /// How a proxy trap's result is checked against its target: a read, a store, or a strict
@@ -80,6 +90,10 @@ pub(crate) struct TrapCheck {
     pub(super) target: Value,
     pub(super) atom: crate::bytecode::Atom,
     pub(super) access: TrapAccess,
+    /// The target's layout id when the pre-check ran, for a key its layout alone answers
+    /// (a name other than an array's `length`): the same layout after the trap answers as
+    /// the pre-check did. 0, which no object's layout is, where the check is made again.
+    pub(super) layout: u32,
 }
 
 impl CallCompletion {
@@ -93,7 +107,7 @@ impl CallCompletion {
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
     #[inline(always)]
-    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_)) }
+    pub(super) fn completes_on_general_path(&self) -> bool { matches!(self, Self::Promise(_) | Self::ArrayStep(_) | Self::Trapped(_) | Self::ToWasm(_)) }
 
     #[inline(always)]
     pub(super) fn take_array_step(&mut self) -> Option<Box<super::array_indexed::ArrayStepCall>> {
@@ -247,10 +261,17 @@ impl Continuation {
     }
 
     fn clear_dead_registers(&mut self) {
-        for index in 0..self.frame.registers.len() {
-            if !self.register_is_live(index) {
-                self.frame.registers[index] = Value::UNDEFINED;
-            }
+        let Some(live) = self.live_registers else { return };
+        let registers = &mut self.frame.registers;
+        let covered = registers.len().min(u64::BITS as usize);
+        let (low, high) = registers.split_at_mut(covered);
+        high.fill(Value::UNDEFINED);
+        // The registers the mask covers, as bits: none of a frame without registers.
+        let covered_bits = u64::MAX.checked_shr(u64::BITS - covered as u32).unwrap_or(0);
+        let mut dead = !live & covered_bits;
+        while dead != 0 {
+            low[dead.trailing_zeros() as usize] = Value::UNDEFINED;
+            dead &= dead - 1;
         }
     }
 
@@ -384,7 +405,7 @@ impl Snap for Continuation {
         frame.this = Snap::unsnap(reader)?;
         frame.locals = Snap::unsnap(reader)?;
         frame.dynamic_bindings = Snap::unsnap(reader)?;
-        frame.registers = Snap::unsnap(reader)?;
+        frame.registers = super::register_file::RegisterFile::from_registers(&<Vec<Value> as Snap>::unsnap(reader)?);
         frame.active_iterators = Snap::unsnap(reader)?;
         frame.with_objects = Snap::unsnap(reader)?;
         let completion = Snap::unsnap(reader)?;
@@ -442,7 +463,7 @@ mod tests {
         frame.this = Value::heap(2);
         frame.locals = vec![Value::heap(4)];
         frame.dynamic_bindings = vec![(0, Value::heap(8))];
-        frame.registers = vec![Value::heap(5)];
+        frame.registers = crate::vm::register_file::RegisterFile::from_registers(&[Value::heap(5)]);
         frame.with_objects = vec![Value::heap(11)];
         frame.with_base = 3;
         frame.fixed_this = true;

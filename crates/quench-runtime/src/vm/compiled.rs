@@ -519,10 +519,23 @@ fn emit_js_tagged_number(
         &[ir::BlockArg::Value(number)],
     );
 
+    // An integer is the common NaN-space value (a double column holds its integral
+    // values tagged), so its tag is tested first: shift, compare, convert.
     builder.switch_to_block(nan);
     let field = builder
         .ins()
         .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
+    let int_field = (crate::value::ValueLayout::INT_TAG
+        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
+    let is_integer_tag = builder
+        .ins()
+        .icmp_imm_u(IntCC::Equal, field, int_field);
+    builder
+        .ins()
+        .brif(is_integer_tag, integer_block, &[], tagged, &[]);
+
+    // Any other tag leaves; an untagged NaN is the double NaN.
+    builder.switch_to_block(tagged);
     let offset = builder.ins().iadd_imm_s(
         field,
         -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
@@ -534,21 +547,11 @@ fn emit_js_tagged_number(
     );
     builder.ins().brif(
         is_tagged,
-        tagged,
+        fallback,
         &[],
         join,
         &[ir::BlockArg::Value(number)],
     );
-
-    builder.switch_to_block(tagged);
-    let int_field = (crate::value::ValueLayout::INT_TAG
-        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
-    let is_integer_tag = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, field, int_field);
-    builder
-        .ins()
-        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
 
     builder.switch_to_block(integer_block);
     let integer = builder.ins().ireduce(types::I32, bits);
@@ -611,6 +614,16 @@ pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
+    // A double converted from an int32 is that int32's exact value, so its ToInt32 is the
+    // int32 itself: no round trip through the double, no range guard.
+    let number = builder.func.dfg.resolve_aliases(number);
+    if let Some(def) = builder.func.dfg.value_def(number).inst()
+        && builder.func.dfg.insts[def].opcode() == ir::Opcode::FcvtFromSint
+        && let [integer] = builder.func.dfg.inst_args(def)
+        && builder.func.dfg.value_type(*integer) == types::I32
+    {
+        return *integer;
+    }
     let magnitude = builder.ins().fabs(number);
     let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
     let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
@@ -713,10 +726,16 @@ pub(super) fn emit_array_length_read(
         header,
         i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
     );
-    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
-    emit_js_guard(builder, int32, fallback);
+    // A flagged length word (a narrow or double-kind backing, bits 31 and 30) is not the
+    // array's length: unsigned, it is above every dense length, and leaves.
+    let plain = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, length, i64::from(MAX_DENSE_LENGTH_WORD));
+    emit_js_guard(builder, plain, fallback);
     length
 }
+
+/// The largest length word of a backing whose values are wide tagged words: bits 31
+/// (`NARROW_LEN`) and 30 (the double element kind) flag other storage.
+const MAX_DENSE_LENGTH_WORD: u32 = (1 << 30) - 1;
 
 /// A dense own array's elements as one access proved them: the backing's first value and
 /// its length. Holds until something changes the array's storage (`ArrayElements`): only
@@ -784,6 +803,12 @@ pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
     let record = emit_array_record_address(builder, record_base, record_id);
     let header = emit_array_header(builder, record);
     let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
+    // A helper may have changed the backing's storage form in place (narrow or double kind,
+    // a flagged length word): the view then reads as empty, so every access through it
+    // misses its bounds test and leaves.
+    let plain = builder.ins().icmp_imm_u(IntCC::UnsignedLessThanOrEqual, length, i64::from(MAX_DENSE_LENGTH_WORD));
+    let zero = builder.ins().iconst(types::I32, 0);
+    let length = builder.ins().select(plain, length, zero);
     (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
 }
 
@@ -1708,7 +1733,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Prefix,
+        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
 }
@@ -3928,7 +3953,6 @@ impl CompiledOsrRegion {
     }
 
     /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
-    pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
 
     /// A miss at the cache site of `pc` met `load`'s shape: points the site's one entry at it by
     /// rewriting its shape and slot in the published code (through the code heap's write view),
@@ -3989,10 +4013,10 @@ impl CompiledOsrRegion {
         #[cfg(test)]
         LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
+        unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
             let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, frame), registers);
+            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
             osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt)
         }) }.unwrap_or(LoopOutcome::Terminated)
     }
@@ -4504,12 +4528,17 @@ unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, l
     u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
 }
 
-/// A lane body's `value instanceof constructor` (`Vm::steady_instanceof`): 1 or 0, or
-/// `Value::DELETED` where the full algorithm decides, which leaves the body at the test.
+/// A lane body's `value instanceof constructor`, decided as the interpreter's own record
+/// decides it (`lane_instanceof_jump_true`): the constructor's proof (`Vm::record_instanceof`),
+/// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
+/// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
 unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
-    let vm = unsafe { &*(vm as *const Vm<H>) };
-    vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
+    // SAFETY: as `lane_field_get`; both reads walk the heap, call nothing and allocate nothing
+    // (the walk only fills the constructor-layout memo).
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let (value, constructor) = (Value::from_bits(value), Value::from_bits(constructor));
+    vm.record_instanceof(value, constructor)
+        .or_else(|| vm.ordinary_instanceof(value, constructor))
         .map_or_else(|| Value::DELETED.to_bits(), u64::from)
 }
 
@@ -4619,10 +4648,17 @@ impl<H: Host> Vm<H> {
         // A Number store logs nothing.
         let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
         if elements.owner_count() != 1 { return None; }
-        let elements = super::index::mutable_array_elements(elements);
-        let before = elements.capacity();
-        elements.reserve(1);
-        let room = elements.capacity();
+        // A double backing keeps its kind (`ArrayElements::reserve_double`).
+        let (before, room) = if elements.is_double() {
+            let before = elements.capacity();
+            elements.reserve_double(1);
+            (before, elements.capacity())
+        } else {
+            let elements = super::index::mutable_array_elements(elements);
+            let before = elements.capacity();
+            elements.reserve(1);
+            (before, elements.capacity())
+        };
         self.heap.charge_payload_growth((room - before) * size_of::<Value>());
         (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
     }
@@ -4754,7 +4790,7 @@ impl<H: Host> Vm<H> {
     /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
     /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
     pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
-        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee })
+        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee() })
     }
 
     /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee
@@ -5092,11 +5128,21 @@ struct JsNativeActivation {
 impl JsNativeActivation {
     /// Construct and consume one owned activation in the entry's scope. The
     /// large dispatch does not cross an optional aggregate-return boundary.
+    #[cfg(feature = "native-execution")]
     #[inline(always)]
     fn with<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
         allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
+        let function = vm.frames[frame].function;
+        Self::with_function(vm, program_id, (frame, function), start_pc, allow_inline_calls, views, run)
+    }
+
+    /// `with` for `function` of `program_id`, which runs above VM frame `frame`: a frameless
+    /// activation's function is not its frame's, and may not be of the frame's program.
+    #[inline(always)]
+    fn with_function<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, (frame, function): (usize, u32), start_pc: usize,
+        allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
-        let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
+        let body = program.function_get(function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
         let mut native = Self { dispatch: JsStepDispatch {
             program_id, frame, allow_inline_calls, start_pc,
@@ -9935,6 +9981,7 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
+        self.heap.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).

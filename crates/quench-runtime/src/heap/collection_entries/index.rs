@@ -24,9 +24,9 @@ const BUCKETS_PER_SLOT: usize = 2;
 pub(super) struct KeyIndex {
     /// Per bucket, `EMPTY` or the hash's top seven bits; a power of two, at least
     /// `BUCKETS_PER_SLOT` per slot.
-    tags: Vec<u8>,
+    tags: Box<[u8]>,
     /// Per bucket, its slot.
-    slots: Vec<u32>,
+    slots: Box<[u32]>,
 }
 
 /// A hash's tag: its top bits, which the bucket position (its low bits) leaves out.
@@ -52,7 +52,7 @@ impl KeyIndex {
     /// The index of slots whose folded hashes are `hashes`.
     pub(super) fn of(hashes: &[u32]) -> Self {
         let buckets = (hashes.len() * BUCKETS_PER_SLOT).next_power_of_two().max(MIN_BUCKETS);
-        let mut index = Self { tags: vec![EMPTY; buckets], slots: vec![0; buckets] };
+        let mut index = Self { tags: vec![EMPTY; buckets].into_boxed_slice(), slots: vec![0; buckets].into_boxed_slice() };
         hashes.iter().enumerate().for_each(|(slot, &hash)| index.link(hash, slot));
         index
     }
@@ -112,7 +112,7 @@ impl KeyIndex {
     }
 
     pub(super) fn bytes(&self) -> usize {
-        self.tags.capacity() + self.slots.capacity() * size_of::<u32>()
+        self.tags.len() + self.slots.len() * size_of::<u32>()
     }
 }
 

@@ -219,7 +219,7 @@ impl<H: Host> Vm<H> {
             PropertyKey::Symbol(symbol) => {
                 self.get_symbol_property_with_receiver(p, holder, symbol, receiver)
             }
-            PropertyKey::Private(_) => Err(JsError("lazy data property key is not private".into())),
+            PropertyKey::Private(..) => Err(JsError("lazy data property key is not private".into())),
         }
     }
 
@@ -529,7 +529,7 @@ impl<H: Host> Vm<H> {
                     PropertyKey::Symbol(symbol) => {
                         self.set_symbol_property_with_receiver(p, holder, symbol, value, receiver)?;
                     }
-                    PropertyKey::Private(_) => {
+                    PropertyKey::Private(..) => {
                         return Err(JsError("lazy data property key is not private".into()));
                     }
                 }

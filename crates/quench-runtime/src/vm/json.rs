@@ -233,6 +233,14 @@ fn write_json_string(value: &JsString, output: &mut JsonText) {
 /// QuoteJSONString of UTF-8 `text`. Every byte QuoteJSONString escapes is ASCII and no
 /// multi-byte sequence contains one, so the runs between escapes are copied whole.
 fn write_json_utf8(text: &[u8], output: &mut JsonText) {
+    output.reserve(text.len() + 2);
+    // Most strings need no escape: one test of their words, then one copy.
+    if !text_needs_json_escape(text) {
+        output.push(b'"');
+        output.extend_from_slice(text);
+        output.push(b'"');
+        return;
+    }
     output.push(b'"');
     let mut run = 0;
     let mut index = 0;
@@ -256,6 +264,22 @@ fn write_json_utf8(text: &[u8], output: &mut JsonText) {
     }
     output.append_bytes(&text[run..]);
     output.push(b'"');
+}
+
+/// Whether any byte of `text` needs an escape, by words: the last partial word is padded
+/// with spaces, which need none.
+#[inline(always)]
+fn text_needs_json_escape(text: &[u8]) -> bool {
+    let mut words = text.chunks_exact(WORD_BYTES);
+    for word in &mut words {
+        if word_needs_json_escape(u64::from_le_bytes(word.try_into().expect("word bytes"))) {
+            return true;
+        }
+    }
+    let rest = words.remainder();
+    let mut padded = [b' '; WORD_BYTES];
+    padded[..rest.len()].copy_from_slice(rest);
+    word_needs_json_escape(u64::from_le_bytes(padded))
 }
 
 /// Bytes scanned at once by `word_needs_json_escape`.
@@ -557,6 +581,7 @@ impl JsonUnit for u8 {
     fn starts_key(units: &[u8], key: &[u8]) -> bool {
         units.get(key.len()) == Some(&b'"') && same_ascii(&units[..key.len()], key)
     }
+    #[inline(always)]
     fn run(units: &[u8]) -> JsonStringUnits<'_> {
         JsonStringUnits::Run(Units::Ascii(units))
     }
@@ -569,6 +594,7 @@ impl JsonUnit for u16 {
     #[inline(always)] fn unit(self) -> u16 {
         self
     }
+    #[inline(always)]
     fn run(units: &[u16]) -> JsonStringUnits<'_> {
         JsonStringUnits::Run(Units::Wide(units))
     }
@@ -594,8 +620,12 @@ impl Utf8Byte {
 
     /// The text of a run of whole UTF-8 characters.
     fn text(units: &[Self]) -> &str {
-        // SAFETY: `Utf8Byte` is a transparent `u8`, and a run bounded by ASCII terminators is whole UTF-8 characters.
-        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len())) }
+        // SAFETY: `Utf8Byte` is a transparent `u8`.
+        let bytes = unsafe { std::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len()) };
+        debug_assert!(std::str::from_utf8(bytes).is_ok(), "a run bounded by ASCII terminators is whole UTF-8 text");
+        // SAFETY: the units are a `str`'s (`Utf8Byte::of`), and a run bounded by ASCII
+        // terminators, which no UTF-8 sequence holds, is whole characters of it.
+        unsafe { std::str::from_utf8_unchecked(bytes) }
     }
 }
 
@@ -2071,7 +2101,7 @@ impl<H: Host> Vm<H> {
                 let key = self
                     .heap
                     .array_elements(keys)
-                    .map(|elements| elements[index])
+                    .map(|elements| elements.get(index).expect("rooted own-key projection"))
                     .expect("rooted own-key projection");
                 if !self.heap.is_string(key) {
                     continue;

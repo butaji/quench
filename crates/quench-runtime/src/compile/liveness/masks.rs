@@ -18,7 +18,32 @@ pub(crate) enum RegisterMasks {
     Windowed { windows: u16, masks: Box<[RegisterSet]> },
 }
 
+/// The largest mask table a collection derives for a function it finds on the stack: past it
+/// (a wasm body of 35K instructions over 256 registers: 1.1 MB, dotnet-aot) the collection
+/// scans every register of the frame instead, and keeps no table.
+pub(crate) const KEPT_MASK_BYTES: usize = 64 * 1024;
+
 impl RegisterMasks {
+    /// Whether `function`'s table, at the width its registers need, would pass
+    /// `KEPT_MASK_BYTES`.
+    fn too_large_to_keep(function: &Function) -> bool {
+        let width = if u32::from(function.registers) <= u64::BITS {
+            std::mem::size_of::<u64>()
+        } else if u32::from(function.registers) <= u128::BITS {
+            std::mem::size_of::<u128>()
+        } else {
+            std::mem::size_of::<RegisterSet>()
+        };
+        function.code.len() * width > KEPT_MASK_BYTES
+    }
+
+    /// `program`'s masks for `function` as a collection reads them: `None` (scan every register
+    /// of its frames) where they are not derived yet and would pass `KEPT_MASK_BYTES`.
+    pub(crate) fn for_collection(program: &crate::bytecode::ResidualProgram, function: u32) -> Option<&Self> {
+        let record = program.function_get(function as usize)?;
+        (record.register_roots.masks.get().is_some() || !Self::too_large_to_keep(record)).then(|| program.register_root_masks(function))?
+    }
+
     /// `masks` at the narrowest width that holds every one of them.
     pub(crate) fn new(masks: Vec<RegisterSet>) -> Self {
         if let Some(narrow) = masks.iter().map(|&mask| u64::try_from(mask).ok()).collect::<Option<Box<[u64]>>>() { return Self::Narrow(narrow); }

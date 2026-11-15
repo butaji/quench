@@ -1157,6 +1157,76 @@ impl<H: Host> Vm<H> {
         Ok(wrapper)
     }
 
+    /// The JavaScript value of an exported function's encoded `result` of scalar type `ty`
+    /// (`CallCompletion::WasmExport`), whose decoding allocates nothing; `undefined` for none.
+    pub(super) fn wasm_export_result(&self, result: Value, ty: Option<WasmType>) -> Value {
+        let Some(ty) = ty else { return Value::UNDEFINED };
+        match self.decode_wasm_value_in(result, ty, None) {
+            Ok(WasmValue::I32(value)) => Value::number(f64::from(value)),
+            Ok(WasmValue::F32(bits)) => Value::number(f64::from(f32::from_bits(bits))),
+            Ok(WasmValue::F64(bits)) => Value::number(f64::from_bits(bits)),
+            _ => unreachable!("a pushed export's result is a validated scalar"),
+        }
+    }
+
+    /// The exported function `callee` names, when a JavaScript call can push its frame in place
+    /// (`dispatch_fast::lane_wasm_export_frame`): an interpreted function of a Wasm program
+    /// whose parameters encode without allocating (`i32`, `f32`) from the Numbers `args` holds,
+    /// so converting them runs no JavaScript, and whose result decodes without allocating.
+    /// Its program, function, instance environment, encoded arguments and result type.
+    pub(super) fn wasm_export_frame_call(
+        &mut self,
+        callee: Value,
+        args: &[Value],
+    ) -> Option<(crate::vm::ProgramId, u32, Value, smallvec::SmallVec<[Value; WASM_INLINE_ARGUMENTS]>, Option<WasmType>)> {
+        let call = match self.lane_stack.wasm_export {
+            Some(call) if call.callee == callee => call,
+            _ => {
+                let call = self.resolve_wasm_export_call(callee)?;
+                self.lane_stack.wasm_export = Some(call);
+                call
+            }
+        };
+        let mut encoded = smallvec::SmallVec::new();
+        for position in 0..usize::from(call.params) {
+            let number = args.get(position).copied().unwrap_or(Value::UNDEFINED).as_number()?;
+            encoded.push(self.encode_wasm_value(if call.f32_params & (1 << position) != 0 {
+                WasmValue::F32((number as f32).to_bits())
+            } else {
+                WasmValue::I32(Self::uint32_from_value(number) as i32)
+            }));
+        }
+        Some((call.program, call.index, call.env, encoded, call.result))
+    }
+
+    /// What `wasm_export_frame_call` reads of `callee` before encoding its arguments: the
+    /// interpreted function behind the wrapper, its instance, and a signature it admits.
+    fn resolve_wasm_export_call(&self, callee: Value) -> Option<WasmExportCall> {
+        let closure = self.wasm_exported_closure(callee)?;
+        let &FunctionRecord { kind: FunctionKind::User(program, index), env, .. } = self.heap.function(closure)? else {
+            return None;
+        };
+        let signatures = self.programs.wasm_signatures_shared(program)?;
+        let signature = signatures.defined_signature(index)?;
+        let result = match signature.results.as_slice() {
+            [] => None,
+            &[ty @ (WasmType::I32 | WasmType::F32 | WasmType::F64)] => Some(ty),
+            _ => return None,
+        };
+        if signature.params.len() > 16 {
+            return None;
+        }
+        let mut f32_params = 0u16;
+        for (position, &ty) in signature.params.iter().enumerate() {
+            match ty {
+                WasmType::I32 => {}
+                WasmType::F32 => f32_params |= 1 << position,
+                _ => return None,
+            }
+        }
+        Some(WasmExportCall { callee, program, index, env, params: signature.params.len() as u8, f32_params, result })
+    }
+
     /// The Wasm closure behind an exported-function wrapper.
     fn wasm_exported_closure(&self, value: Value) -> Option<Value> {
         match self.heap.function(value)? {
@@ -1639,6 +1709,16 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// What a JavaScript-backed import's call yields to its Wasm caller for the callee's
+    /// returned `value`: `undefined` for no result, else its encoded ToWebAssemblyValue for the
+    /// scalar `result` (`CallCompletion::ToWasm`).
+    pub(super) fn wasm_import_result(&mut self, p: &ResidualProgram, value: Value, result: Option<WasmType>) -> Result<Value, JsError> {
+        match result {
+            None => Ok(Value::UNDEFINED),
+            Some(ty) => self.js_to_wasm(p, value, ty, None),
+        }
+    }
+
     /// ToWebAssemblyValue of `value` for type `ty`, encoded.
     fn js_to_wasm(
         &mut self,
@@ -1964,4 +2044,18 @@ mod tests {
             assert_eq!(*calls.borrow(), [mode]);
         }
     }
+}
+
+/// An exported Wasm function's call as `Vm::wasm_export_frame_call` admits it, for the
+/// wrapper `callee` (`LaneStack::wasm_export`).
+#[derive(Clone, Copy)]
+pub(super) struct WasmExportCall {
+    callee: Value,
+    program: crate::vm::ProgramId,
+    index: u32,
+    env: Value,
+    /// The parameters, each an i32 or, where its bit in `f32_params` is set, an f32.
+    params: u8,
+    f32_params: u16,
+    result: Option<WasmType>,
 }

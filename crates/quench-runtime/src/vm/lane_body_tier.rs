@@ -33,7 +33,7 @@ pub(super) struct LaneBodyHistory {
 
 #[path = "lane_body_audit.rs"]
 mod audit;
-pub(super) use audit::{audit_nanos, Timed, Verdict};
+pub(super) use audit::{Epochs, Verdict};
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
@@ -106,7 +106,7 @@ impl LaneView {
     /// `verdict`. A body it compiles past keeps its code for the direct callers that name it.
     pub(super) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
-        let body = unsafe { &mut *self.tier_lane.get() };
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return };
         if completed_region || matches!(exit, LaneExit::Returned { .. }) {
             completed.set(true);
@@ -149,12 +149,12 @@ impl LaneView {
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, event);
-        self.retired.borrow_mut().push(method);
+        self.tier().retired.borrow_mut().push(method);
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
     pub(super) fn warmup_entries(&self) -> u16 {
-        TIERS.lane_body.warmup_entries << self.history.get().lifetimes.min(7)
+        TIERS.lane_body.warmup_entries << self.tier().history.get().lifetimes.min(7)
     }
 
     /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
@@ -176,8 +176,8 @@ impl LaneView {
     /// bodies run from the lane until it specializes and inlines them. Read every
     /// `RECURRENT_ENTRIES`th entry.
     fn recurrent(&self, entries: u16) -> bool {
-        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.history.get().lifetimes == 0
-            && warm_clock().wrapping_sub(self.warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
+        entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.tier().history.get().lifetimes == 0
+            && warm_clock().wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
 
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
@@ -190,33 +190,33 @@ impl LaneView {
 
     /// Whether its history affords another compile.
     pub(super) fn affords_compile(&self) -> bool {
-        let history = self.history.get();
+        let history = self.tier().history.get();
         history.lifetimes <= TIERS.lane_body.max_lifetimes
     }
 
     /// Whether its compile waits one more warm-up for callees still warming, whose bodies it
     /// then calls by their entries (`compiled::DirectCallee`).
     pub(super) fn waits_for_callees(&self) -> bool {
-        let history = self.history.get();
+        let history = self.tier().history.get();
         let waits = history.callee_waits < TIERS.lane_body.max_callee_waits;
         if waits {
-            self.history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
+            self.tier().history.set(LaneBodyHistory { callee_waits: history.callee_waits + 1, ..history });
         }
         waits
     }
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
     /// body whatever its length, which only the lane's own entries ask to amortize.
-    fn called_by_bodies(&self) -> bool { !self.callers.borrow().is_empty() || self.history.get().demanded }
+    fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// Warms again a body declined for its length alone, once a caller's compile meets a call to
     /// it: native callers want it whatever its length. Whether it is warming now.
     pub(in crate::vm) fn demand_body(&self) -> bool {
-        let history = self.history.get();
+        let history = self.tier().history.get();
         // SAFETY: as `lane_body`; no lane body runs while a compile plans.
-        let body = unsafe { &mut *self.tier_lane.get() };
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
         if history.short && !history.demanded && matches!(body, LaneBody::Declined) {
-            self.history.set(LaneBodyHistory { demanded: true, ..history });
+            self.tier().history.set(LaneBodyHistory { demanded: true, ..history });
             *body = LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE };
             self.reclaim_for_tier();
         }
@@ -227,7 +227,7 @@ impl LaneView {
     /// the lane's helper: a fact of this view's body, whose publication invalidates it.
     pub(in crate::vm) fn note_caller(&self, caller: &LaneView) {
         let caller = std::ptr::from_ref(caller);
-        let mut callers = self.callers.borrow_mut();
+        let mut callers = self.tier().callers.borrow_mut();
         if !std::ptr::eq(caller, self) && !callers.contains(&caller) { callers.push(caller); }
     }
 
@@ -235,15 +235,15 @@ impl LaneView {
     /// none, specializes again at its next entry and calls this one by its entry
     /// (`compiled::DirectCallee`). A caller's running body keeps its code (`retired`).
     fn respecialize_callers(&self) {
-        for caller in self.callers.take() {
+        for caller in self.tier().callers.take() {
             unsafe { &*caller }.respecialize();
         }
     }
 
     pub(super) fn note_late_call(&self) -> bool {
-        let history = self.history.get();
+        let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
-        self.history.set(LaneBodyHistory { late_calls, ..history });
+        self.tier().history.set(LaneBodyHistory { late_calls, ..history });
         late_calls == TIERS.lane_body.late_call_calls
     }
 
@@ -253,24 +253,24 @@ impl LaneView {
     }
 
     pub(super) fn respecialize(&self) {
-        let history = self.history.get();
-        let body = unsafe { &mut *self.tier_lane.get() };
+        let history = self.tier().history.get();
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
         let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { return };
         if history.callee_recompiles >= TIERS.lane_body.max_callee_recompiles { return; }
-        self.history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
+        self.tier().history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
         let next = LaneBody::Unspecialized { entries: TIERS.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
         let body_state = body.tier_state();
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, TierEvent::Demote);
-        self.retired.borrow_mut().push(method);
+        self.tier().retired.borrow_mut().push(method);
     }
 
     /// A compile a lifecycle edge outran counts as a dropped body: no run
     /// of it took place.
     pub(super) fn note_dropped_compile(&self) {
-        let history = self.history.get();
-        self.history.set(LaneBodyHistory { lifetimes: history.lifetimes.saturating_add(1), ..history });
+        let history = self.tier().history.get();
+        self.tier().history.set(LaneBodyHistory { lifetimes: history.lifetimes.saturating_add(1), ..history });
     }
 
     /// A specialized body that went at a lifecycle edge warms again from the start, keeping
@@ -280,8 +280,8 @@ impl LaneView {
     pub(super) fn drop_body(&self, body: &mut LaneBody) {
         let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
         let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
-        let history = self.history.get();
-        self.history.set(LaneBodyHistory {
+        let history = self.tier().history.get();
+        self.tier().history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
             ..history
         });
@@ -306,7 +306,7 @@ impl LaneView {
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {
-            self.pinned.borrow_mut().push(body);
+            self.tier().pinned.borrow_mut().push(body);
             super::super::tier_machine::publish(&self.entry, TierState::Compiling, &method);
         }
         self.entry.reset_evidence();
@@ -319,7 +319,7 @@ impl LaneView {
         let declined = !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT);
         if declined {
             // SAFETY: as `lane_body`.
-            unsafe { *self.tier_lane.get() = LaneBody::Declined };
+            unsafe { *self.tier().tier_lane.get() = LaneBody::Declined };
         }
         declined
     }
@@ -327,7 +327,7 @@ impl LaneView {
     /// Whether its body's code is compiling (`LaneBody::Compiling`).
     pub(super) fn compiling(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Compiling { .. })
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Compiling { .. })
     }
 
     /// Counts an entry toward the frameless body and specializes it at the warm-up; whether
@@ -341,7 +341,7 @@ impl LaneView {
         self.settle_retired_body();
         // SAFETY: as `lane_body`; specializing runs no lane body, and the body is taken out
         // of the view while the VM works on it.
-        let body = unsafe { &mut *self.tier_lane.get() };
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
         if awaits_look(body) {
             return true;
         }
@@ -354,11 +354,11 @@ impl LaneView {
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
-                if entries == 0 { self.warm_since.set(ticks); }
+                if entries == 0 { self.tier().warm_since.set(ticks); }
                 *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
                 return true;
             }
@@ -375,7 +375,7 @@ impl LaneView {
     fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u16, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
-                self.history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.history.get() });
+                self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });
                 let wait = 1u16.checked_shl(u32::from(looks)).map_or(u16::MAX, |entries| entries - 1).min(TIERS.lane_body.compile_poll_interval);
                 LaneBody::Compiling { pending, wait: std::cell::Cell::new(wait), looks, recompiles, stuck }
             }
@@ -391,16 +391,16 @@ impl LaneView {
             super::super::compiled::LaneBodyOutcome::Deferred => LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck },
             // Its entries decide when it looks again (`attempts_at`), no hot loop's skip.
             super::super::compiled::LaneBodyOutcome::Unpaid => {
-                self.history.set(LaneBodyHistory { unpaid: true, ..self.history.get() });
+                self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
                 LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck }
             }
             super::super::compiled::LaneBodyOutcome::Short => {
-                self.history.set(LaneBodyHistory { short: true, ..self.history.get() });
+                self.tier().history.set(LaneBodyHistory { short: true, ..self.tier().history.get() });
                 LaneBody::Declined
             }
             super::super::compiled::LaneBodyOutcome::Declined => {
-                if self.history.get().lifetimes > 0 { super::dispatch_fast::lane_body_stats::decline("dropped bodies"); }
-                self.body_stats.declined.set(super::dispatch_fast::lane_body_stats::take_decline());
+                if self.tier().history.get().lifetimes > 0 { super::dispatch_fast::lane_body_stats::decline("dropped bodies"); }
+                self.tier().body_stats.declined.set(super::dispatch_fast::lane_body_stats::take_decline());
                 LaneBody::Declined
             }
         }
@@ -419,8 +419,8 @@ impl LaneView {
     /// A function whose bodies lifecycle edges discarded warms as any entry does.
     fn skip_warm_up(&self) {
         // SAFETY: as `lane_body`; no lane body runs here.
-        if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier_lane.get() }
-            && self.history.get().lifetimes == 0 && !self.history.get().unpaid
+        if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier().tier_lane.get() }
+            && self.tier().history.get().lifetimes == 0 && !self.tier().history.get().unpaid
         {
             *entries = TIERS.lane_body.warmup_entries - 1;
         }

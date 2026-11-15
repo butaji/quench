@@ -28,8 +28,10 @@ impl<H: Host> Vm<H> {
     /// target out of line.
     #[inline(always)]
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+        // An array with extras (named properties) has its elements' length too, unless it
+        // ever held sparse elements, whose length the side table keeps.
         if let Some(object) = self.heap.record_array(target)
-            && !object.has_extras()
+            && (!object.has_extras() || (!object.has_sparse_elements() && !object.is_arguments_object()))
         {
             return Some(object.elements().len());
         }
@@ -64,7 +66,7 @@ impl<H: Host> Vm<H> {
                     && !data.is_arguments_object()
                     && !data.has_indexed_descriptors()
                     && data.elements().len() == length
-                    && self.holes_unobserved(object, data.elements())
+                    && self.holes_unobserved(object, &data.elements().values_cow())
             });
         let writable_length = self
             .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
@@ -125,7 +127,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let value = *self.heap.array_elements(target)?.get(index)?;
+        let value = self.heap.array_elements(target)?.get(index)?;
         (!value.is_deleted()).then_some(value)
     }
 
@@ -293,7 +295,7 @@ impl<H: Host> Vm<H> {
             .filter(|index| {
                 elements
                     .get(*index)
-                    .copied()
+                    
                     .filter(|value| !value.is_deleted())
                     .or_else(|| {
                         self.heap
@@ -411,7 +413,7 @@ impl<H: Host> Vm<H> {
             .and_then(|elements| {
                 elements
                     .get(index)
-                    .copied()
+                    
                     .filter(|value| !value.is_deleted())
             })
             .or_else(|| {
@@ -476,7 +478,7 @@ impl<H: Host> Vm<H> {
         let present = self.heap.array_elements(target).is_some_and(|elements| {
             elements
                 .get(index)
-                .copied()
+                
                 .filter(|value| !value.is_deleted())
                 .is_some()
         }) || self.heap.sparse_get(target, index).is_some();

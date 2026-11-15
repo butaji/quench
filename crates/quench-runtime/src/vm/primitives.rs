@@ -5,6 +5,9 @@ mod whitespace;
 pub(super) use whitespace::is_ecma_whitespace_character;
 use whitespace::is_ecma_whitespace;
 
+/// The longest `repeat` result made by one copy of ASCII text (`Native::StringRepeat`).
+const REPEAT_COPY_MAX_UNITS: usize = 4096;
+
 impl<H: Host> Vm<H> {
     pub(super) fn call_target(&self, callee: Value) -> Result<CallTarget, JsError> {
         match self.heap.function(callee) {
@@ -90,6 +93,9 @@ impl<H: Host> Vm<H> {
             return Some(value);
         }
         if let Some(value) = self.substring_in_place(native, receiver, args) {
+            return Some(value);
+        }
+        if let Some(value) = self.split_in_place(native, receiver, args) {
             return Some(value);
         }
         let result = self.call_primitive_native(p, native, receiver, args).ok();
@@ -324,8 +330,14 @@ impl<H: Host> Vm<H> {
                 };
                 Ok(Value::number(result.map_or(-1.0, |index| index as f64)))
             }
-            Native::StringReplace => self.string_replace_native(p, this, args, false),
-            Native::StringReplaceAll => self.string_replace_native(p, this, args, true),
+            Native::StringReplace => match self.replace_in_place(native, this, args) {
+                Some(value) => Ok(value),
+                None => self.string_replace_native(p, this, args, false),
+            },
+            Native::StringReplaceAll => match self.replace_in_place(native, this, args) {
+                Some(value) => Ok(value),
+                None => self.string_replace_native(p, this, args, true),
+            },
             Native::StringSplit => self.string_split_native(p, this, args),
             Native::StringTrim | Native::StringTrimStart | Native::StringTrimEnd => {
                 let Some(receiver) = self.heap.string(this).cloned() else {
@@ -390,6 +402,17 @@ impl<H: Host> Vm<H> {
                 if size > super::wtf16::MAX_STRING_UNITS {
                     return Err(self.range_error(p, "Invalid string length".into()));
                 }
+                if count == 1 && self.heap.is_string(this) {
+                    return Ok(this);
+                }
+                // Short ASCII text, as a pad or an indent: its bytes written once, in place
+                // of the rope doubling a long result takes.
+                if size <= REPEAT_COPY_MAX_UNITS
+                    && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
+                {
+                    let text: smallvec::SmallVec<[u8; 64]> = bytes.iter().copied().cycle().take(size).collect();
+                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&text)));
+                }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
             }
             Native::StringPadStart | Native::StringPadEnd => {
@@ -398,13 +421,13 @@ impl<H: Host> Vm<H> {
                 };
                 let target =
                     self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                // A string that needs no padding is the receiver itself.
                 if !target.is_finite() || target <= 0.0 {
-                    return Ok(self.heap.alloc_string(receiver));
+                    return Ok(this);
                 }
                 let target = target.trunc().min(64.0 * 1024.0 * 1024.0) as usize;
-                let receiver_units = receiver.units().to_vec();
-                if receiver_units.len() >= target {
-                    return Ok(self.heap.alloc_string(receiver));
+                if receiver.len() >= target {
+                    return Ok(this);
                 }
                 let fill = match args.get(1).copied() {
                     None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_str(" "),
@@ -412,8 +435,22 @@ impl<H: Host> Vm<H> {
                 };
                 let fill_units = fill.units();
                 if fill_units.is_empty() {
-                    return Ok(self.heap.alloc_string(receiver));
+                    return Ok(this);
                 }
+                // ASCII text and fill: the bytes written once, in order, into the result.
+                if let (super::wtf16::Units::Ascii(text), super::wtf16::Units::Ascii(fill)) = (receiver.units(), fill_units) {
+                    let mut bytes = smallvec::SmallVec::<[u8; 32]>::with_capacity(target);
+                    let padding = fill.iter().copied().cycle().take(target - text.len());
+                    if native == Native::StringPadEnd {
+                        bytes.extend_from_slice(text);
+                        bytes.extend(padding);
+                    } else {
+                        bytes.extend(padding);
+                        bytes.extend_from_slice(text);
+                    }
+                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&bytes)));
+                }
+                let receiver_units = receiver.units().to_vec();
                 let fill_len = target - receiver_units.len();
                 let mut padding = Vec::with_capacity(fill_len);
                 while padding.len() < fill_len {
@@ -593,9 +630,7 @@ impl<H: Host> Vm<H> {
                 if radix == 10 || !number.is_finite() {
                     return Ok(self.heap.alloc_string(super::wtf16::JsString::from_number(number)));
                 }
-                Ok(self.heap.alloc_string(
-                    super::string_extra::number_to_radix(number, radix).into(),
-                ))
+                Ok(self.heap.alloc_string(super::string_extra::number_to_radix_string(number, radix)))
             }
             _ => unreachable!("non-primitive native routed to primitive library"),
         }
@@ -643,10 +678,18 @@ impl<H: Host> Vm<H> {
     /// argument is another value.
     #[expect(clippy::wrong_self_convention, reason = "named for `String.fromCharCode`; allocates its result on the VM heap")]
     pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
+        // One code unit, as `fromCharCode(byte)` in a decode loop: its string with no list.
+        if let [value] = args {
+            let unit = Self::uint16_from_value(value.as_number()?);
+            if let Some(value) = self.heap.latin1_unit_string(unit) {
+                return Some(value);
+            }
+            return self.string_from_units(&[unit]).ok();
+        }
         let units = args
             .iter()
             .map(|value| value.as_number().map(Self::uint16_from_value))
-            .collect::<Option<Vec<u16>>>()?;
+            .collect::<Option<smallvec::SmallVec<[u16; 32]>>>()?;
         self.string_from_units(&units).ok()
     }
 
@@ -669,10 +712,9 @@ impl<H: Host> Vm<H> {
 
     /// The string of the one ASCII byte `byte`.
     pub(super) fn ascii_byte_string(&mut self, byte: u8) -> Value {
-        let byte = [byte];
-        // SAFETY: the caller's byte is ASCII, so UTF-8.
-        let text = super::wtf16::JsString::from_str(unsafe { std::str::from_utf8_unchecked(&byte) });
-        self.heap.alloc_string(text)
+        // The byte's shared string once made (`Heap::alloc_unit_run`), with no string built
+        // to find it.
+        self.heap.alloc_unit_run(super::wtf16::Units::Ascii(&[byte]))
     }
 }
 

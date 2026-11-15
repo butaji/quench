@@ -12,7 +12,7 @@ impl LaneRecoverySpace {
 /// Records that a body call into `own` found the stacks short of its body's room.
 pub(super) fn note_short<H: Host>(vm: &Vm<H>, own: &LaneView) {
     let Some(method) = own.lane_body() else { return };
-    if vm.programs.js_jit_diagnostics_enabled() { own.body_stats.refused.set(own.body_stats.refused.get() + 1); }
+    if vm.programs.js_jit_diagnostics_enabled() { own.tier().body_stats.refused.set(own.tier().body_stats.refused.get() + 1); }
     vm.lane_stack.recovery_demand.set(vm.lane_stack.recovery_demand.get().max(method.recovery_space()));
 }
 

@@ -22,6 +22,18 @@ pub(super) enum GeneratorStep {
 /// the step's native activation, which keeps it alive while its frame runs.
 pub(crate) struct GeneratorResume {
     reuses_result: bool,
+    /// The registers a for-of step's `done` and `value` reads write and the pc past them,
+    /// when the step is one (`lane_for_of_step`): a yield the lane makes writes them and
+    /// resumes the caller there, with no result object (`Vm::suspend_in_loop_generator_yield`).
+    pub(super) reads: Option<StepReads>,
+}
+
+/// Where a for-of step resumed in place takes a yield's value (`GeneratorResume::reads`).
+#[derive(Clone, Copy)]
+pub(crate) struct StepReads {
+    pub(crate) done: crate::bytecode::Register,
+    pub(crate) value: crate::bytecode::Register,
+    pub(crate) resume_pc: usize,
 }
 
 /// How a generator resumed in place stopped running its frame: a `yield` of a value, which
@@ -80,7 +92,7 @@ impl<H: Host> Vm<H> {
         });
         self.activate_frame(&mut frame);
         self.frames.push(frame);
-        Some(Ok((call_guard, GeneratorResume { reuses_result })))
+        Some(Ok((call_guard, GeneratorResume { reuses_result, reads: None })))
     }
 
     /// The result of a generator step `resume` made in place, whose popped `frame` stopped
@@ -120,6 +132,17 @@ impl<H: Host> Vm<H> {
             self.reused_iterator_result(value, done)
         } else {
             self.iterator_result(value, done).expect("an iterator result allocates")
+        }
+    }
+
+    /// The yield of a generator step made in place for a for-of step's reads
+    /// (`GeneratorResume::reads`): the popped `frame` suspends at `destination` as
+    /// `finish_in_loop_generator_step` suspends it, and no result object is made.
+    pub(super) fn suspend_in_loop_generator_yield(&mut self, mut frame: Box<Frame>, value: Value, destination: crate::bytecode::Register) {
+        let generator = self.realm.promise.active_native.pop().expect("a resumed generator's activation").receiver;
+        frame.with_objects = self.with_stack.split_off(frame.with_base);
+        if let Some(record) = self.generator_record_mut(generator) {
+            record.suspend(Continuation::suspend(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED));
         }
     }
 
@@ -201,10 +224,9 @@ impl<H: Host> Vm<H> {
         }
         let function = &p.function(id as usize);
         let mut frame = self.pooled_frame();
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
+        // Every local starts undefined, written once, a pooled frame's old values included.
+        frame.locals.clear();
+        frame.locals.resize(function.locals as usize, Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
         for index in 0..fixed {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
@@ -297,8 +319,13 @@ impl<H: Host> Vm<H> {
                 self.generator_proto
             });
         let prototype_atom = self.prototype_atom();
+        // A generator function's own `prototype` is a non-configurable data property, read
+        // through its shape's memo (`own_function_prototype_data`).
         let generator_prototype = function_object
-            .and_then(|function| self.own_property(function, prototype_atom))
+            .and_then(|function| {
+                self.own_function_prototype_data(function, prototype_atom)
+                    .or_else(|| self.own_property(function, prototype_atom))
+            })
             .filter(|prototype| self.object_data(*prototype).is_some())
             .unwrap_or(default_prototype);
         let mut object = Self::empty_object(generator_prototype);
@@ -317,15 +344,13 @@ impl<H: Host> Vm<H> {
             done: false,
             ext: crate::heap::IteratorExt::default(),
         });
-        if let Some(IteratorRecord { source, .. }) = self.heap.iterator_mut(generator) {
-            *source = generator;
-        }
-        let Some(IteratorRecord { ext, .. }) = self.heap.iterator_mut(generator) else {
+        let Some(IteratorRecord { source, ext, .. }) = self.heap.iterator_mut(generator) else {
             self.pool_frame(frame);
             return Err(JsError(
                 "generator allocation lost its iterator cell".into(),
             ));
         };
+        *source = generator;
         ext.generator = Some(Box::new(GeneratorRecord::new(
             Continuation::suspend(frame, Completion::GeneratorStart, None, Value::UNDEFINED),
             realm,
@@ -477,7 +502,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
-        let [generator, promise] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [generator, promise] = &*held_values else {
             return Err(JsError("async generator return state is malformed".into()));
         };
         let (generator, promise) = (*generator, *promise);
@@ -527,7 +553,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
-        let [generator, promise] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [generator, promise] = &*held_values else {
             return Err(JsError("async generator return state is malformed".into()));
         };
         let (generator, promise) = (*generator, *promise);
@@ -555,7 +582,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
-        let [generator, iterator, destination] = elements.as_slice() else {
+        let held_values = elements.as_slice();
+        let [generator, iterator, destination] = &*held_values else {
             return Err(JsError("async delegate return state is malformed".into()));
         };
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -599,15 +627,14 @@ impl<H: Host> Vm<H> {
             on_fulfilled: Value::UNDEFINED,
             on_rejected: Value::UNDEFINED,
             next: target,
-            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context.get())).into(),
+            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context().get())).into(),
         };
-        if record.state == PromiseState::Pending {
+        if record.state() == PromiseState::Pending {
             self.promise_record_mut(source)
                 .expect("source Promise record exists")
-                .reactions
-                .push(reaction);
+                .push_reaction(reaction);
         } else {
-            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+            self.enqueue_promise_reaction(p, reaction, record.state(), record.result());
         }
         Ok(())
     }
@@ -1069,7 +1096,8 @@ impl<H: Host> Vm<H> {
         let Some(elements) = self.heap.array_elements(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
-        let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
+        let held_values = elements.as_slice();
+        let [generator, destination, throwing, adapter, _async_from_sync] = &*held_values
         else {
             return Err(JsError("async delegate reaction state is malformed".into()));
         };
@@ -1096,11 +1124,11 @@ impl<H: Host> Vm<H> {
                 .promise_record(resolved)
                 .cloned()
                 .ok_or_else(|| JsError("async-from-sync value lost its Promise".into()))?;
-            match state.state {
-                PromiseState::Fulfilled => state.result,
+            match state.state() {
+                PromiseState::Fulfilled => state.result(),
                 PromiseState::Rejected => {
                     return Err(JsError::thrown(
-                        state.result,
+                        state.result(),
                         "async-from-sync value rejected".into(),
                     ));
                 }
@@ -1148,9 +1176,9 @@ impl<H: Host> Vm<H> {
         };
         let generator = elements
             .first()
-            .copied()
+            
             .ok_or_else(|| JsError("async delegate rejection state is malformed".into()))?;
-        let async_from_sync = elements.get(4).is_some_and(|value| self.truthy(*value));
+        let async_from_sync = elements.get(4).is_some_and(|value| self.truthy(value));
         let error = JsError::thrown(reason, "delegated async iterator rejected".into());
         if async_from_sync {
             self.fail_async_generator_delegate(generator, error)
@@ -1621,11 +1649,7 @@ impl<H: Host> Vm<H> {
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
             vm.frames.push(frame);
-            let result = vm.run_frame_general_with_error(
-                &execution_program,
-                vm.frames.len() - 1,
-                initial_error,
-            );
+            let result = vm.run_resumed_frame_or_raise(&execution_program, vm.frames.len() - 1, initial_error);
             let mut frame = vm.frames.pop().expect("async generator frame exists");
             vm.deactivate_frame(&mut frame, &result);
             vm.set_active_program(previous_program);
@@ -1752,7 +1776,7 @@ mod call_completion_tests {
     #[test]
     fn generator_completion_moves_resume_state_once() {
         for reuses_result in [false, true] {
-            let mut completion = CallCompletion::Generator(GeneratorResume { reuses_result });
+            let mut completion = CallCompletion::Generator(GeneratorResume { reuses_result, reads: None });
             assert!(completion.take_promise().is_none());
             assert!(completion.is_generator());
             let resume = completion.take_generator().expect("generator completion");

@@ -102,7 +102,7 @@ fn append_shape_roots(
             .flat_map(|(key, attributes)| {
                 // Slot-held accessors (a getter, a pair cell) are traced with their object's slots.
                 let (getter, setter) = attributes.functions(accessors, || (None, None));
-                key.symbol_value()
+                key.gc_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
             }),
@@ -385,6 +385,35 @@ impl<H: Host> Vm<H> {
             .retain(|(program, _, _), _| !reclaimed.contains(program));
     }
 
+    /// Drops the unlowered copies of the functions lowered since the last full collection
+    /// that no frame runs (`ResidualProgram::release_lowered_tier0`); one a frame runs waits
+    /// for the next. Frames match by residual: programs share one.
+    fn release_lowered_tier0(&mut self) {
+        let mut lowered = std::mem::take(self.lowered_tier0.get_mut());
+        if lowered.is_empty() {
+            return;
+        }
+        let key = |code: &crate::bytecode::ResidualProgram| std::ptr::from_ref(code) as usize;
+        let live = self.programs.decoded_residuals().map(|code| (key(code), code)).collect::<rustc_hash::FxHashMap<_, _>>();
+        let active = self
+            .frames
+            .iter()
+            .filter_map(|frame| Some((key(self.programs.residual(frame.program)?), frame.function)))
+            .collect::<FxHashSet<_>>();
+        lowered.retain(|&(address, function)| {
+            // A residual no program holds any more was dropped with its copies.
+            let Some(code) = live.get(&address) else { return false };
+            if active.contains(&(address, function)) {
+                return true;
+            }
+            // SAFETY: a full collection, and no frame of any program sharing the residual runs
+            // the function; references into a copy are held only while a frame runs it.
+            unsafe { code.release_lowered_tier0(function as usize) };
+            false
+        });
+        *self.lowered_tier0.get_mut() = lowered;
+    }
+
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
         self.collect_inner(program, full, false);
     }
@@ -396,7 +425,10 @@ impl<H: Host> Vm<H> {
     fn collect_inner(&mut self, _program: &ResidualProgram, full: bool, begin_cycle: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
+        // The active for-in's cursor lives outside the heap until written back.
+        self.for_in_flush_cursor();
         self.clear_call_targets();
+        self.forget_outer_environments();
         self.resolved_module_requests.clear();
         self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
@@ -470,7 +502,16 @@ impl<H: Host> Vm<H> {
         // costs each root a step through every nesting level. They go into the previous
         // collection's mark stack, which holds as many already.
         let mut roots = self.heap.take_mark_stack();
-        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
+        // Under counts, a minor collection may free any old record nothing counted names. The
+        // edges the VM writes once (program constants, kept atom strings, startup roots, shape
+        // edges) are taken as a minor would take them, where they may name young records, and
+        // their records are pinned (`Heap::rc_pin`) so no epoch frees them; when counts
+        // restarted, which drops pins, every one is taken and pinned again.
+        let rc = self.heap.rc_active();
+        let repin = rc && self.rc_pin_epoch != self.heap.rc_pin_epoch();
+        let all_roots = full || repin;
+        let mut pins = Vec::new();
+        self.programs.extend_roots(if rc { &mut pins } else { &mut roots }, all_roots, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend([
@@ -708,7 +749,8 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.heap.kept_atom_roots(full));
+        let kept_atoms = self.heap.kept_atom_roots(all_roots);
+        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -770,20 +812,21 @@ impl<H: Host> Vm<H> {
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        roots.extend(self.startup_intrinsic_roots());
+        // Old startup roots stay marked until a full collection, which takes them all. Under
+        // counts they are pinned when taken, as a minor collection may free old records too.
+        if all_roots || begin_cycle || !self.startup_roots_old() || self.heap.satb_active() {
+            let startup = self.startup_intrinsic_roots();
+            if rc { pins.extend(startup) } else { roots.extend(startup) }
+        }
         for frame in &self.frames {
             // A missing map means the function uses a register form the liveness pass cannot
             // represent; keep the safe conservative scan for that activation.
-            let register_masks = self
-                .programs
-                .residual(frame.program)
-                .and_then(|program| program.register_root_masks(frame.function));
             roots.extend([frame.env, frame.this]);
             roots.extend(frame.context.callee());
             roots.extend(frame.original_arguments.iter().copied());
             roots.extend(frame.locals.iter().copied());
             roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
-            match register_masks {
+            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
                 Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
                 None => roots.extend(frame.registers.iter().copied()),
             }
@@ -826,10 +869,28 @@ impl<H: Host> Vm<H> {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
+        // A cycle's snapshot, and a minor collection under counts (which re-marks the
+        // zero-count old records anything uncounted names, `Heap::rc_pre_mark`), take every
+        // edge the VM holds outside the heap as a root; under counts the edges of the shapes
+        // made since the last minor collection are pinned instead, being written once, but an
+        // owned dictionary's change in place, so they are roots every time.
         if begin_cycle {
             for shape in 0..shape_count as u32 {
                 shape_trace.append_shape_edges(GcTraceKind::Collection, shape, false, &mut roots);
             }
+        } else if !full && rc {
+            let pinned = if repin { 0 } else { self.rc_pinned_shapes.min(shape_count) };
+            for shape in 0..pinned {
+                if shape_lookup::is_owned_dictionary(&self.shapes[shape]) {
+                    shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut roots);
+                }
+            }
+            for shape in pinned..shape_count {
+                shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut pins);
+            }
+            self.rc_pinned_shapes = shape_count;
+        }
+        if begin_cycle || !full && rc {
             roots.extend(owned_roots.values().flatten().copied());
             if let Some(strings) = &self.dynamic_strings {
                 roots.extend(strings.values().copied());
@@ -838,6 +899,13 @@ impl<H: Host> Vm<H> {
             roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
             roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
             self.private_site_homes.for_each_value(|value| roots.push(value));
+        }
+        if rc {
+            self.heap.rc_pin(&pins);
+            self.rc_pin_epoch = self.heap.rc_pin_epoch();
+        }
+        roots.append(&mut pins);
+        if begin_cycle {
             self.heap.begin_cycle(roots);
             return;
         }
@@ -865,6 +933,13 @@ impl<H: Host> Vm<H> {
             Some(&closure_reads),
             full,
         );
+        // Whether every startup root is old now, so the next minor collection may leave
+        // them out (`StartupIntrinsics::roots_old`).
+        if !self.startup_roots_old() {
+            let heap = &self.heap;
+            let old = self.startup_intrinsic_roots().all(|value| value.heap_reference().is_none() || heap.is_old(value));
+            self.startup_intrinsics.roots_old = old;
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
@@ -879,7 +954,8 @@ impl<H: Host> Vm<H> {
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
         self.programs.clear_wasm_reference_caches();
-        self.prune_function_values(full);
+        // Under reference counts a minor collection frees old closures too.
+        self.prune_function_values(full || self.heap.rc_active());
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.
@@ -889,6 +965,9 @@ impl<H: Host> Vm<H> {
         self.private_site_homes.prune_dead(|value| heap.is_live(value));
         if full && self.programs.has_unchecked_reclaimable() {
             self.reclaim_unreferenced_programs();
+        }
+        if full {
+            self.release_lowered_tier0();
         }
         if full {
             self.heap.set_reclaimable_programs_after_full(self.programs.settled_reclaimable_bytes());
@@ -902,6 +981,9 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);
+            // Compaction renumbers the shapes: pins taken stay, but which shapes they cover is
+            // not known by index any more.
+            self.rc_pinned_shapes = 0;
         } else {
             self.retain_live_method_caches();
         }
@@ -1021,6 +1103,7 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.private_site_homes.forget_shapes();
         self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
@@ -1084,7 +1167,7 @@ impl<H: Host> Vm<H> {
         let previous = std::mem::replace(&mut self.native_microtask_running, true);
         let result = (|| {
             self.check_execution_interrupt()?;
-            self.run_job_queue(program, |_| true)?;
+            self.run_job_queue(program, true, |_| true)?;
             Ok(Value::UNDEFINED)
         })();
         self.native_microtask_running = previous;
@@ -1109,11 +1192,13 @@ impl<H: Host> Vm<H> {
     fn run_job_queue(
         &mut self,
         program: &ResidualProgram,
+        chain: bool,
         mut more: impl FnMut(&Self) -> bool,
     ) -> Result<(), JsError> {
         let home = self.realm.globals;
         // An enclosing queue's entry stays in place below this queue's own.
         let outer = std::mem::replace(&mut self.unobserved_jobs_entered, false);
+        let outer_chain = std::mem::replace(&mut self.chain_await_jobs, chain);
         let result = (|| {
             while more(self) && let Some(job) = self.realm.jobs.pop_front() {
                 self.check_execution_interrupt()?;
@@ -1133,6 +1218,7 @@ impl<H: Host> Vm<H> {
         })();
         self.leave_unobserved_jobs();
         self.unobserved_jobs_entered = outer;
+        self.chain_await_jobs = outer_chain;
         self.switch_realm_global(home);
         result
     }
@@ -1193,9 +1279,9 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         loop {
-            self.run_job_queue(program, |vm| vm.promise_record(promise)
-                .is_some_and(|record| record.state == PromiseState::Pending))?;
-            if self.promise_record(promise).is_none_or(|record| record.state != PromiseState::Pending)
+            self.run_job_queue(program, false, |vm| vm.promise_record(promise)
+                .is_some_and(|record| record.state() == PromiseState::Pending))?;
+            if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }
             self.advance_static_module_jobs(program)?;
             self.advance_dynamic_import_jobs(program, true)?;

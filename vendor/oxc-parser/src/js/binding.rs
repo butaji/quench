@@ -176,6 +176,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             if let PropertyKey::StaticIdentifier(ident) = &key {
                 shorthand = true;
                 self.check_identifier_with_span(key_cur_kind, self.ctx, ident.span);
+                self.declare_binding(ident.name);
                 let identifier =
                     BindingPattern::new_binding_identifier(ident.span, ident.name, self);
                 self.context_add(Context::In, |p| p.parse_initializer(start, identifier))
@@ -196,7 +197,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ///   = `AssignmentExpression`[?In, ?Yield, ?Await]
     fn parse_initializer(&mut self, start: u32, left: BindingPattern<'a>) -> BindingPattern<'a> {
         if self.eat(Kind::Eq) {
+            let binding_kind = self.binding_kind.take();
             let expr = self.parse_assignment_expression_or_higher();
+            self.binding_kind = binding_kind;
             BindingPattern::new_assignment_pattern(self.end_span(start), left, expr, self)
         } else {
             left

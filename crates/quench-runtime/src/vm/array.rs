@@ -37,7 +37,7 @@ impl<H: Host> Vm<H> {
         let value = self.heap.array_elements(array).and_then(|elements| {
             elements
                 .get(index)
-                .copied()
+                
                 .filter(|value| !value.is_deleted())
                 .or_else(|| {
                     self.heap
@@ -291,7 +291,7 @@ impl<H: Host> Vm<H> {
         let moved_present = self
             .heap
             .array_elements(this)
-            .is_some_and(|elements| self.holes_unobserved(this, &elements[start..]));
+            .is_some_and(|elements| self.holes_unobserved(this, &elements.values_cow()[start..]));
         let new_length = (length - delete_count)
             .checked_add(items.len())
             .filter(|length| *length <= MAX_ARRAY_LENGTH)?;
@@ -557,7 +557,7 @@ impl<H: Host> Vm<H> {
                 }
                 // Present own data elements read without observing anything, and append as
                 // the definitions would.
-                if let Some(values) = vm.present_dense_elements(item, 0..length).map(<[Value]>::to_vec)
+                if let Some(values) = vm.present_dense_elements(item, 0..length).map(|values| values.into_owned())
                     && vm.append_dense_definitions(target, next, &values)
                 {
                     next += length;
@@ -625,9 +625,16 @@ impl<H: Host> Vm<H> {
         &self,
         this: Value,
         range: std::ops::Range<usize>,
-    ) -> Option<&[Value]> {
-        let elements = self.array_read_view(this)?.get(range)?;
-        elements.iter().all(|value| !value.is_deleted()).then_some(elements)
+    ) -> Option<std::borrow::Cow<'_, [Value]>> {
+        let view = self.array_read_view(this)?;
+        let elements = view.get(range.clone())?;
+        if !elements.iter().all(|value| !value.is_deleted()) {
+            return None;
+        }
+        Some(match view {
+            std::borrow::Cow::Borrowed(all) => std::borrow::Cow::Borrowed(&all[range]),
+            std::borrow::Cow::Owned(all) => std::borrow::Cow::Owned(all[range].to_vec()),
+        })
     }
 
     /// CreateDataPropertyOrThrow of `values` at indices `start..` of `array`, a dense array
@@ -676,7 +683,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn array_push_one(&mut self, this: Value, value: Value) -> Option<Value> {
         let object = self.heap.record_array(this)?;
         let length = object.elements().len();
-        if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.chain_holds_no_index(object.proto())
+        if !object.holds_ordinary_elements() || length >= MAX_ARRAY_LENGTH || !self.link_chain_holds_no_index(object.proto_link())
         {
             return None;
         }
@@ -685,6 +692,14 @@ impl<H: Host> Vm<H> {
         }
         self.heap.push_array_element(this, value)?;
         Some(Value::length(length + 1))
+    }
+
+    /// `chain_holds_no_index` of the prototype `link` names, matched undecoded against the
+    /// held proof's links.
+    #[inline(always)]
+    fn link_chain_holds_no_index(&self, link: crate::heap::ProtoLink) -> bool {
+        self.heap.dependencies().index_free_chain().is_some_and(|proof| proof.links.contains(&link.bits()))
+            || self.prove_index_free_chain(link.prototype())
     }
 
     /// The staged append (`staged::builtins::array_push_one`) of `value` to `array`, whose
@@ -758,6 +773,9 @@ impl<H: Host> Vm<H> {
         {
             return false;
         }
+        if self.heap.push_double_element(this, value) {
+            return true;
+        }
         if self.heap.grow_array_elements(this, |elements| elements.push(value)).is_none() {
             unreachable!("matched an array above");
         }
@@ -783,7 +801,7 @@ impl<H: Host> Vm<H> {
             super::index::mutable_array_elements(object.elements_mut()).set(index, value);
             return true;
         }
-        self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
+        self.heap.push_double_element(array, value) || self.heap.grow_array_elements(array, |elements| elements.push(value)).is_some()
     }
 
     /// ArrayAccumulation's CreateDataPropertyOrThrow of `values` at a dense literal's next
@@ -811,7 +829,7 @@ impl<H: Host> Vm<H> {
             || !self
                 .heap
                 .array(this)
-                .is_some_and(|object| object.elements()[index].is_deleted())
+                .is_some_and(|object| object.elements().get(index).is_some_and(Value::is_deleted))
             || !self.inherited_index_unclaimed(this, index)
         {
             return false;
@@ -831,7 +849,7 @@ impl<H: Host> Vm<H> {
         let length = self.dense_array_length(this)?;
         let Some(last) = length.checked_sub(1) else { return Some(Value::UNDEFINED) };
         let object = self.heap.array_mut(this)?;
-        if object.elements()[last].is_deleted() { return None; }
+        if object.elements().get(last).is_some_and(Value::is_deleted) { return None; }
         super::index::mutable_array_elements(object.elements_mut()).pop()
     }
 
@@ -952,7 +970,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(length);
         let count = end.saturating_sub(start);
         let result = self.array_species_create(p, object, count)?;
-        if let Some(values) = self.present_dense_elements(object, start..end).map(<[Value]>::to_vec)
+        if let Some(values) = self.present_dense_elements(object, start..end).map(|values| values.into_owned())
             && self.fill_dense_holes(result, &values)
         {
             // Each CreateDataPropertyOrThrow filled a hole; the final `length` Set still runs.

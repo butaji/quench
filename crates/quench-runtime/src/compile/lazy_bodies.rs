@@ -10,14 +10,14 @@
 //! early check alone makes the compilation fail, and the program compiles again eagerly,
 //! so its diagnostics are the eager ones.
 mod facts;
-pub(super) use facts::{BodyFacts, parse_collecting};
+pub(super) use facts::{BodyFacts, parse_collecting, parse_free_names};
 mod arrow;
 pub(super) use arrow::is_released_arrow;
 mod reparse;
-pub(super) use reparse::{Nesting, parse_chunk, reparse};
+pub(super) use reparse::{Nesting, ReparseFailure, parse_chunk, reparse};
 use oxc_allocator::Allocator;
 mod parse_arena;
-pub(super) use parse_arena::{arena, release_after};
+pub(super) use parse_arena::{arena, release_after, release_parsed_free_pages};
 pub(crate) use parse_arena::sized_arena;
 pub(crate) use parse_arena::{expire_warm_arena, release_warm_arena};
 use oxc_ast::ast::{
@@ -231,8 +231,11 @@ pub(super) fn parse<'a>(
     check: Option<oxc_parser::LazyBodyCheck>,
     skim: Option<oxc_parser::LazyBodySkim>,
     inherited_strict: bool,
+    nested: bool,
+    recognize: super::annex_b_targets::Recognize,
+    skip: Option<oxc_parser::LazyBodySkip>,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, skim, inherited_strict);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, skim, inherited_strict, nested, recognize, skip);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);

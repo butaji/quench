@@ -7,8 +7,80 @@ const STRING_CONCAT_INLINE_PARTS: usize = 9;
 /// past it the copy a flat concatenation makes costs more than its record saves, and a string
 /// read soon is copied twice.
 const PARTS_KNOWN_LIMIT: usize = 64;
+/// Direct-mapped entries of `ConcatMemo`.
+const CONCAT_MEMO_ENTRIES: usize = 256;
+/// The odd multiplier (2^64 / golden ratio) and right-key rotation spreading a key pair.
+const CONCAT_MEMO_MIX: (u64, u32) = (0x9e37_79b9_7f4a_7c15, 17);
+
+/// The atom `left + right` spells, by operand key (`Vm::concat_key`), which names each
+/// operand while the heap's collection epoch it records holds: a string's slot names the same
+/// immutable string until a collection. Atoms keep their text until the VM reassigns them,
+/// which clears it.
+pub(super) struct ConcatMemo(Box<[(u64, u64, u32); CONCAT_MEMO_ENTRIES]>, u64);
+
+impl Default for ConcatMemo {
+    fn default() -> Self {
+        Self(Box::new([(u64::MAX, u64::MAX, 0); CONCAT_MEMO_ENTRIES]), u64::MAX)
+    }
+}
+
+impl ConcatMemo {
+    pub(super) fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    #[inline(always)]
+    fn index(left: u64, right: u64) -> usize {
+        let (multiplier, rotation) = CONCAT_MEMO_MIX;
+        let mixed = (left ^ right.rotate_left(rotation)).wrapping_mul(multiplier);
+        (mixed >> (u64::BITS - CONCAT_MEMO_ENTRIES.trailing_zeros())) as usize
+    }
+}
 
 impl<H: Host> Vm<H> {
+    /// The memo key of a concatenation operand: its value's bits, for an integer or a string,
+    /// whose slot names it until a collection (`ConcatMemo`); `None` for any other value.
+    #[inline(always)]
+    fn concat_key(&self, operand: Value) -> Option<u64> {
+        (operand.as_int().is_some() || self.heap.is_string(operand)).then(|| operand.to_bits())
+    }
+
+    /// The string of the atom `left + right` of a string and an integer spelled when it last
+    /// ran (`ConcatMemo`), as `"k" + i` keys repeat; `None` for any other pair, or where the
+    /// memo has no live string for it.
+    #[inline(always)]
+    pub(super) fn memoized_concat(&self, left: Value, right: Value) -> Option<Value> {
+        // A key joins a string and an integer, as `"k" + i` does; two strings take the joins.
+        if left.as_int().is_none() == right.as_int().is_none() {
+            return None;
+        }
+        let (left, right) = (self.concat_key(left)?, self.concat_key(right)?);
+        let (l, r, atom) = self.concat_memo.0[ConcatMemo::index(left, right)];
+        if l != left || r != right || self.concat_memo.1 != self.heap.collection_epoch() {
+            return None;
+        }
+        self.heap.atom_string(atom, false)
+    }
+
+    /// Records that `left + right` made the atom string `result` (`memoized_concat`).
+    fn memoize_concat(&mut self, left: Value, right: Value, result: Value) {
+        if left.as_int().is_none() == right.as_int().is_none() {
+            return;
+        }
+        // Only an atom result is kept: a fresh text (`"id" + n` counting up) skips the keys.
+        let Some(atom) = self.heap.string_atom(result) else {
+            return;
+        };
+        if let (Some(l), Some(r)) = (self.concat_key(left), self.concat_key(right)) {
+            let epoch = self.heap.collection_epoch();
+            if self.concat_memo.1 != epoch {
+                self.concat_memo.0.fill((u64::MAX, u64::MAX, 0));
+                self.concat_memo.1 = epoch;
+            }
+            self.concat_memo.0[ConcatMemo::index(l, r)] = (l, r, atom);
+        }
+    }
+
     /// `left + right` of strings and Numbers whose text is ASCII and short enough to sit
     /// inline (`SHORT_ASCII_CAPACITY`), such as a key built as `"d" + i`: each operand's
     /// bytes written once into the result, with no string made per operand or joined.
@@ -39,12 +111,18 @@ impl<H: Host> Vm<H> {
         let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
         // Such a key usually spells an atom whose string lives: it is the result, made and
         // matched to its atom once rather than per concatenation and per keyed access.
-        let atom = self.find_atom(Self::atom_hash_str(text), |atom| self.atom_units_equal_str(atom, text));
+        // The inline string is made first: its hash reads its padded words, and neither it
+        // nor the hash scans the bytes for ASCII again.
+        let inline = JsString::from_ascii_bytes(&bytes);
+        let hash = inline.inline_text_hash().expect("short ASCII text is held inline");
+        let atom = self.find_atom(wtf16::table_hash(hash), |atom| self.atom_units_equal_str(atom, text));
         if let Some(string) = atom.and_then(|atom| self.heap.atom_string(atom, false)) {
+            self.memoize_concat(left, right, string);
             return Some(string);
         }
-        let string = self.heap.alloc_string(JsString::from_str(text));
+        let string = self.heap.alloc_string(inline);
         atom.inspect(|atom| self.heap.record_string_atom(string, *atom));
+        self.memoize_concat(left, right, string);
         Some(string)
     }
 
@@ -126,7 +204,14 @@ impl<H: Host> Vm<H> {
         if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
             return None;
         }
-        if let Some(small) = crate::heap::SmallParts::new(ids, texts, number)
+        let small = crate::heap::SmallParts::new(ids, texts, number).or_else(|| match number {
+            // A Number between two strings that is no int32: the pair as a template.
+            Some((value, 1)) if texts == 2 => {
+                self.heap.small_template(ids[0], ids[1]).map(|template| crate::heap::SmallParts::templated(template, value))
+            }
+            _ => None,
+        });
+        if let Some(small) = small
             && let Some(string) = self.heap.alloc_small_string(small)
         {
             return Some(string);

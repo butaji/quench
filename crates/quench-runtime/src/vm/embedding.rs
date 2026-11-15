@@ -809,17 +809,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn detail_string(&self, value: Value) -> String {
-        if let Some(number) = value.as_number() {
-            return crate::number_to_string::format(number);
-        }
-        if let Some(boolean) = value.as_bool() {
-            return boolean.to_string();
-        }
-        if value.is_null() {
-            return "null".into();
-        }
-        if value.is_undefined() {
-            return "undefined".into();
+        if let Some(detail) = super::error::primitive_detail(value) {
+            return detail;
         }
 
         let mut value = value;
@@ -952,7 +943,7 @@ impl<H: Host> Vm<H> {
         let promise = self.embedding_value(promise)?;
         let value = self.embedding_value(value)?;
         let state = self.promise_record(promise)
-            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state;
+            .ok_or_else(|| JsError("value does not have Promise internal slots".into()))?.state();
         if state != super::promise::PromiseState::Pending { return Ok(()); }
         let program = self.embedding_program()?;
         self.promise_resolve_value(&program, promise, value)
@@ -983,10 +974,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
         use crate::PromiseSnapshot as Snapshot;
         let value = self.embedding_value(root)?;
-        Ok(self.promise_record(value).map(|record| match record.state {
+        Ok(self.promise_record(value).map(|record| match record.state() {
             super::promise::PromiseState::Pending => Snapshot::Pending,
-            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
-            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
+            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result()),
+            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result()),
         }))
     }
 

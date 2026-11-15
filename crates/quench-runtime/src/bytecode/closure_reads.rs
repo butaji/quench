@@ -88,6 +88,20 @@ impl<'a> EnvironmentDemand<'a> {
     }
 }
 
+/// What a closure reads of the activation that makes it (`ClosureReads::maker_reads`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MakerReads {
+    /// A slot, a by-name binding or the lexical `this` of the maker's environment, or a
+    /// whole scope chain: the closure takes the maker's environment.
+    Maker,
+    /// Nothing of the maker's environment, nor of any further out: any environment serves.
+    Nothing,
+    /// Nothing of the maker's environment, but slots further out: an environment of the maker
+    /// holding none of its slots, under the maker's parent, serves, at the distances its code
+    /// reads.
+    Outer,
+}
+
 impl ClosureReads {
     /// The table for `functions`, indexed by function id.
     pub(crate) fn derive<'f>(functions: &[FunctionReadFacts<'f>]) -> Self {
@@ -134,6 +148,25 @@ impl ClosureReads {
                     named_slots: function.named_slots.into(),
                 })
                 .collect(),
+        }
+    }
+
+    /// What a closure of `function` reads of the activation that makes it (`MakerReads`):
+    /// its demand of the environment one activation out (`demand`), and whether it reads
+    /// any further out. `reads_lexical` says whether an arrow's chain reads the implicit
+    /// bindings it would resolve there (`arrow_chain_reads_implicit_bindings`), which the
+    /// table assumes of every arrow.
+    pub(crate) fn maker_reads(&self, function: u32, reads_lexical: bool) -> MakerReads {
+        match self.demand(function, 1) {
+            EnvironmentDemand::Slots { slots: [], named_slots: [], lexical_this, .. } if !(lexical_this && reads_lexical) => {
+                let reads = self.functions.get(function as usize).and_then(|closure| closure.reads.as_deref());
+                match reads {
+                    Some([]) => MakerReads::Nothing,
+                    Some(_) => MakerReads::Outer,
+                    None => MakerReads::Maker,
+                }
+            }
+            _ => MakerReads::Maker,
         }
     }
 

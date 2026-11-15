@@ -139,8 +139,7 @@ fn add_chain_stores<H: Host>(
 
 /// Makes `program` the VM's active one, with its constants.
 fn enter_program<H: Host>(vm: &mut Vm<H>, program: ProgramId) {
-    let constants = std::ptr::from_ref(vm.programs.constants(program));
-    vm.activate_program(program, constants);
+    vm.set_active_program(program);
 }
 
 /// Notes on `callee`'s plan, when the construction left one, the parent it holds with.

@@ -46,7 +46,8 @@ pub enum NativeInst {
     Split { alternative: u32 },
     GuardedSplit { alternative: u32, guard: NativeGuard },
     Jump(u32),
-    CaptureOpen { temporary: u32, restores: bool },
+    /// `count` consecutive temporaries from `temporary`.
+    CaptureOpen { temporary: u32, count: u32, restores: bool },
     CaptureClose { capture: u32, temporary: u32 },
     ResetCaptures { captures: Vec<u32> },
     LoopInit { counter: u32 },
@@ -76,6 +77,8 @@ pub const NATIVE_FAIL: usize = usize::MAX;
 pub const NATIVE_OVERFLOW: usize = usize::MAX - 1;
 /// A quantifier bound without a maximum.
 pub const NATIVE_UNBOUNDED: u32 = super::UNBOUNDED;
+/// `LoopTail::start` of a loop whose body cannot match empty: no empty check.
+pub const NATIVE_NO_START: u32 = super::NO_START;
 /// The words of one backtracking frame: its resume id and two operands.
 pub const NATIVE_FRAME_WORDS: usize = 3;
 
@@ -181,7 +184,7 @@ impl Program {
     /// `native_inst` of the instructions that read and write registers.
     fn native_registers_inst(&self, inst: Inst) -> NativeInst {
         match inst {
-            Inst::CaptureOpen { temporary, restores } => NativeInst::CaptureOpen { temporary, restores },
+            Inst::CaptureOpen { temporary, count, restores } => NativeInst::CaptureOpen { temporary, count, restores },
             Inst::CaptureClose { capture, temporary } => NativeInst::CaptureClose { capture, temporary },
             Inst::ResetCaptures { first, count } => NativeInst::ResetCaptures { captures: self.lists[first as usize..(first + count) as usize].to_vec() },
             Inst::LoopInit { counter } => NativeInst::LoopInit { counter },

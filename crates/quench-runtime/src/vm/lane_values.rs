@@ -3,6 +3,11 @@
 
 use crate::Value;
 
+/// The context words below each window's register 0 (`register_file::FRAME_CONTEXT`): `top`
+/// always has them free beneath it, so a window starts at `top` and the next at its end plus
+/// these, and a return stores the window's address back as the top.
+pub(super) const CONTEXT: usize = super::register_file::FRAME_CONTEXT;
+
 /// The values of a lane stack's windows, `base..top`, in an allocation of room up to `end`.
 /// They hold no drop glue, so truncation and growth only move words.
 pub(super) struct LaneValues {
@@ -18,10 +23,13 @@ impl Default for LaneValues {
 
 impl LaneValues {
     pub(super) fn with_capacity(capacity: usize) -> Self {
-        let mut owner = Vec::<Value>::with_capacity(capacity);
+        let mut owner = Vec::<Value>::with_capacity(capacity.max(2 * CONTEXT));
         let base = owner.as_mut_ptr();
-        // SAFETY: the allocation holds `capacity` values.
-        Self { base, top: base, end: unsafe { base.add(owner.capacity()) }, owner }
+        // SAFETY: the allocation holds at least `CONTEXT` values; the first window's context
+        // words start initialized, as every later window's are written by its push.
+        unsafe { for word in 0..CONTEXT { base.add(word).write(Value::UNDEFINED); } }
+        // The context words of the first window sit at the base (`Self::top`).
+        Self { base, top: base.wrapping_add(CONTEXT), end: Self::end_of(base, owner.capacity()), owner }
     }
 
     #[inline(always)]
@@ -38,7 +46,13 @@ impl LaneValues {
     #[inline(always)]
     pub(super) fn room(&self) -> usize { self.end.addr().wrapping_sub(self.top.addr()) / std::mem::size_of::<Value>() }
     #[inline(always)]
-    pub(super) fn clear(&mut self) { self.top = self.base; }
+    pub(super) fn clear(&mut self) { self.top = self.base.wrapping_add(CONTEXT); }
+
+    /// The end `room` measures to: the next window's context words (`CONTEXT`) past the
+    /// last window's registers stay within the allocation of `capacity` values at `base`.
+    fn end_of(base: *mut Value, capacity: usize) -> *mut Value {
+        base.wrapping_add(capacity.saturating_sub(CONTEXT).max(CONTEXT))
+    }
 
     /// Ends the values at `top`, an address within the allocation.
     ///
@@ -61,7 +75,8 @@ impl LaneValues {
         unsafe { std::ptr::copy_nonoverlapping(self.base, grown.as_mut_ptr(), len); }
         self.base = grown.as_mut_ptr();
         // SAFETY: the new allocation holds `len + additional` values.
-        unsafe { self.top = self.base.add(len); self.end = self.base.add(grown.capacity()); }
+        unsafe { self.top = self.base.add(len); }
+        self.end = Self::end_of(self.base, grown.capacity());
         self.owner = grown;
         true
     }

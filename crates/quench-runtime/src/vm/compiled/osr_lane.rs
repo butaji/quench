@@ -7,14 +7,15 @@ use super::*;
 /// inlined callee writes the callee's live registers to.
 pub(super) fn bind_loop<H: Host>(
     native: &mut JsNativeActivation, vm: &mut Vm<H>, region: &LoopRegion, entry: &mut LoopEntry,
-    (frame, lane_context): (usize, usize),
+    (_frame, lane_context): (usize, usize),
 ) {
     native.dispatch.bind_native_storage(vm);
     native.dispatch.lane_context = lane_context;
-    // A region's `THIS`-based reads take the running activation's receiver, as a
-    // lane body's do; `with` leaves it `DELETED`. The lane context's `this` is the
-    // outer activation's, so read the loop's own frame.
-    native.dispatch.receiver = vm.current_this(frame).unwrap_or(Value::DELETED).to_bits();
+    // A region's `THIS`-based reads take the running activation's receiver, as a lane
+    // body's do (`lane_loop_body`); `with` leaves it `DELETED`. A frameless activation's
+    // receiver is the lane context's: `frame` is then the VM frame beneath it, its caller's.
+    // SAFETY: `lane_context` is the running lane's context for `H`.
+    native.dispatch.receiver = unsafe { super::dispatch_fast::lane_context_this::<H>(lane_context) }.to_bits();
     // The counter is the `words` field's first word, not the struct's offset 0:
     // `LoopEntry` is not `repr(C)`.
     native.dispatch.loop_entry = entry.words_mut() as usize;
@@ -57,27 +58,21 @@ pub(super) unsafe fn bind_captures<H: Host>(
     captures
 }
 
-/// The lane activation's own registers, locals and body. A frame whose local storage does not
-/// cover the function keeps them in the activation window, after the register file; the VM
-/// frame may name the caller.
+/// The lane activation's own registers, locals and body. Its locals are where a lane body's
+/// are (`dispatch_fast::lane_body_locals`): the VM frame may name the caller.
 ///
 /// # Safety
-/// `registers` is the activation's live register file.
+/// `registers` is the activation's live register file; `lane_context` the running lane's
+/// context for `H`.
 pub(super) unsafe fn bind_frame<H: Host>(
-    native: &mut JsNativeActivation, vm: &mut Vm<H>, (program, function, frame): (ProgramId, u32, usize),
+    native: &mut JsNativeActivation, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
     registers: *mut crate::value::Value,
 ) {
     if let Some(program) = vm.programs.get(program)
         && let Some(body) = program.function_get(function as usize) {
         native.dispatch.native_registers = registers;
         native.dispatch.register_count = usize::from(body.registers);
-        native.dispatch.native_locals = if vm.frames[frame].locals.len() < usize::from(body.locals) {
-            // SAFETY: the window follows the register file.
-            unsafe { registers.add(usize::from(body.registers)
-                + usize::from(super::dispatch_fast::WINDOW_LOCALS)) }
-        } else {
-            vm.frames[frame].locals.as_mut_ptr()
-        };
+        native.dispatch.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
         native.dispatch.local_count = usize::from(body.locals);
         native.dispatch.body = body as *const _;
         native.dispatch.residual = Rc::as_ptr(&program) as usize;

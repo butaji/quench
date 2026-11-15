@@ -103,6 +103,11 @@ impl Match {
     pub fn groups(&self) -> impl Iterator<Item = Option<Range<usize>>> + '_ {
         std::iter::once(Some(self.range.clone())).chain(self.captures.iter().cloned())
     }
+    /// Drops this match, handing its captures vector to the next match found on this thread.
+    pub fn recycle(self) {
+        backtrack::recycle_captures(self.captures);
+    }
+
     pub fn named_groups(&self) -> impl Iterator<Item = (&str, Option<Range<usize>>)> + '_ {
         self.named
             .iter()
@@ -559,6 +564,9 @@ impl Regex {
             Some(program) => program,
             None => return Some(None),
         };
+        if sticky && program.refuses_start(bytes, start) {
+            return Some(None);
+        }
         Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)))
     }
 

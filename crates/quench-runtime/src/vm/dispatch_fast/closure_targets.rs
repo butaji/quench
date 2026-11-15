@@ -27,7 +27,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(super) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let entry = *self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.generation() != self.lane_stack.generation || entry.program() != self.active_program {
+        if entry.admission != self.lane_stack.admission {
             return None;
         }
         let (program, function, env) = self.same_realm_user_target(callee)?;
@@ -56,8 +56,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let (function, env) = callee.as_known_closure()?;
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
-        if entry.generation() != self.lane_stack.generation
-            || entry.program() != self.active_program
+        if entry.admission != self.lane_stack.admission
             || entry.function != function
             || !entry.this_binding.binds_receiver()
         {
@@ -92,10 +91,19 @@ impl<H: Host> Vm<H> {
     /// callee has no lexical `this` to read. Anything else resolves in `closure_target`.
     #[inline(always)]
     fn sibling_closure_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
+        // A sibling over the entry's own environment, as closures made over their maker's
+        // parent are (`Vm::maker_free_environment`), shares every fact the entry read of it:
+        // its captures and an arrow's lexical `this`.
+        if env == entry.env {
+            return Some(ScriptCallTarget { callee, ..*entry });
+        }
         if !entry.this_binding.binds_receiver() {
             return None;
         }
-        if entry.view.is_null() {
+        // A closure of the same function over the same environment, as an immediately
+        // invoked function expression makes at each run of its enclosing body: every fact
+        // of the entry holds for it but its identity.
+        if entry.view.is_null() || env == entry.env {
             return Some(ScriptCallTarget { callee, env, ..*entry });
         }
         if entry.capture.is_null() {

@@ -1,7 +1,7 @@
 //! Unit repeats, loops and the resume blocks backtracking jumps to.
 use super::{Emit, Resume, FIRST_OPERAND, SECOND_OPERAND};
 use cranelift_codegen::ir::{self, condcodes::IntCC, types, InstBuilder, MemFlagsData};
-use quench_regexp::backtrack::native::{NativeInst, NativeTest, NATIVE_UNBOUNDED as UNBOUNDED};
+use quench_regexp::backtrack::native::{NativeInst, NativeTest, NATIVE_NO_START as NO_START, NATIVE_UNBOUNDED as UNBOUNDED};
 
 impl Emit<'_, '_> {
     /// The first position in `from..to` whose unit fails `test`, or `to`.
@@ -108,16 +108,19 @@ impl Emit<'_, '_> {
 
     fn loop_tail(&mut self, counter: u32, start: u32, min: u32, head: u32) {
         let count = self.register(counter);
-        let enough = self.compare_constant(IntCC::UnsignedGreaterThanOrEqual, count, i64::from(min));
-        let position = self.position();
-        let began = self.register(start);
-        let empty = self.compare(IntCC::Equal, position, began);
-        let rejected = self.b.ins().band(enough, empty);
-        let (reject, continues) = (self.b.create_block(), self.b.create_block());
-        self.branch(rejected, reject, continues);
-        self.b.switch_to_block(reject);
-        self.fail();
-        self.b.switch_to_block(continues);
+        // A body that cannot match empty keeps no start and needs no empty check.
+        if start != NO_START {
+            let enough = self.compare_constant(IntCC::UnsignedGreaterThanOrEqual, count, i64::from(min));
+            let position = self.position();
+            let began = self.register(start);
+            let empty = self.compare(IntCC::Equal, position, began);
+            let rejected = self.b.ins().band(enough, empty);
+            let (reject, continues) = (self.b.create_block(), self.b.create_block());
+            self.branch(rejected, reject, continues);
+            self.b.switch_to_block(reject);
+            self.fail();
+            self.b.switch_to_block(continues);
+        }
         let next = self.b.ins().iadd_imm_s(count, 1);
         self.set_register(counter, next);
         self.goto(head);

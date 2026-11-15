@@ -294,7 +294,7 @@ impl LoopPlanner<'_> {
             global_reads: &global_reads(unit), facts: VmFacts::STATIC, generic,
             direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
             entry_fields,
-            plan: super::lane_region::RegionPlan {
+            plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: false },
                 completion: super::lane_region::Completion::Body, views: self.views,
             },
@@ -372,12 +372,8 @@ pub(in crate::vm) fn start_osr_region(
     super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
     let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
-    let ir = function.dfg.num_insts();
     let code = super::super::jit_backend::run_in_background(move || {
-        let started = std::time::Instant::now();
-        let code = compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));
-        super::tier_model::note_compile(started.elapsed(), ir);
-        code
+        compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
     Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), sites: Default::default() })

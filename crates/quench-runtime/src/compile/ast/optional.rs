@@ -68,23 +68,23 @@ impl FunctionCompiler<'_, '_> {
         value
     }
 
+    /// One fused test of `value` against `constant` by strict identity (`JumpBinaryFalse`,
+    /// which the lane runs as `lane_jump_nullish_false` for `null` and `undefined`): the jump
+    /// is taken when they are identical (`when_identical`), else when they differ.
+    pub(in crate::compile) fn jump_strictly(&mut self, value: Register, constant: Constant, when_identical: bool) -> usize {
+        let operator = if when_identical { BinaryOperator::StrictInequality } else { BinaryOperator::StrictEquality };
+        let constant = self.constant_operand(constant);
+        self.emit(Op::JumpBinaryFalse, operator as u16, Operand::register(value).0, constant.0, 0)
+    }
+
     pub(super) fn emit_optional_prefix(
         &mut self,
         value: Register,
     ) -> (Register, Option<usize>, usize) {
         let dst = self.reg();
-        let null = self.literal(Constant::Null);
-        let is_null = self.emit_binary(2, Operand::register(value), Operand::register(null));
-        let jump_not_null = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
-        let jump_null = self.emit(Op::Jump, 0, 0, 0, 0);
-        let check_undefined = self.code.len() as u32;
-        self.patch_instruction(jump_not_null, check_undefined);
-        let undefined = self.literal(Constant::Undefined);
-        let is_undefined =
-            self.emit_binary(2, Operand::register(value), Operand::register(undefined));
-        let jump_not_undefined = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
-        let undefined_block = self.code.len() as u32;
-        self.patch_instruction(jump_null, undefined_block);
+        let jump_null = self.jump_strictly(value, Constant::Null, true);
+        let jump_not_undefined = self.jump_strictly(value, Constant::Undefined, false);
+        self.patch(jump_null);
         let undefined = self.literal(Constant::Undefined);
         self.emit(Op::Move, dst, undefined, 0, 0);
         let end = self.emit(Op::Jump, 0, 0, 0, 0);

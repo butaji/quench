@@ -166,8 +166,8 @@ mod tests {
             [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]
         );
         assert_eq!(
-            [crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64],
-            [mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64]
+            [crate::heap::NARROW_LEN as u64, crate::heap::DOUBLE_LEN as u64, crate::heap::ENCODED_LEN as u64, crate::heap::OTHERS_UNKNOWN as u64, crate::heap::LENGTH_FROM_VALUES as i64 as u64, crate::heap::OTHERS_FROM_VALUES as i64 as u64, crate::value_vec::INLINE_PROPERTY_COUNT as u64],
+            [mirror::NARROW_LEN as u64, mirror::DOUBLE_LEN as u64, mirror::ENCODED_LEN as u64, mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64]
         );
         use mirror::words as w;
         assert_eq!(

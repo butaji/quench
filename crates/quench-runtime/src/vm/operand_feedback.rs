@@ -175,6 +175,21 @@ pub(super) unsafe fn note_number_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip)
     cell.set(OperandKinds(cell.get()).union(OperandKinds::INT32).union(OperandKinds::DOUBLE).0);
 }
 
+/// Adds the BigInt kind to the feedback byte of the record at `ip`: what `note_operands`
+/// adds for two BigInt operands, without classifying them again.
+///
+/// # Safety
+/// As `note_operands`.
+#[inline(always)]
+pub(super) unsafe fn note_bigint_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
+    // SAFETY: as the function's own.
+    let cell = unsafe { feedback_cell((*cx).base, ip) };
+    let kinds = OperandKinds(cell.get()).union(OperandKinds::BIGINT);
+    if kinds.0 != cell.get() {
+        cell.set(kinds.0);
+    }
+}
+
 /// `note_operands` for a handler's first miss, out of line so the handler's own code stays as it is.
 ///
 /// # Safety

@@ -9,6 +9,7 @@ macro_rules! binary_family {
      $($name:ident, $wasm:ident => $body:expr;)+) => {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
+            #[inline(always)]
             pub(crate) fn apply(self, $left: $float, $right: $float) -> WasmValue {
                 type $float_alias = $float;
                 type $bits_alias = $bits;
@@ -35,6 +36,7 @@ macro_rules! unary_family {
      $($name:ident, $wasm:ident => $body:expr;)+) => {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
+            #[inline(always)]
             pub(crate) fn apply(self, $value: $float) -> WasmValue {
                 type $float_alias = $float;
                 type $bits_alias = $bits;

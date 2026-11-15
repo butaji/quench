@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
     /// prototype.
     pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
         let text = self.heap.string(string).or_else(|| self.heap.string(self.string_wrapper_primitive(string)?))?;
-        let unit = text.units().get(index)?;
+        let unit = text.unit_at(index)?;
         // An ASCII unit's string is shared (`ascii_unit_string`), as `charAt`'s is.
         Some(match self.ascii_unit_string(unit) {
             Some(shared) => shared,
@@ -61,6 +61,15 @@ impl<H: Host> Vm<H> {
     /// `get_index` of a string at an integer key inside its length: the one-unit string
     /// there (`string_index_value`). `None` for any other read.
     pub(super) fn string_element(&mut self, string: Value, key: Value) -> Option<Value> {
+        // An int32 key into flat ASCII text, as `s[i]` in a scan: the byte's shared string,
+        // read in place with no unit view built.
+        if let Some(index) = key.as_int()
+            && let Some(text) = self.heap.string(string)
+            && let Some(super::wtf16::Units::Ascii(bytes)) = text.existing_units()
+        {
+            let byte = *bytes.get(usize::try_from(index).ok()?)?;
+            return Some(self.ascii_byte_string(byte));
+        }
         let index = key
             .as_number()
             .filter(|number| number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(number))?;
@@ -267,7 +276,7 @@ impl<H: Host> Vm<H> {
                 || data.boxed_primitive().is_some()
                 || data.is_module_namespace()
                 || data.deferred_module().is_some()
-                || self.heap.sparse_length(current).is_some()
+                || self.heap.sparse_get(current, index).is_some_and(|value| !value.is_deleted())
                 || self.shape_names_index(data.shape(), index)
             {
                 return None;
@@ -308,7 +317,7 @@ impl<H: Host> Vm<H> {
         object
             .elements()
             .get(index)
-            .copied()
+            
             .filter(|value| !value.is_deleted())
     }
 

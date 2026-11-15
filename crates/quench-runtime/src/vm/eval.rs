@@ -202,8 +202,18 @@ impl<H: Host> Vm<H> {
         if self.heap.string(source).is_some() {
             self.require_source_compilation(p)?;
         }
+        // An ASCII rope compiles from a copy the string does not keep: its program keeps the
+        // rope (`SourceText::Rope`), whose pieces other strings share.
+        let unkept = self
+            .heap
+            .string(source)
+            .filter(|text| text.is_unflattened_ascii_rope())
+            .map(|text| text.flat_unkept().into_owned());
+        let unkept_text = unkept.as_ref().and_then(crate::vm::wtf16::FlatUnits::ascii_str);
         if let Some(source_text) = self.heap.string(source).cloned()
-            && let Some(literal) = crate::Engine::eval_single_regexp_literal(source_text.host_string())
+            && let Some(literal) = crate::Engine::eval_single_regexp_literal(
+                unkept_text.unwrap_or_else(|| source_text.host_string()),
+            )
         {
             let text = source_text.host_string();
             let start = text[..literal.span.start].encode_utf16().count() + 1;
@@ -231,8 +241,15 @@ impl<H: Host> Vm<H> {
             _ if let Some(value) = self.heap.string(source)  => value.clone(),
             _ => return Ok(source),
         };
+        if let Some(units) = &unkept {
+            // Hash the copy in hand: hashing the string would make the rope flat for good.
+            self.heap.remember_string_hash(source, units.view().text_hash());
+        }
         let cache_source = Some(eval_source::EvalSource::of(&self.heap, source, &source_text));
-        let host_text = source_text.host_string();
+        let host_text = match unkept_text {
+            Some(text) => text,
+            None => source_text.host_string(),
+        };
         let text = if self.host.allows_natives_syntax() {
             strip_v8_optimization_intrinsics(host_text)
         } else {
@@ -291,7 +308,7 @@ impl<H: Host> Vm<H> {
         source_name: &str,
         cache_source: Option<eval_source::EvalSource>,
         host_script: bool,
-        shared_text: Option<std::rc::Rc<str>>,
+        shared_text: Option<crate::bytecode::SourceText>,
     ) -> Result<Value, JsError> {
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();
@@ -313,6 +330,20 @@ impl<H: Host> Vm<H> {
         };
         if let Some(program) = cached {
             return self.run_global_eval_program(p, program);
+        }
+        // A strict direct eval of a text compiled before: a new program, its own Script with
+        // its own origin, over the earlier program's code (jsdom-d3-startup evaluates each
+        // 3.4 MB bundle text twice, inside a class method, so strict).
+        if let Some(key) = &facts.key
+            && let Some(code) = self.programs.cached_strict_direct_eval_code(key)
+        {
+            let key = facts.key.take().expect("checked above");
+            let caller = key.caller.clone();
+            let Some(program_id) = self.store_dynamic_program_shared(code) else {
+                return Err(self.type_error(p, "dynamic program store is full".into()));
+            };
+            self.programs.cache_strict_direct_eval_code(key, program_id);
+            return self.run_global_eval_instance(p, program_id, None, Some(caller));
         }
         let kept = host_script.then(|| self.kept_host_script(source_name, mode, source)).flatten();
         let compiled = kept.is_none();
@@ -343,6 +374,7 @@ impl<H: Host> Vm<H> {
         })?;
         eval_source::keep_shared_text(&mut residual, shared_text);
         let cacheable = eval_source::is_cacheable(&residual, source);
+        let strict_code_key = facts.key.as_ref().filter(|_| eval_source::is_strict_code_cacheable(&residual)).cloned();
         let cache_source = cache_source.filter(|_| cacheable && facts.key.is_none());
         let direct_key = facts.key.take().filter(|_| cacheable);
         let caller = direct_key.as_ref().map(|key| key.caller.clone());
@@ -357,6 +389,9 @@ impl<H: Host> Vm<H> {
         }
         if let Some(key) = direct_key {
             self.programs.cache_direct_eval(key, program_id);
+        }
+        if let Some(key) = strict_code_key {
+            self.programs.cache_strict_direct_eval_code(key, program_id);
         }
         self.run_global_eval_instance(p, program_id, cache_source, caller)
     }
@@ -535,6 +570,12 @@ impl<H: Host> Vm<H> {
         let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
         let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
             .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
+        // Checking the kept text's checksum read every page of it, and the run reads it again
+        // only for a function's source text or a lazily compiled body: Air kept four sources'
+        // pages (1.5 MB of compile-cache pages) resident at its peak.
+        if let crate::bytecode::SourceText::Kept(kept) = &text {
+            H::kept_bytes_read(kept.as_bytes());
+        }
         let specialized = self.specialized;
         let mut kept = self.decode_cached_program(bytes, text, 0, name, specialized).ok()?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut kept.source, origin) {
@@ -1126,7 +1167,7 @@ impl<H: Host> Vm<H> {
         }
         if !names.is_empty() { return Some((first_home?, names)); }
         let home = self.eval_home_binding(p)?;
-        let names = self.object_data(home).into_iter().flat_map(|object| object.private_names()).filter_map(|brand| {
+        let names = self.private_names(home).into_iter().filter_map(|brand| {
             let identity = self.atom_name(brand.name).to_owned();
             private_identity_label(&identity).map(str::to_owned).map(|label| (label, identity))
         }).fold(Vec::new(), |mut names, binding| { if !names.iter().any(|(label, _)| label == &binding.0) { names.push(binding); } names });

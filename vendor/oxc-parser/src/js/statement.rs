@@ -105,7 +105,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                         let string = string.unbox();
                         let src = &self.source_text
                             [string.span.start as usize + 1..string.span.end as usize - 1];
-                        self.strict |= src == "use strict";
+                        if src == "use strict" {
+                            self.strict = true;
+                            self.early.use_strict();
+                        }
                         directives.push(Directive::new(span, string, Str::from(src), self));
                         continue;
                     }
@@ -279,8 +282,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             // Section 14.13 Labelled Statement
             // Avoids lookahead for a labeled statement, which is on a hot path
             if self.eat(Kind::Colon) {
+                self.early.unreference(ident.name.as_str());
+                self.early.enter_label(ident.name.as_str(), matches!(self.cur_kind(), Kind::For | Kind::While | Kind::Do));
                 let label = LabelIdentifier::new(ident.span, ident.name, self);
                 let body = self.parse_statement_list_item(StatementContext::Label);
+                self.early.exit_label();
                 return Statement::new_labeled_statement(self.end_span(start), label, body, self);
             }
         }
@@ -289,6 +295,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     /// Section 14.2 Block Statement
     pub(crate) fn parse_block(&mut self) -> ArenaBox<'a, BlockStatement<'a>> {
+        self.early.enter(crate::early::ScopeKind::Block);
+        let block = self.parse_block_in_scope();
+        self.early.exit();
+        block
+    }
+
+    /// A block whose declarations are the scope around it's (a catch clause's body).
+    fn parse_block_in_scope(&mut self) -> ArenaBox<'a, BlockStatement<'a>> {
         let start = self.cur_start();
         let body = self.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
             p.parse_statement_list_item(StatementContext::StatementList)
@@ -355,7 +369,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn parse_do_while_statement(&mut self) -> Statement<'a> {
         let start = self.cur_start();
         self.bump_any(); // advance `do`
+        self.early.enter_loop();
         let body = self.parse_statement_list_item(StatementContext::Do);
+        self.early.exit_loop();
         self.expect(Kind::While);
         let test = self.parse_paren_expression();
         self.bump(Kind::Semicolon);
@@ -367,12 +383,23 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         self.bump_any(); // bump `while`
         let test = self.parse_paren_expression();
+        self.early.enter_loop();
         let body = self.parse_statement_list_item(StatementContext::While);
+        self.early.exit_loop();
         Statement::new_while_statement(self.end_span(start), test, body, self)
     }
 
     /// Section 14.7.4 For Statement
     fn parse_for_statement(&mut self) -> Statement<'a> {
+        self.early.enter(crate::early::ScopeKind::Block);
+        self.early.enter_loop();
+        let statement = self.parse_for_statement_inner();
+        self.early.exit_loop();
+        self.early.exit();
+        statement
+    }
+
+    fn parse_for_statement_inner(&mut self) -> Statement<'a> {
         let for_start = self.cur_start();
         self.bump_any(); // bump `for`
 
@@ -623,6 +650,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) {
         debug_assert!(matches!(kind, Kind::In | Kind::Of));
         let is_for_in = kind == Kind::In;
+        if declaration.has_init() {
+            self.early.mark_unsure();
+        }
 
         if declaration.declarations.len() > 1 {
             self.error(diagnostics::multiple_declarations_in_for_loop_head(
@@ -733,9 +763,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         self.bump_any(); // bump `continue`
         let label = if self.can_insert_semicolon() {
+            self.early.jump(true);
             None
         } else {
-            Some(self.parse_label_identifier())
+            let label = self.parse_label_identifier();
+            self.early.labeled_jump(label.name.as_str(), true);
+            Some(label)
         };
         self.asi();
         Statement::new_continue_statement(self.end_span(start), label, self)
@@ -746,9 +779,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         self.bump_any(); // bump `break`
         let label = if self.can_insert_semicolon() {
+            self.early.jump(false);
             None
         } else {
-            Some(self.parse_label_identifier())
+            let label = self.parse_label_identifier();
+            self.early.labeled_jump(label.name.as_str(), false);
+            Some(label)
         };
         self.asi();
         Statement::new_break_statement(self.end_span(start), label, self)
@@ -786,6 +822,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn parse_with_statement(&mut self) -> Statement<'a> {
         let start = self.cur_start();
         self.bump_any(); // bump `with`
+        self.early.mark_unsure();
         let object = self.parse_paren_expression();
         let body = self.parse_statement_list_item(StatementContext::With);
         let span = self.end_span(start);
@@ -801,6 +838,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // and report only the first duplicate, all in the single parsing pass.
         let mut first_default: Option<Span> = None;
         let mut reported_duplicate = false;
+        self.early.enter(crate::early::ScopeKind::Block);
+        self.early.enter_switch();
         let cases = self.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
             let case = p.parse_switch_case();
             if case.test.is_none() {
@@ -817,6 +856,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             }
             case
         });
+        self.early.exit_switch();
+        self.early.exit();
         Statement::new_switch_statement(self.end_span(start), discriminant, cases, self)
     }
 
@@ -905,14 +946,20 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn parse_catch_clause(&mut self) -> ArenaBox<'a, CatchClause<'a>> {
         let start = self.cur_start();
         self.bump_any(); // advance `catch`
+        self.early.enter(crate::early::ScopeKind::Block);
         let pattern = if self.eat(Kind::LParen) {
+            // A destructured parameter conflicts with a `var` of its names in the body.
+            let declares = if self.cur_kind().is_binding_identifier() { crate::early::DeclKind::CatchParam } else { crate::early::DeclKind::Lexical };
+            let binding_kind = self.binding_kind.replace(declares);
             let (pattern, type_annotation) = self.parse_binding_pattern_with_type_annotation();
+            self.binding_kind = binding_kind;
             self.expect(Kind::RParen);
             Some((pattern, type_annotation))
         } else {
             None
         };
-        let body = self.parse_block();
+        let body = self.parse_block_in_scope();
+        self.early.exit();
         let param = pattern.map(|(pattern, type_annotation)| {
             CatchParameter::new(
                 Span::new(

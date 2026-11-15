@@ -56,6 +56,9 @@ enum Step {
     Bits { kernel: BitKernel, a: u16, b: u16, c: u16 },
     Count { kernel: BitKernel, a: u16, b: u16, count: u32 },
     Lanes { kernel: &'static SimdKernel, lane: u8, a: Place, b: Place, c: Option<Place> },
+    /// A lane operator whose operands and result are all vectors the bank holds: its
+    /// kernel's bits form (`SimdKernel::bits`) on bank slots, `c` being `b` for a unary one.
+    Vector { bits: fn(u128, u128, u8) -> u128, lane: u8, a: u16, b: u16, c: u16 },
     Shuffle { form: ShuffleForm, a: u16, b: u16, c: u16 },
     /// Two one-operand u32 shuffles and the extending multiply of their results
     /// (`crate::wasm::simd::multiply_words`).
@@ -68,6 +71,11 @@ enum Step {
     Address { a: u16, index: u16, offset: u64 },
     Load { a: u16, address: u16, at: u32, leave: Leave },
     Store { value: u16, address: u16, at: u32, leave: Leave },
+    /// An `Address` whose register only the `Load` or `Store` after it reads, folded into
+    /// it: the address is computed in place and written to its register only where the
+    /// access leaves, for the general path to read.
+    LoadAt { a: u16, address: u16, index: u16, offset: u64, at: u32, leave: Leave },
+    StoreAt { value: u16, address: u16, index: u16, offset: u64, at: u32, leave: Leave },
 }
 
 /// A run of records one record executes (`lane_vector_region`).
@@ -82,6 +90,21 @@ pub(super) struct VectorRegion {
     /// The register the record after the run reads as its carried accumulator, which its
     /// producer, the run's last record, wrote; `NO_ACCUMULATOR` for none.
     acc: u16,
+    /// The i32 comparison jump after the run when it closes a loop the run begins: the run
+    /// then takes the back edge itself, its bank kept across iterations.
+    looping: Option<RegionLoop>,
+}
+
+/// A loop a region runs itself (`VectorRegion::looping`): its closing jump's comparison of
+/// register `left` and `right`, and the bank registers boxed before leaving from a repeated
+/// iteration, where registers the first iteration had not yet entered may be newer in the
+/// bank than in their slots.
+#[derive(Clone, Copy)]
+struct RegionLoop {
+    comparison: I32BinaryOperator,
+    left: u16,
+    right: I32Right,
+    carried: Leave,
 }
 
 type Bank = [std::mem::MaybeUninit<u128>; BANK_REGISTERS];
@@ -124,6 +147,8 @@ impl VectorRegion {
         r: Registers,
         memory: MemoryView,
         integers: crate::value::IntegerEncoding,
+        may_loop: bool,
+        below_floor: impl Fn() -> bool,
     ) -> Result<(), u32> {
         let mut bank: Bank = [std::mem::MaybeUninit::uninit(); BANK_REGISTERS];
         // SAFETY (bank reads): the builder enters every register before a step reads it
@@ -139,8 +164,13 @@ impl VectorRegion {
                 unsafe { bank.get_unchecked_mut(usize::from($register)).write(bits) };
             }};
         }
+        // Whether this is a repeated iteration of the run's own loop (`RegionLoop`).
+        let mut repeated = false;
         macro_rules! leave {
             ($leave:expr, $at:expr) => {{
+                if repeated && let Some(looping) = &self.looping {
+                    self.box_out(looping.carried, &bank, vm, r);
+                }
                 self.box_out($leave, &bank, vm, r);
                 return Err($at);
             }};
@@ -150,8 +180,12 @@ impl VectorRegion {
             Place::Bank(register) => unsafe { bank.get_unchecked(usize::from(register)).assume_init() },
             Place::I32(register) => u128::from(r.i32(register) as u32),
         };
+        loop {
         for step in &self.steps {
             match *step {
+                // A repeated iteration's bank already holds every register the run unboxes,
+                // newest (`vector_regions` admits only such loops).
+                Step::Unbox { .. } if repeated => {}
                 Step::Unbox { register, at, leave } => match vm.heap.v128(r.get(register)) {
                     Some(bytes) => put!(register, u128::from_le_bytes(bytes)),
                     None => leave!(leave, at),
@@ -167,6 +201,7 @@ impl VectorRegion {
                         Place::I32(register) => r.set(register, integers.encode(bits as u32 as i32)),
                     }
                 }
+                Step::Vector { bits, lane, a, b, c } => put!(a, bits(get!(b), get!(c), lane)),
                 Step::Shuffle { form, a, b, c } => put!(a, form.apply(get!(b), get!(c))),
                 Step::MultiplyWords { a, b, c, left, right } => {
                     put!(a, crate::wasm::simd::multiply_words(get!(b), get!(c), left, right))
@@ -198,6 +233,31 @@ impl VectorRegion {
                         None => leave!(leave, at),
                     }
                 }
+                Step::LoadAt { a, address, index, offset, at, leave } => {
+                    let effective = u64::from(r.i32(index) as u32) + offset;
+                    match vector_bytes(memory, effective) {
+                        // SAFETY: `vector_bytes` keeps the vector's bytes in the memory.
+                        Some(bytes) => put!(a, u128::from_le_bytes(unsafe { bytes.read() })),
+                        None => {
+                            r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
+                            leave!(leave, at)
+                        }
+                    }
+                }
+                Step::StoreAt { value, address, index, offset, at, leave } => {
+                    let effective = u64::from(r.i32(index) as u32) + offset;
+                    match vector_bytes(memory, effective) {
+                        Some(bytes) => {
+                            let bits = get!(value);
+                            // SAFETY: as for `Step::Load`.
+                            unsafe { bytes.write(bits.to_le_bytes()) }
+                        }
+                        None => {
+                            r.set(address, Value::from_bits64(effective).expect("an untagged memory32 address"));
+                            leave!(leave, at)
+                        }
+                    }
+                }
                 Step::Store { value, address, at, leave } => {
                     match r.get(address).bits64().and_then(|address| vector_bytes(memory, address)) {
                         Some(bytes) => {
@@ -209,6 +269,18 @@ impl VectorRegion {
                     }
                 }
             }
+        }
+        // The run's own back edge, unless a safepoint is due there: then, as when the loop
+        // exits, the closing jump's record runs after the run.
+        let Some(looping) = self.looping.filter(|_| may_loop) else { break };
+        let right = match looping.right {
+            I32Right::Register(register) => r.i32(register),
+            I32Right::Immediate(value) => value,
+        };
+        if looping.comparison.evaluate(r.i32(looping.left), right) != Ok(1) || below_floor() {
+            break;
+        }
+        repeated = true;
         }
         if self.end.start != self.end.end {
             self.box_out(self.end, &bank, vm, r);
@@ -224,7 +296,15 @@ lane_handler! {
         // SAFETY: the view owns the region its record names (`LaneView::vector_regions`).
         let region = unsafe { &*i.vector_region() };
         let vm = unsafe { vm(cx) };
-        if let Err(at) = region.run(vm, r, view.memory, view.integers) {
+        // A run that credits back edges to the Wasm tier (`LaneContext::backedges_left`)
+        // leaves them to the closing jump.
+        let may_loop = unsafe { (*cx).backedges_left }.is_none();
+        if let Err(at) = region.run(vm, r, view.memory, view.integers, may_loop, || {
+            // A loop iteration is a backward jump: it spends fuel as one would, leaving the
+            // jump that spends the last unit (`script_fuel_out`) to the record itself.
+            // SAFETY: the context outlives the lane run.
+            unsafe { if (*cx).fuel == 0 { true } else { (*cx).fuel -= 1; false } }
+        }) {
             // SAFETY: `at` is a record of the run.
             return exit(unsafe { ip.add(at as usize) });
         }
@@ -321,6 +401,9 @@ struct Builder<'a> {
     pending: RegisterSet,
     vectors: usize,
     last_leave: Option<Leave>,
+    /// Registers the run unboxes, and registers it writes as scalars.
+    unboxed: RegisterSet,
+    scalar_written: RegisterSet,
 }
 
 impl Builder<'_> {
@@ -359,12 +442,47 @@ impl Builder<'_> {
         leave
     }
 
+    /// The loop `jump`, the instruction after the run, closes when it jumps back to the run's
+    /// first record `start` on an i32 comparison of registers outside the bank, and every
+    /// register the run unboxes ends the run in the bank, never written as a scalar: a
+    /// repeated iteration then finds each newest in the bank. Settles every pending constant,
+    /// so a repeated iteration's slot reads see what the previous one loaded.
+    fn closing_loop(&mut self, jump: WideInstruction, start: usize) -> Option<RegionLoop> {
+        let op = jump.op();
+        let (comparison, right) = match I32BinaryOperator::from_jump_op(op) {
+            Some(comparison) => (comparison, I32Right::Register(jump.b())),
+            None => (
+                I32BinaryOperator::from_immediate_jump_op(op)?,
+                I32Right::Immediate(i32::from(jump.b() as i16)),
+            ),
+        };
+        let left = jump.a();
+        let in_bank = |register: u16| usize::from(register) < BANK_REGISTERS && register_in(self.bank, usize::from(register));
+        let right_in_bank = matches!(right, I32Right::Register(register) if in_bank(register));
+        if jump.jump_target() as usize != start
+            || in_bank(left)
+            || right_in_bank
+            || self.unboxed & !self.bank != RegisterSet::default()
+            || self.unboxed & self.scalar_written != RegisterSet::default()
+        {
+            return None;
+        }
+        self.settle(self.pending);
+        let start = self.spills.len() as u32;
+        let bank = self.bank;
+        self.spills.extend((0..BANK_REGISTERS as u16).filter(|&register| register_in(bank, usize::from(register))));
+        let carried = Leave { start, end: self.spills.len() as u32 };
+        self.last_leave = None;
+        Some(RegionLoop { comparison, left, right, carried })
+    }
+
     /// Read `register` as a vector: enter it into the bank first.
     fn vector(&mut self, pc: usize, register: u16) {
         if !register_in(self.bank, usize::from(register)) {
             let leave = self.leave(pc);
             self.steps.push(Step::Unbox { register, at: self.at(pc), leave });
             self.bank |= RegisterSet::bit(usize::from(register));
+            self.unboxed |= RegisterSet::bit(usize::from(register));
         }
     }
 
@@ -381,8 +499,20 @@ impl Builder<'_> {
             self.vectors += 1;
         } else {
             self.bank &= !bit;
+            self.scalar_written |= bit;
         }
         self.constants[usize::from(register)] = constant;
+    }
+
+    /// The index and offset of the `Address` step just before an access at `pc` through
+    /// `address`, removed, when nothing after the access reads its register.
+    fn folded_address(&mut self, pc: usize, address: u16) -> Option<(u16, u64)> {
+        let &Step::Address { a, index, offset } = self.steps.last()? else { return None };
+        let live = self.live.get(pc + 1).unwrap_or(RegisterSet::MAX);
+        (a == address && index != address && !register_in(live, usize::from(address))).then(|| {
+            self.steps.pop();
+            (index, offset)
+        })
     }
 
     /// `step`, with the two steps before it, as one when together they compute one
@@ -503,6 +633,13 @@ impl Builder<'_> {
                         Step::Count { kernel, a, b, count: count as u32 }
                     }
                     (Some(kernel), _) => Step::Bits { kernel, a, b, c },
+                    (None, _) if vector(result) && vector(kernel.left) && kernel.right.is_none_or(vector) => Step::Vector {
+                        bits: kernel.bits,
+                        lane,
+                        a,
+                        b,
+                        c: if kernel.right.is_some() { c } else { b },
+                    },
                     (None, _) => Step::Lanes {
                         kernel,
                         lane,
@@ -573,14 +710,22 @@ impl Builder<'_> {
             Admitted::Load => {
                 self.scalar(c);
                 let leave = self.leave(pc);
-                self.steps.push(Step::Load { a, address: c, at: self.at(pc), leave });
+                let step = match self.folded_address(pc, c) {
+                    Some((index, offset)) => Step::LoadAt { a, address: c, index, offset, at: self.at(pc), leave },
+                    None => Step::Load { a, address: c, at: self.at(pc), leave },
+                };
+                self.steps.push(step);
                 self.write(a, true, None);
             }
             Admitted::Store => {
                 self.scalar(c);
                 self.vector(pc, a);
                 let leave = self.leave(pc);
-                self.steps.push(Step::Store { value: a, address: c, at: self.at(pc), leave });
+                let step = match self.folded_address(pc, c) {
+                    Some((index, offset)) => Step::StoreAt { value: a, address: c, index, offset, at: self.at(pc), leave },
+                    None => Step::Store { value: a, address: c, at: self.at(pc), leave },
+                };
+                self.steps.push(step);
             }
         }
         Some(())
@@ -615,6 +760,8 @@ pub(super) fn vector_regions(
             pending: RegisterSet::default(),
             vectors: 0,
             last_leave: None,
+            unboxed: RegisterSet::default(),
+            scalar_written: RegisterSet::default(),
         };
         let mut end = pc;
         while end < decoded.len()
@@ -626,6 +773,7 @@ pub(super) fn vector_regions(
             end += 1;
         }
         if builder.vectors >= REGION_MIN_VECTORS {
+            let looping = decoded.get(end).and_then(|&jump| builder.closing_loop(jump, pc));
             let leave = builder.leave(end);
             let acc = produced[end - 1].unwrap_or(NO_ACCUMULATOR);
             regions.push(VectorRegion {
@@ -635,6 +783,7 @@ pub(super) fn vector_regions(
                 records: end - pc,
                 end: leave,
                 acc,
+                looping,
             });
         }
         pc = end.max(pc + 1);

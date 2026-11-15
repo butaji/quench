@@ -26,6 +26,9 @@ impl<H: Host> Vm<H> {
         if !exec && !self.regexp_exec_is_builtin(receiver) {
             return None;
         }
+        if let Some(outcome) = self.steady_ascii_direct(receiver, subject, exec, result_used) {
+            return Some(outcome);
+        }
         let read = self.regexp_steady_state(receiver, subject, result_used && exec)?;
         Some(self.steady_regexp_search(p, receiver, subject, exec, read, result_used))
     }
@@ -49,7 +52,7 @@ impl<H: Host> Vm<H> {
         };
         if let Prefilter::Excludes { stateful } = prefilter {
             if stateful {
-                self.heap.property_set(receiver, slot, Value::number(0.0));
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         }
@@ -284,7 +287,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some((regex, input, matched)) = matched else {
             if stateful {
-                self.heap.property_set(receiver, slot, Value::number(0.0));
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
             }
             return Ok(if exec { Value::NULL } else { Value::FALSE });
         };
@@ -305,7 +308,7 @@ impl<H: Host> Vm<H> {
         captures: bool,
     ) -> Result<Value, JsError> {
         if stateful {
-            self.heap.property_set(receiver, slot, Value::number(matched.range.end as f64));
+            self.heap.primitive_cell_property_set(receiver, slot, Value::number(matched.range.end as f64));
         }
         if captures {
             return self.with_call_roots([receiver, subject], |vm| vm.regexp_exec_result(receiver, subject, input, matched));
@@ -383,6 +386,44 @@ impl<H: Host> Vm<H> {
             intrinsics.builtin_exec.set(Some(exec));
         }
         builtin
+    }
+
+    /// `steady_regexp_call` of a flat ASCII subject searched in place, with the regexp's
+    /// `lastIndex` layout cached and its value an integer: a failed search, most of a
+    /// tokenizer's sticky tries, stores and answers here without building a `SteadyRead`,
+    /// whose moves cost more than the decision. `None` leaves the call to
+    /// `regexp_steady_state`, which decides every other case and fills the layout cache.
+    #[inline(always)]
+    fn steady_ascii_direct(&mut self, receiver: Value, subject: Value, exec: bool, result_used: bool) -> Option<Result<Value, JsError>> {
+        let captures = result_used && exec;
+        let Some(Cell::RegExp { object, meta }) = self.heap.get(receiver) else {
+            return None;
+        };
+        let shape = object.shape();
+        let slot = self.regexp_last_index_layouts.iter().find(|(cached, _)| *cached == shape)?.1 as usize;
+        let last_index = if slot < crate::value_vec::INLINE_PROPERTY_COUNT { object.inline_property(slot) } else { None }?;
+        let index = last_index.as_int()?;
+        let regex = meta.matcher.0.get()?;
+        let flags = meta.flags;
+        let stateful = flags.intersects(RegExpFlags::GLOBAL.with(RegExpFlags::STICKY));
+        let sticky = flags.contains(RegExpFlags::STICKY);
+        let start = if stateful { usize::try_from(index).unwrap_or(0) } else { 0 };
+        if !stateful && !captures && regex.matches_at_every_start() {
+            return None;
+        }
+        let input = self.heap.string(subject)?;
+        let crate::vm::wtf16::Units::Ascii(bytes) = input.existing_flat()?.view() else {
+            return None;
+        };
+        let found = regex.find_ascii(bytes, start, sticky, captures)?;
+        let Some(found) = found else {
+            if stateful {
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
+            }
+            return Some(Ok(if exec { Value::NULL } else { Value::FALSE }));
+        };
+        let (regex, input) = (Rc::clone(regex), input.clone());
+        Some(self.steady_ascii_match(receiver, subject, input, regex, found, (exec, stateful, slot), captures))
     }
 
     /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string

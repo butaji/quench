@@ -13,6 +13,9 @@ const JSON_RETAINED_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 /// few levels.
 const JSON_PLAIN_DEPTH: usize = 64;
 
+/// The plans `JsonPlainWrite::recent_plans` holds.
+const JSON_RECENT_PLANS: usize = 8;
+
 /// The containers being written, inline up to this nesting.
 const JSON_PLAIN_INLINE_ANCESTORS: usize = 16;
 
@@ -26,13 +29,16 @@ struct JsonPlainWrite {
     /// The members of each ordinary object's (shape, prototype) written so far, or `None`
     /// when objects of it take the general serializer.
     object_plans: rustc_hash::FxHashMap<(u32, Value), Option<std::rc::Rc<[JsonMember]>>>,
+    /// Recently used plans by (shape, prototype), one per shape's low bits: a payload's few
+    /// kinds of object recur, nested inside one another, which this answers without hashing.
+    recent_plans: [Option<((u32, Value), std::rc::Rc<[JsonMember]>)>; JSON_RECENT_PLANS],
     /// The `"key":` text of every planned member: an object's keys recur across the objects
     /// of a payload, so each shape's are quoted once.
     key_text: JsonText,
 }
 
-/// One enumerable data member of a planned object: its slot and its `"key":` text's range in
-/// `JsonPlainWrite::key_text`.
+/// One enumerable data member of a planned object: its slot and its `,"key":` text's range in
+/// `JsonPlainWrite::key_text`, whose first byte, the comma, a first written member skips.
 #[derive(Clone, Copy)]
 struct JsonMember {
     slot: u32,
@@ -60,6 +66,7 @@ impl JsonPlainWrite {
     fn forget_plans(&mut self) {
         self.array_lacks_to_json = None;
         self.object_plans.clear();
+        self.recent_plans = Default::default();
         self.key_text.clear();
     }
 
@@ -70,12 +77,28 @@ impl JsonPlainWrite {
             array_lacks_to_json: None,
             output: JsonText::new(),
             object_plans: Default::default(),
+            recent_plans: Default::default(),
             key_text: JsonText::new(),
         }
     }
 }
 
+/// `JSON.stringify(value, replacer, space)`'s argument positions.
+const JSON_REPLACER_ARGUMENT: usize = 1;
+const JSON_SPACE_ARGUMENT: usize = 2;
+
 impl<H: Host> Vm<H> {
+    /// `JSON.stringify(value)`'s call by the plain writer (`json_stringify_plain`), when it
+    /// passes no replacer and no gap (arguments past those two are not read); `None` otherwise.
+    #[inline]
+    pub(in crate::vm) fn json_stringify_plain_call(&mut self, args: &[Value]) -> Option<Value> {
+        let unset = |index: usize| args.get(index).is_none_or(|value| value.is_undefined());
+        if !(unset(JSON_REPLACER_ARGUMENT) && unset(JSON_SPACE_ARGUMENT)) {
+            return None;
+        }
+        self.json_stringify_plain(args.first().copied().unwrap_or(Value::UNDEFINED))
+    }
+
     /// JSON.stringify(value) by the plain writer: the string, or `undefined` for an omitted
     /// value; `None` when the value needs the general steps, having observed nothing.
     pub(super) fn json_stringify_plain(&mut self, value: Value) -> Option<Value> {
@@ -201,16 +224,16 @@ impl<H: Host> Vm<H> {
         plain.output.push(b'{');
         let mut written = false;
         for member in members.iter() {
-            let Some(member_value) = self.heap.property_get(data, member.slot as usize) else {
+            // SAFETY: the plan's slots are its shape's, which the object has.
+            let member_value = unsafe { self.heap.property_get_shaped(data, member.slot as usize) };
+            let Some(member_value) = member_value.filter(|value| !value.is_deleted()) else {
                 return false;
             };
             // The member is written before its value is known; an omitted value takes it back.
             let start = plain.output.len();
-            if written {
-                plain.output.push(b',');
-            }
             let (key_start, key_end) = member.key;
-            plain.output.append_bytes(&plain.key_text[key_start as usize..key_end as usize]);
+            let key_start = key_start as usize + usize::from(!written);
+            plain.output.append_bytes(&plain.key_text[key_start..key_end as usize]);
             match self.json_write_plain(member_value, plain) {
                 Some(true) => written = true,
                 Some(false) => plain.output.truncate(start),
@@ -231,7 +254,16 @@ impl<H: Host> Vm<H> {
         plain: &mut JsonPlainWrite,
     ) -> Option<std::rc::Rc<[JsonMember]>> {
         let key = (data.shape(), data.proto());
+        let recent = key.0 as usize % JSON_RECENT_PLANS;
+        if let Some((last, plan)) = &plain.recent_plans[recent]
+            && *last == key
+        {
+            return Some(plan.clone());
+        }
         if let Some(plan) = plain.object_plans.get(&key) {
+            if let Some(plan) = plan {
+                plain.recent_plans[recent] = Some((key, plan.clone()));
+            }
             return plan.clone();
         }
         let plan = (!self.shape_may_have_accessors(data.shape())
@@ -244,6 +276,7 @@ impl<H: Host> Vm<H> {
                 .map(|&(atom, slot)| {
                     self.plain_named_key(atom).then(|| {
                         let start = plain.key_text.len() as u32;
+                        plain.key_text.push(b',');
                         self.write_json_key(atom, &mut plain.key_text);
                         plain.key_text.push(b':');
                         JsonMember { slot, key: (start, plain.key_text.len() as u32) }

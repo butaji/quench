@@ -23,22 +23,6 @@ const VOID: u32 = UnaryOperator::Void as u32;
 }
 
 impl<H: Host> Vm<H> {
-    /// The ECMAScript language type of `value`, with callable objects distinguished.
-    pub(crate) fn value_type(&self, value: Value) -> crate::ValueType {
-        use crate::ValueType as T;
-        if let Some(kind) = immediate_value_type(value) {
-            kind
-        } else {
-            match self.heap.get(value) {
-                _ if self.heap.is_string(value)  => T::String,
-                Some(Cell::BigInt(_)) => T::BigInt,
-                Some(Cell::Symbol(_)) => T::Symbol,
-                _ if self.is_function(value) => T::Function,
-                _ => T::Object,
-            }
-        }
-    }
-
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
         let kind = self.typeof_kind(value);
         self.typeof_name(kind)
@@ -55,7 +39,7 @@ impl<H: Host> Vm<H> {
     /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
     #[inline]
     pub(super) fn typeof_index_value(&self, value: Value) -> Value {
-        if let Some(kind) = immediate_value_type(value) {
+        if let Some(kind) = super::type_predicates::immediate_value_type(value) {
             return Value::integer(typeof_name_index(kind) as i32);
         }
         Value::integer(typeof_name_index(self.typeof_kind(value)) as i32)
@@ -161,6 +145,13 @@ impl<H: Host> Vm<H> {
         };
         if self.heap.is_string(primitive) || matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
             return Ok(primitive);
+        }
+        // An array index's key, as a native's loop over a proxy or an array-like makes one per
+        // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
+        // that atom (`string_key_atom`) instead of parsing it.
+        if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
+            let atom = self.lookup_array_index_atom(index).unwrap_or_else(|| self.intern_atom(&index.to_string()));
+            return Ok(self.atom_string(atom));
         }
         let text = self.coerce_js_string(program, primitive)?;
         Ok(self.heap.alloc_string(text))
@@ -479,21 +470,5 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof value` for a value outside the heap,
 /// which its tag alone decides; `None` for a heap value.
 pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
-    immediate_value_type(value).map(typeof_name_index)
-}
-
-#[inline]
-fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
-    use crate::ValueType as T;
-    Some(if value.is_undefined() || value.is_deleted() {
-        T::Undefined
-    } else if value.is_null() {
-        T::Null
-    } else if value.as_bool().is_some() {
-        T::Boolean
-    } else if value.as_number().is_some() {
-        T::Number
-    } else {
-        return None;
-    })
+    super::type_predicates::immediate_value_type(value).map(typeof_name_index)
 }
