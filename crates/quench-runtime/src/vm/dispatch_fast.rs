@@ -15331,7 +15331,13 @@ fn lane_super_forwarded_parent<H: Host>(vm: &Vm<H>, callee: Value) -> Option<(Va
         return None;
     };
     let code = vm.programs.residual(*program)?;
-    let forwarded = code.function_get(*function as usize)?.super_forwarding(&code.atoms, &code.constants)?;
+    let body = code.function_get(*function as usize)?;
+    if !body.derived_constructor {
+        return None;
+    }
+    // The parent first: a class whose parent is no native the lane constructs, as every
+    // user class hierarchy's, declines here without decoding its constructor's body
+    // (`Function::super_forwarding`, ~900 Ir), which every `new` of it would otherwise pay.
     let parent = vm.object_data(callee)?.proto();
     match vm.heap.function(parent) {
         // An error's stack starts past its constructors' frames, which this construction
@@ -15339,7 +15345,7 @@ fn lane_super_forwarded_parent<H: Host>(vm: &Vm<H>, callee: Value) -> Option<(Va
         Some(FunctionRecord { kind: FunctionKind::Native(native), .. })
             if (native.constructs_from_lane() && !native.is_error_constructor()) || *native == Native::Array =>
         {
-            Some((parent, forwarded))
+            Some((parent, body.super_forwarding(&code.atoms, &code.constants)?))
         }
         _ => None,
     }
