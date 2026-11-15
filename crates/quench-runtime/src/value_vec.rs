@@ -1024,6 +1024,30 @@ impl ValueArena {
         vector.relocate(target);
     }
 
+    /// `vector`, an ordinary run of a plain object whose values all have a narrow form and
+    /// fill a smaller class narrow, moved into a released range of the narrow class, its own
+    /// range released in turn: what a full collection without compaction does for the runs
+    /// it keeps (`Heap::narrow_live_runs`). Only a released range takes it, so the arena never
+    /// grows for it. `None` changes nothing.
+    pub(crate) fn narrow_into_released(&mut self, vector: ValueVec) -> Option<ValueVec> {
+        debug_assert!(!vector.is_narrow() && !vector.is_dictionary() && !vector.has_inline_property_storage());
+        let length = self.len(vector);
+        if length == 0 || !self.narrows_to_fewer_words(vector, length) {
+            return None;
+        }
+        let mut narrow = vector;
+        narrow.auxiliary |= NARROW_FORM;
+        let capacity = Self::ordered_capacity(narrow, length);
+        let target = self.free[Self::bucket(capacity)].pop()? as usize;
+        self.released_values -= capacity;
+        let words = self.narrow_words_of(vector.start(), length);
+        self.values[target..target + words.len()].copy_from_slice(&words);
+        self.values[target + words.len()..target + capacity].fill(Value::UNDEFINED);
+        self.release_held(vector);
+        narrow.relocate(target);
+        Some(narrow)
+    }
+
     /// Where a surviving young run of `capacity` words at `source` moves: a free range of its
     /// class, or the nursery floor, which never passes the source.
     fn young_target(&mut self, capacity: usize, source: usize) -> usize {
