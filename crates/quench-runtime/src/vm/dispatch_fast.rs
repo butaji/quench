@@ -8494,9 +8494,9 @@ unsafe fn lane_region_run<H: Host>(
     if code.needs_frame() && !unsafe { &*cx }.has_frame() {
         return super::compiled::LoopOutcome::NotEntered;
     }
-    if !lane_region_admits(cx, function, code) {
+    if !lane_region_admits(cx, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
-        let grown = !lane_locals_in_window(cx, function) && lane_room_prepare(cx, code.calls.recovery_space());
+        let grown = !unsafe { lane_context_locals_in_window::<H>(cx as usize) } && lane_room_prepare(cx, code.calls.recovery_space());
         return if grown { super::compiled::LoopOutcome::Exit(region.header) } else { super::compiled::LoopOutcome::NotEntered };
     }
     // SAFETY: the caller's contract.
@@ -8508,17 +8508,17 @@ unsafe fn lane_region_run<H: Host>(
 /// (`lane_room_admits`), and the activation keeps its locals apart from the window past its
 /// registers, which the registers of those callees occupy (`CompiledOsrRegion::run_lane`).
 #[inline(always)]
-fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, function: u32, code: &super::compiled::CompiledOsrRegion) -> bool {
+fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> bool {
     let room = code.calls.recovery_space();
-    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !lane_locals_in_window(cx, function))
+    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !unsafe { lane_context_locals_in_window::<H>(cx as usize) })
 }
 
-/// Whether the running activation, of `function`, keeps its locals in its window past the register
-/// file (`CompiledOsrRegion::run_lane`), where its frame's own storage does not cover them.
-fn lane_locals_in_window<H: Host>(cx: *mut LaneContext<H>, function: u32) -> bool {
-    // SAFETY: the context's program and VM outlive the lane run.
-    let (vm, code) = unsafe { (vm(cx), &*(*cx).code) };
-    code.function_get(function as usize).is_some_and(|body| vm.frames[unsafe { (*cx).frame() }].locals.len() < usize::from(body.locals))
+/// Whether the running activation keeps its locals in the window past its registers (one with an
+/// environment does; a frame's run reads its frame's), as `lane_load_window_local_general` reads them.
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn lane_context_locals_in_window<H: Host>(context: usize) -> bool {
+    !unsafe { (*(context as *mut LaneContext<H>)).env }.is_deleted()
 }
 
 /// Where the lane goes after a region of the loop of `function` left inside the callee of a call it
@@ -19617,7 +19617,7 @@ fn derive_lane_view<'live, H: Host>(
             &mut records,
         )
     } else {
-        (Box::default(), Vec::new())
+        Default::default()
     };
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
