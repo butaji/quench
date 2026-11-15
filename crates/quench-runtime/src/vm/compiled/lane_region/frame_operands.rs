@@ -2,7 +2,7 @@
 use super::*;
 use super::super::super::object_slots::emit;
 use crate::staged::flow::FlowStage;
-use crate::staged::machine::{Lane, MachineScalar, Unary};
+use crate::staged::machine::{Lane, MachineScalar, Relation, Unary};
 use crate::staged::{NumericStage, Stage};
 
 /// An operand's int32 value, statically where it is a constant int32.
@@ -26,6 +26,28 @@ pub(in crate::vm) fn operand_int(builder: &mut FunctionBuilder<'_>, registers: &
         }
         _ => None,
     }
+}
+
+/// `register`'s 64-bit integer word where it is held as one (`Representation::Int64`).
+pub(in crate::vm) fn held_long(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &State, register: Register) -> Option<ir::Value> {
+    let index = usize::from(register);
+    (state.values[index].value.representation == Representation::Int64).then(|| {
+        let variable = register_long(builder, registers, index);
+        builder.use_var(variable)
+    })
+}
+
+/// An operand's integer value as a signed 64-bit word: a register's held word, or its int32
+/// sign-extended, or a constant int32's.
+pub(in crate::vm) fn operand_long(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    state: &mut State, constants: &[crate::bytecode::Constant], operand: crate::bytecode::Operand,
+    otherwise: ir::Block) -> Option<ir::Value> {
+    if let Some(word) = operand.register_index().and_then(|register| held_long(builder, registers, state, register)) {
+        return Some(word);
+    }
+    let int = operand_int(builder, registers, state, constants, operand, otherwise)?;
+    Some(emit(builder).raw_unary(Unary::SignExtend(Lane::I64), int))
 }
 
 /// An operand's binary64 value, statically where it is a constant Number.
@@ -113,6 +135,20 @@ pub(in crate::vm) fn register_int_value(builder: &mut FunctionBuilder<'_>, regis
             }
             int
         }
+        Representation::Int64 => {
+            let variable = register_long(builder, registers, index);
+            let word = builder.use_var(variable);
+            let int = emit(builder).raw_unary(Unary::Narrow(Lane::I32), word);
+            if !fact.value.ty.is_subtype(Type::INT32) {
+                let exact = {
+                    let mut stage = emit(builder);
+                    let widened = stage.raw_unary(Unary::SignExtend(Lane::I64), int);
+                    stage.raw_compare(Relation::Equal, widened, word)
+                };
+                emit_js_guard(builder, exact, otherwise);
+            }
+            int
+        }
         Representation::Tagged | Representation::Float64 => {
             let bits = register_tagged(builder, registers, state, register);
             if !fact.value.ty.is_subtype(Type::INT32) {
@@ -143,6 +179,16 @@ pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, re
             let variable = register_int(builder, registers, index);
             let int = builder.use_var(variable);
             super::super::super::object_slots::emit(builder).i32_to_f64(int)
+        }
+        Representation::Int64 => {
+            let variable = register_long(builder, registers, index);
+            let word = builder.use_var(variable);
+            let number = emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
+            let variable = register_float(builder, registers, index);
+            builder.def_var(variable, number);
+            state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+                ..RegisterFact::definition(fact.ty, Representation::Float64) };
+            number
         }
         Representation::Tagged => {
             let bits = register_tagged(builder, registers, state, register);

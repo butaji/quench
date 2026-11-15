@@ -12,7 +12,7 @@
 
 use crate::bytecode::Operand;
 use crate::places::{DEST, LEFT, Places, RIGHT, Rep};
-use crate::staged::{Concrete, Domain, Frame, NumberOperation, NumericFrame, Overflow, Step, jump_if as branch_on_truth, logical_not, numeric};
+use crate::staged::{Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Overflow, Step, jump_if as branch_on_truth, logical_not, numeric};
 use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
 
@@ -80,7 +80,7 @@ fn staged<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, op
 #[inline(always)]
 fn arithmetic<const K: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> bool {
     let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
-    let operation = NumberOperation::Arithmetic { destination: DEST, left, right, operation: arithmetic_of(K), domain, overflow: Overflow::Exit };
+    let operation = NumberOperation::Arithmetic { destination: DEST, left, right, operation: arithmetic_of(K), domain, overflow: Overflow::Exit, zero: NegativeZero::Exit };
     staged(frame, operation).is_some()
 }
 

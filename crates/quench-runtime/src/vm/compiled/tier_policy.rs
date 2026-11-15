@@ -326,6 +326,7 @@ pub(in crate::vm) fn lane_body_tier() -> Tier {
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
+
 const MEASURED: Tiers = Tiers {
     loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {

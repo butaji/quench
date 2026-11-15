@@ -114,7 +114,7 @@ impl Lowering<'_, '_> {
         if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
         let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
         let Some(types) = self.facts.at(target) else { return false };
-        if !types.iter().copied().enumerate().all(|(index, ty)| {
+        if !types.iter().copied().map(Type::machine).enumerate().all(|(index, ty)| {
             if !self.is_live(target, index as Register) { return true; }
             let fact = state.values[index];
             fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
