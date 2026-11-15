@@ -212,8 +212,8 @@ mod tests {
             let number = value as f64 as i64;
             assert!(IntRange { min: value.min(number), max: value.max(number) }.rounded().contains(IntRange::singleton(number)));
         }
-        let odd = IntRange::singleton((1 << 53) + 1);
-        assert_eq!(odd.rounded(), IntRange::singleton(1 << 53), "ties round to even");
+        let odd = IntRange::singleton((1_i64 << 53) + 1);
+        assert_eq!(odd.rounded(), IntRange::singleton(1_i64 << 53), "ties round to even");
     }
 
     #[test]
