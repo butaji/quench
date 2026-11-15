@@ -5048,8 +5048,43 @@ script_handler! {
         let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
+        // A `+` record of its own that joined a string: later runs go straight to the join
+        // (`lane_operator_strings`), past the Number and BigInt tests and the feedback note,
+        // which already holds the string kind.
+        if OP == super::operations::ADDITION && unsafe { vm(cx) }.heap.is_string(value) {
+            let own = unsafe { (*ip).handler };
+            if own == lane_operator_numbers::<H, OP> as Handler as *const ()
+                || own == lane_operator_numbers_raw::<H, OP> as Handler as *const ()
+            {
+                requicken::<H>(ip, lane_operator_strings::<H>);
+            }
+        }
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_operator_numbers` of `+` at a site that has joined strings: two strings joined
+    /// in place (`Vm::intern_dynamic_concat`), or a string and a Number by
+    /// `lane_concatenation`. Any other operands give the record back to
+    /// `lane_operator_numbers`, which notes them.
+    fn lane_operator_strings<>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        let vm = unsafe { vm(cx) };
+        let value = if vm.heap.is_string(left) && vm.heap.is_string(right) {
+            let value = vm.intern_dynamic_concat(left, right);
+            note_allocation(vm);
+            value
+        } else {
+            lane_concatenation(cx, left, right)
+        };
+        if let Some(value) = value {
+            r.set(i.a, value);
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
+        requicken::<H>(ip, lane_operator_numbers::<H, { super::operations::ADDITION }>);
+        sibling!(lane_operator_numbers::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
     }
 }
 
