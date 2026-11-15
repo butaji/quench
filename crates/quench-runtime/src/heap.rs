@@ -768,6 +768,9 @@ pub(crate) struct Heap {
     /// (`finished_run_object`): only then does a minor sweep visit live functions to list
     /// their young survivors (`YoungOwner::Function`).
     young_function_runs: bool,
+    /// The arena length at the last narrowing pass and the fulls since it: the pass reads every
+    /// live run, so it reruns only once the arena grew an eighth or eight fulls went by.
+    narrow_pass: (usize, u32),
     /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
     /// through a weak reference may be one its snapshot does not reach.
     satb_shaded: std::cell::RefCell<Vec<Value>>,
@@ -3111,7 +3114,14 @@ impl Heap {
             // The pass visits every object record: it pays where property storage is large
             // (8 MB and up), and is a cost of its own for a small arena of many objects.
             if full && self.narrow_runs && self.properties.resident_words() >= Self::NARROW_PASS_MIN_ARENA_WORDS {
-                self.narrow_live_runs();
+                let resident = self.properties.resident_words();
+                let (last, fulls) = self.narrow_pass;
+                if resident > last + last / 8 || fulls >= 8 {
+                    self.narrow_live_runs();
+                    self.narrow_pass = (resident, 0);
+                } else {
+                    self.narrow_pass.1 = fulls + 1;
+                }
             }
         }
         if full {
