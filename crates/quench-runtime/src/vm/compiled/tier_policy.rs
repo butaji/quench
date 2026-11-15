@@ -27,6 +27,16 @@ pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
 /// at the first read: -9.8% at four, -8.2% at two; mobx-startup -0.5% at both.
 pub(in crate::vm) const TIER0_RUNS: u8 = 4;
 
+/// Whether a hot loop plans a lane body of its own (`dispatch_fast::loop_body`). Off until a
+/// loop body is measured against the region or interpreter it replaces, as function bodies are
+/// (P7: a tier runs only where it is cheaper): weighed by plan and compile cost alone, loop
+/// bodies lost on every row measured. JS3 default, 5 iterations, with -> without: regexp-octane
+/// 57.8 -> 132, crypto 119 -> 201, delta-blue 37.8 -> 61.1, Box2D 12.4 -> 22.0, navier-stokes
+/// 249 -> 365, hash-map 30.8 -> 39.4, richards 47.9 -> 44.3; V8-v7 default/no-JIT CPU: earley
+/// 1.76 -> 1.21, regexp 1.56 -> 1.08, raytrace 1.43 -> 1.19, crypto 1.10 -> 0.85, deltablue
+/// 1.12 -> 0.96, richards 1.09 -> 1.04.
+pub(in crate::vm) const LOOP_BODIES: bool = false;
+
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
 

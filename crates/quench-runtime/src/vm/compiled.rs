@@ -3953,7 +3953,6 @@ impl CompiledOsrRegion {
     }
 
     /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
-    pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
 
     /// A miss at the cache site of `pc` met `load`'s shape: points the site's one entry at it by
     /// rewriting its shape and slot in the published code (through the code heap's write view),

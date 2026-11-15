@@ -31,8 +31,10 @@ const POLL: u16 = 16;
 impl LoopBody {
     pub(super) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
 
-    /// A new loop site's body: none is planned where the process runs no Cranelift function tiers (`--b-jit`).
-    pub(super) fn initial() -> Self { if crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
+    /// A new loop site's body: none is planned while loop bodies are off (`tier_policy::LOOP_BODIES`)
+    /// outside `tier-stress`, which keeps compiling every eligible body,
+    /// or where the process runs no Cranelift function tiers (`--b-jit`).
+    pub(super) fn initial() -> Self { if (super::super::compiled::tier_policy::LOOP_BODIES || super::super::compiled::tier_policy::admits_every_compile()) && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { Self::IDLE } else { Self::Declined } }
 
     /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
     /// next body's feedback (a failed entry contract drops the contract), until the bodies
@@ -183,12 +185,13 @@ pub(super) fn header_for_tier_up<H: Host>(cx: *mut LaneContext<H>, own: &LaneVie
 
 /// The header dispatch rule, at a loop's backward jump and at its held header: a `Ready` body
 /// (leased) runs first, else the site's region (UltraJIT's before BaseJIT's), else the
-/// interpreter. A body is planned once the loop is hot, where function tiers run and the
-/// region is absent or BaseJIT's, so an UltraJIT body can pass a BaseJIT region.
+/// interpreter. A body is planned once the loop is hot, where function tiers run and no region
+/// has published: a body over a published region replaces native code with native code, the
+/// same work at its own plan, compile and entry cost (navier-stokes: twice the region's time).
 pub(super) fn lane_loop_enter_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, site: &LoopSite) -> Option<LoopAttempt> {
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
-    if !vm.programs.js_jit_lane_methods_enabled() || !site.is_hot() || site.tier.borrow().is_ultra() {
+    if !vm.programs.js_jit_lane_methods_enabled() || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
     lane_loop_body::<H>(cx, r, ip, site)
