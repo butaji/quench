@@ -148,7 +148,7 @@ impl Heap {
 
     /// Increments the count of `value` if it is a record.
     #[inline(always)]
-    fn rc_increment(&self, value: Value) {
+    pub(super) fn rc_increment(&self, value: Value) {
         if let Some((family, id)) = locate(value) {
             with_space!(self, family, |space| space.rc_increment(id));
         }
@@ -239,16 +239,20 @@ impl Heap {
         self.rc_trace[3] = carried.len() as u64;
         self.rc_zero = carried;
         if !candidates.is_empty() {
-            self.rc_pin_cell_references(&candidates, work);
+            self.rc_pin_cell_references(work);
         }
         self.rc_candidates = candidates;
     }
 
-    /// Adds to `work` each of `candidates` a live legacy cell names, weakly or not, or a
+    /// Adds to `work` each candidate a live legacy cell names, weakly or not, or a
     /// sparse array holds: their references are not counted, and a minor collection traces
     /// old cells only where the cell barrier logged them.
-    fn rc_pin_cell_references(&self, candidates: &[Value], work: &mut Vec<Value>) {
-        let candidates: rustc_hash::FxHashSet<Value> = candidates.iter().copied().collect();
+    ///
+    /// An unmarked record a cell names is a candidate: a newborn could be named only by a
+    /// young cell or one the barrier logged, which the mark traces anyway. So each record
+    /// child left unmarked is pushed, with no set of the candidates to test.
+    fn rc_pin_cell_references(&self, work: &mut Vec<Value>) {
+        let unmarked = |value: &Value| locate(*value).is_some() && !self.rc_is_old(*value);
         let mut held = Vec::new();
         let mut last_proto = PushedProtos::default();
         for (index, slot) in self.slots.iter().enumerate() {
@@ -268,11 +272,11 @@ impl Heap {
                 Cell::WeakRef { target: Some(target), .. } => held.push(target.value),
                 _ => {}
             }
-            work.extend(held.drain(..).filter(|value| candidates.contains(value)));
+            work.extend(held.drain(..).filter(unmarked));
         }
         if let Some(arrays) = &self.sparse_arrays {
             for elements in arrays.values() {
-                work.extend(elements.values.values().copied().filter(|value| candidates.contains(value)));
+                work.extend(elements.values.values().copied().filter(unmarked));
             }
         }
     }
@@ -282,23 +286,23 @@ impl Heap {
     /// whose cascade decremented them. Survivors and re-marked candidates left at 0 are tried
     /// at the next minor collection.
     pub(super) fn rc_epoch(&mut self) {
-        let mut survivors: Vec<Value> = Vec::new();
+        // The object and array survivors counted their children in the mark (`rc_counted`);
+        // the other families' (with the candidates the mark re-marked, aged) count theirs here.
+        let mut survivors = std::mem::take(&mut self.rc_counted);
+        let counted = survivors.len();
+        let mut family = 0..;
         for_each_space_mut!(self, |space, handle| {
             space.rc_ensure();
-            space.for_each_young_survivor(|id| survivors.push(handle(id)));
+            if family.next().is_some_and(|family| family >= 2) {
+                space.for_each_young_survivor(|id| survivors.push(handle(id)));
+            }
         });
         let mut children = Vec::new();
-        self.rc_increment_children(survivors.iter().copied(), &mut children);
+        self.rc_increment_children(survivors[counted..].iter().copied(), &mut children);
         let candidates = std::mem::take(&mut self.rc_candidates);
         self.rc_trace[4] = survivors.len() as u64;
         if crate::trace::Channel::Gc.on() {
             self.rc_trace[5] = candidates.iter().filter(|&&value| !self.rc_is_old(value)).count() as u64;
-        }
-        for &candidate in &candidates {
-            let Some((family, id)) = locate(candidate) else { continue };
-            if with_space!(self, family, |space| space.is_marked(id)) {
-                self.rc_increment_children([candidate], &mut children);
-            }
         }
         let mut zero = std::mem::take(&mut self.rc_zero);
         for value in candidates.into_iter().chain(survivors) {

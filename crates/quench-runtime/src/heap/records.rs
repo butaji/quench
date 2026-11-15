@@ -1021,6 +1021,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             .is_some_and(|block| block.is_occupied(record_index) && block.mark(record_index))
     }
 
+    /// Whether record `id` is aged: a newborn a minor collection under
+    /// `PromotionAge::First` names (`age_newborns`), or a candidate counts unmarked
+    /// (`rc_unmark`).
+    #[inline(always)]
+    pub(super) fn is_aged(&self, id: RecordId) -> bool {
+        let (block_index, record_index) = Self::split_id(id);
+        self.blocks[block_index].aged[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
+    }
+
     pub(super) fn is_marked(&self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         self.blocks
@@ -1653,7 +1662,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             return false;
         }
         *word &= !mask;
-        self.aged_words.push(id - (record_index % OCCUPANCY_WORD_BITS) as RecordId);
+        // Aged, as a newborn is: if the mark re-marks it, it counts its children there. A
+        // word aged already is listed already, among the young words or `aged_words`.
+        let aged = &mut self.blocks[block_index].aged[word_index];
+        if *aged == 0 {
+            self.aged_words.push(id - (record_index % OCCUPANCY_WORD_BITS) as RecordId);
+        }
+        *aged |= mask;
         true
     }
 
@@ -1731,8 +1746,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// young records the mark reached (the marked aged ones of the young words), which the
     /// sweep makes old.
     pub(super) fn for_each_young_survivor(&self, mut visit: impl FnMut(RecordId)) {
-        // A word reloaded for allocation is listed once per load.
+        // A word reloaded for allocation is listed once per load; a candidate's word is in
+        // `aged_words`.
         let mut bases: Vec<RecordId> = Self::young_word_bases(&self.young_words, self.young_floor, self.next_id).collect();
+        bases.extend_from_slice(&self.aged_words);
         bases.sort_unstable();
         bases.dedup();
         for base in bases {

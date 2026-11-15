@@ -795,6 +795,11 @@ pub(crate) struct Heap {
     /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
     rc_zero: Vec<Value>,
     rc_candidates: Vec<Value>,
+    /// Whether the running mark is a minor collection's under counts: the aged object and
+    /// array records it marks count their children as it pushes them (`Heap::mark_value`),
+    /// and are listed in `rc_counted`.
+    rc_marking: bool,
+    rc_counted: Vec<Value>,
     /// The records old as the running full collection started, per family
     /// (`Heap::rc_full_start`).
     rc_old: Vec<Vec<u64>>,
@@ -1110,8 +1115,8 @@ impl Heap {
         &self,
         object_roots: Option<&'a ParallelObjectRootTrace<'a>>,
     ) -> Option<parallel_mark::ParallelMark<'a>> {
-        let traces_records_in_parallel =
-            self.collection_state == CollectionState::FullMarking || !self.has_direct_records();
+        let traces_records_in_parallel = !self.rc_marking
+            && (self.collection_state == CollectionState::FullMarking || !self.has_direct_records());
         let forced = self.parallel_mark_forced();
         if !traces_records_in_parallel || !forced && self.live_slots() < PARALLEL_MARK_MINIMUM_CELLS {
             return None;
@@ -2733,6 +2738,7 @@ impl Heap {
             }
             if self.rc_active {
                 let started = std::time::Instant::now();
+                self.rc_marking = true;
                 self.rc_pre_mark(&mut work);
                 self.rc_trace[0] = started.elapsed().as_micros() as u64;
             }
@@ -2807,6 +2813,8 @@ impl Heap {
         }
         #[cfg(debug_assertions)]
         {
+            // The verifying marks count nothing.
+            let rc_marking = std::mem::replace(&mut self.rc_marking, false);
             if full {
                 self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads, environment_reads);
             } else {
@@ -2814,6 +2822,7 @@ impl Heap {
                 pinned.extend(verify_remembered_records);
                 self.debug_verify_minor(&verify_roots, &pinned, &mut object_roots);
             }
+            self.rc_marking = rc_marking;
         }
         if self.rc_active && crate::trace::Dev::RcVerify.on() {
             if full {
@@ -2828,6 +2837,7 @@ impl Heap {
                 self.mark_work(&mut work, &mut object_roots, None, &mut ephemerons, GcTraceKind::Collection, &mut environments);
             }
         }
+        self.rc_marking = false;
         self.clear_unread_environment_slots(environments);
         self.mark_stack = { work.clear(); work };
         let finalization_jobs = self.prune_weak_entries(full, age);
@@ -3807,15 +3817,27 @@ impl Heap {
             }
             // SAFETY: the direct handle is live and its mark bit was newly set.
             let object = unsafe { self.object_records.get_live(record_id) };
-            Self::object_children(
-                value,
-                object,
-                &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            if self.rc_marking && self.object_records.is_aged(record_id) {
+                // A survivor (or a re-marked candidate) counts what its snapshot names
+                // (`SatbSnapshot`), pushed here. Its shape's edges and owned roots are this
+                // collection's roots already (`Vm::collect_inner` under counts).
+                let first = work.len();
+                Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+                for &child in &work[first..] {
+                    self.rc_increment(child);
+                }
+                self.rc_counted.push(value);
+            } else {
+                Self::object_children(
+                    value,
+                    object,
+                    &self.properties,
+                    work,
+                    object_roots,
+                    trace_kind,
+                    last_proto,
+                );
+            }
             let mark_bits = mark_bits!(self);
             ephemerons.newly_marked(
                 value,
@@ -3834,17 +3856,27 @@ impl Heap {
             }
             // SAFETY: a direct Array Value names an initialized record.
             let array = unsafe { self.array_records.get_live(record_id) };
-            let string_records = &mut self.string_records;
-            Self::array_children(
-                value,
-                array,
-                &self.properties,
-                |string| string_parts::mark_flat(string_records, string),
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
-            );
+            if self.rc_marking && self.array_records.is_aged(record_id) {
+                // As for an object: the snapshot's values are counted as they are pushed.
+                let first = work.len();
+                Self::array_children(value, array, &self.properties, |_| false, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
+                for &child in &work[first..] {
+                    self.rc_increment(child);
+                }
+                self.rc_counted.push(value);
+            } else {
+                let string_records = &mut self.string_records;
+                Self::array_children(
+                    value,
+                    array,
+                    &self.properties,
+                    |string| string_parts::mark_flat(string_records, string),
+                    work,
+                    object_roots,
+                    trace_kind,
+                    last_proto,
+                );
+            }
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && let Some(elements) = arrays.get(&value)
             {
