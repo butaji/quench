@@ -47,7 +47,7 @@ fn caller_runs_general<H: Host>(cx: *mut LaneContext<H>, call: &PendingGeneralCa
 pub(super) fn lane_note_late_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, target: &ScriptCallTarget, argc: u16) {
     let vm = unsafe { vm(cx) };
     let (caller, function) = match Vm::<H>::innermost_shadow_frame() {
-        Some(frame) => (unsafe { &*(*frame.callee).target.view }, unsafe { (*frame.callee).target.function }),
+        Some(frame) => (unsafe { &*(*frame.callee()).target.view }, unsafe { (*frame.callee()).target.function }),
         None => {
             let function = match vm.lane_stack.activations.last() {
                 Some(activation) => activation.function,

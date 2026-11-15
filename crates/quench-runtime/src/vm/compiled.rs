@@ -4764,7 +4764,7 @@ impl<H: Host> Vm<H> {
     /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
     /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
     pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
-        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee })
+        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee() })
     }
 
     /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee

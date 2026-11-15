@@ -16873,16 +16873,16 @@ fn lane_materialize_frames<H: Host>(
         let frame = frames.get(index);
         // SAFETY: the caller's body owns the callee it named, and the callee's view and body
         // outlive the run; the frame's window starts at the stack's values' end.
-        let callee = unsafe { &*frame.callee };
+        let callee = unsafe { &*frame.callee() };
         let vm = unsafe { vm(cx) };
         let registers = frame.window as *mut Value;
         unsafe { vm.lane_stack.values.set_top(registers.add(usize::from(callee.registers) + lane_values::CONTEXT)) };
         let call = callee.call as Ip;
         let argc = ImmediateLayout::argument_count(unsafe { (*call).imm() });
         let caller = unsafe { (*cx).registers };
-        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), argc, Value::from_bits(frame.this), false, callee.forwarder);
+        lane_enter_window::<H, false, false>(cx, caller, call, &callee.target, Registers(registers), argc, Value::from_bits(unsafe { frame.this() }), false, callee.forwarder);
         // The body the call ran is the cell's at that moment, not the descriptor's.
-        let method = frame.body as *const super::compiled::LaneMethod;
+        let method = unsafe { frame.body() } as *const super::compiled::LaneMethod;
         // SAFETY: the active caller's code lease pins a named callee body through recovery, and
         // the view pins every body it published, even once its publication retired.
         let view = unsafe { &*callee.target.view };
@@ -17061,7 +17061,7 @@ unsafe fn lane_body_record<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> (R
         None => unsafe { ((*cx).registers, (*cx).base.add(call_pc as usize)) },
         Some(frame) => {
             // SAFETY: a pushed frame names the caller-owned callee, whose view outlives the run.
-            let view = unsafe { &*(*frame.callee).target.view };
+            let view = unsafe { &*(*frame.callee()).target.view };
             (Registers(frame.window as *mut Value), unsafe { view.records().add(call_pc as usize) })
         }
     }
