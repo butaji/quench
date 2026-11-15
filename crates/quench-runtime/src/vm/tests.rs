@@ -20899,19 +20899,8 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
       }
       globalThis.answer = total + head.tag.length;
     })();"#;
-    let program = Engine::specialize(source, "lane-body-calls.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
-    assert!(answers[0].is_some());
-    assert_eq!(answers[0], answers[1]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some());
 }
 
 const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
@@ -20995,19 +20984,8 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
       for (var j = 0; j < xs.length; j++) total += bits(xs[j] * 1);
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-to-int32.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
-    assert!(answers[0].is_some());
-    assert_eq!(answers[0], answers[1]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some());
 }
 
 #[test]
@@ -21060,19 +21038,9 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
       for (var k = 0; k < 4000; k++) total = (total + step(k % 5 ? t : u, k % 3 ? u : t, k)) | 0;
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-shared-proofs.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(40930.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(40930.0));
 }
 
 #[test]
@@ -21095,19 +21063,9 @@ fn lane_global_reads_and_coercions_like_the_interpreter() {
       try { step(1, 1); } catch (e) { caught += 100; }
       globalThis.answer = total + caught;
     "#;
-    let program = Engine::specialize(source, "lane-global-reads.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(2506320.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(2506320.0));
 }
 
 #[test]
@@ -21125,19 +21083,9 @@ fn lane_typeof_tests_decide_like_the_interpreter() {
       for (let r = 0; r < 2000; r++) total += score(values) + r % 7;
       globalThis.answer = (total);
     "#;
-    let program = Engine::specialize(source, "lane-typeof.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(805995.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(805995.0));
 }
 
 #[test]
@@ -21159,19 +21107,9 @@ fn lane_constructions_build_like_the_interpreter() {
       for (let r = 0; r < 40; r++) { total += sum(build(500)) + points(200) + odd(100) + make(r).car; }
       globalThis.answer = (total);
     "#;
-    let program = Engine::specialize(source, "lane-construct.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(17472780.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(17472780.0));
 }
 
 #[test]
@@ -21214,19 +21152,9 @@ fn lane_parser_node_constructions_build_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "lane-parser-nodes.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(1600989.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1600989.0));
 }
 
 #[test]
@@ -21248,19 +21176,9 @@ fn lane_nested_lengths_read_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "lane-nested-lengths.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(135000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(135000.0));
 }
 
 #[test]
@@ -21285,19 +21203,9 @@ fn lane_capture_stores_write_like_the_interpreter() {
       for (let i = 0; i < 4000; i++) { total = (total + A.f(i % 13)) % 1000000007; }
       globalThis.answer = (total * 7 + B.read() * 3 + A.size());
     "#;
-    let program = Engine::specialize(source, "lane-capture-stores.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(1843176980.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1843176980.0));
 }
 
 #[test]
@@ -21331,19 +21239,9 @@ fn lane_inherited_constants_follow_prototype_writes() {
       total += loop(tasks, 500);
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "lane-inherited-constants.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(1225140.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1225140.0));
 }
 
 #[test]
@@ -21373,19 +21271,9 @@ fn lane_array_length_reads_dense_length_only() {
       total += count("hello", 500);
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "lane-array-length.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(540398.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(540398.0));
 }
 
 #[test]
@@ -21404,19 +21292,9 @@ fn lane_hoisted_length_survives_inlined_calls() {
       let total = 0; for (let c = 0; c < 300; c++) total = (total + kernel(tasks, 100)) | 0;
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "lane-hoisted-length.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(1650000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1650000.0));
 }
 
 #[test]
@@ -21442,19 +21320,9 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
       globalThis.answer = total;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-static-methods.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(163500.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(163500.0));
 }
 
 #[test]
@@ -21474,19 +21342,9 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
           for (let j = 0; j < values.length; j++) total += eq(values[i], values[j]) * (i + 1) + ne(values[i], values[j]) * (j + 1);
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "lane-loose-equality.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(1290000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1290000.0));
 }
 
 #[test]
@@ -21514,19 +21372,9 @@ fn lane_bodies_construct_by_activation() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-construct-activation.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(1600093342.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1600093342.0));
 }
 
 #[test]
@@ -21543,19 +21391,9 @@ fn lane_bodies_allocate_literals() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-literals.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(-1474336480.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(-1474336480.0));
 }
 
 /// The osr diagnostics of function `name` after `source` runs compiled under every memory
@@ -21648,19 +21486,9 @@ fn lane_bodies_construct_empty_arrays() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-empty-arrays.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(720000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(720000.0));
 }
 
 #[test]
@@ -21682,19 +21510,9 @@ fn lane_bodies_add_properties_at_feedback_stores() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-adding-stores.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(36219000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(36219000.0));
 }
 
 #[test]
@@ -21715,19 +21533,8 @@ fn lane_bodies_run_the_staged_add_row_until_a_prototype_gains_a_setter() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-add-row.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
-    assert!(answers[0].is_some());
-    assert_eq!(answers[0], answers[1]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some());
 }
 
 #[test]
@@ -21789,19 +21596,9 @@ fn lane_bodies_read_function_fields_natively() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-function-fields.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(691000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(691000.0));
 }
 
 #[test]
@@ -21830,19 +21627,9 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-deep-inheritance.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(8748000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(8748000.0));
 }
 
 #[test]
@@ -21862,19 +21649,9 @@ fn lane_feedback_stores_take_polymorphic_own_slots() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-polymorphic-stores.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(17138.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(17138.0));
 }
 
 #[test]
@@ -21899,19 +21676,9 @@ fn lane_equality_and_relations_of_int32_fields_and_parameters() {
       globalThis.answer = t;
      })();
     "#;
-    let program = Engine::specialize(source, "lane-int32-equality.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(9980000.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(9980000.0));
 }
 
 #[test]
@@ -21931,19 +21698,9 @@ fn loop_stores_to_packed_objects_write_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let program = Engine::specialize(source, "loop-flattened-stores.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(748800.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(748800.0));
 }
 
 #[test]
@@ -21969,19 +21726,9 @@ fn lane_instanceof_decides_like_the_interpreter() {
       }
       globalThis.answer = t;
     "#;
-    let program = Engine::specialize(source, "lane-instanceof.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(901022.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(901022.0));
 }
 
 #[test]
@@ -22027,19 +21774,9 @@ fn lane_strict_equality_decides_like_the_interpreter() {
       for (let n = 0; n < 20000; n++) { const r = sc_assq(keys[n % 45 < 40 ? n % 45 : 0] , al); if (r !== false) t += r.cdr; else t -= 1; }
       globalThis.answer = total + t;
     "#;
-    let program = Engine::specialize(source, "lane-strict-equality.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(4307110.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(4307110.0));
 }
 
 #[test]
@@ -22190,19 +21927,9 @@ fn lane_outer_captures_read_like_the_interpreter() {
       }
       globalThis.answer = outer();
     "#;
-    let program = Engine::specialize(source, "lane-outer-captures.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(168662875.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(168662875.0));
 }
 
 #[test]
@@ -22226,19 +21953,9 @@ fn lane_element_stores_append_like_the_interpreter() {
       var a = [], b = a; for (var k = 0; k < 40; k++) total = (total + fill(a, 5, k)) | 0;
       globalThis.answer = (total + seen + b.length + fixed.length + closed.length + frozen[1]);
     })();"#;
-    let program = Engine::specialize(source, "lane-append-stores.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(4571092.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(4571092.0));
 }
 
 #[test]
@@ -22259,19 +21976,9 @@ fn lane_element_stores_fill_holes_like_the_interpreter() {
       for (var k = 0; k < 50; k++) total = (total + fill(shared, 8, k)) | 0;
       globalThis.answer = (total + seen * 7 + last + (sealed[2] === undefined ? 1 : 2) + copy[7] + Object.keys(sealed).length);
     })();"#;
-    let program = Engine::specialize(source, "lane-hole-stores.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(4523109.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(4523109.0));
 }
 
 #[test]
@@ -22291,19 +21998,9 @@ fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-store-loops.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(2005786796.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(2005786796.0));
 }
 
 #[test]
@@ -22324,19 +22021,9 @@ fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
       for (var k = 0; k < 300; k++) total = (total + sum(p, 3)) | 0;
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-invariant-reads.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(3000684.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(3000684.0));
 }
 
 #[test]
@@ -22351,19 +22038,9 @@ fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
       for (var k = 0; k < 4000; k++) total = (total * 3 + held({ state: vals[k % vals.length] })) % 1000003;
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-tagged-bitwise.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(-558229.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(-558229.0));
 }
 
 #[test]
@@ -22381,19 +22058,9 @@ fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpret
       }
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-tagged-relations.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(answers, [Some(61024.0); 2]);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(61024.0));
 }
 
 #[test]
@@ -22445,19 +22112,8 @@ fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-int-arithmetic.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
-    }
-    assert_eq!(answers[0], Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
-    assert_eq!(answers[0], answers[1]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
 }
 
 #[test]
