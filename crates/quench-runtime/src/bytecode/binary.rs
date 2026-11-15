@@ -756,6 +756,7 @@ fn decode_program(
         undefined_constant: Default::default(),
         load_encoding: Default::default(),
         closure_reads,
+        wasm_lazy: None,
     };
     Ok(program)
 }

@@ -3499,6 +3499,7 @@ impl<'a> Compiler<'a> {
             validated: Default::default(),
             undefined_constant: Default::default(),
             closure_reads,
+            wasm_lazy: None,
             load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]

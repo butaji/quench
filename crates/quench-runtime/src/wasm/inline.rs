@@ -88,6 +88,29 @@ pub(super) struct Source<I> {
     pub(super) operators: I,
 }
 
+/// The defined functions a plan reads: each body's declared locals and operators, read
+/// again for every pass. A module lowered at once holds them as sources; one that lowers
+/// its functions on their first calls reads them from its kept code bytes.
+pub(super) trait SourceTable<'a, I> {
+    fn count(&self) -> usize;
+    fn locals(&self, index: usize) -> Result<Vec<ValType>, Diagnostic>;
+    fn operators(&self, index: usize) -> Result<I, Diagnostic>;
+}
+
+impl<'a, I: Clone> SourceTable<'a, I> for Vec<Source<I>> {
+    fn count(&self) -> usize {
+        self.len()
+    }
+
+    fn locals(&self, index: usize) -> Result<Vec<ValType>, Diagnostic> {
+        Ok(self[index].locals.clone())
+    }
+
+    fn operators(&self, index: usize) -> Result<I, Diagnostic> {
+        Ok(self[index].operators.clone())
+    }
+}
+
 /// What receives a body's operators, in order.
 pub(super) type Sink<'s, 'a> = dyn FnMut(Operator<'a>) -> Result<(), Diagnostic> + 's;
 
@@ -311,7 +334,9 @@ pub(super) struct Bindings<'m> {
 
 /// One inlining round's leaves, by defined index.
 struct Round {
-    leaves: Vec<Option<Leaf>>,
+    /// Boxed: few functions are leaves, and a module that lowers on first calls keeps its
+    /// rounds for its life.
+    leaves: Vec<Option<Box<Leaf>>>,
 }
 
 /// A module's inlining: the leaves of each round. A body that is not a leaf
@@ -319,17 +344,25 @@ struct Round {
 /// numeric locals), so a later round considers only the previous one's leaves.
 pub(super) struct LeafPlan<'m, 'a, I> {
     name: &'m str,
-    sources: &'m [Source<I>],
+    sources: &'m dyn SourceTable<'a, I>,
     bindings: Bindings<'m>,
-    signatures: Callees,
-    rounds: Vec<Round>,
+    signatures: std::rc::Rc<Callees>,
+    rounds: std::rc::Rc<Vec<Round>>,
     marker: std::marker::PhantomData<Operator<'a>>,
+}
+
+/// What a `LeafPlan` decided, apart from the sources it reads: kept by a module that lowers
+/// its functions on their first calls (`LeafPlan::resume`), which inline as the plan did.
+#[derive(Clone)]
+pub(super) struct PlanFacts {
+    signatures: std::rc::Rc<Callees>,
+    rounds: std::rc::Rc<Vec<Round>>,
 }
 
 impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
     pub(super) fn new(
         name: &'m str,
-        sources: &'m [Source<I>],
+        sources: &'m dyn SourceTable<'a, I>,
         bindings: Bindings<'m>,
         signatures: &WasmSignatures,
         budget: usize,
@@ -338,23 +371,47 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             name,
             sources,
             bindings,
-            signatures: Callees::new(signatures),
-            rounds: Vec::new(),
+            signatures: std::rc::Rc::new(Callees::new(signatures)),
+            rounds: std::rc::Rc::default(),
             marker: std::marker::PhantomData,
         };
         for round in 0..INLINE_ROUNDS {
-            let leaves = (0..sources.len())
+            let leaves = (0..sources.count())
                 .map(|index| match plan.rounds.last() {
                     Some(previous) if previous.leaves[index].is_none() => Ok(None),
-                    _ => plan.leaf(round, index, budget),
+                    _ => plan.leaf(round, index, budget).map(|leaf| leaf.map(Box::new)),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if leaves.iter().all(Option::is_none) {
                 break;
             }
-            plan.rounds.push(Round { leaves });
+            std::rc::Rc::get_mut(&mut plan.rounds)
+                .expect("a plan being made shares no rounds")
+                .push(Round { leaves });
         }
         Ok(plan)
+    }
+
+    /// The plan's decisions, for `resume`.
+    pub(super) fn facts(&self) -> PlanFacts {
+        PlanFacts { signatures: self.signatures.clone(), rounds: self.rounds.clone() }
+    }
+
+    /// The plan `facts` were taken from, reading the same bodies from `sources`.
+    pub(super) fn resume(
+        name: &'m str,
+        sources: &'m dyn SourceTable<'a, I>,
+        bindings: Bindings<'m>,
+        facts: &PlanFacts,
+    ) -> Self {
+        Self {
+            name,
+            sources,
+            bindings,
+            signatures: facts.signatures.clone(),
+            rounds: facts.rounds.clone(),
+            marker: std::marker::PhantomData,
+        }
     }
 
     fn error(&self, message: &str) -> Diagnostic {
@@ -402,7 +459,7 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             return None;
         };
         let callee = self.signatures.defined_index(*function_index)?;
-        let leaf = self.rounds[round].leaves.get(callee)?.as_ref()?;
+        let leaf = self.rounds[round].leaves.get(callee)?.as_deref()?;
         // A call-free body may enter any other function; a calling body only
         // its own call sites.
         ((callee == caller) == leaf.form.calls).then_some((callee, leaf))
@@ -419,7 +476,7 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
             .params
             .len();
         let params = u16::try_from(params).map_err(|_| self.error("too many Wasm parameters"))?;
-        let declared = self.sources[index].locals.clone();
+        let declared = self.sources.locals(index)?;
         let mut form = Form {
             counts: vec![declared.len()],
             assigned_first: Vec::new(),
@@ -531,7 +588,7 @@ impl<'m, 'a, I: Operators<'a>> LeafPlan<'m, 'a, I> {
         sink: &mut Receiver<'_, 'a>,
     ) -> Result<(), Halt> {
         let Some(round) = rounds.min(form.rounds()).checked_sub(1) else {
-            for operator in self.sources[index].operators.clone() {
+            for operator in self.sources.operators(index)? {
                 sink(operator.map_err(|error| self.error(&error.to_string()))?)?;
             }
             return Ok(());

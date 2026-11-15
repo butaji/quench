@@ -1312,7 +1312,8 @@ impl ProgramStore {
         {
             return false;
         }
-        for function in &entry.residual.functions {
+        // A function its module lowers on its first call reads only the module's own pool.
+        for function in entry.residual.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             for instruction in &function.code {
                 let instruction = if instruction.is_wide() {
                     function.wide[instruction.wide_index()]

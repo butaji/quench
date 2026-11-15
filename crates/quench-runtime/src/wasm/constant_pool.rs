@@ -63,4 +63,12 @@ impl ConstantPool {
     pub(super) fn into_constants(self) -> Vec<Constant> {
         self.constants
     }
+
+    pub(super) fn constants(&self) -> &[Constant] {
+        &self.constants
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.constants.len()
+    }
 }

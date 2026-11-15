@@ -452,7 +452,31 @@ impl WasmSignatures {
         name: &str,
         ty: WasmCallableType,
     ) -> Result<u32, crate::Diagnostic> {
-        let (declaration, shape) = match ty {
+        let (declaration, shape) = self.resolve(name, ty)?;
+        let index = self.interned(declaration, shape);
+        u32::try_from(index)
+            .map_err(|_| crate::Diagnostic::unsupported(name, "too many Wasm signature facts"))
+    }
+
+    /// `intern`'s answer for a type the pool already holds, from a pool that is finished:
+    /// a function lowered on its first call interns what the module's lowering interned.
+    pub(super) fn interned_index(
+        &self,
+        name: &str,
+        ty: WasmCallableType,
+    ) -> Result<u32, crate::Diagnostic> {
+        let (declaration, shape) = self.resolve(name, ty)?;
+        self.find(declaration, &shape)
+            .map(|index| index as u32)
+            .ok_or_else(|| crate::Diagnostic::unsupported(name, "Wasm signature missing from a finished pool"))
+    }
+
+    fn resolve(
+        &self,
+        name: &str,
+        ty: WasmCallableType,
+    ) -> Result<(Option<u32>, WasmSignature), crate::Diagnostic> {
+        Ok(match ty {
             WasmCallableType::Embedded(shape) => {
                 if shape
                     .params
@@ -492,10 +516,7 @@ impl WasmSignatures {
                     },
                 )
             }
-        };
-        let index = self.interned(declaration, shape);
-        u32::try_from(index)
-            .map_err(|_| crate::Diagnostic::unsupported(name, "too many Wasm signature facts"))
+        })
     }
 
     pub(crate) fn imports(&self) -> &[CallableImport] {
