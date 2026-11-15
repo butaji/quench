@@ -6662,7 +6662,11 @@ script_handler! {
 /// `hint`'s bits name: an arena run, extras or packed inline values, whose layout it then
 /// reads untested.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
-    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM};
+    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
+    // A narrow run's hint takes the hinted form, which reads the run as the word says.
+    if hint & NARROW_FORM != 0 {
+        return lane_get_field_own_bound::<H, THIS, HINTED_FORM>;
+    }
     match hint & (INLINE_FORM | EXTRAS_FORM) {
         0 => lane_get_field_own_bound::<H, THIS, 0>,
         EXTRAS_FORM => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,

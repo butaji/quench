@@ -160,7 +160,8 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // A fixed form replaces the hint's form bits: equality then proves that form, so its
     // layout is read without testing the bits, whatever form the hint names.
-    let forms = OBJECT.inline_form | OBJECT.extras_form;
+    // A narrow hint's bit is replaced too, so a fixed form never matches a narrow run.
+    let forms = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
     let hint = if FORM == HINTED_FORM { hint } else { hint & !forms | FORM };
     let hint = stage.site(u64::from(hint));
     let same = stage.eq_imm(word, hint);

@@ -25,9 +25,27 @@ pub(crate) const INLINE_FORM: u32 = 1 << 29;
 /// current (`Object::storage_form`); no shape a cache records carries them (`exact_auxiliary`
 /// and `auxiliary` mask them off).
 pub(crate) const EXTRAS_FORM: u32 = 1 << 28;
-pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM;
+/// ... or in a narrow run (`ValueArena`): an arena run of narrow values (`Value::to_narrow`),
+/// two to a word, slot `i` in the `i % 2` half (the lower first) of word `start + i / 2`,
+/// which a plain object's values take where all have a narrow form (`ValueArena::compact_vector`).
+/// Its payload word carries `NARROW_RUN_TAG` beside the start.
+pub(crate) const NARROW_FORM: u32 = 1 << 27;
+pub(crate) const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
 const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM);
 const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
+/// The words a narrow run of `len` values fills.
+#[inline(always)] const fn narrow_words(len: usize) -> usize {
+    len.div_ceil(2)
+}
+/// The narrow value at `slot` of the narrow run whose first word is `words`.
+///
+/// # Safety
+/// `words` addresses a narrow run holding `slot`.
+#[inline(always)] unsafe fn narrow_slot(words: *const Value, slot: usize) -> u32 {
+    let half = if cfg!(target_endian = "little") { slot % 2 } else { 1 - slot % 2 };
+    // SAFETY: the caller's run holds the word; a `Value` is a `u64`, two `u32` halves.
+    unsafe { words.add(slot / 2).cast::<u32>().add(half).read() }
+}
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -190,6 +208,11 @@ impl ValueVec {
         !self.is_dictionary() && self.start() == EMPTY_START as usize
     }
 
+    /// Whether its values are a narrow run (`NARROW_FORM`).
+    #[inline(always)] pub(crate) fn is_narrow(self) -> bool {
+        self.auxiliary & NARROW_FORM != 0
+    }
+
     #[inline] pub(crate) fn is_dictionary(self) -> bool {
         self.auxiliary & DICTIONARY_STORAGE != 0
     }
@@ -245,7 +268,8 @@ impl ValueVec {
     /// shape or run past the snapshot. The vector may be a torn read: the bounds keep the run
     /// inside the snapshot, whatever it holds.
     pub(crate) fn concurrent_run(self, shape_lengths: &[u32], arena_len: usize) -> Option<(usize, usize)> {
-        if self.is_dictionary() {
+        // The marker reads runs as values; a narrow run's halves are not.
+        if self.is_dictionary() || self.is_narrow() {
             return None;
         }
         if self.has_inline_property_storage() || self.start() == EMPTY_START as usize {
@@ -577,6 +601,10 @@ impl ValueArena {
                 .and_then(|values| values.get(&(index as u32)))
                 .copied();
         }
+        if vector.is_narrow() {
+            // SAFETY: a narrow vector's run holds its length's values.
+            return Some(unsafe { self.narrow_get(vector, index) });
+        }
         Some(self.values[vector.start() + index])
     }
 
@@ -588,6 +616,10 @@ impl ValueArena {
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
             return self.dictionary_get(vector, index);
+        }
+        if vector.is_narrow() {
+            // SAFETY: as below.
+            return unsafe { self.narrow_get(vector, index) };
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
@@ -616,8 +648,59 @@ impl ValueArena {
             return None;
         }
         debug_assert!(index < self.len(vector));
+        if vector.is_narrow() {
+            // SAFETY: as for `get_unchecked`.
+            return Some(unsafe { self.narrow_get(vector, index) });
+        }
         // SAFETY: as for `get_unchecked`.
         Some(unsafe { *self.values.get_unchecked(vector.start() + index) })
+    }
+
+    /// The value at `index` of the narrow vector `vector` (`NARROW_FORM`).
+    ///
+    /// # Safety
+    /// `vector` is a live narrow vector and `index` one of its values.
+    #[inline(always)]
+    pub(crate) unsafe fn narrow_get(&self, vector: ValueVec, index: usize) -> Value {
+        debug_assert!(vector.is_narrow() && index < self.len(vector));
+        // SAFETY: the caller's run was allocated from `values` and remains reserved.
+        Value::from_narrow(unsafe { narrow_slot(self.values.as_ptr().add(vector.start()), index) })
+    }
+
+    /// Stores the narrow value `narrow` at `index` of the narrow vector `vector`.
+    ///
+    /// # Safety
+    /// As for `narrow_get`.
+    #[inline(always)]
+    pub(crate) unsafe fn narrow_set(&mut self, vector: ValueVec, index: usize, narrow: u32) {
+        debug_assert!(vector.is_narrow() && index < self.len(vector));
+        let half = if cfg!(target_endian = "little") { index % 2 } else { 1 - index % 2 };
+        // SAFETY: the caller's run was allocated from `values` and remains reserved.
+        unsafe { self.values.as_mut_ptr().add(vector.start() + index / 2).cast::<u32>().add(half).write(narrow) };
+    }
+
+    /// The values of the narrow vector `vector`, decoded: what a store that widens it copies.
+    pub(crate) fn narrow_values(&self, vector: ValueVec) -> Vec<Value> {
+        // SAFETY: each index is one of the live vector's values.
+        (0..self.len(vector)).map(|index| unsafe { self.narrow_get(vector, index) }).collect()
+    }
+
+    /// `vector`, a narrow vector, widened in place of its owner: an ordinary run holding its
+    /// values decoded (`run_of`), or a dictionary once the arena's positions are spent; its
+    /// narrow run is released. The owner stores the result (`Object::set_properties`).
+    pub(crate) fn widen(&mut self, vector: ValueVec) -> ValueVec {
+        debug_assert!(vector.is_narrow() && !self.holds_young_run(vector));
+        let values = self.narrow_values(vector);
+        self.release_held(vector);
+        let mut wide = ValueVec { start: vector.start & !START_MASK | EMPTY_START, auxiliary: vector.auxiliary & !NARROW_FORM };
+        if values.is_empty() {
+            return wide;
+        }
+        match self.run_of(&values) {
+            Some(start) => wide.start = start | (wide.start & !START_MASK),
+            None => wide.use_dictionary(self.allocate_dictionary(values)),
+        }
+        wide
     }
 
     #[cold]
@@ -637,6 +720,7 @@ impl ValueArena {
 
     pub(crate) fn set(&mut self, vector: ValueVec, index: usize, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
+        assert!(!vector.is_narrow(), "a store widens a narrow vector first");
         assert!(index < self.len(vector));
         if vector.is_dictionary() {
             self.dictionaries
@@ -653,6 +737,7 @@ impl ValueArena {
     #[inline(always)]
     pub(crate) unsafe fn set_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
+        debug_assert!(!vector.is_narrow(), "a store widens a narrow vector first");
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
             self.dictionary_set(vector, index, value);
@@ -673,7 +758,7 @@ impl ValueArena {
         index: usize,
         value: Value,
     ) {
-        debug_assert!(!vector.is_dictionary());
+        debug_assert!(!vector.is_dictionary() && !vector.is_narrow());
         // SAFETY: caller provides the same initialized-range invariant as get.
         unsafe { self.set_flat_at(vector.start(), index, value) }
     }
@@ -697,7 +782,7 @@ impl ValueArena {
     /// is no longer used.
     #[inline(always)]
     pub(crate) unsafe fn flat_mut_ptr_unchecked(&mut self, vector: ValueVec, index: usize) -> *mut Value {
-        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary());
+        debug_assert!(!vector.has_inline_property_storage() && !vector.is_dictionary() && !vector.is_narrow());
         debug_assert!(index < self.len(vector));
         // SAFETY: caller provides the same initialized-range invariant as get.
         unsafe { self.values.as_mut_ptr().add(vector.start() + index) }
@@ -707,6 +792,7 @@ impl ValueArena {
     /// an append that fits its range is the store alone; growing is out of line.
     #[inline(always)] pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
+        assert!(!vector.is_narrow(), "an add widens a narrow vector first");
         let len = self.len(*vector);
         if vector.is_dictionary() {
             self.dictionaries
@@ -919,6 +1005,11 @@ impl ValueArena {
         if !self.has_compact_range(vector) {
             return;
         }
+        if vector.is_narrow() {
+            // SAFETY: each index is one of the live vector's values.
+            output.extend((0..len).map(|index| unsafe { self.narrow_get(vector, index) }).filter(|value| value.is_heap()));
+            return;
+        }
         output.extend(
             self.values[vector.start()..vector.start() + len]
                 .iter()
@@ -939,6 +1030,19 @@ impl ValueArena {
         if vector.is_dictionary() {
             let slots = self.dictionaries[&vector.dictionary_id()].clone();
             copy.use_dictionary(self.insert_dictionary(slots));
+            return copy;
+        }
+        if vector.is_narrow() {
+            // The copy's owner may hold extras or be an array, which take wide runs only.
+            let values = self.narrow_values(vector);
+            copy.auxiliary &= !NARROW_FORM;
+            copy.start = copy.start & !START_MASK | EMPTY_START;
+            if !values.is_empty() {
+                match self.run_of(&values) {
+                    Some(start) => copy.start = start | (copy.start & !START_MASK),
+                    None => copy.use_dictionary(self.allocate_dictionary(values)),
+                }
+            }
             return copy;
         }
         let capacity = self.capacity(vector);
@@ -1017,22 +1121,50 @@ impl ValueArena {
         vector.has_compact_range()
     }
 
-    pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, target: usize) -> usize {
+    /// Slides `vector`'s run down to `target` and answers the words it now takes. Where
+    /// `narrows` (a plain object's storage) and every value has a narrow form, the run becomes
+    /// a narrow one (`NARROW_FORM`), half the words; its owner stores the vector back.
+    pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, target: usize, narrows: bool) -> usize {
         assert!(
             !vector.is_dictionary(),
             "dictionary storage is not arena-backed"
         );
         let length = self.len(*vector);
-        let capacity = self.capacity(*vector);
         let source = vector.start();
         assert!(
             target <= source,
             "property ranges must compact in source order"
         );
-        self.values.copy_within(source..source + length, target);
-        self.values[target + length..target + capacity].fill(Value::UNDEFINED);
+        if narrows && !vector.is_narrow() && length > 0 && self.narrows_to_fewer_words(source, length) {
+            let mut narrow = *vector;
+            narrow.auxiliary |= NARROW_FORM;
+            let capacity = Self::ordered_capacity(narrow, length);
+            // Words are written in order, each from values at or past it: word `k` reads
+            // values `2k` and `2k + 1` of a source at or past the target.
+            for word in 0..narrow_words(length) {
+                let low = self.values[source + 2 * word].to_narrow().expect("checked narrow");
+                let high = if 2 * word + 1 < length { self.values[source + 2 * word + 1].to_narrow().expect("checked narrow") } else { 0 };
+                let (first, second) = if cfg!(target_endian = "little") { (low, high) } else { (high, low) };
+                self.values[target + word] = Value::from_bits(u64::from(first) | u64::from(second) << 32);
+            }
+            self.values[target + narrow_words(length)..target + capacity].fill(Value::UNDEFINED);
+            narrow.relocate(target);
+            *vector = narrow;
+            return capacity;
+        }
+        let capacity = self.capacity(*vector);
+        let words = if vector.is_narrow() { narrow_words(length) } else { length };
+        self.values.copy_within(source..source + words, target);
+        self.values[target + words..target + capacity].fill(Value::UNDEFINED);
         vector.relocate(target);
         capacity
+    }
+
+    /// Whether the `length` values at `source` all have a narrow form and fill a smaller
+    /// class as a narrow run than as values.
+    fn narrows_to_fewer_words(&self, source: usize, length: usize) -> bool {
+        capacity_class(narrow_words(length)) < capacity_class(length)
+            && self.values[source..source + length].iter().all(|value| value.to_narrow().is_some())
     }
 
     pub(crate) fn finish_compaction(&mut self, length: usize) {
@@ -1091,6 +1223,7 @@ impl ValueArena {
     /// nursery until the collection, and pushed the arena's end past the nursery's.
     #[inline(never)]
     fn grow(&mut self, vector: &mut ValueVec, max_start: usize) {
+        assert!(!vector.is_narrow(), "growth widens a narrow vector first");
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
         let next = capacity_class(capacity + 1);
@@ -1157,6 +1290,8 @@ impl ValueArena {
     /// empty vector without a range has none.
     #[inline(always)]
     fn ordered_capacity(vector: ValueVec, len: usize) -> usize {
+        // A narrow run's capacity is in words, the class of the words its values fill.
+        let len = if vector.is_narrow() { narrow_words(len) } else { len };
         match (len, vector.start() != EMPTY_START as usize) {
             (0, false) => 0,
             (0, true) => MIN_CAPACITY,
@@ -1169,7 +1304,7 @@ impl ValueArena {
     /// derives from the length, is the same for one value fewer.
     pub(crate) fn drops_last_in_place(vector: ValueVec, len: usize) -> bool {
         vector.has_inline_property_storage()
-            || (!vector.is_dictionary()
+            || (!vector.is_dictionary() && !vector.is_narrow()
                 && len > 0
                 && Self::ordered_capacity(vector, len - 1) == Self::ordered_capacity(vector, len))
     }
@@ -1177,7 +1312,7 @@ impl ValueArena {
     /// Whether `vector`, an arena vector outside dictionary storage of `len` values, has room
     /// for one more value without moving its range (`push`'s `grow`).
     #[inline(always)] pub(crate) fn appends_in_place(vector: ValueVec, len: usize) -> bool {
-        len < Self::ordered_capacity(vector, len)
+        !vector.is_narrow() && len < Self::ordered_capacity(vector, len)
     }
 
     /// `push` of `value` to `vector` of `len` values where `appends_in_place` holds: the
@@ -1467,6 +1602,37 @@ mod tests {
     }
 
     #[test]
+    fn compaction_narrows_a_run_of_narrow_values_and_a_widening_restores_it() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 5);
+        let dead = arena.with_values(1, &[Value::NULL; 5]);
+        let expected = [Value::number(7.0), Value::heap(17), Value::TRUE, Value::UNDEFINED, Value::number(-3.0)];
+        let mut live = arena.with_values(1, &expected);
+        arena.release(dead);
+        let capacity = arena.compact_vector(&mut live, 0, true);
+        arena.finish_compaction(capacity);
+        assert!(live.is_narrow());
+        assert!(capacity < expected.len());
+        for (slot, value) in expected.iter().enumerate() {
+            assert_eq!(arena.get(live, slot).unwrap().to_bits(), value.to_bits());
+        }
+        unsafe { arena.narrow_set(live, 2, Value::FALSE.to_narrow().unwrap()) };
+        assert_eq!(arena.get(live, 2).unwrap(), Value::FALSE);
+        let mut roots = Vec::new();
+        arena.append_heap_references(live, &mut roots);
+        assert_eq!(roots, [Value::heap(17)]);
+        let copy = arena.duplicate(live);
+        assert!(!copy.is_narrow());
+        let wide = arena.widen(live);
+        assert!(!wide.is_narrow());
+        for slot in 0..expected.len() {
+            assert_eq!(arena.get(wide, slot), arena.get(copy, slot));
+        }
+        arena.set(wide, 4, Value::number(0.5));
+        assert_eq!(arena.get(wide, 4).unwrap().to_bits(), Value::number(0.5).to_bits());
+    }
+
+    #[test]
     fn snapshot_preserves_offsets_free_ranges_and_value_bits_after_compaction() {
         let mut arena = ValueArena::default();
         arena.register_shape(1, 3);
@@ -1474,7 +1640,7 @@ mod tests {
         let expected = [Value::number(-0.0), Value::number(f64::NAN), Value::heap(17)];
         let mut live = arena.with_values(1, &expected);
         arena.release(dead);
-        let capacity = arena.compact_vector(&mut live, 0);
+        let capacity = arena.compact_vector(&mut live, 0, false);
         arena.finish_compaction(capacity);
         let mut writer = crate::snapshot::Writer::new();
         arena.write_snapshot(&mut writer);

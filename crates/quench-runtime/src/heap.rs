@@ -169,6 +169,8 @@ pub(crate) struct NativeObjectLayout {
     /// a recorded shape leaves out: a guard of a recorded shape masks them off the word.
     pub(crate) inline_form: u32,
     pub(crate) extras_form: u32,
+    pub(crate) narrow_form: u32,
+    pub(crate) narrow_run_tag: u64,
     pub(crate) inline_property_count: usize,
     pub(crate) extras_tag: u64,
     pub(crate) extras_tag_mask: u64,
@@ -200,6 +202,8 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     dictionary_mask: crate::value_vec::DICTIONARY_STORAGE,
     inline_form: cell::NATIVE_OBJECT_INLINE_FORM,
     extras_form: cell::NATIVE_OBJECT_EXTRAS_FORM,
+    narrow_form: crate::value_vec::NARROW_FORM,
+    narrow_run_tag: cell::NATIVE_OBJECT_NARROW_RUN_TAG,
     inline_property_count: INLINE_PROPERTY_COUNT,
     extras_tag: cell::NATIVE_OBJECT_EXTRAS_TAG,
     extras_tag_mask: cell::NATIVE_OBJECT_EXTRAS_TAG_MASK,
@@ -1271,7 +1275,12 @@ impl Heap {
         // A flag, not an edge: no write barrier for record prototypes.
         match prototype.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
-            Some(record_id) => Some(unsafe { self.object_records.get_live_mut_unbarriered(record_id) }),
+            Some(record_id) => {
+                let object = unsafe { self.object_records.get_live_mut_unbarriered(record_id) };
+                // A prototype takes extras (`Object::mark_as_prototype`), which hold wide runs.
+                access::widen_narrow_run(object, &mut self.properties);
+                Some(object)
+            }
             None => self.object_mut(prototype),
         }
     }
@@ -2070,7 +2079,9 @@ impl Heap {
             }
             .expect("property owner remains live during compaction");
             let mut vector = object.properties();
-            target += properties.compact_vector(&mut vector, target);
+            // A plain object's values may take a narrow run (`value_vec::NARROW_FORM`).
+            let narrows = owner.direct_object_index().is_some() && !object.has_extras() && !object.is_array();
+            target += properties.compact_vector(&mut vector, target, narrows);
             object.set_properties(vector, properties);
         }
         properties.finish_compaction(target);
@@ -4011,7 +4022,7 @@ impl Heap {
         let data = self.object(object)?;
         let vector = data.properties();
         let shape = data.shape();
-        if vector.has_inline_property_storage() || vector.is_dictionary() || slot >= self.properties.len(vector) {
+        if vector.has_inline_property_storage() || vector.is_dictionary() || vector.is_narrow() || slot >= self.properties.len(vector) {
             return None;
         }
         // A widening can retire an active caller. Decline before exposing a raw
@@ -4897,6 +4908,11 @@ fn note_young_owner(owners: &mut Vec<(usize, RecordId)>, start: usize, record_id
 fn append_property(data: &mut Object, properties: &mut ValueArena, slot: usize, value: Value, shape: u32) {
     properties.note_shape_value(shape, slot, value);
     let mut vector = data.properties();
+    if vector.is_narrow() {
+        // An add grows the run, which only a wide run does (`ValueArena::push`).
+        vector = properties.widen(vector);
+        data.set_properties(vector, properties);
+    }
     if !vector.has_inline_property_storage() {
         let before = vector.into_parts();
         properties.push(&mut vector, value);
@@ -4982,6 +4998,18 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
             // SAFETY: as above.
             unsafe { store_extended_slot(data, properties, slot, value, inline) };
         }
+        // A narrow run takes a narrow value in place; another value widens it first.
+        ExactStorage::Narrow => match value.to_narrow() {
+            // SAFETY: as above.
+            Some(narrow) => unsafe { properties.narrow_set(data.properties(), slot, narrow) },
+            None if layout != PropertyStoreLayout::MayWiden => return false,
+            None => {
+                let wide = properties.widen(data.properties());
+                data.set_properties(wide, properties);
+                // SAFETY: as above; the widened run holds every slot.
+                unsafe { properties.set_unchecked(data.properties(), slot, value) };
+            }
+        },
     }
     true
 }

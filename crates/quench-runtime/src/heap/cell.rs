@@ -1373,6 +1373,8 @@ pub(crate) enum ExactStorage {
     /// Behind extras, as a prototype's or an object with a wide inline value: the inline
     /// slots there, or an arena run (`Object::properties`).
     Extended { inline: bool },
+    /// No extras: a narrow run (`value_vec::NARROW_FORM`) from this start.
+    Narrow,
 }
 
 #[repr(C, packed(4))]
@@ -1496,6 +1498,11 @@ impl Default for DisplacedInline {
 }
 
 const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
+/// The payload bit of a plain object whose values are a narrow run (`value_vec::NARROW_FORM`):
+/// the word is then the run's start beside it, so the readers that take a payload with a zero
+/// upper half as a plain arena start (`plain_storage_start`, `plain_arena_start`) refuse it,
+/// and it is no extras tag.
+const NARROW_RUN_TAG: u64 = 1 << u32::BITS;
 const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 /// The storage position of an object without property values (`ValueVec::new`): the only
 /// one an array without extras has, as its payload word holds its element backing instead.
@@ -1534,6 +1541,7 @@ pub(super) const NATIVE_OBJECT_EXTRAS_INLINE_VALUES_OFFSET: usize =
     std::mem::offset_of!(ObjectExtras, inline_properties) + std::mem::offset_of!(DisplacedInline, 0);
 pub(super) const NATIVE_OBJECT_INLINE_STORAGE_MASK: u32 = OBJECT_INLINE_STORAGE;
 pub(super) const NATIVE_OBJECT_INLINE_FORM: u32 = crate::value_vec::INLINE_FORM;
+pub(super) const NATIVE_OBJECT_NARROW_RUN_TAG: u64 = NARROW_RUN_TAG;
 pub(super) const NATIVE_OBJECT_EXTRAS_FORM: u32 = crate::value_vec::EXTRAS_FORM;
 pub(super) const NATIVE_OBJECT_ARRAY_MASK: u32 = OBJECT_ARRAY;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
@@ -2297,6 +2305,11 @@ impl Object {
         } else {
             self.set_header(flags | (start & VALUE_VEC_INTEGRITY_BITS), auxiliary);
             self.set_storage_position(position);
+            if properties.is_narrow() {
+                // Only a plain object's values take a narrow run: its payload is the position.
+                debug_assert!(self.extras_pointer().is_none() && self.meta() & OBJECT_ARRAY == 0);
+                self.payload |= NARROW_RUN_TAG;
+            }
             let form = self.storage_form();
             self.set_aux((self.aux() & !crate::value_vec::STORAGE_FORM) | form);
         }
@@ -2321,10 +2334,19 @@ impl Object {
     /// inline flag and the payload's extras tag decide. The word keeps them current: every
     /// change of either (`initialize_properties`, `extras_mut`) rewrites them, and the
     /// constructors that write the header words directly derive them the same way.
+    /// Whether the payload word names a narrow run (`NARROW_RUN_TAG` beside its start): only
+    /// a plain object's payload outside inline storage is a start; inline values, an array's
+    /// backing and an extras word are other words.
+    #[inline(always)]
+    fn holds_narrow_run(&self) -> bool {
+        self.meta() & (OBJECT_INLINE_STORAGE | OBJECT_ARRAY) == 0 && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS
+    }
+
     #[inline(always)]
     fn storage_form(&self) -> u32 {
         let extras = if self.extras_pointer().is_some() { crate::value_vec::EXTRAS_FORM } else { 0 };
-        (self.meta() & OBJECT_INLINE_STORAGE) | extras
+        let narrow = if self.holds_narrow_run() { crate::value_vec::NARROW_FORM } else { 0 };
+        (self.meta() & OBJECT_INLINE_STORAGE) | extras | narrow
     }
 
 
@@ -2481,6 +2503,9 @@ impl Object {
             None => {
                 // The payload word moves into the extras: the inline values, or the storage
                 // position.
+                // Extras hold a wide run's start only: a narrow run's owner widens first
+                // (`access::widen_narrow_run`).
+                assert!(!self.holds_narrow_run(), "a narrow run widens before its owner takes extras");
                 let (inline, arena_start) = if self.meta() & OBJECT_INLINE_STORAGE != 0 {
                     (Self::unpack_inline(self.payload), 0)
                 } else {
@@ -2760,6 +2785,7 @@ impl Object {
         match form {
             0 => ExactStorage::Plain(self.payload_position() as usize),
             crate::value_vec::INLINE_FORM => ExactStorage::PackedInline,
+            crate::value_vec::NARROW_FORM => ExactStorage::Narrow,
             _ => ExactStorage::Extended { inline: form & crate::value_vec::INLINE_FORM != 0 },
         }
     }
