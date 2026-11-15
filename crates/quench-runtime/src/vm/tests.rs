@@ -4052,6 +4052,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             )),
         },
     ]);
+    vm.method_cache_sites.entry(0).or_default().push(0);
     vm.heap.collect([live]);
     vm.retain_live_method_caches();
     assert!(matches!(

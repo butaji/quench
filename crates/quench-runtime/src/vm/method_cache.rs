@@ -160,9 +160,14 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         let before = self.method_cache_entry_count();
         let heap = &self.heap;
-        // Rebuilt with the entries, so dropped entries leave no stale sites behind.
-        self.method_cache_sites.clear();
-        for (site, entries) in self.method_caches.iter_mut().enumerate() {
+        // Only sites that recorded an entry hold one (`method_cache_sites`), so a collection
+        // visits those, not every site; the map is rebuilt with the entries, so dropped
+        // entries leave no stale sites behind.
+        let mut sites: Vec<u32> = self.method_cache_sites.drain().flat_map(|(_, sites)| sites).collect();
+        sites.sort_unstable();
+        sites.dedup();
+        for site in sites {
+            let Some(entries) = self.method_caches.get_mut(site as usize) else { continue };
             let len = entries.len();
             retain_entries(heap, entries, len);
             for (index, entry) in entries.iter().enumerate() {
