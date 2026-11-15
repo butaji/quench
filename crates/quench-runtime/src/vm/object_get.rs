@@ -528,7 +528,7 @@ impl<H: Host> Vm<H> {
     /// `plain_proved_get` past an own-slot hit: the other answers, else the proving walk.
     #[inline(never)]
     fn plain_proved_get_past_own(&mut self, object: Value, key: PropertyKey) -> Option<Value> {
-        use super::symbol_load_proof::{KIND_ABSENT, KIND_GETTER, KIND_INHERITED, KIND_OWN};
+        use super::symbol_load_proof::{KIND_ABSENT, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
         let data = self.proved_read_receiver(object, key)?;
         let epoch = crate::heap::prototype_layout_epoch();
         if let Some(key32) = key.key32()
@@ -549,7 +549,7 @@ impl<H: Host> Vm<H> {
                     return unsafe { self.heap.property_get_shaped(holder, word.slot()) };
                 }
                 KIND_ABSENT if inherits => return Some(Value::UNDEFINED),
-                KIND_GETTER if inherits => return None,
+                KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if inherits || word.hops() == 0 => return None,
                 _ => {}
             }
         }
@@ -606,6 +606,7 @@ impl<H: Host> Vm<H> {
                     if depth > 0 && let Ok(slot) = u32::try_from(slot) {
                         let getter = SymbolLoadAnswer::Getter { hops: depth, slot };
                         self.prove_symbol_chain(layout, key, epoch, prototype, depth, getter, current);
+                        self.refine_getter_fact(layout, key, epoch, depth, slot, current);
                     }
                     return Some(ProvedLoad::Getter);
                 }
@@ -658,6 +659,27 @@ impl<H: Host> Vm<H> {
             // A holder up the chain is an object record (`prove_load_walk`): its id, plus one.
             let holder = if depth > 0 { holder.direct_object_index().map_or(0, |id| id + 1) } else { 0 };
             self.symbol_load_proofs.record_with_holder(layout, key, epoch, answer, holder);
+        }
+    }
+
+    /// Rewrites the getter fact `prove_symbol_chain` just recorded with where its holder's
+    /// shape keeps the getter (`SlotAccessor`), so a hit reads it without the slot attributes.
+    fn refine_getter_fact(&self, layout: u32, key: PropertyKey, epoch: u64, depth: u8, slot: u32, holder: Value) {
+        use super::symbol_load_proof::{KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT};
+        let (Some(key32), Some(data)) = (key.key32(), self.heap.object_record(holder)) else {
+            return;
+        };
+        if crate::heap::prototype_layout_epoch() != epoch {
+            return;
+        }
+        let kind = match self.slot_accessor(data.shape(), slot as usize) {
+            super::SlotAccessor::Getter => KIND_GETTER_SLOT,
+            super::SlotAccessor::Pair => KIND_GETTER_PAIR,
+            super::SlotAccessor::Attributes => KIND_GETTER,
+        };
+        if kind != KIND_GETTER {
+            let holder_id = holder.direct_object_index().map_or(0, |id| id + 1);
+            self.symbol_load_proofs.record_accessor(layout, key32, epoch, depth, slot, kind, holder_id);
         }
     }
 

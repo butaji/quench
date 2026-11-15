@@ -211,13 +211,13 @@ impl<H: Host> Vm<H> {
         if let Some((layout, key32, data)) = facts
             && let Some(word) = self.symbol_load_proofs.word(layout, key32)
         {
-            use super::super::symbol_load_proof::{KIND_ABSENT, KIND_ABSENT_OWN, KIND_GETTER, KIND_INHERITED, KIND_OWN};
+            use super::super::symbol_load_proof::{KIND_ABSENT, KIND_ABSENT_OWN, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
             match word.kind() {
                 KIND_OWN => {
                     return self.shape_slot_attributes(data.shape(), word.slot()).is_some_and(|attributes| attributes.configurable);
                 }
                 KIND_INHERITED | KIND_ABSENT | KIND_ABSENT_OWN => return true,
-                KIND_GETTER if word.hops() > 0 => return true,
+                KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if word.hops() > 0 => return true,
                 _ => {}
             }
         }
