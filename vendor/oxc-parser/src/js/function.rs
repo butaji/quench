@@ -942,7 +942,7 @@ struct LazyFunction<'f, 'a> {
 /// The parser state a function body's parse can extend with data that outlives the body.
 /// A lazily parsed body releases the arena it used only when this is unchanged.
 #[derive(PartialEq, Eq)]
-struct LazyBodyCheckpoint {
+pub(crate) struct LazyBodyCheckpoint {
     /// Arena chunks only grow: the same capacity means the same current chunk.
     arena_capacity: usize,
     errors: usize,
@@ -956,7 +956,7 @@ struct LazyBodyCheckpoint {
 }
 
 impl LazyBodyCheckpoint {
-    fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
+    pub(crate) fn of<C: Config>(parser: &ParserImpl<'_, C>) -> Self {
         Self {
             arena_capacity: parser.allocator().capacity(),
             errors: parser.errors.len(),

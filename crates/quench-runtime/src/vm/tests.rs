@@ -23957,3 +23957,35 @@ fn forwarded_calls_cross_into_cell_bodies() {
       globalThis.answer = total;
     })();"#);
 }
+
+/// A function body of straight-line statements past the streaming size compiles a run of
+/// statements at a time (`compile::statement_stream`) and runs as the whole body would: calls,
+/// member writes, positions in errors.
+#[test]
+fn straight_line_body_past_the_stream_size_runs_as_written() {
+    let mut source = String::from("var acc = []; var o = { a: 0, b: { c: 0 } }; function emit(x, y) { acc.push(x + (y === undefined ? 0 : y)); }\nfunction big(p) {\n");
+    let mut expected_sum = 0i64;
+    let mut count = 0;
+    for i in 0..24_000i64 {
+        match i % 4 {
+            0 => {
+                source.push_str(&format!("emit({i}, p);\n"));
+                expected_sum += i + 7;
+                count += 1;
+            }
+            1 => source.push_str(&format!("o.a = o.a + {i} % 13;\n")),
+            2 => source.push_str("o.b.c++;\n"),
+            _ => {
+                source.push_str(&format!("emit(Math.max({i}, 1), void 0);\n"));
+                expected_sum += i;
+                count += 1;
+            }
+        }
+    }
+    source.push_str("p.missing.deep;\n}\ntry { big(7); } catch (error) { print(error.name); }\nvar sum = 0; for (var v of acc) sum += v; print(acc.length + ' ' + sum + ' ' + o.b.c);\n");
+    let program = Engine::specialize(&source, "straight-line.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError".to_string(), format!("{count} {expected_sum} 6000")]);
+}

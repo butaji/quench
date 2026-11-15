@@ -18,6 +18,22 @@ impl<'a> Reparsed<'a> {
         Self::function_of(&self.program)
     }
 
+    /// The function parsed again, to change.
+    pub(in crate::compile) fn function_mut(&mut self) -> Option<&mut Function<'a>> {
+        match self.program.body.first_mut()? {
+            Statement::FunctionDeclaration(function) => Some(function),
+            Statement::ExpressionStatement(statement) => match &mut statement.expression {
+                Expression::FunctionExpression(function) => Some(function),
+                Expression::ParenthesizedExpression(parenthesized) => match &mut parenthesized.expression {
+                    Expression::FunctionExpression(function) => Some(function),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn function_of<'p>(program: &'p Program<'a>) -> Option<&'p Function<'a>> {
         match program.body.first()? {
             Statement::FunctionDeclaration(function) => Some(function),
