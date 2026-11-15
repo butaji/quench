@@ -121,6 +121,7 @@ pub(crate) enum Class {
     StringCaseIndex,
     SuperConstArrayObject2,
     ToPropertyKey,
+    ForInStart,
     WasmBranchTable,
     WasmGlobalGet,
     WasmGlobalSet,
@@ -249,6 +250,7 @@ macro_rules! class_of {
     (StringCaseIndex) => { Class::StringCaseIndex };
     (SuperConstArrayObject2) => { Class::SuperConstArrayObject2 };
     (ToPropertyKey) => { Class::ToPropertyKey };
+    (ForInStart) => { Class::ForInStart };
     (WasmBranchTable) => { Class::WasmBranchTable };
     (WasmGlobalGet) => { Class::WasmGlobalGet };
     (WasmGlobalSet) => { Class::WasmGlobalSet };
