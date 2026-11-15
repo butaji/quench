@@ -91,6 +91,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError::validation("Wasm GC operation requires module declarations".into()))
     }
 
+    #[inline(always)]
     fn wasm_struct_field_step(
         &mut self,
         i: WideInstruction,
@@ -104,6 +105,7 @@ impl<H: Host> Vm<H> {
         self.wasm_field_access(reference, GcFieldIndex::Struct(field.index()), field, access, value)
     }
 
+    #[inline(always)]
     fn wasm_array_field_step(
         &mut self,
         i: WideInstruction,
@@ -123,7 +125,7 @@ impl<H: Host> Vm<H> {
     /// the reference's static type, which every subtype shares, so only null and the
     /// element bound remain to check.
     #[inline(always)]
-    fn wasm_field_access(
+    pub(in crate::vm) fn wasm_field_access(
         &mut self,
         reference: Value,
         location: GcFieldIndex,

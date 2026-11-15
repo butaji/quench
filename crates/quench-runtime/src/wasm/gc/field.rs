@@ -21,6 +21,7 @@ impl GcField {
         (index <= u32::MAX >> STORAGE_BITS).then_some(Self(index << STORAGE_BITS | storage))
     }
 
+    #[inline(always)]
     pub(crate) fn from_tag(tag: u32) -> Option<Self> {
         ((tag & STORAGE_MASK) as usize <= PACKED.len()).then_some(Self(tag))
     }
@@ -29,11 +30,13 @@ impl GcField {
         self.0
     }
 
+    #[inline(always)]
     pub(crate) fn index(self) -> u32 {
         self.0 >> STORAGE_BITS
     }
 
     /// The bits a packed field keeps; `None` for a value field.
+    #[inline(always)]
     fn mask(self) -> Option<i32> {
         (self.0 & STORAGE_MASK).checked_sub(1).map(|at| PACKED[at as usize].1)
     }
@@ -48,6 +51,7 @@ impl GcField {
     }
 
     /// What `access` reads of `stored`; a signed read sign-extends the packed bits.
+    #[inline(always)]
     pub(crate) fn load(self, access: GcFieldAccess, stored: Value) -> Value {
         match (access, self.mask()) {
             (GcFieldAccess::ReadSigned, Some(mask)) => {

@@ -1536,11 +1536,14 @@ impl ModuleBindings<'_> {
         };
         let memory_registers: Vec<_> =
             form.memories.iter().copied().map(&mut reserve).collect();
-        let mut accessed = form.globals.iter().peekable();
-        let global_registers: Vec<_> = (0..globals.len() as u32)
-            .map(|global| accessed.next_if_eq(&&global).is_some())
-            .map(&mut reserve)
-            .collect();
+        // Filled from the accessed globals, ascending, rather than mapped over every global
+        // of the module: a module of many globals and functions paid globals x functions.
+        let mut global_registers: Vec<Option<Register>> = vec![None; globals.len()];
+        for &global in &form.globals {
+            if let Some(slot) = global_registers.get_mut(global as usize) {
+                *slot = reserve(true);
+            }
+        }
         let local_base = (usize::from(reserved) + usize::from(local_count)
             <= MAX_REGISTER_LOCALS)
             .then_some(reserved);
@@ -1589,7 +1592,10 @@ impl ModuleBindings<'_> {
                 }
             }
         }
-        let global_slots = lowering.global_registers.iter().copied().enumerate();
+        let global_slots = form
+            .globals
+            .iter()
+            .map(|&global| (global as usize, lowering.global_registers.get(global as usize).copied().flatten()));
         let memory_slots = lowering
             .memory_registers
             .iter()

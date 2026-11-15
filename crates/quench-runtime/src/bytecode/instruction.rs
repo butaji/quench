@@ -163,6 +163,7 @@ macro_rules! layout_accessors {
                 }
             }
 
+            #[inline(always)]
             pub(crate) fn result_register(self) -> Register {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
@@ -835,6 +836,7 @@ impl Instr {
         Self::pack_immediate(op, value).is_some()
     }
 
+    #[inline(always)]
     pub(crate) fn new(op: Op, a: Register, b: Register, c: Register, imm: u32) -> Self {
         Self::try_new(op, a, b, c, imm).expect("instruction exceeds packed domain")
     }
