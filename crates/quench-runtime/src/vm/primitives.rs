@@ -664,10 +664,18 @@ impl<H: Host> Vm<H> {
     /// argument is another value.
     #[expect(clippy::wrong_self_convention, reason = "named for `String.fromCharCode`; allocates its result on the VM heap")]
     pub(super) fn from_char_code_numbers(&mut self, args: &[Value]) -> Option<Value> {
+        // One code unit, as `fromCharCode(byte)` in a decode loop: its string with no list.
+        if let [value] = args {
+            let unit = Self::uint16_from_value(value.as_number()?);
+            if let Some(value) = self.heap.latin1_unit_string(unit) {
+                return Some(value);
+            }
+            return self.string_from_units(&[unit]).ok();
+        }
         let units = args
             .iter()
             .map(|value| value.as_number().map(Self::uint16_from_value))
-            .collect::<Option<Vec<u16>>>()?;
+            .collect::<Option<smallvec::SmallVec<[u16; 32]>>>()?;
         self.string_from_units(&units).ok()
     }
 

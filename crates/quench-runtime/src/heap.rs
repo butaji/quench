@@ -613,6 +613,10 @@ use mark_bits;
 
 /// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
 pub(crate) const ASCII_UNITS: usize = 0x80;
+/// The Latin-1 code units, one past the last: `Heap::ascii_unit_strings` holds a string for
+/// each, the ASCII ones first (the table's readers index it by ASCII unit), then the rest
+/// that a byte decode (`String.fromCharCode(byte)`) makes.
+pub(crate) const UNIT_STRINGS: usize = 0x100;
 
 /// Dead prototype record ids a heap withholds from reuse (`Heap::retire_dead_prototypes`)
 /// before it advances `prototype_layout_epoch` once and frees them all. A withheld id costs one
@@ -691,7 +695,7 @@ pub(crate) struct Heap {
     /// The string each one-unit ASCII text made since the last collection got
     /// (`alloc_string`): strings have no identity, so one record serves every such text, as
     /// V8's single-character string table does. A collection empties it.
-    ascii_unit_strings: Option<Box<[Value; ASCII_UNITS]>>,
+    ascii_unit_strings: Option<Box<[Value; UNIT_STRINGS]>>,
     /// What the last full collection kept, which the generational pacing grows from.
     live_after_full: usize,
     /// What the full collection that last traced closure environments through their reads
