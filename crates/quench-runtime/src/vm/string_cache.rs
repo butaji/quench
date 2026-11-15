@@ -126,7 +126,14 @@ impl<H: Host> Vm<H> {
         if known + numbers <= wtf16::SHORT_ASCII_CAPACITY || known >= PARTS_KNOWN_LIMIT {
             return None;
         }
-        if let Some(small) = crate::heap::SmallParts::new(ids, texts, number)
+        let small = crate::heap::SmallParts::new(ids, texts, number).or_else(|| match number {
+            // A Number between two strings that is no int32: the pair as a template.
+            Some((value, 1)) if texts == 2 => {
+                self.heap.small_template(ids[0], ids[1]).map(|template| crate::heap::SmallParts::templated(template, value))
+            }
+            _ => None,
+        });
+        if let Some(small) = small
             && let Some(string) = self.heap.alloc_small_string(small)
         {
             return Some(string);

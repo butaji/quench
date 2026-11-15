@@ -632,6 +632,7 @@ pub(crate) struct Heap {
     /// Small strings (`small_strings`): ids of the string records' hole, and the texts read.
     small_strings: small_strings::SmallStringSpace,
     small_views: small_strings::SmallViews,
+    small_templates: small_strings::SmallTemplates,
     string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
@@ -2094,6 +2095,7 @@ impl Heap {
         self.string_records = StringRecordSpace::default();
         self.small_strings = small_strings::SmallStringSpace::default();
         self.small_views = small_strings::SmallViews::default();
+        self.small_templates = small_strings::SmallTemplates::default();
         self.clear_string_atoms();
         self.v128_records = V128RecordSpace::default();
         self.marks.clear();

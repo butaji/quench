@@ -35,6 +35,9 @@ const SHAPE_TEXTS: u32 = 3;
 const SHAPE_WIDE_FIRST: u32 = 4;
 /// `head Number`, as `SHAPE_WIDE_FIRST`.
 const SHAPE_WIDE_LAST: u32 = 5;
+/// `prefix Number suffix`: `head` holds a template (`SmallTemplates`), the pair of strings
+/// around the Number, which may be any double, in `tail` (low) and `extra`.
+const SHAPE_WIDE_MIDDLE: u32 = 6;
 /// `SmallParts::head`'s flag once the text has been made: the bits below it hold the text's
 /// length, and `tail` (low) with `extra` one word (`written_word`): the address `Rc::into_raw`
 /// gave for its storage over `VIEW_BITS`, and below them the slot of its latest view
@@ -47,7 +50,7 @@ const VIEW_MASK: u64 = (1 << VIEW_BITS) - 1;
 const NO_VIEW: u32 = VIEW_MASK as u32;
 /// Low bits a text storage address always has clear (its `Rc` is word aligned).
 const TEXT_ALIGN_BITS: u32 = 3;
-const _: () = assert!(STRING_RECORD_CAPACITY as u32 <= NO_TEXT && SHAPE_WIDE_LAST << SHAPE_SHIFT < WRITTEN);
+const _: () = assert!(STRING_RECORD_CAPACITY as u32 <= NO_TEXT && SHAPE_WIDE_MIDDLE << SHAPE_SHIFT < WRITTEN);
 const _: () = assert!(VIEW_COLLECTION_LIMIT < NO_VIEW && 48 - TEXT_ALIGN_BITS + VIEW_BITS <= 64);
 
 /// The parts of a string of parts (`Parts`: two or three, at most one a Number) in 12 bytes:
@@ -98,6 +101,15 @@ impl SmallParts {
             _ => (SHAPE_INT_MIDDLE, id(0), id(1)),
         };
         Some(Self { head: shape << SHAPE_SHIFT | head, tail, extra: int as u32 })
+    }
+
+    /// The record of `prefix Number suffix` whose strings are the pair `template`
+    /// (`Heap::small_template`).
+    #[inline(always)]
+    pub(crate) fn templated(template: u32, number: f64) -> Self {
+        debug_assert!(template < NO_TEXT);
+        let bits = number.to_bits();
+        Self { head: SHAPE_WIDE_MIDDLE << SHAPE_SHIFT | template, tail: bits as u32, extra: (bits >> 32) as u32 }
     }
 
     /// A record that owns `text`, already made (`WRITTEN`).
@@ -157,7 +169,7 @@ impl SmallParts {
 
     /// Its parts in order, each a string id (`NO_TEXT` for none) or a Number; none once written.
     #[inline(always)]
-    fn each(&self) -> [Option<Part>; 3] {
+    fn each(&self, templates: &SmallTemplates) -> [Option<Part>; 3] {
         let text = |id: u32| (id != NO_TEXT).then_some(Part::Text(id));
         let (head, tail) = (text(self.head & ID_MASK), text(self.tail));
         let int = Some(Part::Number(f64::from(self.extra as i32)));
@@ -169,11 +181,16 @@ impl SmallParts {
             SHAPE_TEXTS => [head, tail, text(self.extra)],
             SHAPE_WIDE_FIRST => [wide, head, None],
             SHAPE_WIDE_LAST => [head, wide, None],
+            SHAPE_WIDE_MIDDLE => {
+                let (prefix, suffix) = templates.pairs[(self.head & ID_MASK) as usize];
+                [Some(Part::Text(prefix)), wide, Some(Part::Text(suffix))]
+            }
             _ => [None; 3],
         }
     }
 
-    /// The string parts not yet written out: what a collector traces. Every shape keeps an id
+    /// The string parts not yet written out: what a collector traces. Every shape but
+    /// `SHAPE_WIDE_MIDDLE`, whose template's strings stay rooted (`SmallTemplates`), keeps an id
     /// in `head`; all but the wide shapes one in `tail`, and only `SHAPE_TEXTS` a third in `extra`.
     #[inline(always)]
     pub(super) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
@@ -182,7 +199,7 @@ impl SmallParts {
         }
         let shape = self.head >> SHAPE_SHIFT;
         let head = self.head & ID_MASK;
-        if head != NO_TEXT {
+        if head != NO_TEXT && shape != SHAPE_WIDE_MIDDLE {
             visit(head);
         }
         if shape <= SHAPE_TEXTS && self.tail != NO_TEXT {
@@ -412,7 +429,39 @@ pub(super) fn mark_leaf_small_if_new(
     true
 }
 
+/// Templates: pairs of strings that a Number joins (`SHAPE_WIDE_MIDDLE`), so `"a" + x + "b"`
+/// with any Number `x` takes a 12-byte small string. Each pair is interned once; its strings
+/// are rooted for the heap's life, which the bounds on the count and on each part's length
+/// (`Vm::string_of_parts`) keep to a few hundred kilobytes at most.
+#[derive(Default)]
+pub(crate) struct SmallTemplates {
+    pairs: Vec<(u32, u32)>,
+    index: rustc_hash::FxHashMap<(u32, u32), u32>,
+}
+
+/// Templates a heap interns; a pair past them takes a string-of-parts record.
+const TEMPLATE_CAPACITY: usize = 4096;
+
 impl Heap {
+    /// The template of the strings `prefix` and `suffix` around a Number, interned now if it
+    /// is new; `None` once the table is full.
+    #[inline]
+    pub(crate) fn small_template(&mut self, prefix: u32, suffix: u32) -> Option<u32> {
+        if let Some(&template) = self.small_templates.index.get(&(prefix, suffix)) {
+            return Some(template);
+        }
+        if self.small_templates.pairs.len() >= TEMPLATE_CAPACITY {
+            return None;
+        }
+        // The pair's strings live as long as the table names them.
+        self.roots.insert(Value::direct_string(prefix));
+        self.roots.insert(Value::direct_string(suffix));
+        let template = self.small_templates.pairs.len() as u32;
+        self.small_templates.pairs.push((prefix, suffix));
+        self.small_templates.index.insert((prefix, suffix), template);
+        Some(template)
+    }
+
     /// Bytes the small strings' records and views take, past their texts' own storage.
     pub(super) fn small_string_bytes(&self) -> usize {
         self.small_strings.allocated_bytes() + self.small_views.get().allocated_bytes()
@@ -524,7 +573,7 @@ impl Heap {
     /// The text of the parts of `record`, each part written out first.
     fn small_parts_text(&self, record: &SmallParts) -> JsString {
         let mut number = crate::number_to_string::Short::new();
-        let pieces = record.each().map(|part| match part {
+        let pieces = record.each(&self.small_templates).map(|part| match part {
             None => &[][..],
             // SAFETY: a part is a string its small string keeps alive.
             Some(Part::Text(id)) => match unsafe { self.written_out_string(id) }.units() {
@@ -537,7 +586,7 @@ impl Heap {
             }
         });
         let length = pieces.iter().map(|piece| piece.len()).sum::<usize>() + number.len();
-        let at = record.each().iter().position(|part| matches!(part, Some(Part::Number(_))));
+        let at = record.each(&self.small_templates).iter().position(|part| matches!(part, Some(Part::Number(_))));
         JsString::from_ascii_parts(length, pieces.iter().enumerate().map(|(position, piece)| {
             if Some(position) == at { number.as_slice() } else { piece }
         }))
