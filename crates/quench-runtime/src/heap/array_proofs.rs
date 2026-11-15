@@ -480,7 +480,7 @@ mod tests {
         assert!(proofs.typed_elements::<INT32>(0, base).is_none(), "a second owner retires the proof");
         prove(&mut heap, &mut proofs);
         assert!(!proofs.typed_elements::<INT32>(0, base).unwrap().writable, "a shared store proves no store");
-        unsafe { (*bytes(&mut heap)).make_mut() }[0] = 9;
+        unsafe { (*bytes(&mut heap)).make_mut()[0] = 9 };
         assert!(proofs.typed_elements::<INT32>(0, base).is_none(), "unsharing retires the proof");
         drop(shared);
         prove(&mut heap, &mut proofs);
