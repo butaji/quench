@@ -65,6 +65,7 @@ fn a_sum_or_product_of_int32s_keeps_an_integer_range_within_the_word_span() {
     let negative = range(i64::from(i32::MIN), -1);
     let beyond = number_range(NumberArithmetic::Multiply, negative, negative).expect("the span's own bound is inside it");
     assert_eq!(beyond.max, IntRange::WORD.max);
-    assert_eq!(number_range(NumberArithmetic::Add, beyond, IntRange::singleton(1)), None, "past the word span there is no range");
+    assert_eq!(number_range(NumberArithmetic::Add, beyond, IntRange::singleton(1)), Some(IntRange { min: 2, max: IntRange::WORD.max }), "2^62 + 1 rounds to 2^62, inside the span");
+    assert_eq!(number_range(NumberArithmetic::Add, beyond, IntRange::singleton(1 << 11)), None, "past the word span there is no range");
     assert_eq!(number_range(NumberArithmetic::Multiply, range(-3, 2), range(0, 5)), None, "a possible negative zero has none");
 }

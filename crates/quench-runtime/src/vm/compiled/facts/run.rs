@@ -189,6 +189,7 @@ impl Facts {
             point.refine(text.constants, instruction, false);
             if let Some(following) = following.as_mut() { following.refine(text.constants, instruction, true); }
         }
+        if target <= pc { self.headers.insert(target); }
         if target == text.entry && target <= pc { self.join_backedge(&point.types); }
         self.reach(target, &point, pending, seeds);
         if let Some(following) = following { self.reach(pc + 1, &following, pending, seeds); }

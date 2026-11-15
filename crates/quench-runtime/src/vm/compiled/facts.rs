@@ -39,8 +39,12 @@ pub(super) struct Facts {
     /// The element reads observed to hold Numbers (sorted PCs): each defines a Number the
     /// lowering proves at the read.
     observed: Vec<ObservedRead>,
-    /// How often a merge changed each block's row: past `WIDENING_ROUNDS` a range that grows widens.
+    /// How often a merge changed each block's row: past `WIDENING_ROUNDS` a range that grows widens,
+    /// at a loop header alone (`headers`): a block inside the loop follows the header's finite rows
+    /// exactly, so the branch that guards it keeps the bound it proves.
     rounds: Vec<u8>,
+    /// The leaders a backward edge reaches.
+    headers: CompoundBitSet,
     /// The length relations at each row, parallel to its types (empty where the run tracks none).
     length_of: Vec<Option<Register>>,
     below: Vec<Option<Register>>,
@@ -55,7 +59,7 @@ impl Facts {
     /// A run over `blocks` PCs of `registers` registers.
     fn new(blocks: usize, registers: usize, seeds: run::Seeds<'_>) -> Self {
         Self { offsets: vec![None; blocks], registers, reached: CompoundBitSet::with_capacity(blocks),
-            contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), rounds: vec![0; blocks], ..Self::default() }
+            contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), rounds: vec![0; blocks], headers: CompoundBitSet::with_capacity(blocks), ..Self::default() }
     }
 
     /// The state on entry to the block led by `pc`.
@@ -137,7 +141,7 @@ impl Facts {
     }
 
     /// Joins `incoming` and the relations both it and the row keep into the row of `pc`;
-    /// whether the row changed. Past `WIDENING_ROUNDS` changes a range that grows widens.
+    /// whether the row changed. Past `WIDENING_ROUNDS` changes a range that grows widens at a loop header.
     fn merge_row(&mut self, pc: usize, incoming: &[Type], relations: &Relations) -> bool {
         let Some(slot) = self.offsets.get_mut(pc) else { return false };
         let (start, mut changed) = match *slot {
@@ -151,7 +155,7 @@ impl Facts {
             }
             Some(offset) => {
                 let start = offset.get() - 1;
-                let widening = self.rounds.get(pc).is_some_and(|rounds| *rounds >= WIDENING_ROUNDS);
+                let widening = self.headers.contains(pc) && self.rounds.get(pc).is_some_and(|rounds| *rounds >= WIDENING_ROUNDS);
                 let mut changed = false;
                 for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
                     let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };

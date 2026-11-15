@@ -171,7 +171,7 @@ fn a_counter_below_a_proved_int32_bound_never_overflows_and_one_below_a_number_m
 
 #[test]
 fn an_entry_guarded_range_seeds_its_input_and_an_unguarded_int32_proves_nothing() {
-    let source = "function run(k){return k-1;}";
+    let source = "function run(k){const r=k-1;return r;}";
     let (free, steps) = overflow_proofs_entered(source, Type::INT32, &[(0, IntRange::NON_NEGATIVE)]);
     assert!(!steps.is_empty() && steps.iter().all(|pc| free.contains(pc)), "{free:?} of {steps:?}");
     let (free, _) = overflow_proofs_entered(source, Type::INT32, &[]);
