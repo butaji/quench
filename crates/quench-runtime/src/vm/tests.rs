@@ -240,7 +240,7 @@ fn default_osr_keeps_self_contained_loop_regions() {
                 .and_then(super::program_store::derived_lane_view).unwrap();
             let osr = view.osr_diagnostics();
             assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            assert!(view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -306,7 +306,7 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(2)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
+            let report = view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
             assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
         }
     }

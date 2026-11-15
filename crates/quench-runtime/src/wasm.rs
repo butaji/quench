@@ -966,6 +966,9 @@ impl Engine {
                 parameter_registers: lowering.local_base,
                 initial_register: crate::bytecode::InitialRegister::I32Zero,
             };
+            // The lowering grew the code by doubling; the module keeps it for its life.
+            let mut function = function;
+            function.shrink_to_fit();
             functions.push(function);
             constants = lowering.constants;
         }

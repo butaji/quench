@@ -101,7 +101,7 @@ fn assert_body_stays(source: &str) {
     let views = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap();
     let reports: Vec<String> = views.iter()
         .filter_map(super::program_store::derived_lane_view)
-        .filter_map(|view| view.body_stats.report(0, view.lane_body_state(), &|_, _| None))
+        .filter_map(|view| view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None))
         .collect();
     let run = reports.iter().find(|report| report.contains("\"completed\":") && !report.contains("\"completed\":0,"));
     let run = run.unwrap_or_else(|| panic!("a body completes: {reports:?}"));

@@ -126,8 +126,6 @@ pub(super) struct LaneInstruction {
 /// polymorphic), so one keeps an entry at 32 bytes instead of 112.
 const INLINE_SITE_TARGETS: usize = 1;
 
-/// A `LaneView::loop_at_backedge` entry for an instruction that is no loop's backward jump.
-const NO_LOOP: u32 = u32::MAX;
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
@@ -352,9 +350,10 @@ pub(super) struct LaneView {
     /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
-    /// Per instruction, the index in `loops` of the loop whose backward jump it is, or
-    /// `NO_LOOP`: built once with the loops, so a leave finds its loop by one index.
-    loop_at_backedge: Box<[u32]>,
+    /// The backward jumps' PCs, ascending, each with the index in `loops` of the first loop
+    /// it closes: a leave finds its loop by a binary search over the few loops, where a table
+    /// over every instruction cost 4 bytes per instruction of every view.
+    loop_at_backedge: Box<[(u32, u32)]>,
     /// The vector regions whose first records point into them (`vector_region`): only
     /// those records read them.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -368,29 +367,13 @@ pub(super) struct LaneView {
     /// The prologue's direct run of the compiled body, once the tier compiled it
     /// (`Vm::direct_tier_entry`).
     tier_direct: std::cell::Cell<Option<super::compiled::DirectTierEntry>>,
-    /// The frameless body the prologue runs once the JavaScript tier declined the
-    /// function (`Vm::compile_lane_method`).
-    tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
-    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
-    warm_since: std::cell::Cell<u32>,
+    /// The lane-body tier's state of this function (`LaneTier`), made when the tier first
+    /// looks at it: a view the tier never touches (every view under `--no-jit`, most views
+    /// otherwise) keeps one word instead of about 540 bytes.
+    tier: std::cell::OnceCell<Box<LaneTier>>,
     /// What native callers read to enter its body (`compiled::EntryCell`); the one entry word
     /// of the function, published and withdrawn with its body.
     entry: super::compiled::entry_cell::EntryCell,
-    /// Every body it published, kept until the view drops: a native frame running a body that
-    /// retired recovers its leave through `ShadowFrame::body`.
-    pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
-    /// What its bodies cost and earned so far (`LaneBodyHistory`).
-    history: std::cell::Cell<LaneBodyHistory>,
-    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
-    pub(super) body_stats: LaneBodyStats,
-    /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
-    /// direct callers that name them still run until they retire with them at a shape
-    /// compaction.
-    retired: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::PublishedLaneMethod>>>,
-    /// The views whose bodies compiled a call of this function (`LaneView::note_caller`):
-    /// they specialize again when its body publishes, to call it by its entry.
-    callers: std::cell::RefCell<Vec<*const LaneView>>,
     /// Per record, the register whose value it reads as the carried accumulator
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
@@ -880,11 +863,55 @@ enum LaneBody {
 }
 
 
+/// The lane-body tier's per-function state (`LaneView::tier`).
+pub(super) struct LaneTier {
+    /// The frameless body the prologue runs once the JavaScript tier declined the
+    /// function (`Vm::compile_lane_method`).
+    tier_lane: std::cell::UnsafeCell<LaneBody>,
+    /// The warming tick (`lane_body_tier::warm_ticks`) of the entry its body began warming at, which a function
+    /// entered rarely but for long (`LaneView::recurrent`) specializes by.
+    warm_since: std::cell::Cell<u32>,
+    /// Every body it published, kept until the view drops: a native frame running a body that
+    /// retired recovers its leave through `ShadowFrame::body`.
+    pinned: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::LaneMethod>>>,
+    /// What its bodies cost and earned so far (`LaneBodyHistory`).
+    history: std::cell::Cell<LaneBodyHistory>,
+    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
+    pub(super) body_stats: LaneBodyStats,
+    /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
+    /// direct callers that name them still run until they retire with them at a shape
+    /// compaction.
+    retired: std::cell::RefCell<Vec<std::rc::Rc<super::compiled::PublishedLaneMethod>>>,
+    /// The views whose bodies compiled a call of this function (`LaneView::note_caller`):
+    /// they specialize again when its body publishes, to call it by its entry.
+    callers: std::cell::RefCell<Vec<*const LaneView>>,
+}
+
+impl Default for LaneTier {
+    fn default() -> Self {
+        Self {
+            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }),
+            warm_since: std::cell::Cell::new(0),
+            pinned: std::cell::RefCell::default(),
+            history: Default::default(),
+            body_stats: LaneBodyStats::default(),
+            retired: std::cell::RefCell::default(),
+            callers: std::cell::RefCell::default(),
+        }
+    }
+}
+
 impl LaneView {
+    /// Its lane-body tier state, made on first use.
+    #[inline]
+    pub(super) fn tier(&self) -> &LaneTier {
+        self.tier.get_or_init(Box::default)
+    }
+
     /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
     pub(super) fn lane_body_state(&self) -> &'static str {
         // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier_lane.get() } {
+        match unsafe { &*self.tier().tier_lane.get() } {
             LaneBody::Unspecialized { .. } => "unspecialized",
             LaneBody::Compiling { .. } => "compiling",
             LaneBody::Specialized { .. } => "specialized",
@@ -897,7 +924,7 @@ impl LaneView {
     /// (`QUENCH_LANE_STATE`).
     pub(super) fn lane_body_detail(&self) -> (&'static str, Option<u16>, bool, bool) {
         // SAFETY: as `lane_body`.
-        let entries = match unsafe { &*self.tier_lane.get() } {
+        let entries = match unsafe { &*self.tier().tier_lane.get() } {
             LaneBody::Unspecialized { entries, .. } => Some(*entries),
             _ => None,
         };
@@ -908,7 +935,7 @@ impl LaneView {
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
         // execution or recovery can reenter and change the view's publication.
-        match unsafe { &*self.tier_lane.get() } {
+        match unsafe { &*self.tier().tier_lane.get() } {
             LaneBody::Specialized { method, .. } => method.lease(),
             LaneBody::Unspecialized { .. } | LaneBody::Compiling { .. } | LaneBody::Declined => None,
         }
@@ -972,7 +999,7 @@ impl LaneView {
     /// (`compiled::DirectCallee::method`).
     fn published_lane_body(&self) -> Option<std::rc::Rc<super::compiled::PublishedLaneMethod>> {
         // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier_lane.get() } {
+        match unsafe { &*self.tier().tier_lane.get() } {
             LaneBody::Specialized { method, .. } => Some(method.clone()),
             _ => None,
         }
@@ -983,7 +1010,7 @@ impl LaneView {
     /// tier's handler.
     fn settle_retired_body(&self) {
         // SAFETY: as `lane_body`; settling runs no lane body.
-        let body = unsafe { &mut *self.tier_lane.get() };
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
         if let LaneBody::Specialized { method, tier_prologue, .. } = body
             && !method.is_published()
         {
@@ -996,21 +1023,21 @@ impl LaneView {
     /// Whether it has no body yet and counts entries toward one, its first or a next.
     fn warming(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { .. }) || self.compiling()
     }
 
 
     /// Whether its body left too often and specializes again at its next entry.
     fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
-        matches!(unsafe { &*self.tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
+        matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
     }
 
 
     /// Retires field hints and native bodies (and plans) that name shape IDs when compaction renumbers them.
     pub(super) fn invalidate_shape_bindings(&self) {
         // SAFETY: no lane body runs during a collection.
-        let body = unsafe { &mut *self.tier_lane.get() };
+        let body = unsafe { &mut *self.tier().tier_lane.get() };
         if let LaneBody::Compiling { pending, .. } = body { pending.retire_named_shapes(); }
         if let LaneBody::Specialized { method, tier_prologue, .. } = body
             && method.lease().is_some_and(|method| method.names_shapes)
@@ -1023,7 +1050,7 @@ impl LaneView {
             }
             self.drop_body(body);
         }
-        self.retired.borrow_mut().clear();
+        self.tier().retired.borrow_mut().clear();
         self.clear_hints(&self.field_records);
         self.clear_name_hints();
         for site in &self.loops {
@@ -9321,7 +9348,7 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         let direct = |vm: &Vm<H>| code.function_get(function as usize).map(|body| lane_direct_callees(vm, own, function, body)).unwrap_or_default();
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
-            if let Some(method) = method.lease() { own.body_stats.compiled(function, &method.inlined); }
+            if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
         }
         outcome
     };
@@ -15939,7 +15966,7 @@ script_handler! {
             if lane_body_prepare_recovery(cx, &method) { return exit(base); }
             drop(method);
             if vm.programs.js_jit_diagnostics_enabled() {
-                own.body_stats.refused.set(own.body_stats.refused.get() + 1);
+                own.tier().body_stats.refused.set(own.tier().body_stats.refused.get() + 1);
             }
             next!(cx, r, base, Carried::script_in(cx, view))
         }
@@ -16879,7 +16906,7 @@ fn lane_body_left<H: Host>(
     exit: super::compiled::LaneExit,
 ) -> (LaneBodyLeft, super::compiled::LaneExit) {
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
-        own.body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
+        own.tier().body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
     }
     if exit == super::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
@@ -21089,10 +21116,9 @@ fn derive_lane_view<'live, H: Host>(
     let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
     let first = records.base();
     // The first loop closing at a backedge owns it, as a front-to-back search would find it.
-    let mut loop_at_backedge = vec![NO_LOOP; decoded.len()];
-    for (index, site) in loops.iter().enumerate().rev() {
-        loop_at_backedge[site.backedge as usize] = index as u32;
-    }
+    let mut loop_at_backedge: Vec<(u32, u32)> = loops.iter().enumerate().map(|(index, site)| (site.backedge, index as u32)).collect();
+    loop_at_backedge.sort_unstable();
+    loop_at_backedge.dedup_by_key(|&mut (backedge, _)| backedge);
     LaneView {
         records,
         entries,
@@ -21115,9 +21141,8 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         }),
         tier_direct: std::cell::Cell::new(None),
-        tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { entries: 0, recompiles: 0, stuck: LaneLeaves::NONE }), history: Default::default(), warm_since: std::cell::Cell::new(0),
-        retired: std::cell::RefCell::default(), callers: std::cell::RefCell::default(), entry: super::compiled::entry_cell::EntryCell::new(), pinned: std::cell::RefCell::default(),
-        body_stats: LaneBodyStats::default(),
+        tier: std::cell::OnceCell::new(),
+        entry: super::compiled::entry_cell::EntryCell::new(),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
         plain_backward_jump_sites: decoded
             .iter()
