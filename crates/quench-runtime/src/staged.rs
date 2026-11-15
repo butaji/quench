@@ -92,6 +92,8 @@ mod control;
 mod generic;
 pub(crate) use steps::step;
 pub(crate) mod effects;
+#[cfg_attr(not(test), allow(dead_code))] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
+pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
