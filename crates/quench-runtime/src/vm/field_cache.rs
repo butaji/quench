@@ -190,3 +190,16 @@ pub(super) enum FieldCacheProbe {
     Ineligible,
 }
 
+
+impl<H: Host> Vm<H> {
+    /// The data field a receiver any heap cell holds (a function's `f.call`) inherits from its
+    /// immediate prototype, among its site's recorded entries (`megamorphic_field_cache`): the
+    /// holder tier `polymorphic_field_hit` probes for a record receiver. Every function named
+    /// differently has a shape of its own, so such a site records one entry per name.
+    pub(super) fn cell_polymorphic_holder_hit(&self, object: Value, site: u16) -> Option<Value> {
+        let receiver = self.heap.object(object)?;
+        let holder = self.heap.object(receiver.proto())?;
+        let entry = self.megamorphic_field_cache(self.field_cache_index(site), receiver.exact_shape(), holder.exact_shape())?;
+        (entry.holder != NO_FIELD_HOLDER).then(|| self.heap.property_get(holder, usize::from(entry.slot)))?
+    }
+}

@@ -2,7 +2,8 @@ use super::typed_array_install::{TYPED_ARRAY_BASE_METHODS, TYPED_ARRAY_CALLBACK_
 use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 
-/// Direct-mapped entries of `TypedArrayGeometryProofs`, by name: the four geometry names
+/// Direct-mapped entries of `TypedArrayGeometryProofs`, by name and prototype (a DataView reads
+/// `byteLength` and `byteOffset` through its own): the four geometry names
 /// (`length`, `byteLength`, `byteOffset`, `buffer`) a typed array reads through its
 /// prototypes' accessors, each under the one prototype chain (a Buffer's or a plain view's)
 /// a program mostly reads it from.
@@ -30,7 +31,7 @@ impl<H: Host> Vm<H> {
     /// general path: an own property of the name, an exotic or dictionary link, a data
     /// property or a script getter on the way.
     pub(super) fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
-        let Some(Cell::TypedArray { object: view, .. }) = self.heap.get(object) else {
+        let (Some(Cell::TypedArray { object: view, .. }) | Some(Cell::DataView { object: view, .. })) = self.heap.get(object) else {
             return None;
         };
         let data = &view.object;
@@ -42,7 +43,7 @@ impl<H: Host> Vm<H> {
         }
         let prototype = data.proto();
         let epoch = crate::heap::prototype_layout_epoch();
-        let index = atom as usize % TYPED_ARRAY_GEOMETRY_ENTRIES;
+        let index = (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES;
         let getter = match self.typed_array_geometry.0[index].get() {
             Some(proof) if proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => proof.getter,
             _ => {

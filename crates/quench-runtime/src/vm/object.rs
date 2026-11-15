@@ -118,7 +118,7 @@ const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
 const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 /// `AccessorFieldCache::holder` of an accessor the receiver holds itself.
-const OWN_ACCESSOR: Value = Value::UNDEFINED;
+pub(super) const OWN_ACCESSOR: Value = Value::UNDEFINED;
 
 struct FieldCacheHit {
     value: Value,
@@ -320,7 +320,7 @@ impl<H: Host> Vm<H> {
     /// `SHAPE_INDEX_LONG_WALKS` walks of at least that order already ran, so
     /// index memory stays proportional to walking work already spent.
     #[cold]
-    fn note_long_shape_walk(&self, shape: u32) {
+    pub(super) fn note_long_shape_walk(&self, shape: u32) {
         let entry = &self.shapes[shape as usize];
         let walks = entry.long_walks.get() + 1;
         if walks < SHAPE_INDEX_LONG_WALKS {
@@ -403,40 +403,6 @@ impl<H: Host> Vm<H> {
             return (slot < layout.storage_len()).then_some(DEFAULT_SHAPE_ATTRIBUTES);
         }
         self.walked_shape_attribute(shape, slot)
-    }
-    /// The attributes the nearest transition describing `slot` gives it, walking `shape`'s chain.
-    fn walked_shape_attribute(&self, shape: u32, slot: usize) -> Option<ShapeAttributes> {
-        let mut current = Some(shape);
-        while let Some(id) = current {
-            let shape = &self.shapes[id as usize];
-            match shape.transition {
-                ShapeTransition::Descriptor {
-                    slot: candidate,
-                    attributes,
-                } if candidate as usize == slot => {
-                    return Some(attributes);
-                }
-                ShapeTransition::Add {
-                    slot: candidate,
-                    attributes,
-                    ..
-                } if candidate as usize == slot => {
-                    return Some(attributes.shape());
-                }
-                ShapeTransition::Delete {
-                    slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_SHAPE_ATTRIBUTES),
-                ShapeTransition::FunctionName { .. } | ShapeTransition::FunctionNameReconfigured | ShapeTransition::FunctionLengthReconfigured
-                | ShapeTransition::Constructed { .. }
-                | ShapeTransition::Root
-                | ShapeTransition::Add { .. }
-                | ShapeTransition::Delete { .. }
-                | ShapeTransition::Vacant
-                | ShapeTransition::Descriptor { .. }
-                | ShapeTransition::Dictionary { .. } => current = shape.parent(),
-            }
-        }
-        None
     }
     pub(super) fn shape_keys(&self, shape: u32) -> Vec<PropertyKey> {
         self.shape_entries(shape)
@@ -2271,7 +2237,7 @@ impl<H: Host> Vm<H> {
     /// `holder_hint_hit` of the object part `receiver` (`hinted_receiver`).
     #[inline(always)]
     pub(super) fn holder_hint_hit_in(&self, index: u16, atom: Atom, receiver: &crate::heap::Object) -> Option<Value> {
-        let hint = self.holder_hints.get(usize::from(index))?;
+        let hint = self.holder_hints.holder.get(usize::from(index))?;
         // SAFETY: the hint's watch is live as long as the hint.
         (hint.atom == atom).then(|| unsafe {
             crate::staged::holder::concrete_holder_read(receiver, hint.guard, std::rc::Rc::as_ptr(&hint.watch), hint.value)
@@ -2281,7 +2247,7 @@ impl<H: Host> Vm<H> {
     /// Whether the holder hint `index` is held and its watch still published.
     #[inline(always)]
     pub(super) fn holder_hint_live(&self, index: u16) -> bool {
-        self.holder_hints.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
+        self.holder_hints.holder.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
     }
 
     /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
@@ -2289,7 +2255,7 @@ impl<H: Host> Vm<H> {
     /// was read in.
     #[inline(always)]
     pub(super) fn string_hint_hit(&self, index: u16, atom: Atom) -> Option<Value> {
-        let hint = self.holder_hints.get(usize::from(index))?;
+        let hint = self.holder_hints.holder.get(usize::from(index))?;
         (hint.atom == atom
             && hint.holder == self.string_proto
             && hint.watch.is_published())
@@ -2341,13 +2307,13 @@ impl<H: Host> Vm<H> {
     fn hold_prototype_hint(&mut self, owned: Option<u16>, atom: Atom, guard: u64, prototype: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_prototype(prototype);
         let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
-        let hint = super::HolderHint { guard, atom, holder: prototype, value, watch };
-        if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.len()) {
-            self.holder_hints[usize::from(index)] = hint;
+        let hint = super::holder_hints::HolderHint { guard, atom, holder: prototype, value, watch };
+        if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.holder.len()) {
+            self.holder_hints.holder[usize::from(index)] = hint;
             return Some(index);
         }
-        let index = u16::try_from(self.holder_hints.len()).ok().filter(|&index| index < limit)?;
-        self.holder_hints.push(hint);
+        let index = u16::try_from(self.holder_hints.holder.len()).ok().filter(|&index| index < limit)?;
+        self.holder_hints.holder.push(hint);
         Some(index)
     }
 
@@ -2946,7 +2912,7 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.field_miss_data_value(object, atom, site) {
             return Ok(value);
         }
-        self.record_accessor_field_cache(object, atom, site);
+        self.record_accessor_field_cache(object, atom, site, false);
         let getter = self.cached_field_getter(object, atom, site);
         #[cfg(feature = "profile-lane-exits")]
         if getter.is_none() {
@@ -2966,12 +2932,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Records the accessor a field read at `site` meets on `object` or a prototype of it,
+    /// Records the accessor a field read (a store, with `stores`) at `site` meets on `object` or a prototype of it,
     /// when shapes answer every lookup from `object` to the holder. An own accessor's entry
     /// names no holder (`OWN_ACCESSOR`): a receiver of its shape holds its own accessor in
     /// that slot. Every prototype passed becomes a prototype first, so a later change to one
     /// advances `prototype_layout_epoch` and retires the entry.
-    fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize) {
+    pub(super) fn record_accessor_field_cache(&mut self, object: Value, atom: Atom, site: usize, stores: bool) {
         // The shared overflow site serves reads of every atom; an entry there would answer
         // one name's read with another's getter.
         if !self.field_cache_records(site) {
@@ -2987,7 +2953,7 @@ impl<H: Host> Vm<H> {
             // of the shape holds its own getter in the slot, read from it at each hit.
             let own_getter = slot < FIELD_CACHE_SLOT_CAPACITY
                 && !receiver.has_side_descriptors()
-                && self.slot_holds_getter(receiver, slot);
+                && self.slot_holds_accessor_part(receiver, slot, stores);
             if own_getter {
                 self.record_accessor_entry(
                     site,
@@ -3026,7 +2992,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if slot >= FIELD_CACHE_SLOT_CAPACITY
-            || !self.slot_holds_getter(holder_object, slot)
+            || !self.slot_holds_accessor_part(holder_object, slot, stores)
         {
             return;
         }
@@ -3071,40 +3037,6 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = record_mru_entry(&mut self.accessor_fields, head, ACCESSOR_FIELD_CACHE_WAYS, entry) {
             self.accessor_field_indices.set(site, slot);
             self.note_field_cache_write(site);
-        }
-    }
-
-    /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
-    /// site's recorded accessor still answers it (`record_accessor_field_cache`).
-    pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
-        let mut index = self.accessor_field_indices.get(site);
-        if index == NO_ACCESSOR_FIELD {
-            return None;
-        }
-        let receiver = self.shape_property_lookup(object, atom)?;
-        let (shape, proto, epoch) = (receiver.shape(), receiver.proto(), crate::heap::prototype_layout_epoch());
-        let cache = loop {
-            let cache = self.accessor_fields.get(index as usize)?;
-            if shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch {
-                break cache;
-            }
-            index = cache.next;
-        };
-        let holder = if cache.holder == OWN_ACCESSOR {
-            if receiver.has_side_descriptors() {
-                return None;
-            }
-            receiver
-        } else {
-            self.heap.ordinary_object(cache.holder)?
-        };
-        match cache.slot_accessor {
-            super::SlotAccessor::Getter => self.heap.property_get(holder, usize::from(cache.slot)),
-            super::SlotAccessor::Pair => match self.heap.get(self.heap.property_get(holder, usize::from(cache.slot))?) {
-                Some(Cell::AccessorPair { getter, .. }) => Some(*getter),
-                _ => None,
-            },
-            super::SlotAccessor::Attributes => self.slot_attributes(holder, usize::from(cache.slot))?.getter,
         }
     }
 
@@ -3237,13 +3169,14 @@ impl<H: Host> Vm<H> {
             && self.shape_slot_attributes(object.shape(), slot).is_some_and(|attributes| attributes.accessor)
     }
 
-    /// Whether `object`'s property at `slot` is an accessor with a getter, as `slot_attributes`
-    /// tells, building them only where its shape may hold an accessor.
-    fn slot_holds_getter(&self, object: &Object, slot: usize) -> bool {
+    /// Whether `object`'s property at `slot` is an accessor with a setter (`stores`) or a
+    /// getter, as `slot_attributes` tells, building them only where its shape may hold an
+    /// accessor.
+    fn slot_holds_accessor_part(&self, object: &Object, slot: usize, stores: bool) -> bool {
         self.slot_holds_accessor(object, slot)
             && self
                 .slot_attributes(object, slot)
-                .is_some_and(|attributes| attributes.getter.is_some())
+                .is_some_and(|attributes| if stores { attributes.setter } else { attributes.getter }.is_some())
     }
 
     /// Records `cache` as the site's newest inherited entry. An entry for its receiver shape
@@ -4796,7 +4729,7 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn megamorphic_field_cache(
+    pub(super) fn megamorphic_field_cache(
         &self,
         site: usize,
         receiver: u32,

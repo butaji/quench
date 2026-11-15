@@ -26,8 +26,11 @@ macro_rules! selectors {
             // are never decoded from a selector.
             #[allow(dead_code)]
             pub(super) const ALL: &'static [Self] = &[$(Self::$name,)+];
+            #[allow(dead_code)] #[inline(always)]
+            pub(crate) const fn from_tag(tag: u32) -> Option<Self> { if (tag as usize) < Self::ALL.len() { Some(Self::ALL[tag as usize]) } else { None } }
+            /// How many selectors the family has.
             #[allow(dead_code)]
-            pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
+            pub(crate) const COUNT: usize = Self::ALL.len();
             pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }
             }

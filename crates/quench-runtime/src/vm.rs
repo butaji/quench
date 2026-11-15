@@ -1,6 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
-mod shape_lookup; mod string_wrapper;
+mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
 #[cfg(feature = "aot")]
@@ -33,6 +33,7 @@ mod wasm_gc;
 mod wasm_host;
 mod wasm_js;
 pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
+mod wasm_indirect;
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
@@ -204,7 +205,7 @@ mod object_symbols;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
-#[cfg(test)] mod object_tests;
+#[cfg(test)] mod object_tests; #[cfg(test)] mod shape_attribute_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
@@ -879,22 +880,6 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
-/// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
-/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver whose whole auxiliary word, exact
-/// shape and storage form, is `receiver` (`Object::hint_shape`), which lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
-/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` under
-/// `watch`, which a change to the holder's slot values or any prototype's layout retires.
-/// `prototype` is `holder` as an object's header links it, which an object receiver's test compares.
-#[derive(Clone)]
-struct HolderHint {
-    /// The receiver's header words (`Object::guard_word`): its shape and storage form with
-    /// its prototype link, `holder`'s.
-    guard: u64,
-    atom: Atom,
-    holder: Value,
-    value: Value,
-    watch: crate::heap::PrototypeValueWatch,
-}
 /// Stored as `[receiver, holder, slot]` complemented against `EMPTY_CACHE`, which stores
 /// as zero words.
 impl site_table::SiteEntry for FieldCache {
@@ -1526,7 +1511,7 @@ impl ShapeLookupIndex {
             self.attributes.insert(slot, attributes);
         }
     }
-    fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
+    #[inline(always)] fn slot(&self, key: property_key::PropertyKey) -> Option<u32> {
         self.positions
             .find(Self::key_hash(key), |&position| {
                 self.entries[position as usize].0 == key
@@ -1653,7 +1638,7 @@ impl Shape {
         table
     }
 
-    fn parent(&self) -> Option<u32> {
+    #[inline(always)] fn parent(&self) -> Option<u32> {
         (self.parent != NO_PARENT_SHAPE).then_some(self.parent)
     }
 
@@ -2061,7 +2046,7 @@ pub(crate) struct Vm<H> {
     /// record its own, by index (`Vm::holder_hint_hit`). A hint names its prototype by record
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
-    holder_hints: Vec<HolderHint>,
+    holder_hints: PrototypeHints,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,

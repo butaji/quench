@@ -10,6 +10,7 @@ mod expression;
 mod function;
 mod module;
 mod object;
+mod skim;
 mod operator;
 mod statement;
 

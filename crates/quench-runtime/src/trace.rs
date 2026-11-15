@@ -137,5 +137,7 @@ setting! {
         /// may mark concurrently with the mutator: always (`=on`, or no value), where measured to
         /// pay (`=adaptive`), or never (`=off`).
         ConcurrentGc = "concurrent-gc",
+        /// Functions of a direct eval's source compile on first call.
+        DirectEvalStubs = "direct-eval-stubs",
     }
 }

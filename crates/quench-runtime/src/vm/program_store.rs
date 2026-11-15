@@ -721,6 +721,9 @@ enum ProgramScope {
     /// A sloppy direct eval in a function's or module's scope: its variables
     /// belong to its caller's variable environment.
     Caller,
+    /// A first-call chunk of a function of code whose names resolve through its environments:
+    /// its own root declares nothing, and its by-name loads reach what its stub's do.
+    Enclosed,
 }
 
 #[derive(Clone, Copy)]
@@ -1169,6 +1172,14 @@ impl ProgramStore {
         })
     }
 
+    /// Program `id`, a first-call chunk of a function of program `of`, loads names where its
+    /// stub does: through environments, unless `of` runs in the global scope.
+    pub(super) fn inherit_scope(&mut self, id: ProgramId, of: ProgramId) {
+        if !self.runs_in_global_scope(of) {
+            self.set_scope(id, ProgramScope::Enclosed);
+        }
+    }
+
     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
         self.set_scope(id, ProgramScope::Global);
     }
@@ -1182,7 +1193,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global | ProgramScope::GlobalVariables => true,
-            ProgramScope::Caller => false,
+            ProgramScope::Caller | ProgramScope::Enclosed => false,
         })
     }
 
@@ -1215,7 +1226,7 @@ impl ProgramStore {
         self.entry(id).is_some_and(|entry| match entry.scope {
             ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
             ProgramScope::Global => true,
-            ProgramScope::GlobalVariables | ProgramScope::Caller => false,
+            ProgramScope::GlobalVariables | ProgramScope::Caller | ProgramScope::Enclosed => false,
         })
     }
 
@@ -1293,7 +1304,7 @@ impl ProgramStore {
         if let Some(existing) = &entry.wasm_signatures {
             return Rc::ptr_eq(existing, signatures);
         }
-        if entry.residual.validate().is_err()
+        if entry.residual.validate_unless_proven().is_err()
             || signatures.defined_count() != entry.residual.function_count()
         {
             return false;
@@ -1427,7 +1438,7 @@ impl ProgramStore {
             .defined_signature(index)
     }
 
-    pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
+    #[inline] pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
         self.entry(id)?.wasm_signatures.as_deref()
     }
 
@@ -2767,7 +2778,7 @@ const LANE_VIEW_FIRST_CHUNK: usize = 8;
 pub(super) type LaneViewCell = std::cell::OnceCell<std::ptr::NonNull<super::dispatch_fast::LaneView>>;
 
 /// The view a cell holds, if its function's was derived.
-pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
+#[inline(always)] pub(super) fn derived_lane_view(cell: &LaneViewCell) -> Option<&super::dispatch_fast::LaneView> {
     // SAFETY: a cell points into its table's arena (`LaneViews::store`), which outlives it.
     cell.get().map(|view| unsafe { view.as_ref() })
 }

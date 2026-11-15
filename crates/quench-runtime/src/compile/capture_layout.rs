@@ -225,7 +225,7 @@ pub(super) fn apply_function(
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
-        if captured.is_empty() && selective_layout_is_safe(function, id, inputs, atoms) {
+        if captured.is_empty() && arguments_own_their_slots_unshared(function, id, inputs, atoms) {
             remove_unobservable_clones(function, &captured);
         }
         return;
@@ -322,23 +322,27 @@ fn inherited_dynamic_scope(functions: &[FunctionFacts]) -> Vec<bool> {
 /// Whether the function's activation may keep its uncaptured locals out of its environment:
 /// a nested function, or a module body, whose environment nothing outside it reads by name.
 fn selective_layout_is_safe(function: &Function, id: usize, inputs: &LayoutInputs, atoms: &CompilerAtoms<'_>) -> bool {
-    activation_is_private(function, id, inputs)
+    !function.is_async && !function.is_generator && arguments_own_their_slots_unshared(function, id, inputs, atoms)
+}
+
+/// `activation_is_unshared` of a function whose arguments arrive in slots of their own.
+fn arguments_own_their_slots_unshared(function: &Function, id: usize, inputs: &LayoutInputs, atoms: &CompilerAtoms<'_>) -> bool {
+    activation_is_unshared(function, id, inputs)
         // Each argument arrives in a slot of its own, which no closure names: a simple list's
         // or a directly binding rest list's parameter, or the hidden slot of a list binding
         // its names apart (`Function::arguments_own_their_slots`), whose bindings are locals.
         && function.arguments_own_their_slots(|atom| atoms.get(atom))
 }
 
-/// Whether nothing outside the function's own code reads its environment by name or
-/// resumes it: a nested function or a module body, with no dynamic scope access and no
-/// suspension or construction protocol that names its slots.
-fn activation_is_private(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
+/// Whether nothing outside the function's own code reads its environment by name: a nested
+/// function or a module body, with no dynamic scope access and no construction protocol that
+/// names its slots. A suspendable body keeps its frame across its suspensions, so a copy of
+/// its environment no closure holds is as unobservable as in any other.
+fn activation_is_unshared(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
     let nested = id != 0 && function.parent.is_some();
     let module_body = inputs.module_root && function.parent.is_none();
     (nested || module_body)
         && !inputs.dynamic_descendant
-        && !function.is_async
-        && !function.is_generator
         && function.construction_is_private()
         && !function.has_dynamic_scope_access()
 }

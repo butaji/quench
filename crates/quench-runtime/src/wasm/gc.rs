@@ -36,7 +36,7 @@ impl GcFieldAccess {
             .2
     }
 
-    pub(crate) fn from_op(op: Op) -> Option<Self> {
+    #[inline(always)] pub(crate) fn from_op(op: Op) -> Option<Self> {
         Self::OPS
             .iter()
             .find(|(_, structure, array)| *structure == op || *array == op)

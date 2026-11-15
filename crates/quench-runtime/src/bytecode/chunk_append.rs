@@ -27,9 +27,10 @@ impl SiteCount {
         Self { used: Cell::new(used), room: capacity.saturating_sub(used) }
     }
 
-    /// The count the program's caches are laid out for.
+    /// The count the program's caches are laid out for: the sites used and the room left, which
+    /// stops at the whole site space.
     pub(crate) fn capacity(&self) -> u16 {
-        self.used.get() + self.room
+        self.used.get().saturating_add(self.room)
     }
 }
 
@@ -68,6 +69,8 @@ pub(crate) struct ChunkDelta {
     pub(crate) object_sites: Vec<ObjectSite>,
     pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) literal_templates: Vec<Box<[LiteralStep]>>,
+    /// The stubs of the chunk's functions, with the scopes their own chunks compile against.
+    pub(crate) stubs: Vec<(u32, std::rc::Rc<crate::compile::first_call::FirstCallScopes>)>,
     pub(crate) sites: u16,
 }
 
@@ -116,6 +119,7 @@ impl ResidualProgram {
             (self.object_sites.spare(), delta.object_sites.len()),
             (self.regexp_literal_sites.spare(), delta.regexp_literal_sites.len()),
             (self.literal_templates.spare(), delta.literal_templates.len()),
+            (self.first_call_scopes.spare(), delta.stubs.len()),
         ]
         .iter()
         .all(|(spare, needed)| spare >= needed)
@@ -134,6 +138,7 @@ impl ResidualProgram {
         self.object_sites.append(delta.object_sites.into_iter());
         self.regexp_literal_sites.append(delta.regexp_literal_sites.into_iter());
         self.literal_templates.append(delta.literal_templates.into_iter());
+        self.first_call_scopes.append(delta.stubs.into_iter());
         self.cache_sites.set(delta.sites);
         self.functions.append(delta.functions.into_iter());
         target

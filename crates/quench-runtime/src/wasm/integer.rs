@@ -15,7 +15,7 @@ macro_rules! binary_family {
                 matches!(self, Self::Add | Self::Subtract | Self::Multiply)
             }
 
-            pub(crate) fn apply(self, $($argument: $signed),+) -> Result<WasmValue, WasmTrap> {
+            #[inline(always)] pub(crate) fn apply(self, $($argument: $signed),+) -> Result<WasmValue, WasmTrap> {
                 self.result($($argument),+).map(|value| value.into_wasm(WasmValue::$variant))
             }
 
@@ -42,7 +42,7 @@ macro_rules! unary_family {
      $($name:ident, $wasm:ident => $body:expr;)+) => {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
-            pub(crate) fn apply(self, $argument: $signed) -> WasmValue {
+            #[inline(always)] pub(crate) fn apply(self, $argument: $signed) -> WasmValue {
                 type $signed_alias = $signed;
                 let result: NumericResult<$signed> = match self { $(Self::$name => $body,)+ };
                 result.into_wasm(WasmValue::$variant)

@@ -3841,7 +3841,7 @@ impl Heap {
             }
         });
     }
-    pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
+    #[inline(always)] pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         let value = match object.properties().has_inline_property_storage() {
             true if slot < INLINE_PROPERTY_COUNT => object.inline_property(slot),
             true => None,

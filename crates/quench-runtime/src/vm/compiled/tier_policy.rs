@@ -254,6 +254,7 @@ const MEASURED: Tiers = Tiers {
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
 /// observes every PC up to its stop, and a tier would run past it.
+#[inline(always)]
 pub(in crate::vm) const fn tiers_enter(stops: bool) -> bool {
     crate::DYNAMIC_EXECUTION_ENABLED && !stops
 }

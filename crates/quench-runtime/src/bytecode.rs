@@ -774,6 +774,7 @@ macro_rules! opcodes {
                 Self::JS_DENOTATIONS[self as usize]
             }
 
+            #[inline(always)]
             pub(crate) const fn is_wide_marker(self) -> bool {
                 matches!(self.immediate_role(), ImmediateRole::WideInstructionIndex)
             }
@@ -2008,7 +2009,7 @@ impl Function {
     }
 
     /// Whether `atom` is among `environment_atoms`.
-    pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+    #[inline(always)] pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
         self.declared_atoms().environment.contains(&atom)
     }
 

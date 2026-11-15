@@ -145,24 +145,24 @@ impl Drop for StackGuard {
 
 impl GuestCallGuard {
     /// How many more guest calls the thread admits before `enter` fails.
-    pub fn remaining() -> usize {
+    #[inline] pub fn remaining() -> usize {
         GUEST_CALL_LIMIT
             .with(Cell::get)
             .saturating_sub(ACTIVE_GUEST_CALLS.with(Cell::get))
     }
 
     /// How many more requested Wasm frame bytes the thread admits.
-    pub fn remaining_storage_bytes() -> usize {
+    #[inline] pub fn remaining_storage_bytes() -> usize {
         MAX_GUEST_FRAME_STORAGE_BYTES - ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get)
     }
 
-    pub fn enter() -> Result<Self, StackExhausted> {
+    #[inline] pub fn enter() -> Result<Self, StackExhausted> {
         Self::enter_with_storage(0)
     }
 
     /// Enter a guest activation and account its requested Wasm locals/registers.
     /// JavaScript activations use `enter`, which consumes depth but no Wasm storage.
-    pub fn enter_with_storage(storage_bytes: usize) -> Result<Self, StackExhausted> {
+    #[inline] pub fn enter_with_storage(storage_bytes: usize) -> Result<Self, StackExhausted> {
         ACTIVE_GUEST_CALLS.with(|depth| {
             let current = depth.get();
             let used_storage = ACTIVE_GUEST_FRAME_STORAGE_BYTES.with(Cell::get);
@@ -182,7 +182,7 @@ impl GuestCallGuard {
 }
 
 impl Drop for GuestCallGuard {
-    fn drop(&mut self) {
+    #[inline] fn drop(&mut self) {
         ACTIVE_GUEST_CALLS.with(|depth| depth.set(depth.get() - 1));
         ACTIVE_GUEST_FRAME_STORAGE_BYTES
             .with(|storage| storage.set(storage.get() - self.1));

@@ -206,7 +206,7 @@ impl Heap {
         unsafe { self.slots.get_unchecked(index) }.cell.as_ref()
     }
 
-    pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
+    #[inline] pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
         };
@@ -286,7 +286,7 @@ impl Heap {
     }
 
     /// `iterator`, mutably, past the write barrier.
-    pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
+    #[inline(always)] pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
         if let Some(record_id) = value.direct_iterator_index() {
             // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) });
@@ -334,7 +334,7 @@ impl Heap {
     }
 
     /// `await_state`, mutably, past the write barrier.
-    pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
+    #[inline(always)] pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
         if let Some(record_id) = value.direct_await_index() {
             // SAFETY: direct-await Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.await_records.get_live_mut(record_id, &self.properties) });
@@ -346,7 +346,7 @@ impl Heap {
     }
 
     /// `promise`, mutably, past the write barrier.
-    pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
+    #[inline(always)] pub(crate) fn promise_mut(&mut self, value: Value) -> Option<&mut PromiseCell> {
         if let Some(record_id) = value.direct_promise_index() {
             // SAFETY: direct-promise Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.promise_records.get_live_mut(record_id, &self.properties) });
@@ -382,7 +382,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn is_function_value(&self, value: Value) -> bool {
+    #[inline(always)] pub(crate) fn is_function_value(&self, value: Value) -> bool {
         self.function(value).is_some()
     }
 

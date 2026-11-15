@@ -482,7 +482,7 @@ impl LaneView {
                     (lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, { $leaf }>),
                     (lane_returning::<H, RETURNING_FIELD_HOLDER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_HOLDER, { $leaf }>),
                     (lane_returning::<H, RETURNING_FIELD_INHERITED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_INHERITED, { $leaf }>),
-                    (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>),
+                    (lane_returning::<H, RETURNING_FIELD_NESTED, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_NESTED, { $leaf }>), (lane_returning::<H, RETURNING_FIELD_GETTER, NOT_LEAF>, lane_returning::<H, RETURNING_FIELD_GETTER, { $leaf }>),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
             }};
@@ -611,7 +611,6 @@ const ACTIVATION_FILL_BLOCK: usize = 8;
 const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
 
 mod closure_targets;
-mod getters;
 mod lane_stack_growth;
 use super::lane_values::LaneValues;
 mod this_binding;
@@ -620,7 +619,7 @@ mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, lane_planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
-use getters::{lane_getter_read, lane_read_getter};
+use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
 mod unary_values;
@@ -1390,6 +1389,8 @@ enum ActivationKind {
     /// A Wasm activation keeps its caller's memory for the return and its requested
     /// register payload for guest-stack accounting, excluding admission padding.
     Wasm { memory: MemoryView, frame_storage_bytes: usize },
+    /// A Wasm export JavaScript called (`wasm_exports`): it keeps the caller's environment.
+    WasmExport { frame_storage_bytes: usize, caller_env: Value },
 }
 
 impl Activation {
@@ -1397,7 +1398,7 @@ impl Activation {
     #[inline] fn script(&self) -> Option<&ScriptActivation> {
         match &self.kind {
             ActivationKind::Script(script) => Some(script),
-            ActivationKind::Wasm { .. } => None,
+            ActivationKind::Wasm { .. } | ActivationKind::WasmExport { .. } => None,
         }
     }
 
@@ -1405,7 +1406,7 @@ impl Activation {
     /// whose view carries the context (`MemoryView::script`).
     fn caller_memory<H: Host>(&self, cx: *mut LaneContext<H>) -> MemoryView {
         match self.kind {
-            ActivationKind::Script(_) => MemoryView::script(cx),
+            ActivationKind::Script(_) | ActivationKind::WasmExport { .. } => MemoryView::script(cx),
             ActivationKind::Wasm { memory, .. } => memory,
         }
     }
@@ -1413,7 +1414,7 @@ impl Activation {
     #[inline] fn frame_storage_bytes(&self) -> usize {
         match self.kind {
             ActivationKind::Script(_) => 0,
-            ActivationKind::Wasm { frame_storage_bytes, .. } => frame_storage_bytes,
+            ActivationKind::Wasm { frame_storage_bytes, .. } | ActivationKind::WasmExport { frame_storage_bytes, .. } => frame_storage_bytes,
         }
     }
 }
@@ -1471,6 +1472,8 @@ impl ActivationState {
             if let Some(script) = activation.script() {
                 current.this = script.caller_this;
                 current.env = script.caller_env;
+            } else if let ActivationKind::WasmExport { caller_env, .. } = activation.kind {
+                current.env = caller_env;
             }
             current.program = activation.caller_program;
         }
@@ -1936,6 +1939,8 @@ pub(super) struct LaneStack {
     body_boundary: Option<usize>,
     /// The frames the boundary's caller activations became, once a materialization made them.
     boundary_frames: Option<usize>,
+    /// The Wasm exports JavaScript calls (`wasm_exports`).
+    wasm_exports: wasm_exports::ExportTargets,
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -1968,6 +1973,7 @@ impl Default for LaneStack {
             native_boundary: None,
             body_boundary: None,
             boundary_frames: None,
+            wasm_exports: Default::default(),
         }
     }
 }
@@ -2086,7 +2092,7 @@ impl LaneStack {
     /// Derive `activation_limit` from the activations' capacity, the guest calls the
     /// thread admits beyond the frames and activations already counted, and a due
     /// collection.
-    fn refresh_activation_limit(&self) {
+    #[inline(always)] fn refresh_activation_limit(&self) {
         let limit = if lane_floor().load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR {
             0
         } else {
@@ -2748,12 +2754,12 @@ macro_rules! lane_handler {
 /// `lane_handler!` for a handler only JavaScript views dispatch: the run's context comes
 /// from the carried view (`MemoryView::script`) rather than the thread-local load.
 macro_rules! script_handler {
-    ($(#[$meta:meta])* fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
+    ($(#[$meta:meta])* $vis:vis fn $name:ident<$($param:ident: $ty:ty),*>($cx:ident, $r:ident, $ip:ident, $i:ident, $view:ident) $body:block) => {
         lane_handler!(@define bytes [{
             let cx: *mut LaneContext<H> = bytes.cast();
             debug_assert_eq!(cx, lane_context::<H>(), "a JavaScript view carries its context");
             cx
-        }] $(#[$meta])* fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
+        }] $(#[$meta])* $vis fn $name<$($param: $ty),*>($cx, $r, $ip, $i, $view) $body);
     };
 }
 
@@ -2858,6 +2864,8 @@ lane_handler! {
 
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
+mod local_fields;
+use local_fields::local_field_handler;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
@@ -6887,6 +6895,9 @@ script_handler! {
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
         if crate::bytecode::FieldBase(i.b).local_index().is_some() {
+            if let Some(handler) = local_field_handler(cx, i) {
+                requicken::<H>(ip, handler);
+            }
             sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))
         }
         let vm = unsafe { vm(cx) };
@@ -7014,6 +7025,10 @@ script_handler! {
         let string_base = base.is_some_and(|base| {
             (unsafe { vm(cx) }).heap.is_string(base)
         });
+        if let Some(handler) = local_field_handler(cx, i) {
+            requicken::<H>(ip, handler);
+            sibling!(lane_get_field::<H>, r, ip, Carried::script(cx))
+        }
         let handler: Option<Handler> = match lane_field_site_tier(unsafe { vm(cx) }, code, i) {
             // A string primitive reads `String.prototype`, whatever tier its entries name,
             // where the site admits that read; any other read of one is the general read's.
@@ -7028,7 +7043,7 @@ script_handler! {
             _ if string_base => Some(lane_get_field::<H>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
-            FieldSiteTier::Getter => Some(lane_get_field_getter::<H>),
+            FieldSiteTier::Getter => Some(lane_get_field_getter_hinted::<H>),
             FieldSiteTier::Polymorphic => Some(single_base_handler(
                 i.b,
                 lane_get_field_polymorphic::<H, true, true>,
@@ -7360,7 +7375,7 @@ fn lane_getter_activation<H: Host>(
             let base = unsafe { lane_field_base(cx, r, site.base) }?;
             match site.second {
                 Some((atom, cache)) => {
-                    Some((lane_cached_field(cx, code, base, site.first.0, site.first.1)?, atom, cache))
+                    Some((lane_cached_field(cx, code, base, site.first.0, site.first.1, NO_PRIVATE_RECORD)?, atom, cache))
                 }
                 None => Some((base, site.first.0, site.first.1)),
             }
@@ -7468,14 +7483,14 @@ unsafe fn lane_field_value<H: Host>(
     if i.b == crate::bytecode::FieldBase::NESTED {
         let site = *code.field_sites.get(i.imm() as usize)?;
         let base = unsafe { lane_field_base(cx, r, site.base) }?;
-        let value = lane_cached_field(cx, code, base, site.first.0, site.first.1)?;
+        let value = lane_cached_field(cx, code, base, site.first.0, site.first.1, NO_PRIVATE_RECORD)?;
         return match site.second {
-            Some((atom, cache)) => lane_cached_field(cx, code, value, atom, cache),
+            Some((atom, cache)) => lane_cached_field(cx, code, value, atom, cache, NO_PRIVATE_RECORD),
             None => Some(value),
         };
     }
     let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }?;
-    lane_cached_field(cx, code, base, i.imm(), i.c)
+    lane_cached_field(cx, code, base, i.imm(), i.c, std::ptr::from_ref(i) as usize)
 }
 
 /// The object a field base names: a register, or `this` where the lane knows it.
@@ -7505,18 +7520,17 @@ fn lane_cached_field<H: Host>(
     cx: *mut LaneContext<H>,
     code: &ResidualProgram,
     object: Value,
-    atom: crate::bytecode::Atom,
-    site: u16,
+    atom: crate::bytecode::Atom, site: u16, record: usize,
 ) -> Option<Value> {
     let probe = {
         let vm = unsafe { vm(cx) };
         // A string's own `length`, which its chain never shadows, as a tokenizer's
-        // `this.input.length` reads: no cache records a primitive's, and the probes below
-        // all decline it (`Vm::cached_string_field_hit`).
+        // `this.input.length` reads, and an array's, no shape slot: no cache records either, and
+        // the probes below all decline a primitive (`Vm::cached_string_field_hit`).
         if atom == vm.length_atom
-            && let Some(text) = vm.heap.string(object)
+            && let Some(length) = own_length(vm, object)
         {
-            return Some(Value::length(text.len()));
+            return Some(length);
         }
         // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
         if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
@@ -7533,8 +7547,41 @@ fn lane_cached_field<H: Host>(
         // reach the same accessor and decline it.
         probe => unsafe { lane_getter_read(cx, object, atom, site) }.or_else(|| {
             // SAFETY: the context outlives the lane run.
-            lane_cached_field_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).env })
+            lane_cached_field_miss(cx, code, object, atom, site, probe, record)
         }),
+    }
+}
+
+/// The record of a private-name read the site's private home cache (`PrivateSiteHomes`)
+/// cannot serve: a field site names one atom per record, which a nested site's two do not.
+const NO_PRIVATE_RECORD: usize = 0;
+
+/// A private field's read from the object's private elements, before any cache, as the
+/// general loop's `GetField` does. Its home follows the running function and the environment
+/// its frame would capture from: the lane's frame, or a frameless activation's function and
+/// environment, whose frame would hold that environment as its closure's.
+#[inline(never)]
+fn lane_private_field_read<H: Host>(
+    cx: *mut LaneContext<H>,
+    code: &ResidualProgram,
+    object: Value,
+    atom: crate::bytecode::Atom,
+    record: usize,
+) -> Option<Value> {
+    // SAFETY: the context outlives the lane run.
+    let vm = unsafe { vm(cx) };
+    if record != NO_PRIVATE_RECORD {
+        let (environment, function, frame) = lane_private_site(cx)?;
+        let (brand, hint) = vm.site_private_brand(code, record, environment, function, frame, atom)?;
+        let data = vm.object_data(object)?;
+        return vm.site_private_position(record, data, brand, hint).and_then(|position| data.private_data(position));
+    }
+    match vm.lane_stack.activations.last() {
+        None => vm.private_field_value(code, object, atom),
+        Some(activation) => {
+            let function = activation.script().map(|_| activation.function)?;
+            vm.memoized_private_field_value(code, unsafe { (*cx).env }, function, object, atom)
+        }
     }
 }
 
@@ -7542,32 +7589,28 @@ fn lane_cached_field<H: Host>(
 /// keeps the lookups' stack locals, which would cost it the tail call to the next record.
 #[inline(never)]
 fn lane_cached_field_miss<H: Host>(
-    vm: &mut Vm<H>,
+    cx: *mut LaneContext<H>,
     code: &ResidualProgram,
     object: Value,
     atom: crate::bytecode::Atom,
     site: u16,
     probe: super::object::FieldCacheProbe,
-    environment: Value,
+    record: usize,
 ) -> Option<Value> {
-    // A private field reads from the object's private elements before any cache, as the
-    // general loop's `GetField` does. Its home follows the running function and the
-    // environment its frame would capture from: the lane's frame, or a frameless activation's
-    // function and environment, whose frame would hold that environment as its closure's.
+    // SAFETY: the context outlives the lane run.
+    let vm = unsafe { vm(cx) };
     if vm.is_private_name(atom) {
-        return match vm.lane_stack.activations.last() {
-            None => vm.private_field_value(code, object, atom),
-            Some(activation) => {
-                let function = activation.script().map(|_| activation.function)?;
-                vm.memoized_private_field_value(code, environment, function, object, atom)
-            }
-        };
+        return lane_private_field_read(cx, code, object, atom, record);
     }
     match probe {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
+            // The entries of a site past one shape, whose handler may be a nested site's or a
+            // local base's, as `lane_get_field_hashed` reads them.
+            .or_else(|| vm.polymorphic_field_hit(code, object, site))
+            .or_else(|| vm.cell_polymorphic_holder_hit(object, site))
             .or_else(|| vm.probed_field_miss_value(object, atom, site)),
         super::object::FieldCacheProbe::Ineligible => vm
             .array_length_field(object, atom)
@@ -7778,7 +7821,7 @@ fn lane_private_brand<H: Host>(
     ip: Ip,
     code: &ResidualProgram,
     atom: crate::bytecode::Atom,
-) -> Option<crate::heap::PrivateBrand> {
+) -> Option<(crate::heap::PrivateBrand, usize)> {
     let (environment, function, frame) = lane_private_site(cx)?;
     unsafe { vm(cx) }.site_private_brand(code, ip.addr(), environment, function, frame, atom)
 }
@@ -7818,10 +7861,14 @@ fn lane_private_field_store<H: Host>(
     atom: crate::bytecode::Atom,
     value: Value,
 ) -> bool {
-    let Some(brand) = lane_private_brand(cx, ip, code, atom) else {
+    let Some((brand, hint)) = lane_private_brand(cx, ip, code, atom) else {
         return false;
     };
-    (unsafe { vm(cx) }).object_data_mut(object).is_some_and(|data| data.set_private_field(brand, value))
+    let vm = unsafe { vm(cx) };
+    let Some(position) = vm.object_data(object).and_then(|data| vm.site_private_position(ip.addr(), data, brand, hint)) else {
+        return false;
+    };
+    vm.object_data_mut(object).is_some_and(|data| data.set_private_data(position, value))
 }
 
 /// Leave the lane at `ip` after its instruction failed with `error` before any effect: a frame
@@ -7944,8 +7991,11 @@ script_handler! {
     fn lane_check_private<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.a)).is_some_and(|data| data.private_field(brand).is_some())
+        let present = lane_private_brand(cx, ip, code, i.imm()).is_some_and(|(brand, hint)| {
+            let vm = unsafe { vm(cx) };
+            vm.object_data(r.get(i.a)).is_some_and(|data| {
+                vm.site_private_position(ip.addr(), data, brand, hint).and_then(|position| data.private_data(position)).is_some()
+            })
         });
         if !present {
             sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
@@ -7978,8 +8028,9 @@ script_handler! {
     fn lane_private_in<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|brand| {
-            (unsafe { vm(cx) }).object_data(r.get(i.b)).map(|data| data.has_private_name(brand))
+        let carries = lane_private_brand(cx, ip, code, i.imm()).and_then(|(brand, hint)| {
+            let vm = unsafe { vm(cx) };
+            vm.object_data(r.get(i.b)).map(|data| vm.site_private_position(ip.addr(), data, brand, hint).is_some())
         });
         let Some(carries) = carries else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
@@ -7999,13 +8050,15 @@ script_handler! {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let read = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }.and_then(|object| {
-            let brand = lane_private_brand(cx, ip, code, i.imm())?;
-            let data = (unsafe { vm(cx) }).object_data(object)?;
-            match data.private_field(brand) {
+            let (brand, hint) = lane_private_brand(cx, ip, code, i.imm())?;
+            let vm = unsafe { vm(cx) };
+            let data = vm.object_data(object)?;
+            let position = vm.site_private_position(ip.addr(), data, brand, hint);
+            match position.and_then(|position| data.private_data(position)) {
                 Some(value) => Some(PrivateRead::Value(value)),
                 // A method or accessor of a brand the object carries (`Vm::site_private_element`).
-                None if data.has_private_name(brand) => {
-                    match (unsafe { vm(cx) }).site_private_element(ip.addr(), brand, object)? {
+                None if position.is_some() => {
+                    match vm.site_private_element(ip.addr(), brand, object)? {
                         super::private_site_home::PrivateElement::Method(value) => Some(PrivateRead::Value(value)),
                         super::private_site_home::PrivateElement::Getter(getter) => Some(PrivateRead::Getter(object, getter)),
                     }
@@ -12244,15 +12297,10 @@ impl<H: Host> Vm<H> {
                     // takes the guest-call guard its push would have.
                     crate::stack::GuestCallGuard::enter().ok()
                 }
-                ActivationKind::Wasm { .. } => {
+                ActivationKind::Wasm { .. } | ActivationKind::WasmExport { .. } => {
                     // The lane reserved this payload while it was frameless; its materialized
                     // frame holds the same weighted guard until the call returns.
-                    Some(self.push_wasm_frame_with_registers(
-                        code,
-                        caller,
-                        activation.function,
-                        window,
-                    ))
+                    Some(self.push_wasm_frame_with_registers(code, caller, activation.function, window, state.env))
                 }
             };
             if !to_native {
@@ -14025,6 +14073,9 @@ script_handler! {
         if native == Native::ReflectGet {
             sibling!(reflect_get_call_handler::<H>(), r, ip, Carried::script_in(cx, view))
         }
+        if native == Native::WasmExportedFunction {
+            sibling!(wasm_exports::call_export_handler::<H>(), r, ip, Carried::script(cx))
+        }
         resume!(cx, lane_native_call_value(cx, r, ip, i, native))
     }
 }
@@ -14164,9 +14215,9 @@ fn lane_native_value<H: Host>(
         Native::RegExpExec | Native::RegExpTest | Native::StringReplace | Native::StringMatch => {
             return lane_regexp_call(cx, ip, i, native, callee, receiver, args);
         }
-        // A generator's resumption runs its body, guest code that no in-place shortcut of
-        // `lane_string_or_native_call` makes.
-        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => {
+        // A generator's resumption runs its body, and a Wasm export its function: guest code
+        // that no in-place shortcut of `lane_string_or_native_call` makes.
+        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow | Native::WasmExportedFunction => {
             return lane_call_native(cx, ip, native, callee, receiver, args);
         }
         // Neither a string method nor a pure native: the promise shortcut, else the native.
@@ -14187,13 +14238,16 @@ fn lane_native_value<H: Host>(
 mod named_keys;
 mod denoted;
 mod wasm_calls;
+mod wasm_exports;
+mod i64_operators;
+use i64_operators::i64_operator_handler;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
-use wasm_calls::{known_call_handler, reference_call_handler};
+use wasm_calls::{known_call_handler, reference_call_handler, wasm_return_handler};
 use denoted::{denoted_handler, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
-mod native_calls; mod generator_yields; use generator_yields::yield_handler;
+mod native_calls; mod getters; mod generator_yields; use generator_yields::yield_handler;
 mod array_steps;
 mod for_in_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
@@ -15142,14 +15196,14 @@ fn lane_forwarded_construction<H: Host>(
         .flatten()
     {
         Some(function) => function,
-        None => lane_cached_field(cx, code, this, method.method.0, method.method.1)?,
+        None => lane_cached_field(cx, code, this, method.method.0, method.method.1, NO_PRIVATE_RECORD)?,
     };
     let apply = match (!vm.reads_function_info(method.apply.0))
         .then(|| vm.cell_holder_field_hit(code, function, method.apply.1))
         .flatten()
     {
         Some(apply) => apply,
-        None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1)?,
+        None => lane_cached_field(cx, code, function, method.apply.0, method.apply.1, NO_PRIVATE_RECORD)?,
     };
     if !matches!(
         vm.heap.function(apply),
@@ -17452,10 +17506,12 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
 /// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
-/// enters Wasm functions; a capture store's handler reads the context a Wasm view lacks.
+/// enters Wasm functions and a return completes a Wasm activation; a capture store's handler
+/// reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
-    match op.class() { Class::Call => Some(Some(call)), Class::StoreCapture => Some(None), _ => None }
+    let ret = LaneHandler { handler: wasm_return_handler::<H>(), produces: false };
+    match op.class() { Class::Call => Some(Some(call)), Class::Return => Some(Some(ret)), Class::StoreCapture => Some(None), _ => None }
 }
 
 return_handler! {
@@ -17494,6 +17550,9 @@ lane_handler! {
     fn lane_return_general<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         if let Some(resumed) = lane_complete_cross_activation(cx, value) {
+            resume!(cx, resumed)
+        }
+        if let Some(resumed) = wasm_exports::lane_complete_export(cx, value) {
             resume!(cx, resumed)
         }
         if let Some(resumed) = lane_complete_returning_chain(cx, value) {
@@ -17701,6 +17760,9 @@ const RETURNING_FIELD_NESTED: u8 = 9;
 /// A returning `MakeObjectLiteral` (`return { ... }`): the literal `lane_make_object_literal`
 /// makes, returned from the frame.
 const RETURNING_OBJECT_LITERAL: u8 = 10;
+/// `RETURNING_FIELD` at a site whose reads met a getter (`FieldSiteTier::Getter`): the getter
+/// activation first, as `lane_get_field_getter` makes it, so no cached data probe precedes it.
+const RETURNING_FIELD_GETTER: u8 = 11;
 
 /// The cached read of a single-base returning `GetField` of `KIND` (`RETURNING_FIELD_OWN`,
 /// `_POLYMORPHIC`, `_HOLDER`, `_INHERITED`) at `cache`: a hit, which runs no guest code.
@@ -18477,6 +18539,14 @@ script_handler! {
                 // A read that meets its site's getter activates it, as `lane_get_field`
                 // does: the record returns from the frame, so the getter's completion
                 // completes this activation too (`lane_complete_activation`).
+                RETURNING_FIELD_GETTER => {
+                    return match lane_getter_activation(cx, r, ip, i) {
+                        Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
+                        // A native getter that raised is not called again: the general path raises it.
+                        Err(next) if (vm(cx)).lane_raised.is_some() => next,
+                        Err(_) => sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
+                    };
+                }
                 RETURNING_FIELD => match lane_field_value(cx, r, i) {
                     Some(value) => Some(value),
                     None => {
@@ -18600,7 +18670,8 @@ script_handler! {
                 Some(lane_returning::<H, RETURNING_FIELD, LEAF>)
             }
             FieldSiteTier::Nested => Some(lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>),
-            FieldSiteTier::General | FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD, LEAF>),
+            FieldSiteTier::General => Some(lane_returning::<H, RETURNING_FIELD, LEAF>),
+            FieldSiteTier::Getter => Some(lane_returning::<H, RETURNING_FIELD_GETTER, LEAF>),
             FieldSiteTier::Polymorphic => Some(lane_returning::<H, RETURNING_FIELD_POLYMORPHIC, LEAF>),
             FieldSiteTier::Holder => Some(lane_returning::<H, RETURNING_FIELD_HOLDER, LEAF>),
             FieldSiteTier::Inherited => Some(lane_returning::<H, RETURNING_FIELD_INHERITED, LEAF>),
@@ -19745,10 +19816,7 @@ fn derive_lane_view<'live, H: Host>(
                 && F64UnaryOperator::from_tag(instruction.imm())
                     == Some(F64UnaryOperator::SquareRoot)
             {
-                tables[usize::from(backward_jump)][usize::from(acc)]
-                    .get(op as usize)
-                    .copied()
-                    .flatten()
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| {
                         LaneHandler::producer(match acc {
                             ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
@@ -19758,13 +19826,12 @@ fn derive_lane_view<'live, H: Host>(
                             _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
                         })
                     })
-            } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten().and_then(|_| {
-                    LaneHandler::producer(
-                        FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())]
-                            [usize::from(arith)][usize::from(acc)],
-                    )
-                })
+            } else if let Some(handler) = float_arithmetic(op, instruction.imm())
+                .map(|arith| FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())][usize::from(arith)][usize::from(acc)])
+                .or_else(|| i64_operator_handler::<H>(op, instruction.imm(), acc))
+            {
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                    .and_then(|_| LaneHandler::producer(handler))
             } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain | Class::ArgumentsLength | Class::ArgumentGet)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())

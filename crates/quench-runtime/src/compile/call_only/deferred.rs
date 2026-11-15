@@ -15,7 +15,7 @@ use oxc_ast::ast::{Expression, Function, Program, Statement};
 pub(in crate::compile) fn compiles_at_load(program: &Program<'_>, nested_unbounded: bool, private_names: bool) -> bool {
     let Some(function) = function_alone(program) else { return true };
     function.r#async || function.generator || function.is_expression() && function.id.is_some()
-        || nested_unbounded || private_names || invoked_where_made(program)
+        || nested_unbounded || private_names || invoked_where_made(program.source_text, program.span.end)
 }
 
 /// The function `program` holds alone, as a declaration or an expression statement.
@@ -30,9 +30,9 @@ fn function_alone<'a>(program: &'a Program<'_>) -> Option<&'a Function<'a>> {
     }
 }
 
-/// Whether the source after the function calls it where it is made.
-fn invoked_where_made(program: &Program<'_>) -> bool {
-    let after = program.source_text.get(program.span.end as usize..).unwrap_or_default().trim_start();
+/// Whether the source after the function, which ends at `end`, calls it where it is made.
+pub(in crate::compile) fn invoked_where_made(source_text: &str, end: u32) -> bool {
+    let after = source_text.get(end as usize..).unwrap_or_default().trim_start();
     after.starts_with('(') || after.starts_with(".call") || after.starts_with(".apply")
 }
 

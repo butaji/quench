@@ -25,13 +25,13 @@ fn scalar(value: WasmValue) -> u64 {
     }
 }
 
-fn lane_mask(width: u32) -> u128 {
+#[inline(always)] fn lane_mask(width: u32) -> u128 {
     u128::MAX >> (u128::BITS - width)
 }
-fn lane(bits: u128, width: u32, index: u8) -> u64 {
+#[inline(always)] fn lane(bits: u128, width: u32, index: u8) -> u64 {
     ((bits >> (width * u32::from(index))) & lane_mask(width)) as u64
 }
-fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
+#[inline(always)] fn replace(bits: u128, width: u32, index: u8, value: u64) -> u128 {
     let shift = width * u32::from(index);
     let mask = lane_mask(width);
     (bits & !(mask << shift)) | ((u128::from(value) & mask) << shift)
@@ -40,7 +40,7 @@ fn splat(value: u64, width: u32) -> u128 {
     (0..u128::BITS / width).fold(0, |bits, index| replace(bits, width, index as u8, value))
 }
 
-fn map_lanes(
+#[inline(always)] fn map_lanes(
     left: u128,
     right: Option<u128>,
     width: u32,

@@ -118,7 +118,7 @@ impl<H: Host> Vm<H> {
         module: &crate::WasmModule,
         imports: &[RootId],
     ) -> Result<crate::WasmInstance, JsError> {
-        module.program.validate().map_err(JsError::validation)?;
+        module.program.validate_unless_proven().map_err(JsError::validation)?;
         if imports.len() != module.imports().len() {
             return Err(JsError::wasm_link("Wasm import count mismatch"));
         }
@@ -1020,9 +1020,11 @@ impl<H: Host> Vm<H> {
         Ok((bytes.len() / ty.page_size() as usize) as u64)
     }
 
-    pub(super) fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
-        crate::WasmType::from_wasm(self.wasm_memory_type(memory)?.index_type())
-            .ok_or_else(|| JsError::validation("invalid Wasm memory index type".into()))
+    #[inline] pub(super) fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
+        let Some(Cell::WasmMemory { header, .. }) = self.heap.get(memory) else {
+            return Err(JsError::validation("invalid Wasm memory binding".into()));
+        };
+        crate::WasmType::from_wasm(header.ty.index_type()).ok_or_else(|| JsError::validation("invalid Wasm memory index type".into()))
     }
 
     pub(super) fn wasm_memory_index(&self, memory: Value, value: Value) -> Result<u64, JsError> {
@@ -1392,7 +1394,7 @@ impl<H: Host> Vm<H> {
         environment: Value,
     ) -> Result<Value, JsError> {
         let program = &function.module.program;
-        program.validate().map_err(JsError::validation)?;
+        program.validate_unless_proven().map_err(JsError::validation)?;
         if args.len() != function.signature().params.len() {
             return Err(JsError::validation("Wasm argument count mismatch".into()));
         }
@@ -1494,11 +1496,9 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
-        let crate::WasmValue::I64(value) = self.decode_wasm_value(value, crate::WasmType::I64)?
-        else {
-            unreachable!("decoded i64 operand")
-        };
+    #[inline] pub(super) fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
+        if let Some(bits) = value.bits64() { return Ok(bits as i64); }
+        let crate::WasmValue::I64(value) = self.decode_wasm_value(value, crate::WasmType::I64)? else { unreachable!("decoded i64 operand") };
         Ok(value)
     }
 

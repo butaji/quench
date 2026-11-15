@@ -96,3 +96,93 @@ fn lane_native_getter<H: Host>(
         Resumed::Exit(next) => Err(next),
     }
 }
+
+script_handler! {
+    /// `lane_get_field_getter` at a site whose getter returns an own field of the receiver
+    /// (`lane_hold_getter_hint`): the record's hint (`Vm::holder_hint_hit`), whose shape, link and
+    /// watch tests stand for the getter's call and its read. Any other read takes
+    /// `lane_get_field_getter_refresh`.
+    pub(super) fn lane_get_field_getter_hinted<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }
+            .and_then(|base| vm.getter_hint_hit(i.call_link.get(), i.imm(), base));
+        let Some(value) = value else {
+            sibling!(lane_get_field_getter_refresh::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+script_handler! {
+    /// `lane_get_field_getter_hinted` past its hint: the read the getter's answer makes
+    /// (`lane_getter_answer`), whose getter's own field becomes the hint
+    /// (`lane_hold_getter_hint`). A getter the answer declines takes `lane_get_field_getter`.
+    #[inline(never)]
+    fn lane_get_field_getter_refresh<>(cx, r, ip, i, view) {
+        let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) };
+        let Some(value) = base.and_then(|base| unsafe { lane_hold_getter_hint(cx, ip, i, base) }) else {
+            requicken::<H>(ip, lane_get_field_getter::<H>);
+            sibling!(lane_get_field_getter::<H>, r, ip, Carried::script(cx))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script(cx))
+    }
+}
+
+/// What the getter the site cached answers for `base` (`lane_getter_answer`), made the record's
+/// hint where the getter returns an own field of its receiver; any other getter moves the record
+/// to `lane_get_field_getter` for good.
+///
+/// # Safety
+/// `cx` is the running lane's context and `ip` the `GetField` record `i`.
+unsafe fn lane_hold_getter_hint<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, base: Value) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let site = vm.field_cache_index(i.c);
+    let getter = vm.cached_field_getter(base, i.imm(), site)?;
+    let value = unsafe { lane_getter_answer(cx, getter, base) }?;
+    let slot = lane_getter_field_slot(cx, getter, base)
+        .filter(|_| !vm.is_private_name(i.imm()) && vm.cached_accessor_on_prototype(base, i.imm(), site));
+    if !slot.is_some_and(|slot| set_getter_hint(vm, ip, i.imm(), base, slot)) {
+        requicken::<H>(ip, lane_get_field_getter::<H>);
+    }
+    Some(value)
+}
+
+/// The `FieldOperand::shape` of a record whose hint is a getter's own-field return
+/// (`Vm::getter_hint_hit`), as `HOLDER_HINT` no object's exact shape.
+const GETTER_HINT: u32 = super::super::NO_FIELD_RECEIVER - 3;
+
+/// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
+/// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
+fn set_getter_hint<H: Host>(vm: &mut Vm<H>, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
+    if holds_loop_site(ip) {
+        return false;
+    }
+    // SAFETY: `ip` is a `GetField` record of a live view.
+    let i = unsafe { &*ip };
+    let owned = (unsafe { i.operand.field.shape } == GETTER_HINT).then(|| i.call_link.get());
+    let Some(index) = vm.hold_getter_hint(owned, atom, base, slot, NO_CALL_LINK) else {
+        return false;
+    };
+    set_record_hint(ip, GETTER_HINT, index);
+    true
+}
+
+/// The own slot of `base` that `getter`, a frameless read body, returns (`return this.field`),
+/// by the field cache entry its record answers with.
+fn lane_getter_field_slot<H: Host>(cx: *mut LaneContext<H>, getter: Value, base: Value) -> Option<u16> {
+    let target = lane_script_target(cx, getter).filter(|target| target.entry == CallEntry::Reads)?;
+    let vm = unsafe { vm(cx) };
+    (lane_direct_call_this(vm, &target, base)? == base).then_some(())?;
+    // SAFETY: a `CallEntry::Reads` target of the running program.
+    let LeafRead::Field { base: field_base, kind: RETURNING_FIELD_OWN, cache } = unsafe { LeafRead::of::<H>(&target) }? else {
+        return None;
+    };
+    let entry = vm.field_cache_entry(cache);
+    let receiver = vm.heap.object_record_by_id(base.direct_object_index()?);
+    (crate::bytecode::FieldBase(field_base) == crate::bytecode::FieldBase::THIS
+        && entry.holder == NO_FIELD_HOLDER
+        && entry.receiver == receiver.exact_shape())
+    .then_some(entry.slot)
+}

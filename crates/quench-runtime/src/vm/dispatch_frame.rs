@@ -388,13 +388,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Activate a Wasm function whose registers already hold `registers`:
-    /// a lane activation becoming a frame. Its environment is the caller's.
+    /// a lane activation becoming a frame, of environment `env` or, where the lane held none, the caller's.
     pub(super) fn push_wasm_frame_with_registers(
         &mut self,
         p: &ResidualProgram,
         caller: usize,
         id: u32,
-        registers: &[Value],
+        registers: &[Value], env: Value,
     ) -> crate::stack::GuestCallGuard {
         let function = p.function(id as usize);
         debug_assert_eq!(function.locals, 0);
@@ -420,7 +420,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.pc_is_resume = true;
         frame.binding_site_pc = None;
-        frame.env = self.frames[caller].env;
+        frame.env = if env.is_deleted() { self.frames[caller].env } else { env };
         frame.this = Value::UNDEFINED;
         frame.captured = false;
         frame.with_base = with_base;
@@ -2684,10 +2684,8 @@ impl<H: Host> Vm<H> {
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
                     throwing_pc = pending.call_pc;
                     drop(pending.call_guard);
-                    error = match result {
-                        Err(error) => error,
-                        Ok(_) => unreachable!(),
-                    };
+                    let Err(thrown) = result else { unreachable!() };
+                    error = self.export_boundary_error(p, caller_residual.as_deref().unwrap_or(entry_program), thrown);
                     // A generator resumed in place finishes with its frame's throw.
                     if let Some(resume) = pending.completion.take_generator() {
                         self.abandon_in_loop_generator_step(resume);

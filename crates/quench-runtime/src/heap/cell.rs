@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 mod await_state;
 mod global_values;
 mod modes;
+mod private_elements;
 mod prototype_values;
 mod shape_id;
 mod snapshot;
@@ -753,6 +754,7 @@ impl Native {
     /// are not objects, run no guest code and have no effect beyond allocating their result.
     /// `split` looks `Symbol.split` up only on an object separator (ES2025), so it is among
     /// them; `match` and `search`, which make a RegExp of a string, are not.
+    #[inline]
     pub(crate) fn is_pure_string_method(self) -> bool {
         matches!(
             self,
@@ -2934,8 +2936,11 @@ impl Object {
         extras.structured_serialization = StructuredSerialization::Forbidden;
     }
 
+    /// A namespace is exotic (`set_module_namespace`), so the flag in the object's own word
+    /// rules out every other object without reading its extras.
+    #[inline(always)]
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.brand() == ObjectBrand::ModuleNamespace
+        self.has_exotic_access() && self.brand() == ObjectBrand::ModuleNamespace
     }
     /// A proxy's own object: the handler answers every access, so no shape a cache records
     /// may match it.
@@ -2959,48 +2964,6 @@ impl Object {
     }
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
-    }
-    pub(crate) fn private_names(&self) -> impl Iterator<Item = PrivateBrand> + '_ {
-        self.extras()
-            .into_iter()
-            .flat_map(|extras| extras.private_elements.iter().map(|element| element.brand))
-    }
-    pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
-        self.private_names().any(|candidate| candidate == brand)
-    }
-    pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
-        if !self.has_private_name(brand) {
-            self.extras_mut()
-                .private_elements
-                .push(PrivateElement { brand, data: None });
-        }
-    }
-    pub(crate) fn private_field(&self, brand: PrivateBrand) -> Option<Value> {
-        self.extras()?
-            .private_elements
-            .iter()
-            .find(|element| element.brand == brand)?
-            .data
-    }
-    pub(crate) fn set_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let Some(element) = self.extras_mut_existing().and_then(|extras| extras.private_elements.iter_mut().find(|element| element.brand == brand && element.data.is_some())) else { return false; };
-        element.data = Some(value);
-        true
-    }
-    pub(crate) fn initialize_private_field(&mut self, brand: PrivateBrand, value: Value) -> bool {
-        let elements = &mut self.extras_mut().private_elements;
-        if let Some(element) = elements.iter_mut().find(|element| element.brand == brand) {
-            if element.data.is_some() {
-                return false;
-            }
-            element.data = Some(value);
-        } else {
-            elements.push(PrivateElement {
-                brand,
-                data: Some(value),
-            });
-        }
-        true
     }
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
         self.extras().map_or(0, ObjectExtras::allocated_bytes)

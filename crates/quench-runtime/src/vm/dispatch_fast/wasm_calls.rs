@@ -11,6 +11,46 @@ pub(super) const fn reference_call_handler<H: Host>() -> Handler {
     lane_call_wasm_reference::<H>
 }
 
+lane_handler! {
+    /// A Wasm function's `Return` of an activation the lane pushed (`enter_wasm_function!`),
+    /// whose call keeps its result: the activation leaves the stack, and the caller resumes
+    /// after its call with the result, in the memory view the activation kept. A Wasm
+    /// activation completes no other way, so none of the completions a script activation
+    /// distinguishes are tried; a frame's return and a returning call take the general return.
+    fn lane_wasm_return<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let stack = &mut vm.lane_stack;
+        if let Some(top) = stack.activations.last()
+            && let ActivationKind::Wasm { memory, frame_storage_bytes } = top.kind
+            && unsafe { (*top.call).a } & crate::bytecode::RETURN_REGISTER == 0
+        {
+            let (call, caller_registers, caller_base) = (top.call, top.caller_registers, top.caller_base);
+            let window = top.native.window as *mut Value;
+            // SAFETY: a Wasm activation holds no drop glue; its window is in the values.
+            unsafe {
+                stack.activations.set_len(stack.activations.len() - 1);
+                stack.values.set_top(window);
+            }
+            stack.wasm_storage_bytes -= frame_storage_bytes;
+            // SAFETY: the call record belongs to the caller's live view.
+            unsafe {
+                (*cx).registers = caller_registers;
+                (*cx).base = caller_base;
+                (*cx).memory = memory;
+                caller_registers.set((*call).a, r.get(i.a));
+            }
+            let view = Carried { memory, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
+            next!(cx, caller_registers, following(call), view)
+        }
+        sibling!(lane_return_general::<H>, r, ip, view)
+    }
+}
+
+/// The return handler of Wasm views, for the shared handler table.
+pub(super) const fn wasm_return_handler<H: Host>() -> Handler {
+    lane_wasm_return::<H>
+}
+
 /// Enters `$function` of the running program and instance as a Wasm call: out of the lane when
 /// native code may run it, else as an activation pushed as the general loop's inline call would
 /// be; `$no_room` takes the call when the lane has no room. Shared by the known and reference calls.
@@ -129,7 +169,7 @@ lane_handler! {
     /// callee. Validation proved the callee's type. Any other callee leaves for the general loop.
     fn lane_call_wasm_reference<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let running = (unsafe { (*cx).program }, vm.frames.last().map(|frame| frame.env));
+        let running = (unsafe { (*cx).program }, Some(wasm_exports::running_env(cx)));
         let callee = match vm.heap.function(r.get(i.b)) {
             Some(FunctionRecord { kind: FunctionKind::User(program, function), env, .. })
                 if (*program, Some(*env)) == running => u16::try_from(*function).ok(),
@@ -202,7 +242,7 @@ fn lane_call_compiled<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, fu
     // runs, so before guest code could make the activations frames.
     let args = unsafe { lane_call_window(r, i) };
     let vm = unsafe { vm(cx) };
-    let (program, env) = (unsafe { (*cx).program }, vm.frames[unsafe { (*cx).frame }].env);
+    let (program, env) = (unsafe { (*cx).program }, wasm_exports::running_env(cx));
     let Some(called) = lane_in_place(cx, ip, |vm, _| vm.run_compiled(program, env, function, args).transpose()) else {
         return Some(Resumed::Exit(exit(ip)));
     };

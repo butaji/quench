@@ -6,7 +6,7 @@ use super::*;
 use crate::wasm::integer::I32BinaryOperator;
 
 mod gc;
-pub(super) use gc::{wasm_gc_value_op, wasm_gc_value_ops};
+pub(super) use gc::{wasm_gc_allocates, wasm_gc_field_op, wasm_gc_reads_instance, wasm_gc_value_op, wasm_gc_value_ops};
 
 impl<H: Host> Vm<H> {
     #[inline(never)]
@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
                 self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
             }
             op if wasm_gc_value_op(op) => {
-                if let Some(value) = self.wasm_gc_value_step(self.frames[f].program, self.frames[f].env, i, |vm, register| vm.read(f, register))? {
+                if let Some(value) = self.wasm_gc_general_step(self.frames[f].program, self.frames[f].env, i, |vm, register| vm.read(f, register))? {
                     self.write(f, i.result_register(), value);
                 }
             }

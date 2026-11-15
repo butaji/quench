@@ -72,6 +72,7 @@ impl ConstructedShape {
         (handle ^ self.shape as usize) & (CONSTRUCTED_SHAPE_ENTRIES - 1)
     }
 
+    #[inline]
     fn same_construction(&self, other: &Self) -> bool {
         self.shape == other.shape
             && self.constructor == other.constructor

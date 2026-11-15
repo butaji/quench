@@ -712,17 +712,9 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod control_tests;
-
-#[cfg(test)]
-mod call_tests;
-
-#[cfg(test)]
-mod scalar_tests;
-
-#[cfg(test)]
-mod integer_tests;
-
-#[cfg(test)]
-mod float_tests;
+#[cfg(test)] mod control_tests;
+#[cfg(test)] mod call_tests;
+#[cfg(test)] mod scalar_tests;
+#[cfg(test)] mod integer_tests;
+#[cfg(test)] mod float_tests;
+#[cfg(test)] mod export_call_tests;

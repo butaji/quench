@@ -55,10 +55,12 @@ impl OperandKinds {
         Self(self.0 | other.0)
     }
 
+    #[inline(always)]
     pub(crate) const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
+    #[inline(always)]
     const fn intersects(self, other: Self) -> bool {
         self.0 & other.0 != 0
     }
@@ -90,12 +92,13 @@ impl OperandKinds {
         self.contains(Self::BIGINT)
     }
 
-    /// The kind of one operand: int32 and double by their tags, the rest out of line.
+    /// The kind of one operand: int32 and double by their tags, a string or record by its handle's
+    /// family, the rest out of line.
     #[inline(always)]
     fn of(heap: &crate::heap::Heap, value: Value) -> Self {
         if value.as_int().is_some() {
             Self::INT32
-        } else if value.as_number().is_some() {
+        } else if value.is_double() {
             Self::DOUBLE
         } else if value.is_record() {
             // An object or array record, by its handle's family: no cell lookup, and no call
@@ -104,16 +107,15 @@ impl OperandKinds {
         } else if value.direct_string_index().is_some() {
             Self::STRING
         } else {
-            Self::of_heap(heap, value)
+            Self::of_cell(heap, value)
         }
     }
 
+    /// The kind of a value whose family does not decide it: a legacy cell, a BigInt or other.
     #[cold]
     #[inline(never)]
-    fn of_heap(heap: &crate::heap::Heap, value: Value) -> Self {
-        if heap.is_string(value) {
-            Self::STRING
-        } else if matches!(heap.get(value), Some(crate::heap::Cell::BigInt(_))) {
+    fn of_cell(heap: &crate::heap::Heap, value: Value) -> Self {
+        if matches!(heap.get(value), Some(crate::heap::Cell::BigInt(_))) {
             Self::BIGINT
         } else {
             Self::OTHER

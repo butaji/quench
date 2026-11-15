@@ -832,7 +832,8 @@ impl<H: Host> Vm<H> {
             if let Some(strings) = &self.dynamic_strings {
                 roots.extend(strings.values().copied());
             }
-            roots.extend(self.holder_hints.iter().flat_map(|hint| [hint.holder, hint.value]));
+            roots.extend(self.holder_hints.holder.iter().flat_map(|hint| [hint.holder, hint.value]));
+            roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
             roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
             self.private_site_homes.for_each_value(|value| roots.push(value));
             self.heap.begin_cycle(roots);
@@ -902,13 +903,10 @@ impl<H: Host> Vm<H> {
         } else {
             self.retain_live_method_caches();
         }
+        self.prune_first_chunks();
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
-        // A hint names its prototype by record id, which an allocation may give another object
-        // once this one is swept.
-        for hint in self.holder_hints.iter_mut().filter(|hint| !heap.is_live(hint.holder)) {
-            hint.watch.retire();
-        }
+        self.holder_hints.retire_dead(|holder| heap.is_live(holder));
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()

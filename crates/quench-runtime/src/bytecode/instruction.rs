@@ -91,7 +91,7 @@ impl WideInstruction {
         }
     }
 
-    pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
+    #[inline(always)] pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
         Self { op, a, b, c, imm }
     }
 
@@ -163,7 +163,7 @@ macro_rules! layout_accessors {
                 }
             }
 
-            pub(crate) fn result_register(self) -> Register {
+            #[inline(always)] pub(crate) fn result_register(self) -> Register {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::A),
                     FieldLayout::ResultRegister
@@ -872,7 +872,7 @@ impl Instr {
         Self::wide(usize::try_from(index).ok()?)
     }
 
-    pub(crate) const fn is_wide(self) -> bool {
+    #[inline(always)] pub(crate) const fn is_wide(self) -> bool {
         self.op().is_wide_marker()
     }
 
@@ -884,7 +884,7 @@ impl Instr {
         (self.0 >> Self::OP_BITS) as usize
     }
 
-    pub(crate) const fn as_wide(self) -> WideInstruction {
+    #[inline(always)] pub(crate) const fn as_wide(self) -> WideInstruction {
         WideInstruction::new(self.op(), self.a(), self.b(), self.c(), self.imm())
     }
 
@@ -997,7 +997,7 @@ impl Instr {
         )
     }
 
-    const fn unpack_field(op: Op, position: usize, packed: u16) -> u16 {
+    #[inline(always)] const fn unpack_field(op: Op, position: usize, packed: u16) -> u16 {
         let packed = packed & Self::FIELD_MASK as u16;
         if position == 1
             && matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)
@@ -1012,7 +1012,7 @@ impl Instr {
         Self::unpack_plain_field(packed)
     }
 
-    const fn unpack_plain_field(packed: u16) -> u16 {
+    #[inline(always)] const fn unpack_plain_field(packed: u16) -> u16 {
         let packed = packed & Self::FIELD_MASK as u16;
         (packed & Self::FIELD_PAYLOAD_MASK)
             | ((packed >> Self::FIELD_PACKED_HIGH_SHIFT) << Self::FIELD_SOURCE_HIGH_SHIFT)
