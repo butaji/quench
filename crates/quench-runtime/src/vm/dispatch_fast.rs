@@ -1676,6 +1676,13 @@ impl ScriptCallTarget {
         self.forms & TARGET_INITIALIZES != 0
     }
 
+    /// The registers its activation starts with their initial value: `fill`, exact below
+    /// `u8::MAX`, else every register.
+    #[inline(always)]
+    fn entry_registers(&self) -> usize {
+        if self.fill < u8::MAX { usize::from(self.fill) } else { usize::from(self.registers) }
+    }
+
     /// No legacy `arguments` reflection observes its activation: a strict function's or an
     /// arrow's (`Function::has_restricted_legacy_caller_access`), which its `this` binding
     /// names. A call passing values past its parameters need not keep them, as its frame
@@ -17283,11 +17290,12 @@ fn lane_activate_environment<H: Host>(
     // before the length covers it, and no activation's window moves.
     let callee_registers = unsafe {
         let registers = stack.values.top();
-        // Every register and local starts `undefined` within the target's reserved
-        // room (`ScriptCallTarget::room`); the metadata entries are then
-        // written, and parameter `k` local `k` with its argument where one was passed. The
-        // environment is made when one is needed.
-        fill_window(registers, held + locals, Value::UNDEFINED);
+        // Every register live at entry (`ScriptCallTarget::fill`) and every local starts
+        // `undefined` within the target's reserved room (`ScriptCallTarget::room`); the
+        // metadata entries are then written, and parameter `k` local `k` with its argument
+        // where one was passed. The environment is made when one is needed.
+        fill_window(registers, target.entry_registers(), Value::UNDEFINED);
+        fill_window(registers.add(count), held - count + locals, Value::UNDEFINED);
         let entries = registers.add(count);
         entries.add(usize::from(WINDOW_ENVIRONMENT)).write(Value::DELETED);
         entries
