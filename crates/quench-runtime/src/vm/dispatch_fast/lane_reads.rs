@@ -110,7 +110,7 @@ impl Reads {
     }
 
     /// The value of a constant or local operand.
-    pub(super) fn word(&self, operand: Operand) -> Option<Value> {
+    #[inline] pub(super) fn word(&self, operand: Operand) -> Option<Value> {
         match operand.kind()? {
             // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
             OperandKind::Constant => self.immediate.or_else(|| unsafe { &*self.constants }
@@ -124,7 +124,7 @@ impl Reads {
     }
 
     /// The capture `slot`, `depth` scopes out, or the root's projected binding where `root`.
-    pub(super) fn capture(&self, depth: u16, slot: u16, root: bool) -> Option<Value> {
+    #[inline] pub(super) fn capture(&self, depth: u16, slot: u16, root: bool) -> Option<Value> {
         let CaptureReads { context, read } = self.captures?;
         read(context, depth, slot, root)
     }
