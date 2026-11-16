@@ -765,14 +765,14 @@ impl Cell {
                 length: read_view_length(reader)?,
             },
             tag::MAP => {
-                let object = boxed_object(reader)?;
+                let object = read_object(reader)?;
                 let slots = read_list(reader, |reader| Ok((reader.value()?, reader.value()?)))?;
                 let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
                 let (live, iterators) = (reader.len()?, reader.values()?);
                 Self::Map { object, entries: crate::heap::CollectionEntries::from_snapshot_parts(slots, hashes, live, iterators).into() }
             }
             tag::SET => {
-                let object = boxed_object(reader)?;
+                let object = read_object(reader)?;
                 let slots = reader.values()?;
                 let hashes = (0..slots.len()).map(|_| reader.u32()).collect::<SnapshotResult<_>>()?;
                 let (live, iterators) = (reader.len()?, reader.values()?);

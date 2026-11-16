@@ -4237,12 +4237,15 @@ pub(crate) enum Cell {
         buffer: Value,
         length: ViewLength,
     },
+    // A Map's or Set's object lives in the cell, beside its entries' box: most collections
+    // stay empty (jsdom-d3: 107K of 132K Maps, 152K of 153K Sets), and a boxed object cost
+    // each a 16-byte allocation besides its slot.
     Map {
-        object: Box<Object>,
+        object: Object,
         entries: super::Entries<(Value, Value)>,
     },
     Set {
-        object: Box<Object>,
+        object: Object,
         entries: super::Entries<Value>,
     },
     ShadowRealm {

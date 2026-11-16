@@ -15,10 +15,8 @@ impl Cell {
             // cell stays small.
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
-            Self::RegExp { object, .. } => Some(object),
+            Self::RegExp { object, .. } | Self::Map { object, .. } | Self::Set { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
-            | Self::Map { object, .. }
-            | Self::Set { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }
@@ -53,10 +51,8 @@ impl Cell {
             // cell stays small.
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
-            Self::RegExp { object, .. } => Some(object),
+            Self::RegExp { object, .. } | Self::Map { object, .. } | Self::Set { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
-            | Self::Map { object, .. }
-            | Self::Set { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
             | Self::WeakSet { object, .. }

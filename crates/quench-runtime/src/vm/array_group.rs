@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
         let to_map = native == Native::ArrayGroupToMap;
         let grouped = self.heap.alloc(if to_map {
             Cell::Map {
-                object: Box::new(Self::empty_object(self.map_proto)),
+                object: Self::empty_object(self.map_proto),
                 entries: Default::default(),
             }
         } else {

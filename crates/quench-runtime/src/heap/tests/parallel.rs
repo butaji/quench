@@ -13,7 +13,7 @@ fn parallel_mark_matches_serial_verifier(heap: &mut Heap) {
     // Only a heap without records sweeps, and marks a minor collection, in parallel. Keep
     // this root in the legacy space so those paths remain covered.
     let root = heap.alloc(Cell::Set {
-        object: Box::new(plain_object()),
+        object: plain_object(),
         entries: CollectionEntries::from_hashed(children.iter().map(|&child| (child, 0))).into(),
     });
 
