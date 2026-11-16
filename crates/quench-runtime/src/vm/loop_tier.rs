@@ -215,10 +215,10 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let native_field_loads = native_field_loads(machine, region);
+    let (native_field_loads, store_loads) = (native_field_loads(machine, region), native_store_loads(machine, region));
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
         int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
@@ -258,6 +258,15 @@ fn native_field_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
             Default::default()
         })
         .collect()
+}
+
+/// The descriptors of the stores of `region` whose receiver it redefines, by cache site: native
+/// code stores in place through the arms they give (`site_store_plan`), as a read does.
+fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled::LoopRegion)
+    -> Vec<(u16, Vec<super::super::compiled::NativeFieldLoad>)> {
+    let available = machine.heap.object_record_base().is_some() && region.inlining.is_none();
+    region.dynamic_store_sites().filter(|_| available)
+        .map(|site| (site, machine.native_field_load_descriptors(site))).collect()
 }
 
 /// The element views of `region`'s arrays on entry (`ElementViews`), each pushed to `entry`:

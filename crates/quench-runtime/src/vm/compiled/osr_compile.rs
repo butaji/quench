@@ -235,11 +235,13 @@ fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> Vec<Opt
 /// field-site map, from the observation's descriptors.
 fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     -> Vec<Option<Vec<NativeFieldLoad>>> {
-    super::lane_region::flat_table(region.field_reads().iter().filter_map(|(&offset, &index)| {
+    let reads = region.field_reads().iter().filter_map(|(&offset, &index)| {
         let Some(FieldLookup::Atom { cache_site, .. }) =
             region.instructions()[offset as usize].field_lookup() else { return None };
         Some((usize::from(cache_site), observation.native_field_loads.get(index)?.clone()))
-    }))
+    });
+    let stores = observation.store_loads.iter().map(|(site, loads)| (usize::from(*site), loads.clone()));
+    super::lane_region::flat_table(reads.chain(stores))
 }
 
 impl OsrFacts {

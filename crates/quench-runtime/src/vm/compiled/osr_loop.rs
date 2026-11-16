@@ -1133,6 +1133,11 @@ impl LoopRegion {
             .copied()
     }
 
+    /// The cache sites of the stores whose receiver the region redefines.
+    pub(in crate::vm) fn dynamic_store_sites(&self) -> impl Iterator<Item = u16> + '_ {
+        self.dynamic_field_stores.values().map(|&(_, site)| site)
+    }
+
     pub(in crate::vm) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
         self.numbers.iter().chain(&self.tagged).copied()
     }
@@ -2357,6 +2362,9 @@ fn admit(
 /// the native OSR reader may load directly, by region field index.
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
+    /// The own entries of each store site whose receiver the region redefines
+    /// (`LoopRegion::dynamic_field_stores`), by cache site: the shapes its in-place arms take.
+    pub(crate) store_loads: &'a [(u16, Vec<NativeFieldLoad>)],
     /// The registers holding arrays whose sampled elements were all int32s, or all Numbers, at
     /// entry, with that type: reads through them have it, leaving where one does not.
     pub(crate) number_arrays: &'a [(Register, crate::typed_ir::Type)],
