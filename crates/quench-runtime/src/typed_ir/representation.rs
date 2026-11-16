@@ -1,11 +1,14 @@
 //! How a value is held in machine form.
 #![allow(dead_code)]
 
-use super::Type;
+use super::{IntRange, Type};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Representation {
     Int32,
+    /// An integer Number of `IntRange::EXACT` in a signed 64-bit word: the Number's own value,
+    /// which an index word and a sum of index words need no binary64 round trip to share.
+    Int64,
     Float64,
     Tagged,
 }
@@ -18,8 +21,9 @@ struct RepresentationRow {
 }
 
 /// One row per [`Representation`], in its order.
-const REPRESENTATIONS: [RepresentationRow; 3] = [
+const REPRESENTATIONS: [RepresentationRow; 4] = [
     RepresentationRow { checked: Type::INT32, view: crate::WasmType::I32 },
+    RepresentationRow { checked: Type::int(IntRange::EXACT), view: crate::WasmType::I64 },
     RepresentationRow { checked: Type::NUMBER, view: crate::WasmType::F64 },
     RepresentationRow { checked: Type::ANY, view: crate::WasmType::I64 },
 ];
@@ -39,12 +43,15 @@ impl Representation {
     /// Implicit views supported by the shared emitter. Narrowing and unboxing
     /// require explicit checked operations, never a register assignment.
     pub(crate) fn can_receive(self, source: Self) -> bool {
-        self == source || self == Self::Tagged || (self == Self::Float64 && source == Self::Int32)
+        self == source || self == Self::Tagged
+            || (self == Self::Int64 && source == Self::Int32)
+            || (self == Self::Float64 && matches!(source, Self::Int32 | Self::Int64))
     }
     pub(crate) fn accepts(self, ty: Type) -> bool {
         ty != Type::NEVER
             && match self {
                 Self::Int32 => ty.is_subtype(Type::INT32),
+                Self::Int64 => ty.int_range().is_some_and(|range| IntRange::EXACT.contains(range)),
                 Self::Float64 => ty.is_subtype(Type::NUMBER),
                 Self::Tagged => true,
             }

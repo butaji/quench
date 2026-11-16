@@ -29,7 +29,8 @@ pub(super) struct LoopTier {
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
     /// Entries the published code's guards declined in a row, and whether the next compilation
-    /// guards no loop bound on entry: a loop that appends past its bound misses every entry.
+    /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
+    /// bound misses every versioned entry.
     entry_misses: u16,
     pub(super) unbounded: bool,
 }
@@ -42,7 +43,7 @@ impl LoopTier {
     }
 
     /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
-    /// the code goes and the next compilation guards no loop bound on entry, once.
+    /// the code goes and the next compilation versions no loop bound on entry, once.
     pub(super) fn missed_entry(&mut self, tiers: &Tiers) {
         if self.unbounded || self.compilations >= tiers.loops.max_compilations { return; }
         self.entry_misses += 1;

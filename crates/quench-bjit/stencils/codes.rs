@@ -145,6 +145,20 @@ pub const REALM_ROW: u8 = 28;
 /// continues at TAKEN, past the helper step laid out after the row (which grows the backing); a miss
 /// leaves through EXIT0 into it.
 pub const APPEND_ROW: u8 = 32;
+/// A typed array's element of a planned kind (`TypedArrayKind` in discriminant order, `TYPED_KINDS` of them), read into
+/// the destination (`TYPED_INDEX_ROW` + kind) or replaced by the Number operand (`TYPED_STORE_ROW` + kind), through the
+/// view the loop's entry recorded: the entry words' record offset is hole 1 (a read) or hole 0 (a store), the index
+/// operand hole 2 and the store's value hole 1. The entry proved the kind once, so no row tests it; an index past the
+/// count or a value no element converts leaves through EXIT0 with nothing written. `TYPED_LENGTH_ROW` reads the count
+/// the entry words hold (hole 1) as the destination's int32.
+pub const TYPED_KINDS: u8 = 12;
+pub const TYPED_INDEX_ROW: u8 = 51;
+pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
+pub const TYPED_STORE_ROW: u8 = TYPED_INDEX_LAST + 1;
+pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
+pub const TYPED_LENGTH_ROW: u8 = TYPED_STORE_LAST + 1;
+/// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
+pub const NON_NATIVE_KINDS: [u8; 3] = [7, 8, 9];
 /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
 /// (`THIS_ADD_*`) gains the value operand (hole 1) by the transition the holes carry, one row per storage
 /// form the slot admits (`staged::object::Form`). A hit continues at TAKEN, past the helper step laid

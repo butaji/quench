@@ -1,0 +1,13 @@
+[package]
+name = "quench-gate"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "The single definition of green: build, lint ratchets, census, oracle, C-parity and conformance smoke"
+
+[dependencies]
+quench-tier-corpus = { path = "../quench-tier-corpus" }
+
+[lints]
+workspace = true

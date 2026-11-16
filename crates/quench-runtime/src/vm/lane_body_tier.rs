@@ -35,11 +35,13 @@ pub(super) use audit::{Epochs, Verdict};
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
-const RECURRENT_ENTRIES: u16 = 16;
+const RECURRENT_ENTRIES: u32 = 16;
 /// The completed handler runs of a body per credit to the callees it calls natively: a callee's
 /// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
 const NATIVE_CREDIT_RUNS: u64 = 64;
 const RECURRENT_TICKS: u32 = 256;
+/// The most times a dropped body doubles the warm-up of the next.
+const MAX_DOUBLINGS: u8 = 7;
 
 /// The warming entries every function has counted so far: a clock of the work the program does
 /// while its functions warm, which, unlike wall time, a rerun repeats.
@@ -154,8 +156,8 @@ impl LaneView {
     }
 
     /// The entries before its next body specializes: the warm-up, doubled per dropped body.
-    pub(super) fn warmup_entries(&self) -> u16 {
-        self.tiers.lane_body.warmup() << self.tier().history.get().lifetimes.min(7)
+    pub(super) fn warmup_entries(&self) -> u32 {
+        u32::from(self.tiers.lane_body.warmup()) << self.tier().history.get().lifetimes.min(MAX_DOUBLINGS)
     }
 
     /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
@@ -164,10 +166,11 @@ impl LaneView {
         self.loops.iter().map(|site| site.span() * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
     }
 
-    /// Whether a closed loop of the function runs in a region that still enters native code:
-    /// its calls pay that region's entry, which the function's own body would not.
+    /// Whether a closed loop of the function runs in a region that has run natively and still
+    /// enters it: its calls pay that region's entry, which the function's own body would not.
+    /// A region that never ran (its compile was refused) makes none of the work native.
     pub(in crate::vm) fn enters_region(&self) -> bool {
-        self.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters())
+        self.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters() && site.native_region_runs.get() > 0)
     }
 
     /// Whether a function entered rarely, whose loops run no region that enters native code (its
@@ -176,7 +179,7 @@ impl LaneView {
     /// are hot) costs more than the many cheap entries the warm-up counts, and its callees'
     /// bodies run from the lane until it specializes and inlines them. Read every
     /// `RECURRENT_ENTRIES`th entry.
-    fn recurrent(&self, entries: u16) -> bool {
+    fn recurrent(&self, entries: u32) -> bool {
         entries >= RECURRENT_ENTRIES && entries % RECURRENT_ENTRIES == 0 && self.tier().history.get().lifetimes == 0
             && warm_clock().wrapping_sub(self.tier().warm_since.get()) >= RECURRENT_TICKS && !self.enters_region()
     }
@@ -184,17 +187,17 @@ impl LaneView {
     /// Whether `entries` is a count at which its function weighs a compile: the warm-up, then
     /// each doubling of it, so a function that has not paid for its compile yet looks again
     /// when it has done twice the work.
-    fn attempts_at(&self, entries: u16) -> bool {
+    fn attempts_at(&self, entries: u32) -> bool {
         let warmup = self.warmup_entries();
         entries % warmup == 0 && (entries / warmup).is_power_of_two()
     }
 
     /// Whether `entries`, an attempt's count, is the last the warm-up schedule can name: the
     /// next attempt doubles it past the counter's range, so no later entry looks again.
-    fn last_attempt(&self, entries: u16) -> bool {
-        let warmup = u32::from(self.warmup_entries().max(1));
-        let attempts = u32::from(entries) / warmup;
-        attempts >= 1 && u32::from(entries).saturating_add(warmup * attempts) > u32::from(u16::MAX)
+    fn last_attempt(&self, entries: u32) -> bool {
+        let warmup = u64::from(self.warmup_entries().max(1));
+        let attempts = u64::from(entries) / warmup;
+        attempts >= 1 && u64::from(entries) + warmup * attempts > u64::from(u32::MAX)
     }
 
     /// Whether its history affords another compile.
@@ -257,7 +260,7 @@ impl LaneView {
         if history.callee_recompiles >= self.tiers.lane_body.max_callee_recompiles { return; }
         self.tier().history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let next = LaneBody::Unspecialized { entries: self.tiers.lane_body.warmup_entries - 1, recompiles: *recompiles, stuck: *stuck };
+        let next = LaneBody::Unspecialized { entries: u32::from(self.tiers.lane_body.warmup_entries) - 1, recompiles: *recompiles, stuck: *stuck };
         let body_state = body.tier_state();
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         super::super::tier_machine::withdraw(&self.entry, body_state, TierEvent::Demote);
@@ -334,16 +337,11 @@ impl LaneView {
     /// a fact of the view from then on: its prologue record enters it with `entry`, which
     /// tests nothing the specialization proved (`lane_body_entry`).
     pub(super) fn specialize_lane_body(&self, entry: Handler, work: impl FnOnce(super::super::compiled::LaneBodyWork) -> super::super::compiled::LaneBodyOutcome) -> bool {
-        if self.declined_by_mode() {
-            return false;
-        }
+        if self.declined_by_mode() { return false; }
         self.settle_retired_body();
-        // SAFETY: as `lane_body`; specializing runs no lane body, and the body is taken out
-        // of the view while the VM works on it.
+        // SAFETY: as `lane_body`; specializing runs no lane body, and the body is out of the view while the VM works on it.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if awaits_look(body) {
-            return true;
-        }
+        if awaits_look(body) { return true; }
         let (outcome, entries, recompiles, stuck, looks) = match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized { entries, recompiles, stuck } if self.attempts_at(entries.saturating_add(1)) || self.recurrent(entries.saturating_add(1)) => {
                 if !self.affords_compile() {
@@ -353,7 +351,7 @@ impl LaneView {
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
-                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| u32::from(entries) + 1), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
+                (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
@@ -371,7 +369,7 @@ impl LaneView {
 
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
-    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u16, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+    fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });
@@ -427,7 +425,7 @@ impl LaneView {
         if let LaneBody::Unspecialized { entries, .. } = unsafe { &mut *self.tier().tier_lane.get() }
             && self.tier().history.get().lifetimes == 0 && !self.tier().history.get().unpaid
         {
-            *entries = self.tiers.lane_body.warmup() - 1;
+            *entries = u32::from(self.tiers.lane_body.warmup()) - 1;
         }
     }
 }

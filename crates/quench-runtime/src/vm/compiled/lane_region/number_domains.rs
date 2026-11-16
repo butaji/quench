@@ -7,6 +7,7 @@ use super::*;
 /// a Number type, tagged bits for any other. Entry states and edges both take it from the
 /// target's fact (`facts.at`), so an edge conforms to exactly what its target reads.
 pub(super) fn target_representation(ty: Type) -> Representation {
+    let ty = ty.machine();
     if ty == Type::INT32 { Representation::Int32 }
     else if ty == Type::NUMBER { Representation::Float64 }
     else { Representation::Tagged }
@@ -21,6 +22,12 @@ pub(super) fn box_unboxed(builder: &mut FunctionBuilder<'_>, registers: &mut Reg
             let variable = frame::register_int(builder, registers, index);
             let int = builder.use_var(variable);
             int_tagged(builder, int)
+        }
+        Representation::Int64 => {
+            let variable = frame::register_long(builder, registers, index);
+            let word = builder.use_var(variable);
+            let number = super::object_slots::emit(builder).raw_unary(Unary::FromSigned(Lane::F64), word);
+            emit_js_box_number(builder, number)
         }
         Representation::Float64 => {
             let variable = frame::register_float(builder, registers, index);

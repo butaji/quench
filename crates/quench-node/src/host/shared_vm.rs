@@ -326,7 +326,7 @@ node_bindings! {
         method "nodeTestDirective" (1) => crate::modules::test_runner::directive,
         method "nodeTestSubtest" (0) => crate::modules::test_runner::subtest,
         method "nodeTestContextHook" (1) => crate::modules::test_runner::context_hook,
-        method "nodeTestAssert" (0) => crate::modules::test_runner::planned_assert,
+        method "nodeTestAssert" (0) => crate::modules::test_runner::assertions::planned_assert,
         method "nodeTestBeforeExit" (0) => crate::modules::test_runner::run::before_exit,
         method "nodeTestSettledFulfilled" (1) => crate::modules::test_runner::run::settled_fulfilled,
         method "nodeTestSettledRejected" (1) => crate::modules::test_runner::run::settled_rejected,

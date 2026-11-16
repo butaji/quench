@@ -446,13 +446,7 @@ fn proceed(c: &mut Context<'_>, id: NodeId, completion: Completion) -> Result<()
 /// `createHook`); its children await it before their own hooks.
 pub(super) fn run_before_now(c: &mut Context<'_>, owner: NodeId, hook: RootId) -> Result<(), RootedError> {
     let receiver = context(c, owner)?;
-    let result = c.call_rooted(hook, receiver, &[receiver]);
-    let promise = c.pending_promise_rooted()?;
-    match result {
-        Ok(value) => c.resolve_promise_rooted(promise, value)?,
-        Err(RootedError { exception: Some(error), .. }) => c.reject_promise_rooted(promise, error)?,
-        Err(error) => return Err(error),
-    }
+    let promise = crate::modules::webstreams_shared_vm::promise_call(c, hook, receiver, &[receiver])?;
     let promise = match with_state(c, |state| state.tree[owner].before_pending) {
         Some(previous) => {
             let then = get(c, previous, "then")?;

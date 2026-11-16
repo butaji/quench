@@ -91,7 +91,10 @@ function shellSurface(global, evaluate) {
   global.load = (file) => evaluate(readFile(file), resolve(file));
   global.loadString = (source) => evaluate(source, resolve("loadString"));
   global.runString = (source) => {
-    const context = vm.createContext({});
+    // A context whose global is a real object: V8's contextified global proxy makes a
+    // benchmark whose hot code reads globals ~27x slower (earley-boyer: 152 vs 5.4 ms per
+    // iteration), which measured Node against a sandbox rather than the engine.
+    const context = vm.constants.DONT_CONTEXTIFY === undefined ? vm.createContext({}) : vm.createContext(vm.constants.DONT_CONTEXTIFY);
     const realm = vm.runInContext("globalThis", context);
     shellSurface(realm, (code, filename) => vm.runInContext(code, context, { filename, importModuleDynamically }));
     for (const name of ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask"])
@@ -201,6 +204,15 @@ pub(crate) struct SubScores {
     pub(crate) average: f64,
 }
 
+impl SubScores {
+    /// Whether every sub-score is a finite, positive number, so ratios are defined.
+    pub(crate) fn is_measured(self) -> bool {
+        [self.first, self.worst, self.average]
+            .iter()
+            .all(|score| score.is_finite() && *score > 0.0)
+    }
+}
+
 /// The value of `<name> <label> <value> pts`.
 fn labelled(file: &Path, stdout: &str, label: &str) -> Option<f64> {
     let name = test_name(file);
@@ -220,11 +232,12 @@ pub(crate) fn score(file: &Path, stdout: &str) -> Option<f64> {
 
 /// The test's First, Worst and Average scores, when it printed all three.
 pub(crate) fn sub_scores(file: &Path, stdout: &str) -> Option<SubScores> {
-    Some(SubScores {
+    let sub_scores = SubScores {
         first: labelled(file, stdout, FIRST)?,
         worst: labelled(file, stdout, WORST)?,
         average: labelled(file, stdout, AVERAGE)?,
-    })
+    };
+    sub_scores.is_measured().then_some(sub_scores)
 }
 
 /// Output that must agree across engines: everything except measurements.
@@ -274,6 +287,39 @@ mod tests {
         assert_eq!(score(&file, stdout), Some(70.47));
         assert_eq!(score(&fixture_path("zlib-wasm"), stdout), None);
         assert_eq!(semantic_output(stdout), "Running web-ssr:");
+    }
+
+    #[test]
+    fn parses_first_worst_and_average_beside_the_total() {
+        let stdout = "Running web-ssr:\n\
+            web-ssr First-Score                             56.04 pts\n\
+            web-ssr Worst-Score                             40.25 pts\n\
+            web-ssr Average-Score                           80.50 pts\n\
+            web-ssr Score                                   70.47 pts\n";
+        let file = fixture_path("web-ssr");
+        assert_eq!(
+            sub_scores(&file, stdout),
+            Some(SubScores {
+                first: 56.04,
+                worst: 40.25,
+                average: 80.50,
+            })
+        );
+        assert_eq!(score(&file, stdout), Some(70.47));
+    }
+
+    #[test]
+    fn a_test_missing_one_sub_score_has_none() {
+        let stdout = "web-ssr First-Score 56.04 pts\nweb-ssr Score 70.47 pts\n";
+        assert_eq!(sub_scores(&fixture_path("web-ssr"), stdout), None);
+    }
+
+    #[test]
+    fn non_positive_sub_scores_are_not_measurements() {
+        let stdout = "web-ssr First-Score 0.00 pts\n\
+            web-ssr Worst-Score 1.00 pts\n\
+            web-ssr Average-Score 2.00 pts\n";
+        assert_eq!(sub_scores(&fixture_path("web-ssr"), stdout), None);
     }
 
     #[test]

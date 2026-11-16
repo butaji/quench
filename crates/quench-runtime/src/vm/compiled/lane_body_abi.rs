@@ -4,7 +4,7 @@ use super::*;
 
 /// What a lane body returns in two registers: its status and its result word.
 #[repr(C)]
-pub(super) struct BodyReturn {
+pub(in crate::vm) struct BodyReturn {
     pub(super) status: u32,
     pub(super) value: u64,
 }

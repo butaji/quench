@@ -1,4 +1,4 @@
-//! The heap rows: a captured value, a dense array element read or replaced, an entry-record
+//! The heap rows: a captured value, a dense or typed array element read or replaced, an entry-record
 //! field, an array proof. Each is the shared staged row (`staged/{environment,elements,entry,
 //! value}.rs`) run on `StencilStage`, so the layout reads have one definition across the
 //! interpreter, the specializers and the stencils.
@@ -23,14 +23,14 @@
 //! Every failed proof leaves through exit 0 with nothing written, so the interpreter runs the
 //! instruction.
 
-use crate::layout::{CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{LOOP_ENTRY_ARRAY_COUNT_AT, TypedArrayKind, CALL_CONTEXT_ADAPTER_PAYLOAD, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_LOOP_ENTRY, JS_STEP_STRING_RECORD_BASE};
 use crate::ic_rows;
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of, number_word};
-use crate::words::{hole, hole64};
-use crate::places::{DEST, LEFT, Places};
+use crate::words::{canonical, hole, hole64, int_word};
+use crate::places::{DEST, LEFT, Places, number_place};
 use crate::stage::StencilStage;
-use crate::staged::{Frame, Stage, Step, elements, entry, load_this, read_initialized_local, read_local, string_length, value, write_initialized_local, write_local};
-use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LOAD_LOCAL_ROW, MEM, SITE_ROW, SITE_STORE_ROW, STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW};
+use crate::staged::{Frame, Stage, Step, elements, entry, load_this, read_initialized_local, read_local, string_length, typed_elements, value, write_initialized_local, write_local};
+use crate::codes::{ARRAY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CONSTANT_ROW, ENV_DEFINE_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, IDENTITY_ROW, INDEX_ROW, TYPED_INDEX_ROW, TYPED_INDEX_LAST, TYPED_STORE_ROW, TYPED_STORE_LAST, TYPED_LENGTH_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LOAD_LOCAL_ROW, MEM, SITE_ROW, SITE_STORE_ROW, STORE_LOCAL_ROW, STORE_CHECKED_ROW, LOAD_CHECKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_ROW, LIVE_ROW, REALM_ROW, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW, INSTANCEOF_ROW, APPEND_ROW, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, FOR_IN_ROW, NAME_ARENA_ROW, NAME_EITHER_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, IC_SET_ROW};
 use crate::{environment_rows, key_rows, name_rows, site_rows};
 
 unsafe extern "C" {
@@ -193,6 +193,47 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
     Out::Next(s)
 }
 
+/// The typed view the loop's entry recorded for the array whose entry words lie at the record offset in value hole
+/// `at`, of the kind row `KIND` (counted from `first`) plans: the entry proved the kind once.
+#[inline(always)]
+fn typed_view<const KIND: u8>(payload: usize, (at, first): (u8, u8)) -> Option<typed_elements::TypedView<u64>> {
+    let native = typed_elements::NativeKind::new(TypedArrayKind::ALL[usize::from(KIND - first)])?;
+    let mut stage = StencilStage::from_hole(at);
+    let offset = stage_site(&mut stage);
+    let record = word_at(payload, JS_STEP_LOOP_ENTRY);
+    let values = entry::entry_word(&mut stage, record, offset);
+    let length = entry::entry_word(&mut stage, record, offset + LOOP_ENTRY_ARRAY_COUNT_AT);
+    Some(typed_elements::TypedView { values, length, kind: typed_elements::ViewKind::Static(native), within: false })
+}
+
+/// A typed element read: the entry words' offset is hole 1, the Number delivered as `Value::number` makes it.
+#[inline(always)]
+fn typed_index_row<const KIND: u8, const D: u8, const B: u8>(s: S, payload: usize) -> Out {
+    let index = need!(s, index_of::<B, HOLE_B>(&s));
+    let view = need!(s, typed_view::<KIND>(payload, (HOLE_A, TYPED_INDEX_ROW)));
+    let number = need!(s, typed_elements::typed_read(&mut StencilStage::from_hole(0), view, u64::from(index as u32), ()));
+    deliver::<D>(s, canonical(f64::from_bits(number)))
+}
+
+/// A typed element store of the Number operand (hole 1): the entry words' offset is hole 0, the index hole 2.
+#[inline(always)]
+fn typed_store_row<const KIND: u8, const A: u8, const B: u8>(s: S, payload: usize) -> Out {
+    let index = need!(s, index_of::<B, HOLE_B>(&s));
+    let number = need!(s, number_place::<A, HOLE_A>(&s));
+    let view = need!(s, typed_view::<KIND>(payload, (0, TYPED_STORE_ROW)));
+    need!(s, typed_elements::typed_write(&mut StencilStage::from_hole(0), view, u64::from(index as u32), number, ()));
+    Out::Next(s)
+}
+
+/// A typed array's `length`: the count the entry words (offset in hole 1) hold, an int32.
+#[inline(always)]
+fn typed_length_row<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::from_hole(HOLE_A);
+    let offset = stage_site(&mut stage);
+    let length = entry::entry_word(&mut stage, word_at(payload, JS_STEP_LOOP_ENTRY), offset + LOOP_ENTRY_ARRAY_COUNT_AT);
+    deliver::<D>(s, int_word(length as u32 as i32))
+}
+
 /// `AppendArray`'s fast arm: the Number operand (hole 1) appended to the array at hole 0 where its
 /// backing is writable and its capacity word has room (`elements::append_in_room`); a hit continues at TAKEN.
 #[inline(always)]
@@ -222,6 +263,9 @@ fn element_row<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, cons
         ARRAY_ROW => array_row(s),
         LENGTH_ROW => length_row::<D>(s, payload),
         INDEX_ROW => index_row::<ENTRY, D, B>(s, payload),
+        TYPED_INDEX_ROW..=TYPED_INDEX_LAST => typed_index_row::<KIND, D, B>(s, payload),
+        TYPED_STORE_ROW..=TYPED_STORE_LAST => typed_store_row::<KIND, A, B>(s, payload),
+        TYPED_LENGTH_ROW => typed_length_row::<D>(s, payload),
         APPEND_ROW => append_row::<A>(s, payload),
         _ => store_row::<ENTRY, A, B>(s, payload),
     }

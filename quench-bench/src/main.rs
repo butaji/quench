@@ -2,6 +2,7 @@ mod analysis;
 mod contention;
 mod jetstream;
 mod residuals;
+mod sub_scores;
 mod subcommand;
 mod tier_differential;
 mod tier_invariant;
@@ -37,7 +38,13 @@ const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const TIER_RUN_TIMEOUT_MS: u64 = 60_000;
 /// The development-experiment setting (`quench_runtime::trace::Dev`).
 const QUENCH_DEV: &str = "QUENCH_DEV";
-const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
+/// The only inherited variables; every child process gets exactly these plus its explicit overrides.
+const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME"];
+/// The directory cargo writes optimized builds to; a quench under test beneath it is a release build.
+const RELEASE_DIRECTORY: &str = "release";
+/// The warning printed whenever a score bar is computed from a non-release quench.
+pub(crate) const NON_RELEASE_WARNING: &str =
+    "warning: quench under test is not a release build; score bars are not qualifying";
 const FIXED_WORK_REPORT_SCHEMA: u32 = 5;
 const SUITE_REPORT_SCHEMA: u32 = 16;
 const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
@@ -423,6 +430,9 @@ struct SuiteRecord {
     source_dirty: bool,
     corpus: CorpusRecord,
     host: HostRecord,
+    /// Whether the quench under test is a release build; score bars from other builds are not qualifying.
+    #[serde(default)]
+    quench_release_build: bool,
     engines: Vec<EngineRecord>,
     suite_inputs: Vec<Artifact>,
     /// The exact canonical fixture selection, including unfinished checkpoint runs.
@@ -627,6 +637,7 @@ fn main() {
         return;
     }
 
+    print_run_header(&options.quench, &engine_records);
     let suite = options.suite;
     let mut report = SuiteRecord {
         schema: SUITE_REPORT_SCHEMA,
@@ -645,6 +656,7 @@ fn main() {
         source_dirty,
         corpus: corpus_record(suite, &files),
         host: host_identity(),
+        quench_release_build: is_release_build(&options.quench),
         engines: engine_records,
         suite_inputs: suite.inputs(),
         selected_fixtures: files
@@ -1461,11 +1473,40 @@ fn spec(
 }
 
 fn measurement_environment(overrides: BTreeMap<String, String>) -> BTreeMap<String, String> {
-    let inherited = MEASUREMENT_ENV
+    measurement_environment_from(|key| env::var(key).ok(), overrides)
+}
+
+/// The child environment built from `lookup` over `MEASUREMENT_ENV`, then `overrides`.
+fn measurement_environment_from(
+    lookup: impl Fn(&str) -> Option<String>,
+    overrides: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    MEASUREMENT_ENV
         .iter()
-        .filter_map(|key| env::var(key).ok().map(|value| ((*key).to_string(), value)))
-        .collect::<BTreeMap<_, _>>();
-    inherited.into_iter().chain(overrides).collect()
+        .filter_map(|key| lookup(key).map(|value| ((*key).to_string(), value)))
+        .chain(overrides)
+        .collect()
+}
+
+fn is_release_build(executable: &Path) -> bool {
+    executable
+        .components()
+        .any(|component| component.as_os_str() == RELEASE_DIRECTORY)
+}
+
+/// Records each engine's binary and version, and warns when the quench under test is not a release build.
+fn print_run_header(quench: &Path, engines: &[EngineRecord]) {
+    for engine in engines {
+        eprintln!(
+            "engine {}: {} | {}",
+            engine.name, engine.executable, engine.version
+        );
+    }
+    if is_release_build(quench) {
+        eprintln!("quench under test: {} (release build)", quench.display());
+    } else {
+        eprintln!("{NON_RELEASE_WARNING}: {}", quench.display());
+    }
 }
 
 fn resolve_executable(path: &Path) -> Result<PathBuf, String> {
@@ -3376,9 +3417,9 @@ mod fixed_work_tests {
 #[cfg(all(test, unix, not(target_os = "macos")))]
 mod tests {
     use super::{
-        CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact, now_ns,
-        peak_rss_bytes, read_checkpoint, resume_metadata_matches, validate_resume, wait_child,
-        write_checkpoint,
+        CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact,
+        is_release_build, measurement_environment_from, now_ns, peak_rss_bytes, read_checkpoint,
+        resume_metadata_matches, validate_resume, wait_child, write_checkpoint,
     };
     use std::process::Command;
     use std::{
@@ -3386,6 +3427,38 @@ mod tests {
         fs,
         path::{Path, PathBuf},
     };
+
+    #[test]
+    fn child_environment_carries_only_path_home_and_explicit_overrides() {
+        let inherited = [
+            ("PATH", "/bin"),
+            ("HOME", "/home/user"),
+            ("NODE_OPTIONS", "--inspect"),
+            ("BUN_OPTIONS", "--smol"),
+            ("TMPDIR", "/tmp"),
+            ("LANG", "C"),
+            ("TZ", "UTC"),
+        ];
+        let lookup = |key: &str| {
+            inherited
+                .iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| (*value).to_string())
+        };
+        let overrides = BTreeMap::from([("BUN_JSC_useJIT".to_string(), "1".to_string())]);
+        let environment = measurement_environment_from(lookup, overrides);
+        let names: Vec<&str> = environment.keys().map(String::as_str).collect();
+        assert_eq!(names, ["BUN_JSC_useJIT", "HOME", "PATH"]);
+    }
+
+    #[test]
+    fn release_builds_are_recognized_by_their_release_directory() {
+        assert!(is_release_build(Path::new("target/release/quench-node")));
+        assert!(is_release_build(Path::new(
+            "/home/user/qtri-target/release/quench-node"
+        )));
+        assert!(!is_release_build(Path::new("target/debug/quench-node")));
+    }
 
     #[test]
     fn converts_wait4_peak_rss_to_bytes() {
@@ -3469,6 +3542,7 @@ mod tests {
                 logical_cpus: Some(4),
                 process_metrics_backend: "wait4 test".into(),
             },
+            quench_release_build: true,
             engines: Vec::new(),
             suite_inputs: Vec::new(),
             selected_fixtures: vec![fixture_path.display().to_string()],

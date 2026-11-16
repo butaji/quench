@@ -14662,7 +14662,7 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
             assert!(
                 diagnostics.compile_successes > 0
                     && diagnostics.native_region_runs > 0
-                    && diagnostics.exits > 0,
+                    && diagnostics.sites.iter().any(|site| !site.call_boundary_pcs.is_empty()),
                 "scoped={scoped} captured={captured}: exact-PC call boundary must run natively: {diagnostics:?}"
             );
             assert_eq!(
@@ -16526,6 +16526,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {

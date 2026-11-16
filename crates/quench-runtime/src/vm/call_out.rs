@@ -49,25 +49,33 @@ impl<H: Host> Vm<H> {
         }
         match operation {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
-            CallOut::Equality { strict, negated, .. } => {
-                let left = first.expect("an equality names its left operand");
-                let equal = if strict { self.strict_equal(left, operand) } else { self.equal(p, left, operand)? };
-                Ok(Some(Value::boolean(equal != negated)))
-            }
-            CallOut::Binary { operator, .. } =>
-                self.binary(p, operator, first.expect("a binary names its left operand"), operand).map(Some),
-            CallOut::Delete { strict, .. } => {
-                let strict = strict || p.function(site.function as usize).strict;
-                self.delete_reference_property_mode(p, first.expect("a delete names its base"), operand, strict).map(Some)
-            }
-            CallOut::Decide { operator, .. } => self
-                .binary_truthy(p, operator, first.expect("a decision names its left operand"), operand)
-                .map(|holds| Some(Value::boolean(holds))),
+            CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
+                self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
             CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),
             CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
             _ => self.name_step(p, site, operation, first),
+        }
+    }
+
+    /// The operator steps of `call_out` over the operands `(left, right)`: equality, a binary
+    /// operator, a delete and a branch decision.
+    fn operator_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, (left, right): (Option<Value>, Value))
+        -> Result<Option<Value>, JsError> {
+        let left = left.expect("an operator names its left operand");
+        match operation {
+            CallOut::Equality { strict, negated, .. } => {
+                let equal = if strict { self.strict_equal(left, right) } else { self.equal(p, left, right)? };
+                Ok(Some(Value::boolean(equal != negated)))
+            }
+            CallOut::Binary { operator, .. } => self.binary(p, operator, left, right).map(Some),
+            CallOut::Delete { strict, .. } => {
+                let strict = strict || p.function(site.function as usize).strict;
+                self.delete_reference_property_mode(p, left, right, strict).map(Some)
+            }
+            CallOut::Decide { operator, .. } => self.binary_truthy(p, operator, left, right).map(|holds| Some(Value::boolean(holds))),
+            _ => unreachable!("{operation:?} is no operator step"),
         }
     }
 
@@ -114,28 +122,38 @@ impl<H: Host> Vm<H> {
             return Ok(true);
         }
         self.check_local_assignment_initialized(p, owner, slot, initialize)?;
-        if let Some(atom) = atom
-            && function.declares_global_immutable(atom)
-            && !initialize
-        {
-            return Err(self.type_error(p, "assignment to constant binding".into()));
+        if let Some(atom) = atom {
+            self.refuse_immutable_store(p, function, atom, initialize)?;
         }
         if function.is_self_binding_slot(slot) {
             return if function.strict { Err(self.type_error(p, "assignment to function name binding".into())) } else { Ok(false) };
         }
-        let global_var = self.root_global_var_atom(p, program, running, slot);
-        if let Some(atom) = global_var {
-            let globals = self.realm.globals;
-            let written = self.set_property_with_receiver(p, globals, atom, value, globals)?;
-            if !written && function.strict {
-                return Err(self.type_error(p, "cannot assign to read-only global binding".into()));
-            }
+        if let Some(atom) = self.root_global_var_atom(p, program, running, slot) {
+            self.store_global_var(p, atom, value, function.strict)?;
             return Ok(true);
         }
         self.mirror_global_lexical_binding(p, owner, slot, value);
         *self.owner_binding_mut(p, owner, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
         self.mapped_argument_store(p, owner, slot, value);
         Ok(true)
+    }
+
+    /// The refusal of a store to a global immutable binding after its initialization.
+    fn refuse_immutable_store(&mut self, p: &ResidualProgram, function: &crate::bytecode::Function, atom: Atom, initialize: bool) -> Result<(), JsError> {
+        if function.declares_global_immutable(atom) && !initialize {
+            return Err(self.type_error(p, "assignment to constant binding".into()));
+        }
+        Ok(())
+    }
+
+    /// The store of `value` to the global `var` `atom`, which is the global object's property.
+    fn store_global_var(&mut self, p: &ResidualProgram, atom: Atom, value: Value, strict: bool) -> Result<(), JsError> {
+        let globals = self.realm.globals;
+        let written = self.set_property_with_receiver(p, globals, atom, value, globals)?;
+        if !written && strict {
+            return Err(self.type_error(p, "cannot assign to read-only global binding".into()));
+        }
+        Ok(())
     }
 
     /// The running function's own frame, for the steps that read state only a frame has (its

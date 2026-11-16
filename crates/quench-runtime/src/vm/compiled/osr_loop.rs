@@ -941,11 +941,11 @@ fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite
 
 /// The registers of an inlining region that hold objects: each call's receiver and, where its callee's read is
 /// checked, the callee's register, which holds the function its read gives.
-fn object_registers(calls: &std::collections::BTreeMap<u32, inlining::Site<'_>>, checked_reads: &std::collections::BTreeMap<u32, u32>, caller: &[WideInstruction], header: u32) -> std::collections::BTreeSet<Register> {
+fn object_registers(calls: &inlining::PcMap<inlining::Site<'_>>, checked_reads: &inlining::PcMap<u32>, caller: &[WideInstruction], header: u32) -> std::collections::BTreeSet<Register> {
     calls
         .iter()
         .flat_map(|(pc, site)| {
-            let callee = checked_reads.contains_key(pc).then(|| caller[(*pc - header) as usize].register_b());
+            let callee = checked_reads.contains(pc).then(|| caller[(pc - header) as usize].register_b());
             std::iter::once(site.frame.receiver).chain(callee)
         })
         .collect()
@@ -1005,14 +1005,14 @@ pub(super) fn inline_region<'a>(
     let mask = |pc: u32| live.get(pc as usize);
     let caller_registers = function.registers;
     let mut total = u32::from(caller_registers);
-    let mut calls: std::collections::BTreeMap<u32, inlining::Site<'a>> = std::collections::BTreeMap::new();
+    let mut calls: inlining::PcMap<inlining::Site<'a>> = inlining::PcMap::new(header, caller.len());
     // The caller PCs whose instructions drop out, the setup PCs by the PC they resume at, and
     // the caller instructions the region runs rewritten.
-    let mut dropped = std::collections::BTreeSet::new();
-    let mut setup: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
-    let mut rewritten: std::collections::BTreeMap<u32, WideInstruction> = std::collections::BTreeMap::new();
+    let mut dropped = inlining::PcMap::new(header, caller.len());
+    let mut setup = inlining::PcMap::new(header, caller.len());
+    let mut rewritten = inlining::PcMap::new(header, caller.len());
     let caller_stored = inlining::stored_names(caller, sites);
-    let mut checked_reads: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+    let mut checked_reads = inlining::PcMap::new(header, caller.len());
     let captured = receivers::captured(caller, mask(header)?);
     for (offset, instruction) in caller.iter().copied().enumerate() {
         if !instruction.op().is_call() {
@@ -1038,7 +1038,7 @@ pub(super) fn inline_region<'a>(
         // reads until the call, nor after it. The region gives that read a register of its
         // own, holding the field's value (`held_registers`), and the setup resumes at it.
         let mut resume_offset = read_offset;
-        let checked = defines(receiver) && receivers::stored(caller, read_offset, receiver, sites, &|atom| caller_stored.contains(&atom));
+        let checked = defines(receiver) && receivers::stored(caller, read_offset, receiver, sites, &|atom| caller_stored.contains(atom as usize));
         if checked {
             checked_reads.insert(pc, read);
             // The callee resolves now through the receiver's own path; native code checks
@@ -1078,7 +1078,7 @@ pub(super) fn inline_region<'a>(
         let first = read + 1;
         let bound = inlining::bound_parameters(&caller[read_offset + 1..offset], first, window, &callee, &reached, &defines, &mut dropped)?;
         if !checked {
-            dropped.insert(read);
+            dropped.insert(read, ());
         }
         for setup_pc in resume..pc {
             setup.insert(setup_pc, resume);
@@ -1152,7 +1152,7 @@ pub(super) fn inline_region<'a>(
     // the region's held registers.
     let held: std::collections::BTreeMap<Register, FieldPath> =
         region.held.iter().map(|(register, (path, _))| (*register, path.clone())).chain(captured).collect();
-    let frames = inlining::guarded_frames(calls, &checked_reads, &held, caller_registers, &defines, &mut region)?;
+    let frames = inlining::guarded_frames(calls, &checked_reads, &|register| held.get(&register), caller_registers, &defines, &mut region)?;
     region.inlining = Some(Box::new(Inlining { origins, frames, callee_captures, caller_registers, latch: backedge }));
     Some(region)
 }
@@ -2415,7 +2415,7 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
-    /// Whether loops may guard their bounds once on entry (`RegionPlan::entry_bounds`).
+    /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
 }
 

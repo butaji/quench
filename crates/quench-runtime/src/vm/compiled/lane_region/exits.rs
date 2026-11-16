@@ -8,11 +8,12 @@
 use super::*;
 
 /// The caller registers a leave stores, by the view the cold block stores each from: the
-/// current tagged bits, or the int32 or float64 view boxed there.
+/// current tagged bits, or the int32, 64-bit integer or float64 view boxed there.
 #[derive(PartialEq)]
 pub(super) struct ExitStores {
     tagged: CompoundBitSet,
     int: CompoundBitSet,
+    long: CompoundBitSet,
     float: CompoundBitSet,
 }
 
@@ -25,13 +26,14 @@ pub(super) struct ExitBlock {
 impl Lowering<'_, '_> {
     /// The caller registers a leave at `pc` stores from `state`: written, live there and not homed.
     pub(super) fn stored_at(&self, state: &State, pc: usize) -> ExitStores {
-        let mut stores = ExitStores { tagged: CompoundBitSet::new(), int: CompoundBitSet::new(), float: CompoundBitSet::new() };
+        let mut stores = ExitStores { tagged: CompoundBitSet::new(), int: CompoundBitSet::new(), long: CompoundBitSet::new(), float: CompoundBitSet::new() };
         for register in self.written.iter().take_while(|register| *register < usize::from(self.unit.caller_registers)) {
             if !self.is_live(pc, register as Register) || state.proofs.homed.contains(register) { continue; }
             let fact = state.values[register];
             let view = match fact.value.representation {
                 _ if fact.tagged.current() => &mut stores.tagged,
                 Representation::Int32 => &mut stores.int,
+                Representation::Int64 => &mut stores.long,
                 _ => &mut stores.float,
             };
             view.insert(register);
@@ -79,7 +81,7 @@ impl Lowering<'_, '_> {
     /// Each register of `stored` to the lane frame: its tagged bits, or its unboxed view boxed here.
     fn store_exit_registers(&mut self, stored: &ExitStores) {
         let views = [(&stored.tagged, Representation::Tagged), (&stored.int, Representation::Int32),
-            (&stored.float, Representation::Float64)];
+            (&stored.long, Representation::Int64), (&stored.float, Representation::Float64)];
         for (registers, representation) in views {
             for index in registers.iter() {
                 let bits = match representation {

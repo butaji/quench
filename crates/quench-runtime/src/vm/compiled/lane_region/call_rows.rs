@@ -29,7 +29,7 @@ impl Lowering<'_, '_> {
     /// Whether `instruction` is a construction with its arguments in registers, which the
     /// construct plan lowers where no call row did.
     pub(super) fn is_construction(&self, instruction: WideInstruction) -> bool {
-        self.completion != Completion::Number && Invocation::of(instruction, crate::staged::DecodeContext::of(self.program)).is_some_and(|site| site.constructs())
+        !self.completion.numeric() && Invocation::of(instruction, crate::staged::DecodeContext::of(self.program)).is_some_and(|site| site.constructs())
     }
 
     /// Whether the call at `pc` is a record of the caller whose window its registers hold: the

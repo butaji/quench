@@ -146,7 +146,7 @@ mod tests {
         let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: RealmProof::default(), widened: &[], seen: [&[], &[]], kinds: &[] };
         let helpers = crate::vm::compiled::process_lane_helpers::<crate::test_host::TestHost>();
         // SAFETY: the region has no callees, so no entry cell is read.
-        let built = unsafe { function::build_region(&region, &spec, true, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");
+        let built = unsafe { function::build_region(&region, &spec, ElementViews::Dense, &callees::Callees::default(), helpers) }.expect("the loop has a row for each instruction");
         let (code, table) = (&built.code, &built.resumes);
         assert!(table.pcs().first() == Some(&region.header) && table.pcs().windows(2).all(|pair| pair[0] < pair[1]));
         assert!(table.pcs().iter().all(|pc| (region.header..=region.backedge).contains(pc)));

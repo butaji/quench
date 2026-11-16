@@ -25,6 +25,8 @@ use crate::typed_ir::Division;
 use crate::staged::typed_elements::{NativeKind, ViewKind};
 use crate::staged::typed_view::{prove_typed_view, TypedRecords, ViewAccess};
 use std::collections::{BTreeMap, BTreeSet};
+/// The direct callees of a body's call sites, by unit PC.
+pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
@@ -43,17 +45,24 @@ mod global_reads;
 mod stable;
 #[path = "lane_region/polls.rs"]
 mod polls;
+#[path = "lane_region/scalar.rs"] pub(super) mod scalar;
+#[path = "lane_region/trips.rs"] mod trips;
 #[path = "lane_region/function_names.rs"] mod function_names;
 #[path = "lane_region/literals.rs"] mod literals;
 #[path = "lane_region/allocations.rs"] mod allocations;
 #[path = "lane_region/edges.rs"] mod edges;
 #[path = "lane_region/demand.rs"] mod demand;
+#[path = "lane_region/arithmetic.rs"] mod arithmetic;
+#[path = "lane_region/index_math.rs"] mod index_math;
+#[path = "lane_region/int_inputs.rs"] mod int_inputs;
+#[path = "lane_region/loop_versions.rs"] mod loop_versions;
 #[path = "lane_region/exits.rs"] mod exits;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/exit_tests.rs"] mod exit_tests;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_region/home_tests.rs"] mod home_tests;
 #[path = "lane_region/catches.rs"] mod catches;
 #[path = "lane_region/store_domains.rs"] mod store_domains;
 pub(in crate::vm) use store_domains::store_domains;
+#[path = "lane_region/arguments.rs"] mod arguments;
 #[path = "lane_region/captures.rs"] mod captures;
 #[path = "lane_region/compare_jumps.rs"] mod compare_jumps;
 #[path = "lane_region/relocs.rs"] pub(super) mod relocs;
@@ -83,6 +92,7 @@ use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/element_rows.rs"] mod element_rows;
 #[path = "lane_region/fixed_arrays.rs"] mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] mod element_tests;
+#[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] mod loop_shape_tests;
 use loop_arrays::{ArraySource, LoopArray};
 #[cfg(feature = "aot")] #[path = "lane_region/bound_this.rs"] mod bound_this;
 use frame::EmitFrame;
@@ -163,10 +173,11 @@ impl RegisterFact {
 
 struct Registers {
     tagged: Vec<Variable>,
-    /// Each register's int32 and float64 views, declared at their first use: most registers
-    /// never take one, and the SSA builder's tables grow with variables times blocks. A view
-    /// read before any definition reads zero, as only a state that defined it reads it.
+    /// Each register's int32, 64-bit integer and float64 views, declared at their first use: most
+    /// registers never take one, and the SSA builder's tables grow with variables times blocks. A
+    /// view read before any definition reads zero, as only a state that defined it reads it.
     int: Vec<Option<Variable>>,
+    long: Vec<Option<Variable>>,
     float: Vec<Option<Variable>>,
 }
 
@@ -201,6 +212,9 @@ struct LocalProofs {
     readable: CompoundBitSet,
     /// A fixed receiver (`None`) or register's complete own-slot projection.
     layouts: BTreeMap<(Option<Register>, u32), CheckedObject>,
+    /// The exact shape a register's object had before a call (`kept_shapes.rs`), which the code
+    /// holds again at the register's next use where the VM holds the shape stable.
+    kept_shapes: BTreeMap<Register, u32>,
     /// Registers holding the receiver, whose facts the entry proved.
     receivers: BTreeSet<Register>,
     /// Immutable reads; receiver definitions and memory effects retire these facts.
@@ -243,7 +257,7 @@ impl State {
     fn canonical(registers: usize) -> Self {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
-            layouts: BTreeMap::new(), receivers: BTreeSet::new(),
+            layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false,
             arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
@@ -268,6 +282,7 @@ impl State {
     /// Native reentry retires shape/storage and function-body admission proofs;
     /// object records and language families stay.
     fn call_effect(&mut self) {
+        self.proofs.keep_shapes(&self.values);
         self.proofs.fields.clear();
         self.proofs.int32_projections.clear();
         self.proofs.arrays.clear();
@@ -335,6 +350,8 @@ struct Entry {
 pub(super) struct LoweredLane {
     pub(super) region: LoweredRegion,
     pub(super) clif: Option<String>,
+    /// The function's scalar entry (`scalar`), which its direct calls of itself call: compiled beside the body.
+    pub(super) scalar: Option<ir::Function>,
 }
 
 /// One typed numeric return edge, materialized after joining all return facts.
@@ -352,6 +369,8 @@ struct LoopRead {
     /// replace this receiver or change its shape. Never inferred from feedback.
     receiver: Option<(Register, Type)>,
     header: Option<ObjectHeader>,
+    /// The word an induction value (`representation` `Int64`) advances by at each step of its counter.
+    step: Option<Variable>,
 }
 
 #[derive(Clone, Copy)]
@@ -456,8 +475,7 @@ struct Lowering<'a, 'f> {
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
-    /// The calls, by unit PC, that call a callee's compiled entry (`DirectCallee`).
-    direct: &'a BTreeMap<usize, *const DirectCallee>,
+    direct: &'a DirectSites,
     /// Per inlined frame, its callee's dense capture slots (values and count), fixed by the
     /// callee's identity, which its call guards; null where they are not dense.
     frame_captures: &'a [(usize, usize)],
@@ -465,6 +483,8 @@ struct Lowering<'a, 'f> {
     /// An entry-bound poll page, or the ordinary atomic termination flag.
     interrupt: ir::Value,
     fault_poll: bool,
+    /// A loop region's completed iterations, flushed to its entry record where it leaves (`trips.rs`).
+    trips: Option<Variable>,
     /// Callback completion edges can retire the native entry's interrupt ownership proof.
     reentries: smallvec::SmallVec<[ir::Block; INLINE_EFFECT_EDGES]>,
     polls: smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
@@ -475,6 +495,7 @@ struct Lowering<'a, 'f> {
     registers_base: ir::Value,
     /// The running body's receiver and capture words its caller passes (`entry_cell::capture_word`).
     entry_words: (ir::Value, ir::Value),
+    callee_slots: Vec<(u16, ir::Value)>,
     registers: Registers,
     written: CompoundBitSet,
     /// Source operations already consumed by an exact, unobservable scalar pair.
@@ -519,19 +540,20 @@ struct Lowering<'a, 'f> {
     hoisted: BTreeMap<usize, LoopRead>,
     /// Loop-invariant array bases whose views their loop's entry proves (`loop_arrays`).
     loop_arrays: Vec<LoopArray>,
-    /// Loop bounds the entering edge guards below a hoisted dense array's length
-    /// (`int_ranges::LoopBound`), so the loop's accesses below the bound need no bounds check.
-    loop_bounds: Vec<int_ranges::LoopBound>,
+    /// The shapes loops proved of their invariant receivers on their entering edges (`loop_receivers`).
+    loop_shapes: Vec<loop_receivers::LoopShape>,
     /// Whether no operation of the unit may move an array's backing or the array record table
     /// (`arrays_stay_put`), so the record table's base is read-only throughout.
     arrays_fixed: bool,
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
+    /// Whether loops version their bounds on entry (`RegionPlan::entry_bounds`).
+    entry_bounds: bool,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
-    /// The unit's integer ranges, computed once before lowering (`int_ranges::analyze`): the
+    /// The unit's integer proofs, computed once before lowering (`Lowering::prove_ranges`): the
     /// arithmetic that cannot overflow and the hoisted element accesses within their array.
     ranges: int_ranges::IntRanges,
     /// The registers whose int32 range the entry guards once and the ranges pass takes as
@@ -621,6 +643,9 @@ pub(super) enum Completion {
     /// Pure, restartable scalar entry: borrowed inputs in the window's first slots, proved
     /// Numbers once at entry, and one Number result word; a miss restarts the original call.
     Number,
+    /// A numeric function's entry that takes its numbers in registers (`scalar`): the same
+    /// results and misses as `Number`, for a call whose arguments are proved those numbers.
+    Scalar(scalar::ScalarAbi),
 }
 
 impl Completion {
@@ -662,28 +687,25 @@ impl ElementViews {
     }
 }
 
-/// No heap, environment or guest-call effect may precede scalar-call recovery.
-fn numeric_unit(program: &ResidualProgram, unit: &super::lane_unit::Unit) -> bool {
-    unit.frames.is_empty() && numeric_instructions(program, &unit.instructions)
-}
-
 pub(super) fn restartable_numeric_function(program: &ResidualProgram, function: &crate::bytecode::Function,
     instructions: &[WideInstruction]) -> bool {
     super::super::js_compiled::function_candidate(function, program) && numeric_instructions(program, instructions)
 }
 
 fn numeric_instructions(program: &ResidualProgram, instructions: &[WideInstruction]) -> bool {
-    instructions.iter().all(|instruction| {
-        if instruction.writes_current_this()
-            || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
-        match instruction.op() {
-            opcode if opcode.is_load_const() => program.constants.get(instruction.constant_index())
-                .and_then(super::facts::immediate).is_some(),
-            _ if instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
-            _ => instruction.op().js_denotation() == JsDenotation::NumericBinary
-                && instruction.numeric_local_target().is_none(),
-        }
-    })
+    instructions.iter().all(|instruction| numeric_instruction(program, *instruction))
+}
+
+fn numeric_instruction(program: &ResidualProgram, instruction: WideInstruction) -> bool {
+    if instruction.writes_current_this()
+        || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
+    match instruction.op() {
+        opcode if opcode.is_load_const() => program.constants.get(instruction.constant_index())
+            .and_then(super::facts::immediate).is_some(),
+        _ if instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
+        _ => instruction.op().js_denotation() == JsDenotation::NumericBinary
+            && instruction.numeric_local_target().is_none(),
+    }
 }
 
 fn register_offset(register: Register) -> i32 {
@@ -720,8 +742,13 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn define(&mut self, state: &mut State, register: Register, value: ir::Value, fact: RegisterFact) {
-        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state,
-            register, value, fact);
+        frame::register_define(&mut self.builder, &mut self.registers, &mut self.written, state, register, value, fact);
+    }
+
+    /// Whether `pc` is the entry function's own record: an inlined callee's records read that
+    /// callee's activation, which no window of the entry's holds.
+    fn caller_record(&self, pc: usize) -> bool {
+        matches!(self.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_)))
     }
 
     fn set_tagged(&mut self, state: &mut State, register: Register, bits: ir::Value) {
@@ -769,7 +796,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     /// (`JsStepDispatch::exit_line`).
     #[track_caller]
     fn exit(&mut self, state: &mut State, pc: u32) {
-        if self.vm.diagnostics && self.completion != Completion::Number {
+        if self.vm.diagnostics && !self.completion.numeric() {
             let line = self.raw_const(Lane::I64, i64::from(std::panic::Location::caller().line()));
             self.store_word(regions::dispatch(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
         }
@@ -778,7 +805,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// Leave at `pc` with the interpreter's state: every written register back in the lane's file, but those it already holds.
     fn leave_at(&mut self, state: &mut State, pc: u32) {
-        if self.completion == Completion::Number {
+        if self.completion.numeric() {
             self.return_at(0);
             return;
         }
@@ -829,7 +856,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Some(block) => {
                 self.entered.insert(pc);
                 self.finishes |= pc <= self.at;
-                if self.at < pc { self.hoist_loop_entry(state, pc); }
+                if self.at < pc { self.hoist_entry(state, pc); }
                 self.conform(state, pc);
                 if self.at < pc { self.arrive(state, pc); }
                 self.goto(block, &[]);
@@ -915,7 +942,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
                 self.builder.def_var(variable, number);
             }
             Representation::Tagged => { self.tagged(state, register); }
-            Representation::Int32 | Representation::Float64 => {}
+            Representation::Int32 | Representation::Int64 | Representation::Float64 => {}
         }
         self.conform_object(state, target, register, ty);
         // A fact this edge does not prove and cannot guard leaves at the target, exactly:
@@ -963,7 +990,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// The live caller registers a once-entered region entry loaded from their frame slots.
     fn home_entry_registers(&self, state: &mut State, pc: usize) {
-        if pc == self.coverage.entry() && self.completion != Completion::Number
+        if pc == self.coverage.entry() && !self.completion.numeric()
             && edges::entered_once(&self.unit.instructions, pc, |at| self.coverage.lowered(at)) {
             for register in (0..self.unit.caller_registers).filter(|register| self.is_live(pc, *register)) {
                 state.proofs.homed.insert(usize::from(register));
@@ -1057,37 +1084,6 @@ pub(super) fn leaders(instructions: &[WideInstruction]) -> CompoundBitSet {
         }
     }
     leaders
-}
-
-/// Whether `instruction` reads a field as an int32 (`Lowering::get_field`): a lookup with no
-/// sink or completion whose last read's slots have only held int32 values, its value's tag
-/// tested at the read.
-fn int32_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    read_slot_type(program, fields, instruction) == Some(Type::INT32)
-}
-
-/// Whether `instruction` reads a field whose slots have held Numbers, not only int32s: the read
-/// proves Number once and keeps the double view, so its arithmetic takes the double operation.
-fn number_read(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> bool {
-    read_slot_type(program, fields, instruction) == Some(Type::NUMBER)
-}
-
-/// The slot type every shape of `instruction`'s plain field read observed, if they agree.
-fn read_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
-    if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
-        return None;
-    }
-    let last = match instruction.field_lookup() {
-        Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
-        Some(FieldLookup::Site(index)) => match program.field_sites.get(index) {
-            Some(site) if site.sink.is_none() => site.second.unwrap_or(site.first).1,
-            _ => return None,
-        },
-        None => return None,
-    };
-    let shapes = site_loads(fields, last)?;
-    let ty = shapes.first()?.ty;
-    shapes.iter().all(|field| field.ty == ty).then_some(ty)
 }
 
 /// The register whose value `register` copies at the comparison at `pc`: following the moves and
@@ -1384,8 +1380,8 @@ pub(super) struct RegionPlan {
     pub(super) coverage: Coverage,
     pub(super) completion: Completion,
     pub(super) views: ElementViews,
-    /// Whether loops may guard their bounds once on entry (`int_ranges::LoopBound`): an OSR
-    /// site whose entries kept missing compiles again without (`LoopTier::missed_entry`).
+    /// Whether loops may version their bounds on entry (`int_ranges::prove_loops`): an OSR site
+    /// whose entries kept missing compiles again without (`LoopTier::missed_entry`).
     pub(super) entry_bounds: bool,
 }
 
@@ -1424,7 +1420,7 @@ pub(super) struct RegionSpecializer<'p> {
     pub(super) global_reads: &'p crate::vm::global_facts::GlobalReads,
     pub(super) facts: VmFacts<'p>,
     pub(super) generic: &'p [usize],
-    pub(super) direct: &'p BTreeMap<usize, *const DirectCallee>,
+    pub(super) direct: &'p DirectSites,
     pub(super) frame_captures: &'p [(usize, usize)],
     pub(super) isa: &'p dyn cranelift_codegen::isa::TargetIsa,
     /// An OSR region's field reads answered from the entry record, by unit PC and entry
@@ -1466,19 +1462,22 @@ pub(super) fn lower_body(
     global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
-    direct: &BTreeMap<usize, *const DirectCallee>,
+    direct: &DirectSites,
     frame_captures: &[(usize, usize)], entry: Option<usize>,
     number_reads: &[super::facts::ObservedRead],
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
-    let region = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
+    let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
-            completion: Completion::Body, views: ElementViews::Dense } }
-        .specialize(program).ok()?;
+            completion: Completion::Body, views: ElementViews::Dense } };
+    // The scalar entry lowers first: the body calls it only where it exists.
+    let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
+    let scalar = abi.and_then(|abi| scalar::lowered(program, RegionSpecializer { generic: &[], facts: VmFacts { scalar: Some(abi), ..vm }, plan: scalar::plan(abi), ..body }));
+    let region = RegionSpecializer { facts: VmFacts { scalar: abi.filter(|_| scalar.is_some()), ..vm }, ..body }.specialize(program).ok()?;
     super::residuals::report_clif(function_id, &region.function);
     let clif = native_dump_directory().map(|_| region.function.to_string());
-    Some(LoweredLane { region, clif })
+    Some(LoweredLane { region, clif, scalar })
 }
 
 /// The position a failed entry contract takes in a lane body's leave set
@@ -1499,7 +1498,7 @@ pub(super) fn lower(
     global_reads: &crate::vm::global_facts::GlobalReads,
     vm: VmFacts<'_>,
     generic: &[usize],
-    direct: &BTreeMap<usize, *const DirectCallee>,
+    direct: &DirectSites,
     frame_captures: &[(usize, usize)],
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &EntryWords,
@@ -1520,14 +1519,14 @@ pub(super) fn lower(
     let unit = residual.as_ref().unwrap_or(unit);
     crate::vm::dispatch_fast::lane_body_stats::lowering_function(function_id);
     let function = program.function_get(function_id as usize)?;
-    let numeric = completion == Completion::Number;
+    let numeric = completion.numeric();
     if numeric && (!super::super::js_compiled::function_candidate(function, program)
-        || !numeric_unit(program, unit) || function.params > unit.caller_registers) { return None; }
+        || !scalar::numeric_unit(program, unit, completion != Completion::Number, direct) || function.params > unit.caller_registers) { return None; }
     if fields.iter().flatten().flatten().any(|field| !field.valid()) { return None; }
     if unit.instructions.is_empty() || unit.instructions.len() > MAX_NATIVE_RECORDS {
         return None;
     }
-    let signature = lane_body_signature(isa.pointer_type(), isa.default_call_conv());
+    let signature = completion.signature(isa.pointer_type(), isa.default_call_conv());
     let mut native = ir::Function::with_name_signature(UserFuncName::user(LANE_REGION_NAMESPACE, function_id), signature);
     // Every access this lowering emits is tagged with its alias region (`regions::flags`), so the
     // function names them before anything verifies or compiles it (declaring again is a no-op).
@@ -1538,8 +1537,7 @@ pub(super) fn lower(
     builder.append_block_params_for_function_params(entry_block);
     builder.switch_to_block(entry_block);
     let parameters = builder.block_params(entry_block).to_vec();
-    let [context, entry_this, entry_captures, registers_base] = parameters.as_slice() else { return None };
-    let (context, entry_this, entry_captures, registers_base) = (*context, *entry_this, *entry_captures, *registers_base);
+    let [context, entry_this, entry_captures, registers_base] = scalar::entry_words(&mut builder, completion, &parameters)?;
     let mut stage = emit(&mut builder);
     let payload = if numeric { stage.raw_const(Lane::I64, 0) } else {
         stage.raw_load(Lane::I64, regions::dispatch(), context, std::mem::offset_of!(CallContext, adapter_payload) as i32) };
@@ -1578,6 +1576,7 @@ pub(super) fn lower(
     let registers = Registers {
         tagged: (0..count).map(|_| builder.declare_var(types::I64)).collect(),
         int: vec![None; count],
+        long: vec![None; count],
         float: vec![None; count],
     };
     // An alternative of a call's switch starts a block: a callee other than the one before
@@ -1614,6 +1613,7 @@ pub(super) fn lower(
         int_captures,
         interrupt,
         fault_poll,
+        trips: None,
         reentries: smallvec::SmallVec::new(),
         polls: smallvec::SmallVec::new(),
         poll_latches: super::SecondaryMap::new(),
@@ -1629,6 +1629,7 @@ pub(super) fn lower(
         payload,
         registers_base,
         entry_words: (entry_this, entry_captures),
+        callee_slots: Vec::new(),
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -1653,10 +1654,10 @@ pub(super) fn lower(
         hoists: BTreeMap::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
-        loop_arrays: Vec::new(), arrays_fixed: false,
-        loop_bounds: Vec::new(),
+        loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
+        entry_bounds,
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         ranges: int_ranges::IntRanges::new(0),
@@ -1676,43 +1677,10 @@ pub(super) fn lower(
             lowering.written.insert(register);
         }
     }
-    let mut initial = vec![Type::ANY; count]; if numeric { initial[..usize::from(function.params)].fill(Type::NUMBER); }
+    let mut initial = completion.initial_types(count, usize::from(function.params));
     let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
-    for instruction in instructions.iter().enumerate().filter(|(pc, _)| !generic.contains(&entry_leave(unit)) && !heap.contains(*pc)).map(|(_, i)| i) {
-        let (operands, required) = match instruction.op() {
-            opcode if opcode.is_jump_binary_false() && nullish_comparison(&program.constants, *instruction, |_| Type::ANY).is_some() => continue,
-            opcode if opcode.is_jump_binary_false() => {
-                let operands = [instruction.operand_b(), instruction.operand_c()];
-                if super::operations::NumberRelation::from_operator(instruction.binary_operator_field()).is_none()
-                    || super::operations::equality_operator(instruction.binary_operator_field()).is_some()
-                    && !operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-                        && program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)
-                            .and_then(Value::as_number).is_some()) { continue; }
-                let floating = operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-                    && super::facts::operand_type(&program.constants, *operand, |_| Type::ANY) == Type::NUMBER);
-                (operands, if floating { Type::NUMBER } else { Type::INT32 })
-            }
-            _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => {
-                let operator = instruction.binary_operator();
-                let required = if super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator).is_some() { Type::INT32 }
-                    else if super::operations::NumberArithmetic::from_js_instruction(instruction.op(), operator).is_some() { Type::NUMBER }
-                    else { continue };
-                ([instruction.operand_b(), instruction.operand_c()], required)
-            }
-            _ => continue,
-        };
-        if operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-            && program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate)
-                .and_then(Value::as_number).is_none()) { continue; }
-        for register in operands.into_iter().filter_map(Operand::register_index)
-            .filter(|r| (function.parameter_registers.is_some_and(|base|
-                *r >= base && *r - base < function.params)
-                || function.local_registers.iter().any(|entry|
-                    entry.local < function.params && entry.register == *r))
-                && !numeric && !lowering.written.contains(usize::from(*r))) {
-            let current = &mut initial[usize::from(register)];
-            if *current != Type::INT32 { *current = required; }
-        }
+    if !numeric {
+        scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
     }
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
@@ -1721,7 +1689,7 @@ pub(super) fn lower(
         let [field] = site_loads(fields, cache_site)?.as_slice() else { return None };
         field.own_direct().then_some((base.register_index()?, field.shape))
     };
-    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
+    lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed));
     lowering.intrinsics = native_calls::intrinsic_calls(unit, global_reads, |pc| direct.contains_key(&pc));
     let loops = local_loops(unit, &program.constants, entry_pc, &lowering.intrinsics);
     // One entry query of the call depth replaces each binding's helper with its cached
@@ -1737,9 +1705,9 @@ pub(super) fn lower(
         // same verified SSA view. This is an admission requirement, not a fact
         // assumed about the source program or a TypeScript annotation.
         let mut refined = false;
-        for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge()) {
-            if matches!(*carried, Type::INT32 | Type::NUMBER) && *input != *carried {
-                *input = *carried;
+        for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge().iter().map(|ty| ty.machine())) {
+            if matches!(carried, Type::INT32 | Type::NUMBER) && *input != carried {
+                *input = carried;
                 refined = true;
             }
         }
@@ -1753,7 +1721,7 @@ pub(super) fn lower(
                         | super::operations::NumberRelation::GreaterThan | super::operations::NumberRelation::GreaterEqual)) {
             let operands = [instruction.operand_b(), instruction.operand_c()];
             if operands.iter().any(|operand| super::facts::operand_type(&program.constants, *operand,
-                |register| lowering.facts.backedge().get(usize::from(register)).copied().unwrap_or(Type::ANY)) == Type::INT32) {
+                |register| lowering.facts.backedge().get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_int32()) {
                 for register in operands.into_iter().filter_map(Operand::register_index)
                     .filter(|register| *register < unit.caller_registers && !lowering.written.contains(usize::from(*register))) {
                     if initial[usize::from(register)] == Type::NUMBER {
@@ -1763,9 +1731,8 @@ pub(super) fn lower(
                 }
             }
         }
-        if refined {
-            lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, &[], observed);
-        }
+        refined |= lowering.seed_loop_ints(&mut initial, &loops);
+        if refined { lowering.facts = super::facts::analyze(entry_pc, &initial, &instructions, &leaders, &program.constants, &writes, &own_shape, lowering.native_calls, super::facts::Seeds::observing(observed)); }
         lowering.refine_inductive_inputs(&mut initial, &instructions, &leaders, &loops, &own_shape);
     }
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
@@ -1776,11 +1743,9 @@ pub(super) fn lower(
     lowering.loop_arrays = loop_arrays::loop_arrays(unit, &loops, &leaders,
         |header, at| lowering.hoists.get(&header).is_some_and(|reads| reads.iter().any(|read|
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
-        lowering.views, typed_captures);
+        lowering.views, typed_captures, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
-    if entry_bounds { lowering.loop_bounds = int_ranges::loop_bounds(program, unit, &lowering.facts, &lowering.loop_arrays, generic, &|pc| lowering.dense_loop_access(pc)); }
-    lowering.guard_bound_indexes(entry_pc, generic);
-    lowering.ranges = int_ranges::analyze(program, unit, &lowering.facts, entry_pc, &lowering.entering, &lowering.loop_bounds, generic, &|pc| lowering.dense_loop_access(pc));
+    lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
@@ -1806,14 +1771,18 @@ pub(super) fn lower(
         let block = lowering.builder.create_block();
         lowering.goto(block, &[]);
         lowering.builder.switch_to_block(block);
+        lowering.begin_trips();
         if !matches!(lowering.unit.origins.get(pc), Some(super::lane_unit::Origin::Caller(_))) {
             return None;
         }
         let undefined = lowering.raw_const(Lane::I64, Value::UNDEFINED.to_bits() as i64);
         for register in 0..count {
-            // A numeric entry's window holds its parameters alone.
-            let in_window = if numeric { register < usize::from(function.params) }
-                else { register < usize::from(lowering.unit.caller_registers) && lowering.is_live(pc, register as Register) };
+            // A numeric entry's window holds its parameters alone; a scalar entry has none.
+            let in_window = match completion {
+                Completion::Scalar(_) => false,
+                Completion::Number => register < usize::from(function.params),
+                Completion::Body => register < usize::from(lowering.unit.caller_registers) && lowering.is_live(pc, register as Register),
+            };
             let bits = if in_window {
                 lowering.raw_load(Lane::I64, regions::frame(), registers_base, register_offset(register as Register))
             } else {
@@ -1831,13 +1800,7 @@ pub(super) fn lower(
             let miss = lowering.guard_exit(&state, pc as u32);
             emit_js_guard(&mut lowering.builder, admitted, miss);
         }
-        if numeric {
-            // Each input is proved a Number once, here; later uses read its unboxed view.
-            for register in 0..function.params {
-                let miss = lowering.guard_exit(&state, pc as u32);
-                lowering.number(&mut state, register, miss);
-            }
-        }
+        if numeric { lowering.enter_numeric_parameters(&mut state, pc, &parameters); }
         if fault_poll {
             // Publication lends a resumable page for this entire no-GC entry.
             // If unavailable, leave before any guest effect through ordinary recovery.
@@ -1854,7 +1817,7 @@ pub(super) fn lower(
         // A bounded range reads its fields at their sites; hoisting them to a shared entry
         // guard would make every call leave at the entry.
         lowering.proving_entry = true;
-        lowering.hoist_loop_entry(&mut state, pc);
+        lowering.hoist_entry(&mut state, pc);
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
@@ -1864,7 +1827,7 @@ pub(super) fn lower(
         if !coverage.lowered(pc) { continue; }
         if let Some(block) = lowering.blocks[pc] {
             if reachable {
-                lowering.hoist_loop_entry(&mut state, pc);
+                lowering.hoist_entry(&mut state, pc);
                 lowering.conform(&mut state, pc);
                 lowering.arrive(&state, pc);
                 lowering.entered.insert(pc);
@@ -1880,6 +1843,7 @@ pub(super) fn lower(
             lowering.switch_to(block, lowering.sealable.contains(pc));
             state = lowering.entry_state(pc, count);
             lowering.keep_shared_proofs(&mut state, pc);
+            lowering.seed_loop_shapes(&mut state, pc);
             reachable = true;
         }
         if !reachable {
@@ -1917,6 +1881,7 @@ pub(super) fn lower(
     lowering.leave_with(status, Some(word));
     lowering.builder.switch_to_block(leave);
     let results = lowering.builder.block_params(leave).to_vec();
+    lowering.flush_trips();
     lowering.leave(&results);
     // A lane body is a whole function body and must complete; so must an inlined unit, whose
     // callees rejoin it. A loop or range over the function's own code completes by its exits
@@ -1928,7 +1893,7 @@ pub(super) fn lower(
     if !lowering.valid || (completion.status_and_pc() && must_finish && !lowering.finishes) {
         return None;
     }
-    let number_result = (completion == Completion::Number).then(|| lowering.finish_number_returns());
+    let number_result = numeric.then(|| lowering.finish_number_returns());
     let native_count = lowering.native;
     let hoists_arrays = !lowering.loop_arrays.is_empty();
     let mut polls = std::mem::take(&mut lowering.polls);
@@ -1982,6 +1947,7 @@ impl Lowering<'_, '_> {
     fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
+        state.join_kept_shapes(incoming);
         state.proofs.int32_projections.retain(|projection| incoming.proofs.int32_projections.contains(projection));
         state.proofs.numbers.retain(|projection| incoming.proofs.numbers.contains(projection));
         state.proofs.meet_homed(&incoming.proofs.homed);
@@ -2033,7 +1999,7 @@ impl Lowering<'_, '_> {
                 let stop = self.stop;
                 self.goto(stop, &[word]);
             }
-            Completion::Number => {
+            Completion::Number | Completion::Scalar(_) => {
                 let miss = self.raw_const(Lane::I32, NUMBER_ENTRY_MISS);
                 let no_word = self.raw_const(Lane::I64, 0);
                 self.leave(&[miss, no_word]);
@@ -2070,7 +2036,7 @@ impl Lowering<'_, '_> {
                     let integer = match representation {
                         Representation::Int32 => value,
                         Representation::Float64 => self.raw_unary(Unary::ToSignedSaturating(Lane::I32), value),
-                        Representation::Tagged => unreachable!("typed numeric return"),
+                        Representation::Int64 | Representation::Tagged => unreachable!("typed numeric return"),
                     };
                     self.raw_unary(Unary::ZeroExtend(Lane::I64), integer)
                 }
@@ -2079,7 +2045,7 @@ impl Lowering<'_, '_> {
                     self.raw_unary(Unary::Bitcast(Lane::I64), number)
                 }
                 (NativeNumberResult::Float64, Representation::Float64) => self.raw_unary(Unary::Bitcast(Lane::I64), value),
-                (_, Representation::Tagged) => unreachable!("typed numeric return"),
+                (_, Representation::Int64 | Representation::Tagged) => unreachable!("typed numeric return"),
             };
             let success = self.raw_const(Lane::I32, 0);
             self.leave(&[success, value]);
@@ -2101,10 +2067,7 @@ impl Lowering<'_, '_> {
             let values = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_values));
             return (values, emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, capture_len)));
         }
-        let word = self.entry_words.1;
-        let mask = self.raw_const(Lane::I64, super::entry_cell::CAPTURE_ADDRESS_MASK);
-        let values = self.raw_binary(Binary::And, word, mask);
-        (values, self.raw_binary_imm(Binary::ShiftRightUnsigned, word, i64::from(super::entry_cell::CAPTURE_ADDRESS_BITS)))
+        self.entry_capture_slots()
     }
 
     /// Whether this run is a lane body, whose callers pass its receiver and captures as the
@@ -2148,7 +2111,7 @@ impl Lowering<'_, '_> {
             });
         let mut calls = CompoundBitSet::with_capacity(self.unit.frames.len());
         let mut call_receivers = CompoundBitSet::with_capacity(self.unit.frames.len());
-        if self.completion != Completion::Number {
+        if !self.completion.numeric() {
             // Roots name canonical caller homes never written by this unit.
             // Local Move aliases are valid only within their basic block.
             let roots: Vec<_> = (0..self.unit.registers).map(|register|
@@ -2232,7 +2195,7 @@ impl Lowering<'_, '_> {
                     for site in sites {
                         let writes = if instruction.op().is_field_store() {
                             self.facts.before(pc, instruction.register_a(), instructions, _leaders,
-                                &self.program.constants, &writes, self.native_calls)
+                                &self.program.constants, &writes, self.native_calls).machine()
                         } else if instruction.writes_current_this()
                             && matches!(instruction.field_lookup(), Some(FieldLookup::Site(index))
                                 if self.program.field_sites[index].sink.is_some_and(|(_, sink)| sink == site)) {
@@ -2454,40 +2417,6 @@ impl Lowering<'_, '_> {
         self.guard_entering_ranges(state, pc);
     }
 
-    /// The observed int32 entries live at `entry` (a dead register's value is stale, and nothing
-    /// conforms it) whose range is narrower than int32 and whose entry fact is
-    /// int32: what the entry guards once (`guard_entering_ranges`) and the pass assumes.
-    fn entering_ranges(&self, entry: usize) -> Vec<(Register, IntRange)> {
-        let types = self.facts.at(entry);
-        self.int_entries.iter().copied().filter(|&(register, range)| range != IntRange::FULL && self.is_live(entry, register)
-            && types.and_then(|types| types.get(usize::from(register))).is_some_and(|ty| ty.is_subtype(Type::INT32))).collect()
-    }
-
-    /// Entering ranges for the loop bounds' indexes: an index live and int32 at `entry` whose
-    /// range there is unknown is guarded non-negative once, so the ranges pass proves its reads
-    /// within the length the bound guards. An entry that left before (`generic`) guards none.
-    fn guard_bound_indexes(&mut self, entry: usize, generic: &[usize]) {
-        if generic.contains(&entry) { return }
-        let types = self.facts.at(entry);
-        for bound in self.loop_bounds.clone() {
-            let index = bound.index;
-            if !self.is_live(entry, index) || self.entering.iter().any(|(register, _)| *register == index)
-                || !types.and_then(|types| types.get(usize::from(index))).is_some_and(|ty| ty.is_subtype(Type::INT32)) { continue }
-            self.entering.push((index, IntRange::NON_NEGATIVE));
-        }
-    }
-
-    /// Leaves at `pc` where an entering register is below its range's minimum: the one guard
-    /// the ranges pass's entry state relies on (the range's maximum is int32's).
-    fn guard_entering_ranges(&mut self, state: &mut State, pc: usize) {
-        for (register, range) in self.entering.clone() {
-            let exit = self.guard_exit(state, pc as u32);
-            let value = self.int(state, register, exit);
-            let within = self.raw_compare_imm(Relation::SignedGreaterEqual, value, i64::from(range.min));
-            emit_js_guard(&mut self.builder, within, exit);
-        }
-    }
-
     /// The guards' leaves to fill, once the entry's shared leave (`entry_conform`) is filled:
     /// it leaves with the plan's entry leave, with no register written yet to write back.
     fn take_leaves(&mut self) -> Vec<GuardExit> {
@@ -2504,7 +2433,7 @@ impl Lowering<'_, '_> {
     fn return_entry(&mut self) {
         match self.completion {
             Completion::Body => self.return_at(super::LaneExit::Entry.word()),
-            Completion::Number => self.return_at(0),
+            Completion::Number | Completion::Scalar(_) => self.return_at(0),
         }
     }
 
@@ -2512,6 +2441,7 @@ impl Lowering<'_, '_> {
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
         self.left_here = self.generic.contains(&pc);
+        self.advance_inductions(pc);
         if self.unit.markers.contains(&pc) || !retains_array_views(&self.program.constants, instruction) {
             state.proofs.arrays.clear();
         }
@@ -2525,6 +2455,8 @@ impl Lowering<'_, '_> {
             opcode if opcode.is_throw() => self.throw(state, pc, instruction),
             // A call, a construction in the caller's window and a return: the staged operations
             // the tier's facts admit (`call_rows`).
+            _ if self.scalar_call_admitted(state, pc, instruction) => Some(self.scalar_call(state, pc, instruction)),
+            _ if plain && self.is_scalar_callee_load(pc, instruction) => Some(self.scalar_callee_load(state, pc, instruction)),
             _ if self.is_call_row(instruction) => self.call_row_step(state, pc, instruction),
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
@@ -2538,7 +2470,7 @@ impl Lowering<'_, '_> {
                 let Some(constant) = self.program.constants.get(instruction.constant_index()) else { return false };
                 self.load_constant(state, pc, instruction, constant)
             }
-            opcode if opcode.is_return() && plain && self.completion == Completion::Number => {
+            opcode if opcode.is_return() && plain && self.completion.numeric() => {
                 self.return_number(state, instruction.register_a(), pc32);
                 Some(false)
             }
@@ -2559,6 +2491,13 @@ impl Lowering<'_, '_> {
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
             _ if self.allocation_row(pc, instruction) => Some(self.allocation(state, pc, instruction)),
             _ if self.is_construction(instruction) => self.construct(state, pc, instruction),
+            // The entry function's own `arguments` binding, whose values the activation kept
+            // or an unmaterialized binding holds; an inlined callee's reads its own, which no
+            // window of this activation holds.
+            _ if plain && instruction.op().class().eq(Class::ArgumentsLength) && self.own_arguments_read(pc, instruction) =>
+                self.arguments_length(state, pc32, instruction),
+            _ if plain && instruction.op().class().eq(Class::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
+                self.arguments_get(state, pc32, instruction),
             _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
             _ if plain && instruction.op().is_truthiness_jump() => {
                 let target = instruction.jump_target() as usize;
@@ -2583,7 +2522,7 @@ impl Lowering<'_, '_> {
             }
             None => {
                 super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
-                if self.coverage.full() && (self.completion == Completion::Number
+                if self.coverage.full() && (self.completion.numeric()
                     || !((instruction.op().class().eq(Class::Return) && plain) || instruction.returns_from_frame())) {
                     self.valid = false;
                 }
@@ -2693,7 +2632,6 @@ impl Lowering<'_, '_> {
         self.reload_property_arena();
     }
 
-
     /// A fused `typeof value === name` (`bytecode::typeof_test`): an immediate value's tag
     /// decides it, as `Vm::typeof_test_value` would, and a heap value's cell the VM reads
     /// (`lane_typeof_is`). A returning test completes the activation with its Boolean.
@@ -2767,14 +2705,14 @@ impl Lowering<'_, '_> {
     /// `step` with what the operation's frame needs beyond its edges (`StepWith`).
     fn step_with(&mut self, state: &mut State, edges: frame::Edges, operation: crate::staged::Operation<ir::Value, EmitProof>,
         StepWith { access, sites, site }: StepWith<'_>) -> crate::staged::Step<ir::Value, ()> {
-        let locals = self.completion != Completion::Number;
+        let locals = !self.completion.numeric();
         let makes_environment = operation.makes_environment();
         let property_values = access.and_then(|_| self.entry.as_ref()).map(|entry| self.builder.use_var(entry.receiver.properties));
         let gate = access.map(|_| self.payload);
         let mut stage = Emit { builder: &mut self.builder, property_values, gate };
         let fields = access.map(|(plans, held)| FieldFacts { plans, entry: self.entry.as_ref(), native_calls: self.native_calls,
             held,
-            stable: StableHold { holders: &mut self.stable.holders, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
+            stable: StableHold { holders: &mut self.stable.holders, shapes: &mut self.stable.shapes, loops: &self.stable.stable_loops, online: self.vm.online, at: self.at } });
         let mut frame = EmitFrame { registers: &mut self.registers, written: &mut self.written,
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
@@ -3207,80 +3145,13 @@ impl Lowering<'_, '_> {
         self.leave_site().with(&mut self.builder, status, word);
     }
 
-    /// Count a taken execution of the region's backward edge in the loop entry record
-    /// (`LoopEntry::backedge_count`), which the loop tier's pricing reads.
-    /// A lane body (`Coverage::Prefix`) counts nothing.
-    fn count_backedge(&mut self) {
-        if !matches!(self.coverage, Coverage::Loop { .. }) { return; }
-        let offset = i32::try_from(std::mem::offset_of!(super::JsStepDispatch, loop_entry))
-            .expect("dispatch offset fits i32");
-        let payload = self.payload;
-        let entry = self.raw_load(Lane::I64, regions::dispatch(), payload, offset);
-        let zero = self.raw_compare_imm(Relation::Equal, entry, 0);
-        let (skip, count) = (self.builder.create_block(), self.builder.create_block());
-        self.branch_if(zero, (skip, &[]), (count, &[]));
-        self.builder.switch_to_block(count);
-        let word = self.raw_load(Lane::I64, regions::miss_counter(), entry, 0);
-        let next = self.raw_binary_imm(Binary::Add, word, 1);
-        self.store_word(regions::miss_counter(), next, entry, 0);
-        self.goto(skip, &[]);
-        self.builder.switch_to_block(skip);
-    }
-
-    fn interrupt_check(&mut self, state: &mut State, pc: u32) {
-        if self.fault_poll {
-            let interrupt = self.interrupt;
-            let proof = super::EmitProof::Safepoint { interrupt, miss: None, fault_poll: true };
-            self.step(state, frame::Edges::Value, crate::staged::Operation::Safepoint { proof });
-            return;
-        }
-        let interrupt = self.interrupt;
-        let exit = self.guard_exit(state, pc);
-        let proof = super::EmitProof::Safepoint { interrupt, miss: Some(exit), fault_poll: false };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Safepoint { proof });
-    }
-
-    fn emit_fault_poll(&mut self) {
-        frame::calls::safepoint_parts(&mut self.builder, &mut self.polls,
-            super::EmitProof::Safepoint { interrupt: self.interrupt, miss: None, fault_poll: true });
-    }
-
-    /// Joining edges must not move a guard, conversion or recovery across the
-    /// interrupt check. Only already-conforming SSA views may share this latch;
-    /// flag-based checks retain their exact-PC recovery on the original edge.
-    fn shared_backedge(&mut self, state: &State, target: usize) -> bool {
-        if !self.fault_poll || !self.shared_headers.contains(target) || !self.entered.contains(target) { return false; }
-        let Some(block) = self.blocks.get(target).copied().flatten() else { return false };
-        let Some(types) = self.facts.at(target) else { return false };
-        if !types.iter().copied().enumerate().all(|(index, ty)| {
-            if !self.is_live(target, index as Register) { return true; }
-            let fact = state.values[index];
-            fact.value.ty.is_subtype(ty) && if ty == Type::INT32 {
-                fact.value.representation == Representation::Int32
-            } else if ty == Type::NUMBER {
-                fact.value.representation == Representation::Float64
-            } else { fact.tagged.current() }
-        }) { return false; }
-        let latch = match self.poll_latches[block] {
-            Some(latch) => latch,
-            None => {
-                let latch = self.builder.create_block();
-                self.poll_latches[block] = Some(latch);
-                latch
-            }
-        };
-        self.finishes = true;
-        self.goto(latch, &[]);
-        true
-    }
-
     fn continue_branch(&mut self, state: &mut State, pc: usize, target: usize,
         taken_block: ir::Block, fall_block: ir::Block) {
         let back = target <= pc && target == self.coverage.entry();
         self.backedge |= back;
-        if back { self.count_backedge(); }
         let refinements = std::mem::take(&mut state.refinements);
         self.switch_to(taken_block, true);
+        if back { self.count_trip(); }
         let mut taken_state = state.clone();
         taken_state.narrow(crate::staged::Edge::Target, &refinements);
         self.continue_at(&mut taken_state, target);
@@ -3347,7 +3218,7 @@ impl Lowering<'_, '_> {
     /// Whether a loop definition of `register` of type `ty` makes it a candidate for an int32
     /// entry contract: the definition yields an int32, or the register held one at entry.
     fn int32_candidate(&self, register: Register, ty: Type) -> bool {
-        ty == Type::INT32 || self.int_entries.iter().any(|(entry, _)| *entry == register)
+        ty.is_int32() || self.int_entries.iter().any(|(entry, _)| *entry == register)
     }
 
     /// An unchanged arm preserves a checked entry hypothesis. Every definition
@@ -3369,7 +3240,7 @@ impl Lowering<'_, '_> {
                 let index = usize::from(register);
                 if (header..=back).contains(&pc) && register < self.unit.caller_registers
                     && self.is_live(header, register) && self.written.contains(index)
-                    && matches!(initial[index], Type::ANY | Type::NUMBER) && self.int32_candidate(register, ty) {
+                    && initial[index].is_any_or_number() && self.int32_candidate(register, ty) {
                     candidates.insert(index);
                 }
             });
@@ -3426,10 +3297,10 @@ impl Lowering<'_, '_> {
     /// an admitted field read carries its actual loop-entry contract, even when
     /// the general analysis has no field feedback (as in linked AOT).
     fn int32_operand_at(&self, pc: usize, operand: Operand, boundaries: &CompoundBitSet) -> bool {
-        if super::facts::operand_type(&self.program.constants, operand, |_| Type::ANY) == Type::INT32 { return true; }
+        if super::facts::operand_type(&self.program.constants, operand, |_| Type::ANY).is_int32() { return true; }
         let Some(mut register) = operand.register_index() else { return false };
         if self.facts.before(pc, register, &self.unit.instructions, boundaries,
-            &self.program.constants, &writes, self.native_calls) == Type::INT32 { return true; }
+            &self.program.constants, &writes, self.native_calls).is_int32() { return true; }
         for at in (0..pc).rev() {
             if boundaries.contains(at + 1) || self.unit.markers.contains(&at) { return false; }
             let instruction = self.unit.instructions[at];
@@ -3486,15 +3357,6 @@ impl Lowering<'_, '_> {
         false
     }
 
-    /// The reads `header`'s loop repeats unchanged, made on its entry edge from `state`: a
-    /// guard that fails there leaves at the header, before the loop runs.
-    fn hoist_loop_entry(&mut self, state: &mut State, header: usize) {
-        self.hoist_arrays(state, header, false);
-        self.hoist_stable(state, header);
-        self.hoist_reads(state, header);
-        self.hoist_arrays(state, header, true);
-    }
-
     /// Whether an enclosing loop's entry hoisted the capture read at `pc` already (its body holds
     /// this loop's, so the read is invariant there too): reading it again at each entry here would
     /// be a helper call inside the outer loop, spilling every value live across it.
@@ -3544,7 +3406,7 @@ impl Lowering<'_, '_> {
                         let base = register.map_or(crate::bytecode::FieldBase::THIS, crate::bytecode::FieldBase::register);
                         let lookup = FieldLookup::Atom { atom, base, cache_site };
                         let Some(value) = self.field_value(state, (base, lookup), &[(atom, cache_site)], HeldRead::default(), exit) else { continue };
-                        (value, int32_read(self.program, self.fields, instruction))
+                        (value, field_reads::int32_read(self.program, self.fields, instruction))
                     }
                 }
             };
@@ -3552,7 +3414,7 @@ impl Lowering<'_, '_> {
             let int32 = if carried {
                 self.loop_fields[field.unwrap()].stores.iter().all(|store| {
                     self.facts.before(*store, self.unit.instructions[*store].register_a(),
-                        &self.unit.instructions, &boundaries, &self.program.constants, &writes, self.native_calls) == Type::INT32
+                        &self.unit.instructions, &boundaries, &self.program.constants, &writes, self.native_calls).is_int32()
                 })
             } else { int32 };
             if int32 {
@@ -3642,7 +3504,7 @@ impl Lowering<'_, '_> {
                     self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range });
                 }
             }
-            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header };
+            let read = LoopRead { value: variable, ty, representation, receiver, header: object_header, step: None };
             if let Some(index) = field {
                 for pc in &self.loop_fields[index].reads { self.hoisted.insert(*pc, read); }
             } else { self.hoisted.insert(pc, read); }
@@ -3688,16 +3550,6 @@ impl Lowering<'_, '_> {
                     self.builder.def_var(variables.length, view.length);
                     let unproved = self.raw_const(Lane::I32, 0);
                     self.builder.def_var(variables.room, unproved);
-                    // Each bound the loop compares its indexes with is at most the length: one
-                    // guard here stands for the bounds check of every access below the bound.
-                    let bounds: Vec<Register> = self.loop_bounds.iter()
-                        .filter(|bound| bound.header == header && array.source == ArraySource::Register(bound.array))
-                        .map(|bound| bound.limit).collect();
-                    for limit in bounds {
-                        let limit = self.int(state, limit, exit);
-                        let within = self.raw_compare(Relation::SignedLessEqual, limit, view.length);
-                        emit_js_guard(&mut self.builder, within, exit);
-                    }
                 }
                 ElementViews::Typed(_) => self.hoist_typed_view(array, bits, variables, exit),
             }
@@ -4277,91 +4129,7 @@ impl Lowering<'_, '_> {
         }
         match (arithmetic, bitwise) {
             _ if remainder => { self.remainder(state, destination, [left, right], exit); }
-            (Some(arithmetic), _) => {
-                let float_operand = [left, right].iter().any(|operand| match operand.kind() {
-                    Some(OperandKind::Register) => state.values[usize::from(operand.payload())].value.representation == Representation::Float64,
-                    Some(OperandKind::Constant) => self.program.constants.get(usize::from(operand.payload()))
-                        .and_then(super::facts::immediate).is_some_and(|value| !super::facts::is_int32(value)),
-                    _ => false,
-                }) || self.left_here;
-                // Operands proved int32 stay int32, as C keeps them: an overflow, or a product's
-                // negative zero, is a value no int32 holds and leaves, rather than every result
-                // becoming a double that the next operation converts back.
-                let proved_int = self.proved_int(state, [left, right]);
-                if arithmetic == super::operations::NumberArithmetic::Divide || float_operand {
-                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Float64,
-                        overflow: crate::staged::Overflow::Exit });
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                } else if proved_int {
-                    // A result the unit's ranges keep inside int32, or a sum or difference only
-                    // `| 0` reads (its ToInt32), is the wrapping int32 result: no overflow exit.
-                    let overflow = if self.ranges.overflow_free(pc)
-                        || (arithmetic.int32_projection_is_wrapping() && self.truncated(pc, destination)) {
-                        crate::staged::Overflow::Wrap
-                    } else {
-                        crate::staged::Overflow::Exit
-                    };
-                    let operation = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic { destination, left, right,
-                        operation: arithmetic, domain: crate::staged::Domain::Int32, overflow });
-                    self.step(state, frame::Edges::ValueGuarded { miss: exit }, operation);
-                } else if arithmetic.int32_projection_is_wrapping()
-                    && self.truncated(pc, destination) {
-                    // Only its ToInt32 is read: int32 operands wrap, any other numbers take
-                    // ToInt32 of their double result, and both join as an int32.
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let wrapped = if arithmetic == super::operations::NumberArithmetic::Add {
-                        self.raw_binary(Binary::Add, left_int, right_int)
-                    } else {
-                        self.raw_binary(Binary::Sub, left_int, right_int)
-                    };
-                    let join = self.builder.create_block();
-                    let int = self.builder.append_block_param(join, types::I32);
-                    self.goto(join, &[wrapped]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let number = crate::staged::number_machine::float_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_number, right_number);
-                    let truncated = self.number_to_int32(number, exit);
-                    self.goto(join, &[truncated]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state, pc);
-                    self.set_int(state, destination, int);
-                } else {
-                    let float = self.builder.create_block();
-                    self.builder.set_cold_block(float);
-                    let mut float_state = state.clone();
-                    let left_int = self.operand_int(state, left, float).expect("supported operand");
-                    let right_int = self.operand_int(state, right, float).expect("supported operand");
-                    let (result, overflow) = crate::staged::number_machine::checked_int32_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_int, right_int);
-                    let int_done = self.builder.create_block();
-                    self.branch_if(overflow, (float, &[]), (int_done, &[]));
-                    self.builder.switch_to_block(int_done);
-                    if arithmetic == super::operations::NumberArithmetic::Multiply {
-                        let zero = self.raw_compare_imm(Relation::Equal, result, 0);
-                        let signs = self.raw_binary(Binary::Or, left_int, right_int);
-                        let negative = self.raw_compare_imm(Relation::SignedLess, signs, 0);
-                        let negative_zero = self.raw_binary(Binary::And, zero, negative);
-                        emit_js_guard_not(&mut self.builder, negative_zero, float);
-                    }
-                    let join = self.builder.create_block();
-                    let number = self.builder.append_block_param(join, types::F64);
-                    let result = self.raw_unary(Unary::FromSigned(Lane::F64), result);
-                    self.goto(join, &[result]);
-                    self.builder.switch_to_block(float);
-                    let left_number = self.operand_number(&mut float_state, left, exit)?;
-                    let right_number = self.operand_number(&mut float_state, right, exit)?;
-                    let result = crate::staged::number_machine::float_arithmetic(&mut super::object_slots::emit(&mut self.builder), arithmetic, left_number, right_number);
-                    self.goto(join, &[result]);
-                    self.builder.switch_to_block(join);
-                    self.join_states(state, &float_state, pc);
-                    self.set_number(state, destination, number);
-                }
-            }
+            (Some(arithmetic), _) => { self.arithmetic(state, pc, instruction, arithmetic, exit)?; }
             (_, Some(bitwise)) => {
                 let left_int = self.operand_to_int32(state, left, exit)?;
                 let right_int = self.operand_to_int32(state, right, exit)?;
@@ -4381,7 +4149,7 @@ impl Lowering<'_, '_> {
                 self.set_boolean(state, destination, boolean);
             }
         }
-        if returns && self.completion == Completion::Number {
+        if returns && self.completion.numeric() {
             self.return_number(state, destination, pc as u32);
             return Some(false);
         }
@@ -4422,3 +4190,8 @@ mod tests;
 #[cfg(test)]
 #[path = "lane_region/lowering_tests.rs"]
 mod lowering_tests;
+#[path = "lane_region/kept_shapes.rs"] mod kept_shapes;
+#[path = "lane_region/loop_receivers.rs"] mod loop_receivers;
+#[cfg(test)]
+#[path = "lane_region/slot_proof_tests.rs"]
+mod slot_proof_tests;

@@ -26,6 +26,13 @@ pub(super) enum Heap {
     /// `array[index] = value` replacing a present element in place: the array word at hole 0, the
     /// value at hole 1, the index at hole 2.
     Store,
+    /// `Index` and `Store` of a typed array of the planned `TypedArrayKind` (its discriminant) the loop's entry viewed:
+    /// the array's entry words are at the record offset in hole 1 (a read) or hole 0 (a store). The entry proved the
+    /// kind (`LoopTier::select`), so the row, one per kind, tests none.
+    TypedIndex(u8),
+    TypedStore(u8),
+    /// A typed array's `length`: the count its entry words hold (offset in hole 1), an int32.
+    TypedLength,
     /// The field value the loop entry recorded: its byte offset in the record at hole 1.
     Field,
     /// The array word at hole 1 is a direct array (what `RequireObjectCoercible` of one proves).
@@ -170,7 +177,7 @@ pub(super) struct HeapRow {
 impl Heap {
     /// The row's code in `quench_bjit::numeric::library`.
     pub(super) fn code(self) -> u8 {
-        self.slot_code().or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
+        self.slot_code().or_else(|| self.element_code()).or_else(|| self.object_code()).or_else(|| self.test_code()).or_else(|| self.global_code()).unwrap_or_else(|| self.other_code())
     }
 
     /// The code of a row addressed by a frame, capture or environment slot.
@@ -189,11 +196,21 @@ impl Heap {
         })
     }
 
-    /// The code of a row that reads or writes an object's fields, elements or sites.
-    fn object_code(self) -> Option<u8> {
+    /// The code of a row that reads or writes an array's or typed array's elements.
+    fn element_code(self) -> Option<u8> {
         Some(match self {
             Heap::Index => library::INDEX_ROW,
             Heap::Store => library::STORE_ROW,
+            Heap::TypedIndex(kind) => library::TYPED_INDEX_ROW + kind,
+            Heap::TypedStore(kind) => library::TYPED_STORE_ROW + kind,
+            Heap::TypedLength => library::TYPED_LENGTH_ROW,
+            _ => return None,
+        })
+    }
+
+    /// The code of a row that reads or writes an object's fields or sites.
+    fn object_code(self) -> Option<u8> {
+        Some(match self {
             Heap::Field => library::FIELD_ROW,
             Heap::Site | Heap::SiteChain => library::SITE_ROW,
             Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
@@ -268,6 +285,11 @@ impl Heap {
 
     /// Whether the row's result is a tagged word whatever the registers around it hold: a value
     /// the activation holds, not a Number the region proved.
+    /// Whether the row's result is a Number a double holds (a typed element), whatever the site's feedback.
+    pub(super) fn yields_double(self) -> bool {
+        matches!(self, Heap::TypedIndex(_))
+    }
+
     pub(super) fn yields_tagged(self) -> bool {
         matches!(self, Heap::This | Heap::LoadLocal(_) | Heap::Word)
     }
@@ -305,6 +327,9 @@ mod tests {
     #[allow(dead_code)]
     mod stencil_layout {
         include!("../../../../quench-bjit/stencils/layout.rs");
+    }
+    mod stencil_units {
+        include!("../../../../quench-bjit/stencils/units.rs");
     }
 
 
@@ -390,6 +415,35 @@ mod tests {
         );
     }
 
+    /// The typed-array kinds the stencils name are the runtime's, in its order, with its widths.
+    fn typed_kinds_match() {
+        use stencil_layout::TypedArrayKind as Mirror;
+        let mirrored = Mirror::ALL;
+        assert_eq!(usize::from(stencil_layout::LOOP_ENTRY_ARRAY_COUNT_AT as u8), std::mem::size_of::<u64>(), "the count follows the elements' address");
+        let native_kinds: Vec<u8> = (0..quench_bjit::numeric::library::TYPED_KINDS).filter(|kind| !quench_bjit::numeric::library::NON_NATIVE_KINDS.contains(kind)).collect();
+        let runtime_native: Vec<u8> = crate::heap::TYPED_ARRAYS.iter().filter(|row| crate::staged::typed_elements::NativeKind::new(row.kind).is_some()).map(|row| row.kind as u8).collect();
+        assert_eq!(native_kinds, runtime_native);
+        assert_eq!(crate::heap::TYPED_ARRAYS.len(), mirrored.len());
+        for (row, mirror) in crate::heap::TYPED_ARRAYS.iter().zip(mirrored) {
+            assert_eq!((row.kind as usize, row.width), (mirror as usize, mirror.width()), "{}", row.name);
+        }
+    }
+
+    /// The conversions the stencils make of a binary64's bits are the runtime's own of its value.
+    #[test]
+    fn stencil_units_match() {
+        let samples = [
+            0.0, -0.0, 0.5, -0.5, 1.0, 1.5, -1.5, 2.5, 254.5, 255.0, 255.5, 256.0, 0.499_999_999_999_999_94, 0.500_000_000_000_000_1,
+            2_147_483_648.0, -2_147_483_649.0, 4_294_967_295.0, 4_294_967_296.5, 1e10, -1e10, 9_007_199_254_740_993.0, 1e19, 1e300,
+            f64::MAX, f64::MIN, f64::MIN_POSITIVE, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+        ];
+        for value in samples {
+            assert_eq!(stencil_units::to_int32(value), crate::units::to_int32(value), "ToInt32 of {value}");
+            let clamped = if value.is_nan() { 0 } else { value.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u64 };
+            assert_eq!(stencil_units::clamp_u8(value.to_bits()), clamped, "clamp of {value}");
+        }
+    }
+
     #[test]
     fn stencil_layout_matches() {
         use stencil_layout as mirror;
@@ -410,6 +464,7 @@ mod tests {
             [mirror::NARROW_LEN as u64, mirror::DOUBLE_LEN as u64, mirror::ENCODED_LEN as u64, mirror::OTHERS_UNKNOWN as u64, mirror::LENGTH_FROM_VALUES as i64 as u64, mirror::OTHERS_FROM_VALUES as i64 as u64, mirror::INLINE_PROPERTIES as u64, u64::from(mirror::SMALL_STRING_ID_MASK), u64::from(mirror::SMALL_STRING_ID_BASE)]
         );
         value_words_match();
+        typed_kinds_match();
         assert_eq!(super::super::NATIVE_JS_STOPPED, mirror::call_record::NATIVE_JS_STOPPED);
         for (name, runtime, copy) in payload_offsets() {
             assert_eq!(runtime, copy, "{name}: the runtime's offset is the stencil layout's");

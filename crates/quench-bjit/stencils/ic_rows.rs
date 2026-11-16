@@ -40,6 +40,7 @@ use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp, Reached};
 use crate::staged::object::{Form, direct_object_record};
 use crate::staged::region::Region;
+use crate::staged::object::Rep;
 use crate::staged::slot_store::own_flat_store;
 use crate::staged::Stage;
 use crate::words::hole;
@@ -138,7 +139,7 @@ fn write<const INT: bool, const A: u8>(s: &S, payload: usize) -> Option<()> {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     store_admitted(&mut stage, payload as u64)?;
     let (id, record, _) = receiver::<SET_RECEIVER>(s, &mut stage, payload)?;
-    own_flat_store(&mut stage, record, id, 0, 0, word, ())
+    own_flat_store(&mut stage, record, id, 0, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }), ())
 }
 
 #[inline(always)]

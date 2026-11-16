@@ -941,6 +941,10 @@ macro_rules! lane_helper_inventory {
 lane_helper_inventory! { H;
     FunctionCapture => lane_function_capture_read::<H>,
     FieldGet => lane_field_get::<H>,
+    /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
+    ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
+    /// One kept `arguments` element (`lane_body_argument_get`).
+    ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
     /// A loop region's call (`dispatch_fast::lane_region_call`).
@@ -1228,6 +1232,8 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) constants: &'a [Value],
     /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
     pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
+    /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
+    pub(super) shape_stable: &'a dyn Fn(u32) -> bool,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
@@ -1276,20 +1282,22 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_fields: Option<&'a crate::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
+    /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
+    pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None };
+        frozen_fields: None, frozen_constants: None, scalar: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None }
+            frozen_fields: None, frozen_constants: None, scalar: None }
     }
 }
 
@@ -1877,9 +1885,10 @@ impl CallContext {
     }
 
     /// The context of code that reads only the interrupt state: the flag, and the VM's
-    /// poll page, whose fault ends the call as terminated (`guard_fault`).
+    /// poll page, whose fault ends the call as terminated (`guard_fault`), where the entry
+    /// runs through the fault-resuming trampoline (`native_poll_page`).
     fn interrupt_only(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Self {
-        let poll = interrupt.poll_page();
+        let poll = native_poll_page(interrupt);
         Self {
             stack_limit: 0,
             interrupt: interrupt.attention_flag(),
@@ -3405,6 +3414,9 @@ pub(super) struct LaneMethod {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: BodyEntry,
+    /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
+    /// that proves its numeric arguments calls by the entry cell's `scalar` word.
+    scalar: Option<usize>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -3454,6 +3466,11 @@ impl LaneMethod {
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
     pub(super) fn entry_address(&self) -> usize {
         self.entry as usize
+    }
+
+    /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
+    pub(super) fn scalar_address(&self) -> Option<usize> {
+        self.scalar
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
@@ -4137,57 +4154,7 @@ impl LaneFrame {
         context.callout = lane_method_exit as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;
         Self {
             context,
-            dispatch: JsStepDispatch {
-                program_id: ProgramId::MAIN,
-                frame: usize::MAX,
-                allow_inline_calls: false,
-                start_pc: 0,
-                #[cfg(feature = "native-execution")]
-                stop_pc: JS_NO_STOP_PC,
-                native_registers: std::ptr::null_mut(),
-                register_count: 0,
-                native_locals: std::ptr::null_mut(),
-                local_count: 0,
-                fixed_this_slot: std::ptr::null(),
-                capture_values: std::ptr::null(),
-                capture_len: 0, capture_stores: 0,
-                array_record_base: 0,
-                string_record_base: 0,
-                ascii_unit_strings: 0,
-                object_record_base: 0,
-                function_record_base: 0,
-                object_mark_blocks: 0,
-                object_mark_block_count: 0,
-                property_buffer: 0,
-                field_entries: 0,
-                typed_view_directory: 0,
-                typed_view_pages: 0,
-                buffer_relocations: 0,
-                call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-                loop_entry: 0,
-                method_cache_atoms: 0,
-                method_cache_atom_words: 0,
-                stores_specialized: 0,
-                slots_tracked: 0,
-                function_mark_blocks: 0,
-                function_mark_block_count: 0,
-                empty_string: Value::DELETED.to_bits(),
-                environment_storage: crate::heap::absent_environment_storage(),
-                receiver: Value::DELETED.to_bits(),
-                vm: 0,
-                residual: 0,
-                body: std::ptr::null(),
-                inlined: 0,
-                exit_line: 0,
-                lane_context: 0,
-                returned_pc: 0,
-                native_top: 0,
-                native_end: 0,
-                shadow_top: 0,
-                shadow_end: 0,
-                lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-                outcome: None,
-            },
+            dispatch: JsStepDispatch::idle(),
             scratch: Vec::new(),
         }
     }
@@ -4297,37 +4264,14 @@ impl JsNativeActivation {
         let activation = &mut vm.frames[frame];
         let mut native = Self { dispatch: JsStepDispatch {
             program_id, frame, allow_inline_calls, start_pc,
-            #[cfg(feature = "native-execution")]
-            stop_pc: JS_NO_STOP_PC,
             native_registers: activation.registers.as_mut_ptr(),
             register_count: activation.registers.len(),
             native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
-            fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
-            object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
-            stores_specialized: 0,
-            slots_tracked: 0,
-            function_mark_blocks: 0,
-            function_mark_block_count: 0,
-            empty_string: Value::DELETED.to_bits(),
-            environment_storage: crate::heap::absent_environment_storage(),
-            receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
             body,
-            inlined: 0,
-            exit_line: 0,
-            lane_context: 0,
-            returned_pc: 0,
-            native_top: 0,
-            native_end: 0,
-            shadow_top: 0,
-            shadow_end: 0,
-            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-            outcome: None,
+            ..JsStepDispatch::idle()
         }, _program: program };
         // The prologue already coerced `this` (`Vm::call_this_value`); a frame that has not
         // initialized it leaves the receiver `DELETED`, at which a body's `LoadThis` leaves.
@@ -4339,6 +4283,30 @@ impl JsNativeActivation {
 }
 
 impl JsStepDispatch {
+    /// The payload of no activation: no frame, registers, locals or VM, every base word unbound.
+    fn idle() -> Self {
+        Self {
+            program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
+            #[cfg(feature = "native-execution")]
+            stop_pc: JS_NO_STOP_PC,
+            native_registers: std::ptr::null_mut(), register_count: 0, native_locals: std::ptr::null_mut(), local_count: 0,
+            fixed_this_slot: std::ptr::null(),
+            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
+            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
+            object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
+            property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
+            call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
+            empty_string: Value::DELETED.to_bits(),
+            environment_storage: crate::heap::absent_environment_storage(),
+            receiver: Value::DELETED.to_bits(),
+            vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
+            native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
+            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
+            outcome: None,
+        }
+    }
+
     /// The VM stays in place throughout this entry. Derive the owner address
     /// from the same full-VM pointer as semantic callouts, without creating a
     /// shared borrow that later mutable callouts would invalidate. Rebind on
@@ -4695,10 +4663,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 instruction_pc: pc, next_pc: pc, result: Ok(StepResult::Continue),
             }));
         }
-        let packed = *body
-            .code
-            .get(pc)
-            .ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
+        let packed = *body.code.get(pc).ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
         let instruction = if SINGLE_OPERATION {
             let selected = operation.as_ref().ok_or_else(||
                 JsError::validation("invalid native semantic opcode".into()))?;
@@ -4732,9 +4697,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         } else {
             super::dispatch_fast::decoded_instruction(body, packed)
         };
-        let next_pc = pc
-            .checked_add(1)
-            .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
+        let next_pc = pc.checked_add(1).ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
         let frame = &mut vm.frames[dispatch.frame];
         // Entry admits these homes, and every effectful continuation validates
