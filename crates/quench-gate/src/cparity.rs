@@ -116,6 +116,10 @@ fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Option<Fi
             return Ok(Some(fields));
         }
     }
+    // A tier that reports no loop statistics (b-jit) has its regions' dumps alone.
+    if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Loop { .. }))? {
+        return Ok(Some(fields));
+    }
     scalar_call(directory, &dumps)
 }
 
