@@ -400,9 +400,10 @@ impl Default for CaptureCache {
 const CAPTURE_WALKS: usize = 64;
 /// Closure templates `Vm::closure_in_realm` remembers, one per function id modulo the count:
 /// the nested functions a closure-heavy region makes again on each call of its parent. A
-/// conflict overwrites the entry, which only costs the displaced function's next closure
-/// the lookups the template saves.
-const CLOSURE_TEMPLATES: usize = 64;
+/// conflict overwrites the entry, which costs the displaced function's next closure the
+/// lookups the template saves (about 1.6K Ir) and a template recorded again. At 64 the
+/// TypeScript compiler's closures took that path 882K times in one run.
+const CLOSURE_TEMPLATES: usize = 1024;
 const _: () = assert!(CLOSURE_TEMPLATES.is_power_of_two());
 const _: () = assert!(CAPTURE_WALKS.is_power_of_two());
 
