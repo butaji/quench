@@ -11,7 +11,6 @@ vm::compiled::base_body::forms::a_ten_deep_call_chain_makes_its_steps_in_the_cal
 vm::compiled::base_body::forms::an_environment_binding_in_its_dead_zone_raises_as_the_interpreter_does
 vm::compiled::base_body::forms::initialize_this_publishes_the_receiver_to_the_rows_after_it
 vm::compiled::base_body::tests::class_construction_and_super_print_what_the_interpreter_prints
-vm::compiled::base_body::tests::global_counter_loops_run_in_a_body_without_leaving
 vm::compiled::base_body::tests::inlined::a_callee_with_a_loop_and_two_returns_runs_inlined
 vm::compiled::base_body::tests::inlined::a_global_callee_is_inlined_without_a_guard_and_completes
 vm::compiled::base_body::tests::property_writes_run_in_a_body
@@ -29,7 +28,6 @@ vm::compiled::stable_fact_tests::a_folded_global_value_retires_its_readers_when_
 vm::compiled::stable_fact_tests::a_folded_prototype_value_retires_its_readers_when_it_changes
 vm::compiled::stable_fact_tests::stable_facts_changed_mid_run_leave_compiled_bodies_with_exact_results
 vm::compiled::tests::native_widening_edges_retire_readers_before_guest_store
-vm::dispatch_fast::in_place_natives::tests::in_place_natives_keep_their_results_and_errors
 vm::float_slot_tests::raw_double_slots_compute_what_tagged_slots_compute
 vm::generator::eval_tests::a_generator_step_run_by_eval_code_is_a_nested_job_run_in_the_lane
 vm::generator::eval_tests::a_generator_using_eval_across_yields_makes_no_frame
@@ -49,11 +47,8 @@ vm::lane_loop_tests::a_loop_function_that_has_run_long_compiles_under_the_measur
 vm::lane_loop_tests::a_loop_over_a_typed_array_runs_as_a_base_region_that_never_leaves
 vm::lane_native_callback_tests::a_compiled_body_calls_natives_that_call_back_without_leaving
 vm::native_frame_tests::native_frames_pushed_through_the_top_word_are_counted_until_linked
-vm::object_tests::field_cache_invalidation_resets_every_written_site
-vm::object_tests::third_receiver_promotes_field_site_to_megamorphic
 vm::owner_step::tests::a_base_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving
 vm::owner_step::tests::an_ultra_jit_chain_of_name_local_and_with_steps_runs_natively_without_leaving
-vm::snapshot::tests::restored_realm_runs_an_entry_as_the_installing_one_does
 vm::tests::forced_deopt_corpus_tests::forced_deopt_corpus_matches_the_interpreter
 vm::tests::forced_deopt_corpus_tests::forced_stencil_region_leaves_match_the_interpreter
 vm::tests::forced_deopt_tests::forced_guards_hold_across_the_corpus
