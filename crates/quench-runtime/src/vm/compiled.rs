@@ -3574,7 +3574,7 @@ impl LaneExit {
     }
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
-        if matches!(self, Self::Entry | Self::Stub) { Self::At(0) } else { self }
+        if self.entered_nothing() { Self::At(0) } else { self }
     }
 }
 

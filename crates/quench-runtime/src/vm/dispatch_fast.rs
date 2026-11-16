@@ -1948,9 +1948,12 @@ type ScriptGeneration = u32;
 struct Admission(u64);
 
 impl Admission {
+    /// Where the program sits in the word: above the generation.
+    const PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
+
     #[inline(always)]
     const fn new(generation: ScriptGeneration, program: ProgramId) -> Self {
-        Self(generation as u64 | (program.raw() as u64) << 32)
+        Self(generation as u64 | (program.raw() as u64) << Self::PROGRAM_SHIFT)
     }
 
     /// A bit no target's or memo's admission has: the lane's carries it while a condition
@@ -1965,7 +1968,7 @@ impl Admission {
 
     #[inline(always)]
     const fn program(self) -> ProgramId {
-        ProgramId::from_raw((self.0 >> 32) as u32)
+        ProgramId::from_raw((self.0 >> Self::PROGRAM_SHIFT) as u32)
     }
 }
 
@@ -10305,7 +10308,7 @@ fn lane_loop_run<H: Host>(
         lane_loop_diagnose(cx, r, site, region, run, program);
     }
     let RegionRun { exit, nested } = run;
-    if matches!(exit, LaneExit::Entry | LaneExit::Stub) {
+    if exit.entered_nothing() {
         // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
         site.tier.borrow_mut().missed_entry(site.tiers);
         return LoopContinuation::Jump;

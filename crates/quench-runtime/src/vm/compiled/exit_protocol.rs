@@ -88,6 +88,12 @@ impl LaneExit {
         }
     }
 
+    /// Whether the run entered nothing: its entry contract failed or the cell held the stub, so
+    /// the registers are as the run found them.
+    pub(in crate::vm) fn entered_nothing(self) -> bool {
+        matches!(self, Self::Entry | Self::Stub)
+    }
+
     /// Whether a leave at a caller PC is one of `range`'s (a loop's PCs); other leaves are
     /// inside the loop unless they complete or terminate the run.
     pub(in crate::vm) fn inside(self, range: std::ops::RangeInclusive<u32>) -> bool {

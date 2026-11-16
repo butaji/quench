@@ -16,9 +16,9 @@ const CALLGRIND: [&str; 2] = ["--tool=callgrind", "--callgrind-out-file=/dev/nul
 const COLLECTED: &str = "Collected : ";
 /// Cold runs: no on-disk compile cache, no startup snapshot.
 const COLD: [(&str, &str); 2] = [("QUENCH_COMPILE_CACHE", ""), ("QUENCH_STARTUP_SNAPSHOT", "off")];
-/// The relative change under which a count is the same: callgrind repeats to about 0.01%.
-const TOLERANCE_PER_MILLE: u64 = 3;
-const PER_MILLE: u64 = 1000;
+/// The share of a ceiling under which a change is the same count (about 0.3%): callgrind
+/// repeats to about 0.01%.
+const SAME_COUNT_DIVISOR: u64 = 333;
 
 /// The total Ir of `kernel` run by the interpreter.
 fn instructions(config: &Config, host: &Path, kernel: &Path) -> Result<u64, String> {
@@ -43,7 +43,7 @@ pub fn run(config: &Config) -> Verdict {
     for kernel in &kernels {
         let name = kernel.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default().to_owned();
         let count = instructions(config, &host, kernel)?;
-        let slack = |ceiling: u64| ceiling * TOLERANCE_PER_MILLE / PER_MILLE;
+        let slack = |ceiling: u64| ceiling / SAME_COUNT_DIVISOR;
         match ceilings.get(&name).copied() {
             Some(ceiling) if count > ceiling + slack(ceiling) => grown.push(format!("{name}: {count} Ir, ceiling {ceiling}")),
             Some(ceiling) if count + slack(ceiling) < ceiling => { ceilings.insert(name, count); lowered += 1; }
