@@ -25,7 +25,7 @@ pub(super) enum RecordOperand {
 impl RecordOperand {
     /// The operand an encoded record field names; `None` for a field operand, which only the
     /// general path reads.
-    pub(super) fn encoded(encoded: u16) -> Option<Self> {
+    #[inline(always)] pub(super) fn encoded(encoded: u16) -> Option<Self> {
         let operand = Operand(encoded);
         Some(match operand.kind()? {
             OperandKind::Register => Self::Register(operand.payload()),

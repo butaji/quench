@@ -199,7 +199,7 @@ impl<H: Host> Vm<H> {
                     crate::bytecode::MakerReads::Maker
                 } else {
                     p.closure_reads.as_deref().map_or(crate::bytecode::MakerReads::Maker, |reads| {
-                        reads.maker_reads(parts.id, crate::bytecode::arrow_chain_reads_implicit_bindings(p, parts.id))
+                        reads.maker_reads(parts.id, || crate::bytecode::arrow_chain_reads_implicit_bindings(p, parts.id))
                     })
                 },
                 call_only: plan.prototype_unobservable,
