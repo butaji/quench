@@ -635,7 +635,7 @@ impl Heap {
     pub(crate) fn dense_array_element_narrow_stats(&self) -> (usize, usize) {
         let mut stats = (0, 0);
         self.array_records.for_each_live(|_, array| {
-            for value in array.elements().as_slice() {
+            for value in array.elements().as_slice().iter() {
                 stats.0 += 1;
                 stats.1 += usize::from(value.to_narrow().is_some());
             }
@@ -644,7 +644,7 @@ impl Heap {
             Cell::Array { object } => Some(object),
             _ => None,
         }) {
-            for value in object.elements().as_slice() {
+            for value in object.elements().as_slice().iter() {
                 stats.0 += 1;
                 stats.1 += usize::from(value.to_narrow().is_some());
             }
