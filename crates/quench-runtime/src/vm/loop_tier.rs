@@ -62,6 +62,11 @@ impl LoopTier {
     pub(super) fn iterations(&self) -> u64 { self.iterations }
 
     /// Iterations per native run, or `None` before the first run.
+    /// The native runs of its code so far.
+    pub(super) fn runs(&self) -> u64 {
+        u64::from(self.runs)
+    }
+
     pub(super) fn mean_trip(&self) -> Option<u64> {
         self.iterations.checked_div(u64::from(self.runs))
     }

@@ -322,6 +322,12 @@ impl LoopSite {
         self.entering.get()
     }
 
+    /// Whether its loop runs in a region entered from the lane: a closed one that still enters and
+    /// has run natively (a region that never ran makes none of the loop's work native).
+    pub(super) fn runs_region(&self) -> bool {
+        self.call_boundary_pcs.is_empty() && self.active_region().is_some() && self.enters() && self.tier.borrow().runs() > 0
+    }
+
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
