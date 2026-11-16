@@ -595,8 +595,10 @@ pub(crate) struct Heap {
     /// (`finished_run_object`): only then does a minor sweep visit live functions to list
     /// their young survivors (`YoungOwner::Function`).
     young_function_runs: bool,
-    /// The arena length at the last narrowing pass and the fulls since it: the pass reads every
-    /// live run, so it reruns only once the arena grew an eighth or eight fulls went by.
+    /// The least arena length since the last narrowing pass and the fulls since it: the pass
+    /// reads every live run, so it reruns only once the arena grew an eighth over that low or
+    /// eight fulls went by. The low, not the pass's own length, so that an arena that shrank
+    /// and grows again narrows on the way back up.
     narrow_pass: (usize, u32),
     /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
     /// through a weak reference may be one its snapshot does not reach.
@@ -3050,7 +3052,7 @@ impl Heap {
                     self.narrow_live_runs();
                     self.narrow_pass = (resident, 0);
                 } else {
-                    self.narrow_pass.1 = fulls + 1;
+                    self.narrow_pass = (last.min(resident), fulls + 1);
                 }
             }
         }
@@ -4298,6 +4300,7 @@ impl Heap {
             unsafe { self.properties.narrow_set(vector, slot, narrow) };
             return;
         }
+        self.properties.keep_shape_wide(vector);
         let vector = self.object_mut(object).expect("property owner is an object").properties();
         self.properties.set(vector, slot, value);
     }
@@ -5237,7 +5240,7 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
             Some(narrow) => unsafe { properties.narrow_set(data.properties(), slot, narrow) },
             None if layout != PropertyStoreLayout::MayWiden => return false,
             None => {
-                let wide = properties.widen(data.properties());
+                let wide = properties.widen_for_value(data.properties());
                 data.set_properties(wide, properties);
                 // SAFETY: as above; the widened run holds every slot.
                 unsafe { properties.set_unchecked(data.properties(), slot, value) };

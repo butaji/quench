@@ -868,12 +868,24 @@ impl ValueArena {
         (0..self.len(vector)).map(|index| unsafe { self.narrow_get(vector, index) }).collect()
     }
 
+    /// Records that narrow `vector` widens for a value without a narrow form: its shape's
+    /// objects keep ordinary runs from then on (`widened_shapes`). A structural widen (an
+    /// added property, extras) says nothing of the shape's values and leaves it narrowable.
+    pub(crate) fn keep_shape_wide(&mut self, vector: ValueVec) {
+        self.widened_shapes.insert(vector.auxiliary());
+    }
+
+    /// `widen` for a value without a narrow form (`keep_shape_wide`).
+    pub(crate) fn widen_for_value(&mut self, vector: ValueVec) -> ValueVec {
+        self.keep_shape_wide(vector);
+        self.widen(vector)
+    }
+
     /// `vector`, a narrow vector, widened in place of its owner: an ordinary run holding its
     /// values decoded (`run_of`), or a dictionary once the arena's positions are spent; its
     /// narrow run is released. The owner stores the result (`Object::set_properties`).
     pub(crate) fn widen(&mut self, vector: ValueVec) -> ValueVec {
         debug_assert!(vector.is_narrow() && !self.holds_young_run(vector));
-        self.widened_shapes.insert(vector.auxiliary());
         let values = self.narrow_values(vector);
         self.release_held(vector);
         let mut wide = ValueVec { start: vector.start & !START_MASK | EMPTY_START, auxiliary: vector.auxiliary & !NARROW_FORM };
