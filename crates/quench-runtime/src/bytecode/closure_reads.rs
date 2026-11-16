@@ -153,12 +153,13 @@ impl ClosureReads {
 
     /// What a closure of `function` reads of the activation that makes it (`MakerReads`):
     /// its demand of the environment one activation out (`demand`), and whether it reads
-    /// any further out. `reads_lexical` says whether an arrow's chain reads the implicit
+    /// any further out. `reads_lexical` answers whether an arrow's chain reads the implicit
     /// bindings it would resolve there (`arrow_chain_reads_implicit_bindings`), which the
-    /// table assumes of every arrow.
-    pub(crate) fn maker_reads(&self, function: u32, reads_lexical: bool) -> MakerReads {
+    /// table assumes of every arrow; it walks the arrow's code, so only an arrow that reads
+    /// no slot of its maker asks it.
+    pub(crate) fn maker_reads(&self, function: u32, reads_lexical: impl FnOnce() -> bool) -> MakerReads {
         match self.demand(function, 1) {
-            EnvironmentDemand::Slots { slots: [], named_slots: [], lexical_this, .. } if !(lexical_this && reads_lexical) => {
+            EnvironmentDemand::Slots { slots: [], named_slots: [], lexical_this, .. } if !(lexical_this && reads_lexical()) => {
                 let reads = self.functions.get(function as usize).and_then(|closure| closure.reads.as_deref());
                 match reads {
                     Some([]) => MakerReads::Nothing,

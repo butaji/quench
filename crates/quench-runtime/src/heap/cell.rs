@@ -3640,6 +3640,7 @@ impl EnvironmentSlots {
 
     /// A dense slot view for native reads. The caller must keep the environment live and
     /// discard the pointer at a safepoint, where collection or mutation can replace storage.
+    #[inline]
     pub(crate) fn native_dense_view(&self) -> Option<(*const Value, usize)> {
         let dense = self.dense()?;
         const { assert!(std::mem::size_of::<EnvironmentSlot>() == std::mem::size_of::<Value>()) };
