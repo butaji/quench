@@ -49,6 +49,9 @@ impl LaneMethod {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
+        if let Some(directory) = native_dump_directory() {
+            dump_native_code(directory, DumpSite::Body { function, scalar: None }, &memory, "");
+        }
         // SAFETY: `base_region::function` links its code behind `entry_body`, of the lane body ABI.
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         Some(Self {

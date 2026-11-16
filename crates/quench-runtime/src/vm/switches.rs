@@ -19,13 +19,19 @@ thread_local! {
 /// `QUENCH_FLOAT_SLOTS`: a slot whose owner's type is Number holds its Number as the raw IEEE
 /// double (`value_vec::encode_slot`), so native code reads and writes it with one load or store
 /// and no tag test. Slot types are kept only where native code runs (`ValueArena::track`).
-/// Inline: every slot decode reads it (`value_vec::read_type`), so its set flag is one load there.
-#[inline]
+/// Read per slot decode (`value_vec::read_type`), so the initialized value is one inlined load.
+#[inline(always)]
 pub(crate) fn float_slots() -> bool {
     #[cfg(test)]
     if FLOAT_SLOTS_FOR_TEST.get() { return true; }
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| named("QUENCH_FLOAT_SLOTS"))
+    *FLOAT_SLOTS.get_or_init(read_float_slots)
+}
+
+static FLOAT_SLOTS: OnceLock<bool> = OnceLock::new();
+
+#[cold]
+fn read_float_slots() -> bool {
+    named("QUENCH_FLOAT_SLOTS")
 }
 
 /// Runs `body` with `float_slots` on for this thread.
