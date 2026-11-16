@@ -22,6 +22,12 @@ impl LiveMask for u64 {
     }
 }
 
+impl LiveMask for u128 {
+    fn narrow(set: RegisterSet) -> Self {
+        (set & RegisterSet::from(u128::MAX)).as_u128().unwrap_or_default()
+    }
+}
+
 impl LiveMask for RegisterSet {
     fn narrow(set: RegisterSet) -> Self {
         set
@@ -51,16 +57,26 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
     analyze_successors(function, transfers, &crate::bytecode::Successors::of_code(function))
 }
 
-/// `analyze_successors` of wide masks, solved at one word when the function's registers fit
-/// it: most do, and a word's solve costs a fraction of a set's.
+/// `analyze_successors` of wide masks, solved at the narrowest of one word, two words or a
+/// whole set that holds the function's registers: most fit a word, and a set's eight words
+/// cost a function of 65 to 128 registers four times a pair's on every transfer.
 pub(crate) fn analyze_wide(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
 ) -> Vec<RegisterSet> {
-    if usize::from(function.registers) > u64::BITS as usize {
-        return analyze_successors(function, transfers, successors);
+    match usize::from(function.registers) {
+        registers if registers <= u64::BITS as usize => analyze_narrowed::<u64>(function, transfers, successors),
+        registers if registers <= u128::BITS as usize => analyze_narrowed::<u128>(function, transfers, successors),
+        _ => analyze_successors(function, transfers, successors),
     }
-    let words: Vec<(u64, u64)> = transfers.iter().map(|(read, written)| (read.word(0), written.word(0))).collect();
-    analyze_successors(function, &words, successors).into_iter().map(RegisterSet::from).collect()
+}
+
+/// `analyze_successors` of `transfers` at the width `M`, which holds every register of the
+/// function, widened back to sets.
+fn analyze_narrowed<M: LiveMask>(
+    function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+) -> Vec<RegisterSet> {
+    let narrowed: Vec<(M, M)> = transfers.iter().map(|&(read, written)| (M::narrow(read), M::narrow(written))).collect();
+    analyze_successors(function, &narrowed, successors).into_iter().map(Into::into).collect()
 }
 
 /// `analyze_transfers` over the function's successor table, `successors`.
