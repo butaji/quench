@@ -101,11 +101,13 @@ impl EntryCell {
         Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()) }
     }
 
-    /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires.
+    /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
+    /// entry to the stub and the body word, which says whether the cell is published, to none.
     pub(in crate::vm) fn publish(&self, method: &PublishedLaneMethod) {
         let Some(body) = method.lease() else { return };
         self.recovery.set(std::ptr::addr_of!(body.recovery_space).addr());
         self.body.set(Rc::as_ptr(&body).addr());
+        method.on_retire(&self.body, Rc::as_ptr(&body).addr(), 0);
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
         self.scalar.set(Self::scalar_stub());

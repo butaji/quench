@@ -1267,7 +1267,7 @@ file-lines crates/quench-node/src/modules/perf_hooks.rs 773
 file-lines crates/quench-node/src/modules/perf_timeline.rs 1132
 file-lines crates/quench-node/src/modules/pipe_binding.rs 948
 file-lines crates/quench-node/src/modules/process_shared_vm.rs 4494
-file-lines crates/quench-node/src/modules/process_state.rs 655
+file-lines crates/quench-node/src/modules/process_state.rs 642
 file-lines crates/quench-node/src/modules/process_surface.rs 504
 file-lines crates/quench-node/src/modules/querystring_shared_vm.rs 534
 file-lines crates/quench-node/src/modules/readline_shared_vm.rs 2460

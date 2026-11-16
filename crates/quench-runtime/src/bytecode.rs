@@ -3795,6 +3795,13 @@ pub(crate) struct CacheSiteCounts {
     pub(crate) objects: usize,
 }
 
+impl CacheSiteCounts {
+    /// Whether caches laid out for `layout` hold every site of these counts.
+    pub(crate) fn fits_within(self, layout: Self) -> bool {
+        self.fields <= layout.fields && self.methods <= layout.methods && self.objects <= layout.objects
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,

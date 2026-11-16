@@ -350,11 +350,11 @@ impl<T: CollectionEntry> CollectionEntries<T> {
         self.head = slot_count(self.table.len());
     }
 
-    /// Registers a new iterator, each registered once (a fresh one, or one `take_iterators`
-    /// returned), and returns how many are registered.
+    /// Registers a new iterator (a fresh one, or one `take_iterators` returned), and returns
+    /// how many are registered. A fresh iterator may reuse the record of a collected one that
+    /// is still registered; `Heap::move_collection_iterators` keeps one of the two.
     pub(crate) fn register_iterator(&mut self, iterator: Value) -> usize {
         let walking = &mut self.rare_mut().walking;
-        debug_assert!(!walking.iterators.contains(&iterator));
         walking.iterators.push(iterator);
         walking.iterators.len()
     }
