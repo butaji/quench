@@ -6217,8 +6217,7 @@ script_handler! {
         let imm = i.imm();
         // Deeper reads take `lane_load_outer_capture` (`specialize_captures`).
         debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
-        let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-        if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at, false) {
+        if !lane_frame::staged_load_own_capture::<H>(cx, r, view, i.a, ImmediateLayout::capture_slot(imm)) {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         }
         next!(cx, r, following(ip), view)
