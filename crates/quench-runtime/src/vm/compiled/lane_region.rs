@@ -2476,7 +2476,7 @@ impl Lowering<'_, '_> {
             }
             // A capture's read or store, by its staged row.
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
-            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
+            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.fold_native_member(state, pc, instruction).or_else(|| self.get_field(state, pc, instruction)),
             _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if instruction.op().class().eq(Class::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),

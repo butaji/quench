@@ -77,6 +77,20 @@ impl Lowering<'_, '_> {
     /// the closed program gives the field one value: the field is read once here as data and
     /// required to hold it, so a changed prototype fails the guard and leaves to the shared
     /// body. False, emitting nothing, otherwise.
+    /// The read at `pc` of a native member of a Stable global (`GlobalRead::NativeMember`), folded
+    /// to the function it held: the holder's values are a dependency (`hold_holder`), so a write
+    /// to one retires this code rather than each run re-reading the member.
+    /// `None` where the read is not one, or completes its frame or writes `this` besides.
+    pub(super) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, holder, .. }) = self.global_reads.get(&pc) else { return None };
+        if !self.division().folds(BindingTime::Stable) || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
+        let exit = self.guard_exit(state, pc as u32);
+        self.hold_holder(state, exit, holder);
+        let constant = self.identity_constant(value);
+        self.define(state, instruction.result_register(), constant, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
+        Some(true)
+    }
+
     pub(super) fn fold_frozen_field(&mut self, state: &mut State, read: (crate::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         if !self.division().folds(crate::staged::division::FROZEN_FIELD) { return false; }
