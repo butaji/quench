@@ -17905,6 +17905,9 @@ enum LaneBodyLeft {
 /// nothing the lane does next reads it.
 #[inline(always)]
 fn lane_record_end<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, method: &super::compiled::LaneMethod, exit: super::compiled::LaneExit) {
+    if !matches!(exit, super::compiled::LaneExit::Returned { .. }) && crate::trace::Channel::BodyLeave.on() {
+        eprintln!("QUENCH_BODY_LEAVE function={} exit={exit:?}", lane_running_function(cx));
+    }
     if unsafe { vm(cx) }.programs.js_jit_diagnostics_enabled() {
         own.tier().body_stats.ended(exit, &method.exits, &method.inlined, super::compiled::take_lane_exit_line());
     }
