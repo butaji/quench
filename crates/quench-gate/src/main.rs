@@ -14,6 +14,7 @@ mod conformance;
 mod cparity;
 mod debug;
 mod lint;
+mod no_jit_ir;
 mod oracle;
 mod owners;
 mod passed;
@@ -31,13 +32,14 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 7] = [
+const STEPS: [Step; 8] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
     Step { name: "library", quick: false, blocking: false, run: oracle::run },
     Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
+    Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
 ];
 

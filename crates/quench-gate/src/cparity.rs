@@ -37,7 +37,7 @@ use classes::Fields;
 use stats::{Dump, Hot, Site};
 use table::{Table, Tally};
 
-const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
+pub const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
 const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
@@ -47,7 +47,7 @@ const DEV_VARIABLE: &str = "QUENCH_DEV";
 const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 
 /// The kernel sources, in name order.
-fn kernels(directory: &Path) -> io::Result<Vec<PathBuf>> {
+pub fn kernels(directory: &Path) -> io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();

@@ -1615,6 +1615,7 @@ name = "quench-gate"
 version = "0.1.0"
 dependencies = [
  "quench-tier-corpus",
+ "serde_json",
 ]
 
 [[package]]
