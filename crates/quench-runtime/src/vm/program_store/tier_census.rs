@@ -89,7 +89,7 @@ impl ProgramStore {
         for (program, entry) in self.programs.iter().enumerate().filter_map(|(program, entry)| Some((program as u32, entry.as_ref()?))) {
             for function in (0..u32::MAX).map_while(|function| entry.residual.function_get(function as usize).map(|_| function)) {
                 if let Some(view) = entry.lane_views.derived(function) {
-                    census.record(Tier::UjitLaneBody, view.body_stats.runs(), self.function_size(program, function));
+                    census.record(Tier::UjitLaneBody, view.tier().body_stats.runs(), self.function_size(program, function));
                     for site in view.osr_diagnostics().sites {
                         let span = u64::from(site.backedge_pc.saturating_sub(site.header_pc)) + 1;
                         census.record(Tier::InterpreterLoop, site.lane_backedge_count, span);

@@ -84,6 +84,24 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    /// `spread_into_array` of a `source` whose iteration runs no guest code
+    /// (`intact_iteration_kind`), which then neither throws nor calls out: `true` once its
+    /// values are appended to the dense literal `array`, `false` (nothing done) for any other.
+    pub(super) fn spread_intact_in_place(&mut self, array: Value, source: Value) -> bool {
+        if self.share_spread_elements(array, source) {
+            return true;
+        }
+        let Some(values) = self.intact_iteration_values(source) else {
+            return false;
+        };
+        if self.append_literal_elements(array, &values) {
+            return true;
+        }
+        // Not a dense literal after all: the general step appends what it iterates again,
+        // which an intact source yields the same.
+        false
+    }
+
     pub(super) fn iterable_to_rooted_list(
         &mut self,
         p: &ResidualProgram,
@@ -110,7 +128,7 @@ impl<H: Host> Vm<H> {
         match kind {
             IterationSource::Array => {
                 let length = self.heap.array(source)?.elements().len();
-                self.present_dense_elements(source, 0..length).map(<[Value]>::to_vec)
+                self.present_dense_elements(source, 0..length).map(|values| values.into_owned())
             }
             IterationSource::Set => match self.heap.get(source)? {
                 Cell::Set { entries, .. } => Some(entries.to_vec()),
@@ -153,27 +171,37 @@ impl<H: Host> Vm<H> {
             return (self.fuse_intact(IntactFuse::StringIterator) && self.fuse_intact(IntactFuse::StringIteratorNext))
                 .then_some(IterationSource::String);
         }
-        let (kind, iterator, next) = match self.heap.get(source)? {
-            Cell::Set { object, .. } if object.proto() == self.set_proto && !object.has_side_descriptors() => {
-                (IterationSource::Set, IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
+        // The prototype holds `@@iterator`: the realm's own `Set.prototype` or `Map.prototype`,
+        // or another realm's (a script loaded as its own realm makes its collections there),
+        // whose intrinsic the fuse at that prototype proves. The iterators every realm makes
+        // share one prototype, the realm's `next` fuse.
+        let (kind, holder, iterator, next) = match self.heap.get(source)? {
+            Cell::Set { object, .. } if !object.has_side_descriptors() => {
+                (IterationSource::Set, object.proto(), IntactFuse::SetIterator, IntactFuse::SetIteratorNext)
             }
-            Cell::Map { object, .. } if object.proto() == self.map_proto && !object.has_side_descriptors() => {
-                (IterationSource::Map, IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
+            Cell::Map { object, .. } if !object.has_side_descriptors() => {
+                (IterationSource::Map, object.proto(), IntactFuse::MapIterator, IntactFuse::MapIteratorNext)
             }
             _ => return None,
         };
-        let symbol = self.iterator_symbol_key()?;
-        if self.property_shape_slot(self.object_data(source)?.shape(), symbol).is_some() {
-            return None;
+        let shape = self.object_data(source)?.shape();
+        if self.collection_iteration_shape != Some(shape) {
+            let symbol = self.iterator_symbol_key()?;
+            if self.property_shape_slot(shape, symbol).is_some() {
+                return None;
+            }
+            if !self.shape_is_dictionary(shape) {
+                self.collection_iteration_shape = Some(shape);
+            }
         }
-        (self.fuse_intact(iterator) && self.fuse_intact(next)).then_some(kind)
+        (self.heap.object(holder).is_some() && self.fuse_intact_at(iterator, holder) && self.fuse_intact(next)).then_some(kind)
     }
 
     /// Whether neither `iterator` nor any prototype in its chain has `key`, which the shapes
     /// alone decide: a built-in iterator record, or an ordinary object, with no own `key` (in
     /// its shape or side table) above a chain of ordinary objects (`Vm::plain_property_lookup`).
     /// `false` when they cannot, as for a Proxy, whose `get` trap observes the lookup.
-    fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
+    pub(super) fn iterator_lacks_property(&self, iterator: Value, key: PropertyKey) -> bool {
         let Some(record) = self.heap.iterator(iterator) else {
             return self.plain_property_lookup(iterator, key) == Some(None);
         };
@@ -184,7 +212,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         let proto = data.proto();
-        proto.is_null() || self.plain_property_lookup(proto, key) == Some(None)
+        proto.is_null() || self.iterator_absence_proved(proto, key) || self.plain_property_lookup(proto, key) == Some(None)
     }
 
     pub(super) fn iterator_step_value(
@@ -229,7 +257,7 @@ impl<H: Host> Vm<H> {
             // GetMethod of an absent `return` yields undefined and the close ends (ECMA-262
             // 7.4.11 steps 3-5); the shapes of a built-in iterator's chain decide that without
             // the general lookup.
-            if vm.iterator_lacks_property(iterator, PropertyKey::string(atom)) {
+            if vm.iterator_lacks_property_proving(iterator, PropertyKey::string(atom)) {
                 return Ok(Value::UNDEFINED);
             }
             let method = vm.get_property(p, iterator, atom)?;
@@ -2778,14 +2806,7 @@ impl<H: Host> Vm<H> {
         } else {
             self.box_object_or_type_error(p, source)?
         };
-        Ok(self.heap.alloc_iterator(IteratorRecord {
-            object: Self::empty_object(self.array_iterator_proto),
-            source,
-            kind,
-            index: 0,
-            done: false,
-            ext: crate::heap::IteratorExt::default(),
-        }))
+        Ok(self.array_iterator_of(kind, source))
     }
 
     pub(super) fn iterator_next(
@@ -2937,8 +2958,8 @@ impl<H: Host> Vm<H> {
                 .array_elements(env)
                 .map_or((false, Value::UNDEFINED), |elements| {
                     (
-                        elements.first().is_some_and(|done| self.truthy(*done)),
-                        elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                        elements.first().is_some_and(|done| self.truthy(done)),
+                        elements.get(1).unwrap_or(Value::UNDEFINED),
                     )
                 });
         if done
@@ -2960,8 +2981,8 @@ impl<H: Host> Vm<H> {
                 .array_elements(env)
                 .map_or((Value::UNDEFINED, false), |elements| {
                     (
-                        elements.get(1).copied().unwrap_or(Value::UNDEFINED),
-                        elements.get(2).is_some_and(|close| self.truthy(*close)),
+                        elements.get(1).unwrap_or(Value::UNDEFINED),
+                        elements.get(2).is_some_and(|close| self.truthy(close)),
                     )
                 });
         if close_on_rejection {
@@ -3216,11 +3237,11 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let rest = array.elements().get(position..)?;
-        if rest.iter().any(|value| value.is_deleted()) {
+        let elements = array.elements();
+        if position > elements.len() || elements.range(position..elements.len()).any(|value| value.is_deleted()) {
             return None;
         }
-        let rest = rest.to_vec();
+        let rest: Vec<Value> = elements.range(position..elements.len()).collect();
         if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
             *done = true;
             *source = Value::UNDEFINED;
@@ -3256,7 +3277,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(&element) = array.elements().get(position) else {
+        let Some(element) = array.elements().get(position) else {
             if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
                 *done = true;
                 *source = Value::UNDEFINED;
@@ -3276,7 +3297,8 @@ impl<H: Host> Vm<H> {
     /// Whether `method` is this realm's %ArrayIteratorPrototype%.next and `iterator` one of
     /// its array iterators, so a step may run without the call and its result object.
     pub(super) fn steps_as_array_iterator(&self, iterator: Value, method: Value) -> bool {
-        self.iteration_step(iterator, method) == IterationStep::Array
+        self.heap.iterator(iterator).is_some_and(|record| record.kind.is_array_iterator())
+            && self.is_current_realm_native(method, Native::ArrayIteratorNext)
     }
 
     /// What a step calling `method` of `iterator` is, from one read of the iterator's record:
@@ -3289,7 +3311,9 @@ impl<H: Host> Vm<H> {
             Some(IteratorRecord { kind, .. })
                 if kind.is_array_iterator() && self.is_current_realm_native(method, Native::ArrayIteratorNext) =>
             {
-                IterationStep::Array
+                // A keys or entries step makes its value (`Vm::step_array_entry`), as a
+                // collection's step does.
+                if matches!(kind, IteratorKind::Array | IteratorKind::ArrayValues) { IterationStep::Array } else { IterationStep::Collection }
             }
             Some(IteratorRecord { kind: IteratorKind::Generator, ext, .. })
                 if ext.generator.as_ref().is_some_and(|record| !record.is_executing())
@@ -3415,7 +3439,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        let Some(value) = array.elements().get(position).copied() else {
+        let Some(value) = array.elements().get(position) else {
             if let Some(IteratorRecord { done, source, .. }) = self.heap.iterator_mut(iterator) {
                 *done = true;
                 *source = Value::UNDEFINED;

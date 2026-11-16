@@ -119,49 +119,46 @@ pub fn emit_native_module(
         {
             return Err(format!("{name}: test-only external names cannot be linked"));
         }
-        for global in function.global_values.values() {
-            if let ir::GlobalValueData::Symbol {
-                name: target, tls, ..
-            } = global
-            {
-                if matches!(target, ir::ExternalName::TestCase(_)) {
-                    return Err(format!("{name}: test-only external names cannot be linked"));
-                }
-                if let ir::ExternalName::User(reference) = target {
-                    let target = &function.params.user_named_funcs()[*reference];
-                    let declared = match target.namespace {
-                        NATIVE_FUNCTION_NAMESPACE => (target.index as usize) < symbols.len(),
-                        NATIVE_DATA_NAMESPACE => (target.index as usize) < data_symbols.len(),
-                        _ => false,
-                    };
-                    if !declared {
-                        return Err(format!("{name}: undeclared native function or data {target}"));
-                    }
-                }
-                if *tls {
-                    return Err(format!(
-                        "{name}: thread-local native symbols are not declared"
-                    ));
-                }
-            }
-        }
         // Inlining leaves unused FuncRef/name declarations behind. Validate
         // actual instructions, not those non-emitted compilation records.
         for instruction in function.layout.blocks().flat_map(|block| function.layout.block_insts(block)) {
-            let reference = match function.dfg.insts[instruction] {
+            match function.dfg.insts[instruction] {
+                ir::InstructionData::UnaryGlobalValue { opcode: ir::Opcode::SymbolValue, global_value } => {
+                    let ir::GlobalValueData::Symbol { name: target, tls, .. } = &function.global_values[global_value] else { continue };
+                    if matches!(target, ir::ExternalName::TestCase(_)) {
+                        return Err(format!("{name}: test-only external names cannot be linked"));
+                    }
+                    if let ir::ExternalName::User(reference) = target {
+                        let target = &function.params.user_named_funcs()[*reference];
+                        let declared = match target.namespace {
+                            NATIVE_FUNCTION_NAMESPACE => (target.index as usize) < symbols.len(),
+                            NATIVE_DATA_NAMESPACE => (target.index as usize) < data_symbols.len(),
+                            _ => false,
+                        };
+                        if !declared {
+                            return Err(format!("{name}: undeclared native function or data {target}"));
+                        }
+                    }
+                    if *tls {
+                        return Err(format!(
+                            "{name}: thread-local native symbols are not declared"
+                        ));
+                    }
+                }
                 ir::InstructionData::Call { func_ref, .. }
                 | ir::InstructionData::TryCall { func_ref, .. }
-                | ir::InstructionData::FuncAddr { func_ref, .. } => func_ref,
-                _ => continue,
-            };
-            if let ir::ExternalName::User(reference) = function.dfg.ext_funcs[reference].name {
-                let target = &function.params.user_named_funcs()[reference];
-                if target.namespace != NATIVE_FUNCTION_NAMESPACE {
-                    return Err(format!("{name}: data or private symbol {target} cannot be called as a function"));
+                | ir::InstructionData::FuncAddr { func_ref, .. } => {
+                    if let ir::ExternalName::User(reference) = function.dfg.ext_funcs[func_ref].name {
+                        let target = &function.params.user_named_funcs()[reference];
+                        if target.namespace != NATIVE_FUNCTION_NAMESPACE {
+                            return Err(format!("{name}: data or private symbol {target} cannot be called as a function"));
+                        }
+                        if target.index as usize >= symbols.len() {
+                            return Err(format!("{name}: undeclared native function {target}"));
+                        }
+                    }
                 }
-                if target.index as usize >= symbols.len() {
-                    return Err(format!("{name}: undeclared native function {target}"));
-                }
+                _ => {}
             }
         }
         let id = symbols[index];

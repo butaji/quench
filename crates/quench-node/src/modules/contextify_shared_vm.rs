@@ -32,6 +32,8 @@ pub(crate) struct State {
 
 static NEXT_SCRIPT: AtomicU64 = AtomicU64::new(1);
 
+mod magic_comment;
+
 /// The private symbols the binding keeps its facts under, built once per VM.
 mod slot {
     pub(super) const CONTEXT: &str = "context";
@@ -58,6 +60,8 @@ mod record {
 /// wrapper origin (a count of lines and columns discounted) cannot express.
 const LINE_PADDING: &str = "\n";
 const COLUMN_PADDING: &str = " ";
+const SOURCE_URL_DIRECTIVE: &str = "sourceURL";
+const SOURCE_MAP_URL_DIRECTIVE: &str = "sourceMappingURL";
 const FNV64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV64_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -139,9 +143,9 @@ pub(crate) fn script_class(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     get(c, binding, "ContextifyScript")
 }
 
-/// A magic comment's value, which the compile found, or undefined.
-fn directive(c: &mut Context<'_>, value: Option<&str>) -> RootId {
-    match value {
+/// The value of the last `//# name=value` directive in `source`, or undefined.
+fn magic_comment(c: &mut Context<'_>, source: &str, name: &str) -> RootId {
+    match magic_comment::value(source, name) {
         Some(value) => c.string_rooted(value),
         None => c.undefined(),
     }
@@ -227,9 +231,9 @@ pub(crate) fn script(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> 
     let cached = argument(c, args, 4);
     let produce = argument(c, args, 5);
     report_cache(c, receiver, &source, cached, produce)?;
-    let source_url = directive(c, compiled.source_url());
+    let source_url = magic_comment(c, &source, SOURCE_URL_DIRECTIVE);
     c.assign_named_property_rooted(receiver, "sourceURL", source_url)?;
-    let source_map_url = directive(c, compiled.source_map_url());
+    let source_map_url = magic_comment(c, &source, SOURCE_MAP_URL_DIRECTIVE);
     c.assign_named_property_rooted(receiver, "sourceMapURL", source_map_url)?;
     let id = NEXT_SCRIPT.fetch_add(1, Ordering::Relaxed);
     let key = slot_key(c, slot::SCRIPT)?;
@@ -281,11 +285,11 @@ pub(crate) fn run_in_context(c: &mut Context<'_>, receiver: RootId, args: &[Root
 
 /// Run `body` against the context `record` names, with the sandbox's state on its global
 /// before and the global's changes on the sandbox after.
-pub(crate) fn within<T>(
+pub(crate) fn within(
     c: &mut Context<'_>,
     record: RootId,
-    body: impl FnOnce(&mut Context<'_>, RootId) -> Result<T, RootedError>,
-) -> Result<T, RootedError> {
+    body: impl FnOnce(&mut Context<'_>, RootId) -> Result<RootId, RootedError>,
+) -> Result<RootId, RootedError> {
     let global = get(c, record, record::GLOBAL)?;
     let sandbox = get(c, record, record::SANDBOX)?;
     let contextified = !c.strict_equal_rooted(global, sandbox)?;
@@ -731,17 +735,16 @@ pub(crate) fn compile_function(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     }
     let scopes: String = (0..extensions.len()).map(|index| format!("with (arguments[{index}]) ")).collect();
     let prefix = format!("(function () {{ {scopes}return function ({}) {{\n", parameters.join(", "));
+    let suffix = "\n}; })";
     let (wrapper_lines, _) = quench_runtime::wrapper_origin(&prefix).unwrap_or_default();
-    let wrapped = format!("{prefix}{}{source}\n}}; }})", offsets.padding());
+    let wrapped = format!("{prefix}{}{source}{suffix}", offsets.padding());
     let (line, column) = offsets.origin();
     let evaluate = |c: &mut Context<'_>, global: RootId| {
-        let compiled = c.compile_script_in_realm_with_origin(global, &wrapped, &filename, wrapper_lines + line, column)?;
-        let source_map_url = directive(c, compiled.source_map_url());
-        let outer = c.evaluate_compiled_script_in_realm_rooted(global, &compiled)?;
+        let outer = c.evaluate_specialized_script_in_realm_with_origin_rooted(global, &wrapped, &filename, wrapper_lines + line, column)?;
         let undefined = c.undefined();
-        Ok((c.call_rooted(outer, undefined, &extensions)?, source_map_url))
+        c.call_rooted(outer, undefined, &extensions)
     };
-    let (function, source_map_url) = match record {
+    let function = match record {
         Some(record) => within(c, record, evaluate)?,
         None => {
             let global = c.global_root()?;
@@ -750,6 +753,7 @@ pub(crate) fn compile_function(c: &mut Context<'_>, _: RootId, args: &[RootId]) 
     };
     let result = c.object_rooted()?;
     c.assign_named_property_rooted(result, "function", function)?;
+    let source_map_url = magic_comment(c, &source, SOURCE_MAP_URL_DIRECTIVE);
     c.assign_named_property_rooted(result, "sourceMapURL", source_map_url)?;
     let cached = argument(c, args, 4);
     let produce = argument(c, args, 5);

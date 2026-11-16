@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod register_file;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
@@ -21,15 +22,19 @@ pub use compiled::NativeFaultHandler;
 mod native_op_profile;
 mod js_compiled;
 mod jit_backend;
-mod tier_machine;
+mod tier_machine; pub mod tier_events;
+mod shape_stability;
+pub(crate) mod switches;
 mod shape_transitions;
 mod snapshot;
 mod startup_intrinsics;
 mod wasm;
 pub use compiled::{AheadImages, ExecutionMode};
+pub(crate) use compiled::InstanceRecord;
 pub use date::local_timezone_changed;
 mod wasm_exception;
 mod wasm_gc;
+mod wasm_global;
 mod wasm_host;
 mod wasm_js;
 pub(crate) use wasm_exception::{js_tag_cell, js_tag_type};
@@ -38,6 +43,7 @@ mod wasm_table;
 use crate::Value;
 use crate::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
+use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
@@ -60,6 +66,9 @@ use std::rc::Rc;
 /// sequence. The state must not be zero, which xorshift never leaves.
 fn fresh_random_seed() -> u64 {
     use std::hash::BuildHasher as _;
+    if let Some(seed) = crate::clock::fixed_random_seed() {
+        return seed;
+    }
     std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now()) | 1
 }
 pub(super) use crate::units::MAX_SAFE_INTEGER;
@@ -110,6 +119,10 @@ struct RuntimeAtoms {
 }
 pub(crate) mod activation;
 mod agent;
+mod atom_set;
+mod pending_job;
+use pending_job::PendingJob;
+use atom_set::AtomSet;
 mod arguments;
 mod array;
 pub(crate) mod array_buffer;
@@ -129,6 +142,7 @@ mod call_arguments;
 mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
+mod call_out_calls;
 mod coercion;
 mod collection_intake;
 mod collections;
@@ -136,9 +150,9 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
-mod dispatch_fast; mod lane_values; mod proved_region;
-#[cfg(test)] mod proved_region_tests;
-mod dispatch_frame;
+mod dispatch_fast; mod lane_values; mod lane_activations;
+pub(crate) use dispatch_fast::{copy_arguments, fill_window as fill_registers};
+mod dispatch_frame; mod tier0_promotion;
 mod dispatch_wasm;
 mod dynamic_strings;
 #[cfg(feature = "profile-lane-exits")]
@@ -146,10 +160,16 @@ mod lane_exits;
 mod embedding;
 mod provenance;
 mod inspection;
+mod caller_view;
 mod environment; mod name_scope;
+mod owner_step; mod var_owner;
+mod root_bindings;
+mod handler_entry;
 mod equality; mod error; mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod in_presence;
+mod instanceof_walk;
 mod site_table;
 mod finalization;
 mod first_call_append; mod first_call_chunk;
@@ -179,6 +199,7 @@ mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
 mod intact_fuses;
+mod iterator_proofs;
 mod iterators;
 mod json;
 mod method_cache;
@@ -187,12 +208,11 @@ mod module;
 mod number;
 mod object_template;
 mod object;
-mod shape_facts;
-use shape_facts::ShapeFacts;
 mod shape_memo;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
+mod private_slots;
 mod enumerable_key_memo;
 mod name_atom_memo;
 mod object_assignment;
@@ -205,10 +225,13 @@ mod object_keys;
 mod object_static;
 mod object_symbols;
 #[cfg(test)] mod lane_loop_tests;
+#[cfg(test)] mod float_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
 #[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod object_tests; #[cfg(test)] mod shape_attribute_tests;
+#[cfg(test)] mod native_frame_tests;
+#[cfg(test)] mod catch_tests; #[cfg(test)] mod test_oracle; #[cfg(test)] mod shape_stability_tests;
 mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
@@ -219,12 +242,13 @@ pub(crate) use regexp::RegExpFlags;
 use program_store::{ModuleImport, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
+use root_bindings::RootBinding;
+use var_owner::{EvalCaller, VarOwner};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;
 pub(crate) use operations::number_is_truthy;
 mod primitives;
-pub(crate) use primitives::is_ecma_whitespace_character;
 pub(crate) mod program_store;
 mod promise;
 mod promise_aggregate;
@@ -263,7 +287,6 @@ mod temporal_zoned_date_time;
 mod type_predicates;
 mod typed_array;
 mod typed_array_access;
-mod typed_element;
 mod typed_array_base64;
 mod typed_array_construct;
 mod typed_array_install;
@@ -328,7 +351,7 @@ pub(super) struct Frame {
     locals: Vec<Value>,
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
-    registers: Vec<Value>,
+    registers: register_file::RegisterFile,
     capture_cache: CaptureCache,
     /// How many leading register slots hold values, whatever the current length: below it a
     /// root-mapped activation can take the file without rewriting it.
@@ -377,9 +400,10 @@ impl Default for CaptureCache {
 const CAPTURE_WALKS: usize = 64;
 /// Closure templates `Vm::closure_in_realm` remembers, one per function id modulo the count:
 /// the nested functions a closure-heavy region makes again on each call of its parent. A
-/// conflict overwrites the entry, which only costs the displaced function's next closure
-/// the lookups the template saves.
-const CLOSURE_TEMPLATES: usize = 64;
+/// conflict overwrites the entry, which costs the displaced function's next closure the
+/// lookups the template saves (about 1.6K Ir) and a template recorded again. At 64 the
+/// TypeScript compiler's closures took that path 882K times in one run.
+const CLOSURE_TEMPLATES: usize = 1024;
 const _: () = assert!(CLOSURE_TEMPLATES.is_power_of_two());
 const _: () = assert!(CAPTURE_WALKS.is_power_of_two());
 
@@ -413,7 +437,7 @@ impl Frame {
             locals: vec![],
             dynamic_bindings: vec![],
             captured: false,
-            registers: vec![],
+            registers: register_file::RegisterFile::new(),
             initialized_registers: 0,
             capture_cache: CaptureCache::default(),
             active_iterators: vec![],
@@ -590,95 +614,6 @@ pub(crate) struct ActiveIterator {
     pub(crate) iterator: u16,
     pub(crate) done: u16,
 }
-/// A queued job: a call, or a promise reaction run without a job function to dispatch through.
-enum PendingJob {
-    Call {
-        callback: Value,
-        this: Value,
-        args: Vec<Value>,
-    },
-    Reaction(promise::PromiseJob),
-    Thenable(promise::ThenableJob),
-}
-
-impl PendingJob {
-    /// Pushes the values the job holds onto `roots`, which keep them alive while it runs.
-    fn push_roots(&self, roots: &mut Vec<Value>) {
-        match self {
-            Self::Call {
-                callback,
-                this,
-                args,
-            } => {
-                roots.extend([*callback, *this]);
-                roots.extend_from_slice(args);
-            }
-            Self::Reaction(job) => roots.extend([job.realm, job.handler, job.next, job.value]),
-            Self::Thenable(job) => roots.extend([job.realm, job.then, job.thenable, job.promise]),
-        }
-    }
-}
-/// A set of atoms as one bit per atom index, so membership is a word's bit.
-#[derive(Clone, Default)]
-struct AtomSet {
-    words: Vec<u64>,
-}
-
-impl AtomSet {
-    const WORD_BITS: usize = u64::BITS as usize;
-
-    /// Whether `atom` is in the set; an empty set, a realm with no global lexical name,
-    /// answers with one test.
-    #[inline(always)]
-    fn contains(&self, atom: &Atom) -> bool {
-        let index = *atom as usize;
-        !self.words.is_empty()
-            && self.words.get(index / Self::WORD_BITS).is_some_and(|word| word >> (index % Self::WORD_BITS) & 1 != 0)
-    }
-
-    /// Adds `atom`; whether it was absent.
-    fn insert(&mut self, atom: Atom) -> bool {
-        let index = atom as usize;
-        let word = index / Self::WORD_BITS;
-        if word >= self.words.len() {
-            self.words.resize(word + 1, 0);
-        }
-        let bit = 1 << (index % Self::WORD_BITS);
-        let absent = self.words[word] & bit == 0;
-        self.words[word] |= bit;
-        absent
-    }
-
-    fn clear(&mut self) {
-        self.words.clear();
-    }
-
-    fn iter(&self) -> impl Iterator<Item = Atom> + '_ {
-        self.words.iter().enumerate().flat_map(|(word, &bits)| {
-            (0..Self::WORD_BITS).filter(move |bit| bits >> bit & 1 != 0).map(move |bit| (word * Self::WORD_BITS + bit) as Atom)
-        })
-    }
-}
-
-impl Extend<Atom> for AtomSet {
-    fn extend<I: IntoIterator<Item = Atom>>(&mut self, atoms: I) {
-        atoms.into_iter().for_each(|atom| {
-            self.insert(atom);
-        });
-    }
-}
-
-impl crate::snapshot::Snap for AtomSet {
-    fn snap(&self, writer: &mut crate::snapshot::Writer) -> crate::snapshot::SnapshotResult<()> {
-        let atoms: Vec<Atom> = self.iter().collect();
-        crate::snapshot::Snap::snap(&atoms, writer)
-    }
-    fn unsnap(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let mut set = Self::default();
-        set.extend(<Vec<Atom> as crate::snapshot::Snap>::unsnap(reader)?);
-        Ok(set)
-    }
-}
 /// A realm's global lexical bindings in insertion order. A binding is never removed while its
 /// realm is active, so its index names it until the realm switches, and a read that holds the
 /// index and name (`lane_load_root_lexical`) needs no hash.
@@ -688,7 +623,7 @@ struct Realm {
     globals: Value,
     /// Every global lexical name of the realm, including every bound one
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one: a test every
-    /// global name load makes (`lane_load_global_name`).
+    /// global name load makes (`lane_load_name_bound`).
     global_lexical_declarations: AtomSet,
     global_lexical_bindings: GlobalLexicalBindings,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
@@ -794,9 +729,8 @@ struct ParkedRealm {
 }
 /// The natives whose prototypes VM fields follow from the active realm
 /// (`Vm::realm_prototype_field`).
-/// One `typeof` name per `crate::ValueType`, indexed by its discriminant; `Function` is the
-/// last type.
-const TYPEOF_NAMES: usize = crate::ValueType::Function as usize + 1;
+/// One `typeof` name per `bytecode::TYPEOF_NAMES` entry, indexed as `typeof_name_index` classifies values.
+const TYPEOF_NAMES: usize = crate::bytecode::TYPEOF_NAMES.len();
 const REALM_FOLLOWING_PROTOTYPES: [Native; 4] =
     [Native::Object, Native::Function, Native::Array, Native::String];
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -833,6 +767,9 @@ enum SlotAccessor {
 #[derive(Clone, Copy)]
 struct AccessorFieldCache {
     receiver: u32,
+    /// The receiver's layout id (`Object::layout_id`): its shape and prototype in one word,
+    /// which an ordinary receiver's hit compares instead of each.
+    layout: u32,
     /// The receiver's prototype, where the chain to `holder` starts.
     prototype: Value,
     /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
@@ -847,6 +784,11 @@ struct AccessorFieldCache {
     epoch: u64,
     /// The site's next older entry in `Vm::accessor_fields`, or `NO_ACCESSOR_FIELD`.
     next: u32,
+    /// The getter whose call a field read of the receiver answers (`answer`), or undefined:
+    /// `Vm::memoized_getter_answer` reads it in place of the call.
+    getter: Value,
+    /// That read's field entry, which proves the receiver's shape itself.
+    answer: FieldCache,
 }
 /// A cache site without an accessor entry (`Vm::accessor_field_indices`).
 const NO_ACCESSOR_FIELD: u32 = object::MRU_CHAIN_END;
@@ -940,6 +882,9 @@ struct FieldAddCache {
     source_shape: u32,
     target_shape: u32,
     slot: u16,
+    /// The layouts of the receiver that recorded the add and of the record it moves to
+    /// (`Transition::layouts`), which the staged rows guard and store.
+    layouts: [u32; 2],
     prototype_depth: u8,
     prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
     /// The `prototype_layout_epoch` under which a walk last proved the chain from
@@ -957,6 +902,7 @@ impl FieldAddCache {
         source_shape: NO_FIELD_RECEIVER,
         target_shape: NO_FIELD_RECEIVER,
         slot: 0,
+        layouts: [0; 2],
         prototype_depth: 0,
         prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
         proved_epoch: NO_PROVED_EPOCH,
@@ -964,6 +910,11 @@ impl FieldAddCache {
     };
     fn prototype_shapes(&self) -> &[u32] {
         &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+    /// The shape transition the entry caches, as the staged add row takes it.
+    #[inline(always)]
+    fn transition(&self) -> Transition {
+        Transition { before: self.source_shape, after: self.target_shape, slot: self.slot, layouts: self.layouts }
     }
     /// Whether the chain proof (`proved_epoch`, `proved_prototype`) holds for a receiver
     /// whose prototype `link` names: then the chain needs no walk.
@@ -1116,6 +1067,38 @@ struct MethodCacheSet {
     len: u8,
     entries: [MethodCache; compiled::tier_policy::POLYMORPHISM],
 }
+/// What making a program the executing one reads (`Vm::program_context`): its residual, lane
+/// views, constants, cache layout and field cache entries, derived once and again only after
+/// something they come from changed (`ProgramStore::context_epoch`), so a switch between
+/// programs, as a cross-program call and its return make, looks nothing up and copies no
+/// layout. Boxed per program (`Vm::program_contexts`), so its address holds.
+pub(crate) struct ProgramContext {
+    /// The `ProgramStore::context_epoch` it was derived at.
+    epoch: u64,
+    /// The program's residual; null for a program the store does not hold.
+    code: *const crate::bytecode::ResidualProgram,
+    /// Its lane views by function; a null slice until the program's view table exists
+    /// (`Vm::lane_program_context`), which a program the lane never enters never makes.
+    views: *const [program_store::LaneViewCell],
+    constants: *const [Value],
+    layout: ProgramCacheLayout,
+    field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
+}
+
+impl ProgramContext {
+    /// A context no epoch matches: the active one before any program is.
+    fn idle() -> Self {
+        Self {
+            epoch: u64::MAX,
+            code: std::ptr::null(),
+            views: std::ptr::slice_from_raw_parts(std::ptr::null(), 0),
+            constants: &[],
+            layout: ProgramCacheLayout::default(),
+            field_entries: std::ptr::null(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {
     field_base: usize,
@@ -1382,7 +1365,7 @@ impl ShapeAttributes {
 impl ShapeTransition {
     fn introduces_gc_roots(self) -> bool {
         match self {
-            Self::Add { key, .. } => key.symbol_value().is_some(),
+            Self::Add { key, .. } => key.gc_value().is_some(),
             Self::Descriptor { attributes, .. } => attributes.table_accessors(),
             Self::Root | Self::FunctionName { .. } | Self::FunctionNameReconfigured | Self::FunctionLengthReconfigured | Self::Constructed { .. } | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
         }
@@ -1404,7 +1387,7 @@ impl ShapeTransition {
             Self::Descriptor { slot, attributes } if !attributes.table_accessors() => {
                 Some(ShapeTransitionKey::Descriptor { slot, attributes })
             }
-            Self::Delete { key, .. } if key.symbol_value().is_none() => {
+            Self::Delete { key, .. } if key.gc_value().is_none() => {
                 Some(ShapeTransitionKey::Delete(key))
             }
             Self::Root
@@ -1529,6 +1512,63 @@ impl ShapeLookupIndex {
             + self.positions.capacity() * (size_of::<u32>() + 1)
             + self.attributes.capacity() * size_of::<(u32, ShapeAttributes)>()
     }
+}
+/// Facts a shape inherits from its chain: once a transition introduces one, every descendant
+/// keeps it. One byte, so `Shape` keeps its size.
+#[derive(Clone, Copy, Default)]
+struct ShapeFacts(u8);
+impl ShapeFacts {
+    /// A symbol key or a table accessor of the chain may be a GC root.
+    const MAY_HAVE_GC_ROOTS: u8 = 1 << 0;
+    /// Some property of the chain was a `SLOT_GETTER` accessor, so a raw slot read must check
+    /// whether the slot holds a getter rather than a value. A pair cell's slot is told by its
+    /// value instead (`Vm::is_accessor_pair`), under `ACCESSOR_PAIRS`, so a shape of data
+    /// properties and pairs, as a logger object with a `level` pair, keeps reading raw.
+    const SLOT_GETTERS: u8 = 1 << 1;
+    /// Some property of the chain was made an accessor. Only a descriptor transition makes
+    /// one, as an add carries data attributes, so a chain without this fact holds data
+    /// properties alone and a read of any slot is its value.
+    const ACCESSORS: u8 = 1 << 2;
+    /// Some property of the chain was made an accessor with a setter, as every lazy data
+    /// property is, rather than a getter alone: its functions in `Vm::shape_accessors`
+    /// (`ShapeAttributes::table_accessors`) or a pair cell in its slot (`slot_accessor_pair`).
+    const ACCESSOR_PAIRS: u8 = 1 << 3;
+    /// Some property of the chain was deleted, or left a vacant slot when it was rebuilt: a
+    /// deletion past `SHARED_DELETIONS` makes the object its own dictionary (`DictionaryTrigger::DeletionPattern`).
+    const DELETIONS: u8 = 1 << 4;
+    /// A transition introduced non-default slot attributes. Without this fact every
+    /// allocated slot has the default data descriptor, including vacated slots.
+    const NON_DEFAULT_ATTRIBUTES: u8 = 1 << 5;
+
+    fn extended_by(self, transition: ShapeTransition) -> Self {
+        let introduced = |fact: bool, bit: u8| if fact { bit } else { 0 };
+        let descriptor = |test: fn(ShapeAttributes) -> bool| {
+            matches!(transition, ShapeTransition::Descriptor { attributes, .. } if test(attributes))
+        };
+        Self(
+            self.0
+                | introduced(transition.introduces_gc_roots(), Self::MAY_HAVE_GC_ROOTS)
+                | introduced(
+                    matches!(transition, ShapeTransition::Add { attributes, .. } if attributes != DEFAULT_DATA_ATTRIBUTES)
+                        || descriptor(|attributes| attributes != DEFAULT_SHAPE_ATTRIBUTES),
+                    Self::NON_DEFAULT_ATTRIBUTES,
+                )
+                | introduced(descriptor(ShapeAttributes::slot_getter), Self::SLOT_GETTERS)
+                | introduced(descriptor(|attributes| attributes.accessor), Self::ACCESSORS)
+                | introduced(
+                    descriptor(|attributes| attributes.table_accessors() || attributes.slot_accessor_pair()),
+                    Self::ACCESSOR_PAIRS,
+                )
+                | introduced(matches!(transition, ShapeTransition::Delete { .. } | ShapeTransition::Vacant), Self::DELETIONS),
+        )
+    }
+
+    fn accessor_pairs(self) -> bool { self.0 & Self::ACCESSOR_PAIRS != 0 }
+    fn accessors(self) -> bool { self.0 & Self::ACCESSORS != 0 }
+    fn default_attributes(self) -> bool { self.0 & Self::NON_DEFAULT_ATTRIBUTES == 0 }
+    fn deletions(self) -> bool { self.0 & Self::DELETIONS != 0 }
+    fn may_have_gc_roots(self) -> bool { self.0 & Self::MAY_HAVE_GC_ROOTS != 0 }
+    fn slot_getters(self) -> bool { self.0 & Self::SLOT_GETTERS != 0 }
 }
 /// Each shape's storage length and its parent's id and length, in table order (a parent
 /// precedes its children): the table as the heap registers slot owners from it.
@@ -1738,6 +1778,8 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     setter: None,
 };
 pub(crate) struct Vm<H> {
+    /// Typed array views' element addresses by view (`typed_array_access::TypedViewCache`).
+    typed_views: typed_array_access::TypedViewCache,
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
     /// Whether the innermost running job queue has entered the host's context for unobserved
@@ -1753,6 +1795,9 @@ pub(crate) struct Vm<H> {
     /// %String.prototype% of the current realm; primitive string property
     /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
+    /// %Number.prototype% of the main realm: a number primitive's field read takes it
+    /// through the site's cache as a string's takes `string_proto`.
+    number_proto: Value,
     array_buffer_proto: Value,
     shared_array_buffer_proto: Value,
     array_iterator_proto: Value,
@@ -1807,6 +1852,10 @@ pub(crate) struct Vm<H> {
     // Boxed: pooled frames are reused as the `Box<Frame>` the stack and generators hold.
     #[allow(clippy::vec_box)]
     frame_pool: Vec<Box<Frame>>,
+    /// Functions lowered from tier 0 whose unlowered copy the next full collection drops
+    /// (`Vm::release_lowered_tier0`).
+    /// By residual address, which the collection matches against the live programs'.
+    lowered_tier0: std::cell::RefCell<Vec<(usize, u32)>>,
     /// Emptied call stacks of finished general loops, one per nesting level reached: a loop
     /// takes one on entry, so running a job allocates no stack of its own.
     pending_call_stacks: Vec<Vec<dispatch_frame::PendingGeneralCall>>,
@@ -1815,8 +1864,12 @@ pub(crate) struct Vm<H> {
     #[allow(clippy::vec_box)]
     #[cfg_attr(not(feature = "native-execution"), allow(dead_code))]
     js_native_contexts: Vec<Box<compiled::CallContext>>,
+    /// The environments native Wasm code holds across its calls into other instances.
+    native_roots: Box<compiled::NativeRoots>,
     /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
+    /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
+    lane_roots: Vec<dispatch_fast::ParkedLane>,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,
@@ -1825,9 +1878,6 @@ pub(crate) struct Vm<H> {
     #[cfg(feature = "native-execution")]
     native_program_resolver: Option<Box<native_program::NativeProgramResolver<H>>>,
     execution_interrupt: crate::ExecutionInterrupt,
-    /// Invalidates monomorphic `call_indirect` certificates after a table
-    /// mutation or collection that can change target identity.
-    wasm_reference_epoch: std::cell::Cell<u64>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
@@ -1851,10 +1901,16 @@ pub(crate) struct Vm<H> {
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
+    /// Where a lane body's native `throw` raised the error in `lane_raised`
+    /// (`compiled::raise_site`), which the lane gives it as its source location once it
+    /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
+    lane_raise_site: u64,
     /// A lane native call running with its activations still frameless
     /// (`Native::runs_beside_activations`), which the first observer of the frame stack makes
     /// frames (`materialize_deferred_lane`).
     lane_deferred: Option<dispatch_fast::DeferredLaneCall>,
+    /// The scope `VarOwner::Window` names, read by `Vm::running_owner` while `lane_deferred` stands.
+    running_window: Option<dispatch_fast::WindowScope>,
     /// The module the host resolved each (referrer, specifier) of a static request to since
     /// the last collection (`Vm::resolve_module_request`). The graph's passes (collection,
     /// pending dependencies, instantiation, evaluation) resolve each request again, and each
@@ -1878,11 +1934,17 @@ pub(crate) struct Vm<H> {
     /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
     /// its run hands to the native once the lane exits there.
     lane_native_returned: Option<Value>,
-    /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
-    active_layout: ProgramCacheLayout,
-    /// The active program's materialized constants, kept by `set_active_program` and by
-    /// constant installation. A program's constant buffer never moves once installed.
-    active_constants: *const [Value],
+    /// The value the activation a lane job ran awaited or yielded (`dispatch_fast::lane_await`,
+    /// `dispatch_fast::lane_yield`), which its run hands to the await's reactions, or to the
+    /// native `next` that stepped a sync generator, once the lane exits there.
+    lane_suspended: Option<Value>,
+    /// The active program's context (`program_contexts`), kept by `set_active_program`: its
+    /// cache layout and constants are one load from it.
+    active_context: *const ProgramContext,
+    /// Each program's context by its index (`program_context`), derived on its first use.
+    program_contexts: Vec<Box<ProgramContext>>,
+    /// The context active before any program is, which `active_context` names until then.
+    idle_context: Box<ProgramContext>,
     /// The active program's field cache entries (`SiteTable::entries_from` of its
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
@@ -1901,6 +1963,7 @@ pub(crate) struct Vm<H> {
     shape_accessors: Vec<ShapeAccessors>,
     transitions: shape_transitions::ShapeTransitionIndex,
     shape_slot_memo: shape_memo::ShapeSlotMemo,
+    shape_attribute_memo: shape_memo::ShapeAttributeMemo,
     plain_copy_shapes: shape_memo::PlainCopyShapeMemo,
     plain_assign_shapes: shape_memo::PlainAssignShapeMemo,
     /// The final shapes of host records, by their names list (`create_embedding_record`).
@@ -1914,6 +1977,8 @@ pub(crate) struct Vm<H> {
     private_site_homes: private_site_home::PrivateSiteHomes,
     /// An array shape with no own `@@iterator` (`Vm::array_iteration_intact`).
     array_iteration_shape: Option<u32>,
+    /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
+    collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
@@ -1921,8 +1986,13 @@ pub(crate) struct Vm<H> {
     /// (`json::JsonPlainCache`).
     json_plain: json::JsonPlainCache,
     species_slot_proof: std::cell::Cell<Option<object_get::SpeciesSlotProof>>,
+    /// That an iterator prototype's chain lacks a name (`Vm::iterator_lacks_property`): the
+    /// prototype, the name (`PropertyKey::key32`) and the `prototype_layout_epoch` it was proved under.
+    iterator_absence_proof: std::cell::Cell<Option<(Value, u32, u64)>>,
     /// The last proof that a promise's species constructor is `%Promise%` (`promise_species_proved`).
     promise_species_proof: std::cell::RefCell<Option<promise::PromiseSpeciesProof>>,
+    /// The `then` a resolution read from promises of one layout (`Vm::memoized_resolution_then`).
+    promise_then_memo: std::cell::Cell<Option<promise::PromiseThenMemo>>,
     enumerable_keys: enumerable_key_memo::EnumerableKeyMemo,
     name_atom_memo: name_atom_memo::NameAtomMemo,
     atom_text: AtomTable,
@@ -1938,19 +2008,24 @@ pub(crate) struct Vm<H> {
     /// The strings most recently matched by a RegExp whose search decodes them, most recent
     /// first, each prepared once for repeated matching (`Vm::regexp_subject`).
     regexp_subjects: regexp::SubjectCache,
+    /// The atoms concatenations of atom strings and integers spelled (`Vm::memoized_concat`).
+    concat_memo: string_cache::ConcatMemo,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
-    /// recorded by its first read (`lane_load_name_first`); it lives as long as the atoms.
-    intrinsic_natives: Vec<(Atom, Native)>,
+    /// indexed by atom and recorded by its first read (`lane_load_name_resolve`); it lives as long
+    /// as the atoms.
+    intrinsic_natives: Vec<Option<Native>>,
     /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).
     native_families: Vec<operations::NativeFamily>,
     /// The compiled chunk of each first-call stub, by its program and function, while both live.
     first_chunks: first_call_chunk::FirstChunks,
+    streamed_stubs: first_call_chunk::StreamedStubs,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
-    /// The `typeof` result string of each value type, made on first use; `undefined` until
-    /// then. Rooted, so `typeof` neither hashes nor allocates once warm.
+    /// The `typeof` result strings, one table indexed as `bytecode::TYPEOF_NAMES`, interned when the
+    /// heap is made (`Vm::intern_typeof_names`). Rooted, so `typeof` neither hashes nor allocates, and a
+    /// compiled body may name the table (`staged::value::typeof_string`).
     typeof_names: [Value; TYPEOF_NAMES],
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: WellKnownSymbols,
@@ -1993,6 +2068,10 @@ pub(crate) struct Vm<H> {
     /// id, so a collection that sweeps that prototype drops the hint's value, and one that
     /// renumbers shapes every hint.
     holder_hints: PrototypeHints,
+    /// Under reference counts: the shapes whose edges are pinned (`Heap::rc_pin`), and the
+    /// heap's pin epoch they were pinned in.
+    rc_pinned_shapes: usize,
+    rc_pin_epoch: u64,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
@@ -2000,12 +2079,18 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot, direct-mapped by shape; derived from shapes, so
     /// field-cache invalidation clears them.
     instanceof_constructor_layouts: [Option<(u32, usize)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// What `key in object` answered of receiver shapes and keys (`in_presence`), direct-mapped; derived from
+    /// shapes, so field-cache invalidation clears it.
+    in_presences: [Option<in_presence::InPresence>; in_presence::IN_PRESENCES],
     /// Constructor prototypes (a subclass's parent constructor, `%TypedArray%`) proved to
     /// inherit the native `@@hasInstance` (`Vm::inherits_native_has_instance`), each with the
     /// prototype-layout epoch its proof holds under: the proof marks every link of the chain
     /// a prototype, so any change to one, and every collection, retires it. Direct-mapped by
     /// the holder's cell.
     instanceof_inheriting_holders: [Option<(Value, u64)>; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
+    /// Per constructor, direct-mapped by its cell, the link of its `prototype` object while
+    /// a watch on its values and layout holds (`Vm::proved_instanceof`).
+    instanceof_proofs: [(Value, crate::heap::ProtoLink, Option<crate::heap::PrototypeValueWatch>); INSTANCEOF_CONSTRUCTOR_LAYOUTS],
     /// The shapes an ordinary closure's own properties step through, without and with a
     /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
     /// invalidation clears it.
@@ -2013,6 +2098,10 @@ pub(crate) struct Vm<H> {
     /// The shape a promise's resolving function's own `length` and `name` reach
     /// (`Vm::native_with_realm`); derived from shapes, so field-cache invalidation clears it.
     resolver_function_shape: Option<u32>,
+    /// The shapes a bound function's own `length` and `name` and its environment's target,
+    /// receiver and bound values reach (`Vm::bind_function`), the first one's adds recorded;
+    /// derived from shapes, so field-cache invalidation clears it.
+    bound_function_shape: Option<(u32, u32)>,
     /// The parts of a recorded closure that depend on its function and realm alone
     /// (`construction::ClosureTemplate`); derived from shapes, so field-cache invalidation
     /// clears it.
@@ -2058,14 +2147,12 @@ pub(crate) struct Vm<H> {
     constructed_shapes: [provenance::ConstructedShape; provenance::CONSTRUCTED_SHAPE_ENTRIES],
     /// The host's object templates (`object_template`), indexed by their ids.
     object_templates: Vec<object_template::ObjectTemplate>,
-    /// The method caches of the sites that have recorded one: a site at or past its length is
-    /// empty (`record_method_cache` grows it). A program lays out a site for every method call
-    /// its lazily compiled bodies may hold, and a bundle's never run.
-    method_caches: Vec<[MethodCache; method_cache::METHOD_CACHE_WAYS]>,
-    /// The method cache sites laid out across programs, `method_caches` aside.
-    method_site_count: usize,
+    method_caches: method_cache::MethodCacheTable,
     megamorphic_methods: Vec<MethodCacheSet>,
     method_cache_atoms: method_cache::MethodCacheAtoms,
+    /// The inline method-cache sites that may hold an entry for each atom: a superset, pushed
+    /// when a site first records the atom, so invalidating an atom visits only its sites.
+    method_cache_sites: FxHashMap<Atom, Vec<u32>>,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: site_table::SiteTable<u32>,
@@ -2083,6 +2170,8 @@ pub(crate) struct Vm<H> {
     default_collation: Option<std::rc::Rc<intl_collator::Collation>>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
+    /// The direct evals running above lane activations (`var_owner::EvalCaller`), innermost last.
+    eval_callers: Vec<EvalCaller>,
     direct_eval_var_program: Option<ProgramId>,
     /// The Function-constructor programs this VM may still offer the host's compile cache
     /// (`DYNAMIC_FUNCTIONS_KEPT`).
@@ -2386,24 +2475,21 @@ impl<H: Host> Vm<H> {
         }
         Ok(())
     }
-    pub(super) fn mirror_global_lexical_binding(
+    pub(in crate::vm) fn mirror_global_lexical_binding(
         &mut self,
         program: &ResidualProgram,
-        frame: usize,
+        owner: VarOwner,
         slot: usize,
         value: Value,
     ) {
-        let Some(current) = self.frames.get(frame) else {
-            return;
-        };
-        if let Some(atom) = self.root_global_lexical_atom(program, current.function, slot)
+        if let Some(atom) = self.root_global_lexical_atom(program, self.owner_view(owner).function(), slot)
             && self.realm.global_lexical_bindings.contains_key(&atom)
         {
             self.bind_global_lexical(atom, value);
         }
     }
     /// A global lexical name was declared: it may shadow a global property that a global name
-    /// read's hint names (`dispatch_fast::lane_load_global_name`), so every such hint is
+    /// read's hint names (`dispatch_fast::lane_load_name_bound`), so every such hint is
     /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
     pub(super) fn note_global_lexical_names(&self) {
         self.programs.clear_global_name_hints();
@@ -2526,6 +2612,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        self.report_bytecode();
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.report();
         #[cfg(feature = "profile-memory")]
@@ -2565,8 +2652,7 @@ impl<H: Host> Vm<H> {
             self.report_memory_if_enabled("complete");
             return;
         }
-        self.profile
-            .report(&self.heap, ProgramId::MAIN.raw(), program);
+        self.profile.report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
     }
@@ -2724,7 +2810,7 @@ impl<H: Host> Vm<H> {
             self.field_add_indices.capacity_bytes(),
             self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>(),
             self.field_add_sets.len(),
-            self.method_caches.capacity() * size_of::<[MethodCache; method_cache::METHOD_CACHE_WAYS]>(),
+            self.method_caches.capacity_bytes(),
             self.megamorphic_methods.len(),
         );
         self.heap
@@ -2763,7 +2849,7 @@ impl<H: Host> Vm<H> {
             + self.megamorphic_field_indices.capacity_bytes()
             + self.field_add_indices.capacity_bytes()
             + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
-            + self.method_caches.capacity() * size_of::<[MethodCache; method_cache::METHOD_CACHE_WAYS]>();
+            + self.method_caches.capacity_bytes();
         let atom_side_table_bytes = self.atoms.capacity() * (size_of::<Atom>() + 1)
             + self.atom_sequence.appended_record_bytes()
             + (0..self.atom_sequence.appended_len())
@@ -2930,7 +3016,7 @@ impl<H: Host> Vm<H> {
         self.direct_eval = false;
         self.parameter_eval = false;
         self.eval_script_context = false;
-        self.construct_target = None;
+        self.set_construct_target(None);
         self.realm.promise = Default::default();
         self.shapes.truncate(1);
         self.shape_constructors.clear();
@@ -2938,6 +3024,7 @@ impl<H: Host> Vm<H> {
         self.shapes[0].last_child.set(NO_LAST_CHILD);
         self.transitions.clear();
         self.shape_slot_memo.clear();
+        self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
         self.embedding_record_shapes.clear();
@@ -2946,12 +3033,15 @@ impl<H: Host> Vm<H> {
         self.symbol_load_proofs.clear();
         self.private_site_homes.clear();
         self.array_iteration_shape = None;
+        self.collection_iteration_shape = None;
         self.array_species_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
+        self.iterator_absence_proof.set(None);
         self.promise_species_proof.take();
+        self.promise_then_memo.take();
         self.heap.dependencies_mut().retire_all();
-        self.enumerable_keys.clear(); self.heap.clear_string_atoms();
+        self.enumerable_keys.clear(); self.heap.clear_string_atoms(); self.concat_memo.clear();
         // The sealed holders and their shapes belong to the discarded heap.
         self.startup_intrinsics = Default::default();
         self.atom_text = program.atoms.clone();
@@ -2966,7 +3056,7 @@ impl<H: Host> Vm<H> {
         self.regexp_matchers.clear();
         self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
-        self.typeof_names = [Value::UNDEFINED; TYPEOF_NAMES];
+        self.intern_typeof_names();
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.clear_call_targets();
@@ -2975,36 +3065,8 @@ impl<H: Host> Vm<H> {
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
         }
-        let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
-        let new_target = self.intern_atom(NEW_TARGET_BINDING);
-        let regexp_flag_accessors =
-            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
-        self.runtime_atoms = RuntimeAtoms {
-            lexical_this,
-            new_target,
-            regexp_exec: self.intern_atom("exec"),
-            regexp_flags: self.intern_atom("flags"),
-            last_index: self.intern_atom("lastIndex"),
-            regexp_flag_accessors,
-            then: self.intern_atom("then"),
-            constructor: self.intern_atom("constructor"),
-            next: self.intern_atom("next"),
-            name: self.intern_atom("name"),
-            empty: self.intern_atom(""),
-            value: self.intern_atom("value"),
-            done: self.intern_atom("done"),
-            iterator_return: self.intern_atom("return"),
-            writable: self.intern_atom("writable"),
-            enumerable: self.intern_atom("enumerable"),
-            configurable: self.intern_atom("configurable"),
-            get: self.intern_atom("get"), set: self.intern_atom("set"),
-            bound_target: self.intern_atom(BOUND_TARGET_KEY),
-            bound_this: self.intern_atom(BOUND_THIS_KEY),
-            bound_args: self.intern_atom(BOUND_ARGS_KEY),
-            proxy_traps: proxy::PROXY_TRAP_NAMES.map(|name| self.intern_atom(name)),
-        };
+        self.runtime_atoms = self.intern_runtime_atoms();
         self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
-        self.field_caches_moved();
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
@@ -3021,9 +3083,10 @@ impl<H: Host> Vm<H> {
         self.prototype_atom = self.intern_atom("prototype");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
-        self.method_caches.clear(); self.method_site_count = program.method_sites.capacity();
+        self.method_caches = method_cache::MethodCacheTable::with_empty(program.method_sites.capacity());
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
+        self.method_cache_sites.clear();
         self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();
@@ -3032,6 +3095,8 @@ impl<H: Host> Vm<H> {
         self.programs.reset(program.clone());
         self.instanceof_constructor_layouts = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
         self.instanceof_inheriting_holders = [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS];
+        self.instanceof_proofs = std::array::from_fn(|_| (Value::UNDEFINED, crate::heap::ProtoLink::NULL, None));
+        self.in_presences = [None; in_presence::IN_PRESENCES];
         self.closure_shapes = [None; 2];
         self.resolver_function_shape = None;
         self.function_name_shapes.clear();
@@ -3047,11 +3112,14 @@ impl<H: Host> Vm<H> {
         self.set_instanceof_has_instance_holder(Value::NULL);
         self.program_cache_layouts.clear();
         self.free_cache_layouts.clear();
+        self.programs.bump_context_epoch();
         self.program_cache_layouts.push(ProgramCacheLayout {
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program.cache_sites.capacity()),
             ..ProgramCacheLayout::default()
         });
-        self.set_active_program(ProgramId::MAIN);
+        // The new table moved every pointer into the old one; the layouts now locate its sites.
+        self.active_program = ProgramId::MAIN;
+        self.field_caches_moved();
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
         self.temporal_plain_date_proto = Value::NULL;
@@ -3078,11 +3146,44 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    /// Only native code reads slot representations, so only a runtime that runs lane bodies
-    /// keeps them, from its shape table and what its live objects hold: once its builtins
+    /// The atoms the runtime reads by name, interned in the reset realm.
+    fn intern_runtime_atoms(&mut self) -> RuntimeAtoms {
+        let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
+        let new_target = self.intern_atom(NEW_TARGET_BINDING);
+        let regexp_flag_accessors =
+            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
+        RuntimeAtoms {
+            lexical_this,
+            new_target,
+            regexp_exec: self.intern_atom("exec"),
+            regexp_flags: self.intern_atom("flags"),
+            last_index: self.intern_atom("lastIndex"),
+            regexp_flag_accessors,
+            then: self.intern_atom("then"),
+            constructor: self.intern_atom("constructor"),
+            next: self.intern_atom("next"),
+            name: self.intern_atom("name"),
+            empty: self.intern_atom(""),
+            value: self.intern_atom("value"),
+            done: self.intern_atom("done"),
+            iterator_return: self.intern_atom("return"),
+            writable: self.intern_atom("writable"),
+            enumerable: self.intern_atom("enumerable"),
+            configurable: self.intern_atom("configurable"),
+            get: self.intern_atom("get"),
+            set: self.intern_atom("set"),
+            bound_target: self.intern_atom(BOUND_TARGET_KEY),
+            bound_this: self.intern_atom(BOUND_THIS_KEY),
+            bound_args: self.intern_atom(BOUND_ARGS_KEY),
+            proxy_traps: proxy::PROXY_TRAP_NAMES.map(|name| self.intern_atom(name)),
+        }
+    }
+
+    /// Only native code (Cranelift's or `--b-jit`'s stencils) reads slot representations, so only a runtime that
+    /// runs lane bodies keeps them, from its shape table and what its live objects hold: once its builtins
     /// exist or its realm is restored.
     pub(super) fn keep_slot_representations(&mut self) {
-        if self.programs.js_jit_lane_methods_enabled() && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) {
+        if self.programs.js_jit_lane_methods_enabled() && (crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) || crate::jit_mode::base_only()) {
             let layouts = self.shape_layouts();
             self.heap.track_slot_representations(&layouts);
         }
@@ -3104,7 +3205,7 @@ impl<H: Host> Vm<H> {
         }
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
-        let mut constants = Vec::with_capacity(program.constants.capacity());
+        let mut constants = Vec::with_capacity(program.constants.len());
         // Equal string constants share one cell, as engines intern literals: a string is an
         // immutable primitive, so which cell holds it is unobservable, and `===` between
         // literals from different sites then decides by identity before comparing text.
@@ -3126,7 +3227,7 @@ impl<H: Host> Vm<H> {
             };
             constants.push(value);
         }
-        self.programs.set_constants(id, constants);
+        self.programs.set_constants(id, constants, program.constants.capacity() - program.constants.len());
         // Lane views carry constants, so call targets naming the old views are stale.
         self.lane_stack.clear_script_targets();
         if id == self.active_program {
@@ -3169,6 +3270,7 @@ impl<H: Host> Vm<H> {
     /// the programs before it.
     pub(super) fn append_cache_layout(&mut self, id: ProgramId, sites: crate::bytecode::CacheSiteCounts) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
+        self.programs.bump_context_epoch();
         if let Some(layout) = self.free_cache_layouts.get_mut(&sites).and_then(Vec::pop) {
             self.empty_cache_ranges(layout);
             self.program_cache_layouts.push(layout);
@@ -3178,7 +3280,7 @@ impl<H: Host> Vm<H> {
             sites,
             shared_uncached_field: ProgramCacheLayout::shared_uncached_field(self.field_caches.len(), sites.fields),
             field_base: self.field_caches.len(),
-            method_base: self.method_site_count,
+            method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
         });
         let fields = usize::from(sites.fields);
@@ -3188,7 +3290,7 @@ impl<H: Host> Vm<H> {
         self.field_add_indices.extend_empty(fields);
         self.inherited_field_indices.extend_empty(fields);
         self.accessor_field_indices.extend_empty(fields);
-        self.method_site_count += sites.methods;
+        self.method_caches.extend_empty(sites.methods);
         self.object_shapes.extend_empty(sites.objects);
     }
 
@@ -3203,9 +3305,7 @@ impl<H: Host> Vm<H> {
             self.inherited_field_indices.set(site, NO_INHERITED_FIELD);
             self.accessor_field_indices.set(site, NO_ACCESSOR_FIELD);
         }
-        let recorded = self.method_caches.len();
-        let methods = layout.method_base.min(recorded)..(layout.method_base + layout.sites.methods).min(recorded);
-        self.method_caches[methods].fill([EMPTY_METHOD_CACHE; method_cache::METHOD_CACHE_WAYS]);
+        self.method_caches.empty_sites(layout.method_base..layout.method_base + layout.sites.methods);
         for site in layout.object_base..layout.object_base + layout.sites.objects {
             self.object_shapes.set(site, NO_OBJECT_SHAPE);
         }
@@ -3225,18 +3325,93 @@ impl<H: Host> Vm<H> {
     /// index reads. A program's layout is appended before the program can run.
     #[inline(always)]
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
-        let constants = std::ptr::from_ref(self.programs.constants(program));
-        self.activate_program(program, constants);
+        let context = self.program_context(program);
+        self.activate_context(program, context);
     }
 
-    /// `set_active_program` with `program`'s constants (`ProgramStore::constants`) in hand.
+    /// `program`'s context (`ProgramContext`), derived again where something it comes from
+    /// changed since.
     #[inline(always)]
-    pub(super) fn activate_program(&mut self, program: ProgramId, constants: *const [Value]) {
+    pub(super) fn program_context(&mut self, program: ProgramId) -> *const ProgramContext {
+        let epoch = self.programs.context_epoch();
+        match self.program_contexts.get(program.raw() as usize) {
+            Some(context) if context.epoch == epoch => &**context,
+            _ => self.derive_program_context(program, epoch),
+        }
+    }
+
+    /// `program_context` past its context's epoch, out of line.
+    #[cold]
+    #[inline(never)]
+    fn derive_program_context(&mut self, program: ProgramId, epoch: u64) -> *const ProgramContext {
+        let index = program.raw() as usize;
+        while self.program_contexts.len() <= index {
+            self.program_contexts.push(Box::new(ProgramContext::idle()));
+        }
+        let (code, views, constants) = match self.programs.residual(program) {
+            Some(code) => (
+                std::ptr::from_ref(code),
+                self.programs.made_lane_views(program).map_or(std::ptr::slice_from_raw_parts(std::ptr::null(), 0), std::ptr::from_ref),
+                std::ptr::from_ref(self.programs.constants(program)),
+            ),
+            None => (std::ptr::null(), std::ptr::slice_from_raw_parts(std::ptr::null(), 0), &[][..] as *const [Value]),
+        };
+        let layout = self.program_cache_layouts.get(index).copied().unwrap_or_default();
+        let field_entries = self.field_caches.entries_from(layout.field_base);
+        let context = &mut self.program_contexts[index];
+        **context = ProgramContext { epoch, code, views, constants, layout, field_entries };
+        &**context
+    }
+
+    /// `program_context` of a program the lane runs, whose view table it makes if the
+    /// program has none yet. The program is one the store holds.
+    #[inline(always)]
+    pub(super) fn lane_program_context(&mut self, program: ProgramId) -> *const ProgramContext {
+        let context = self.program_context(program);
+        // SAFETY: a context stays in its box while the VM lives.
+        if unsafe { (*context).views.is_null() } {
+            return self.make_context_views(program);
+        }
+        context
+    }
+
+    /// `lane_program_context` of a program without its view table yet, out of line.
+    #[cold]
+    #[inline(never)]
+    fn make_context_views(&mut self, program: ProgramId) -> *const ProgramContext {
+        let Some((_, views, _)) = self.programs.lane_program(program) else {
+            unreachable!("a lane target names a program the store holds");
+        };
+        let views = std::ptr::from_ref(views);
+        let context = &mut self.program_contexts[program.raw() as usize];
+        context.views = views;
+        &**context
+    }
+
+    /// Sets the construction whose callee's frame is pending (`construct_target`), which
+    /// refuses cached lane calls while it is (`refresh_call_refusal`).
+    #[inline]
+    pub(in crate::vm) fn set_construct_target(&mut self, target: Option<ConstructionTarget>) {
+        self.construct_target = target;
+        self.refresh_call_refusal();
+    }
+
+    /// Whether cached lane calls are refused (`dispatch_fast::LaneStack::set_refused`): under a
+    /// `with` scope or a pending construction, whose calls the lane does not make from a cache.
+    #[inline]
+    pub(super) fn refresh_call_refusal(&mut self) {
+        let refused = self.with_scope_entered || self.construct_target.is_some();
+        self.lane_stack.set_refused(refused);
+    }
+
+    /// `set_active_program` with `program`'s context (`program_context`) in hand.
+    #[inline(always)]
+    pub(super) fn activate_context(&mut self, program: ProgramId, context: *const ProgramContext) {
         self.active_program = program;
-        self.lane_stack.enter_scope_program(program);
-        self.active_layout = self.program_cache_layouts[program.raw() as usize];
-        self.active_constants = constants;
-        self.refresh_active_field_entries();
+        self.lane_stack.enter_program(program);
+        self.active_context = context;
+        // SAFETY: a context stays in its box while the VM lives.
+        self.active_field_entries = unsafe { (*context).field_entries };
     }
 
     /// Re-derive `active_field_entries` after the active program or the field cache table
@@ -3249,7 +3424,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn refresh_active_field_entries(&mut self) {
-        self.active_field_entries = self.field_caches.entries_from(self.active_layout.field_base);
+        // Every context's entries point into the table that moved.
+        self.programs.bump_context_epoch();
+        self.set_active_program(self.active_program);
     }
 
     /// The field cache table grew or was replaced: the only events that move its mapping, and so
@@ -3266,14 +3443,12 @@ impl<H: Host> Vm<H> {
     /// Constant `index` of the active program.
     #[inline(always)]
     pub(super) fn active_constant(&self, index: usize) -> Option<Value> {
-        debug_assert!(std::ptr::eq(
-            self.active_constants,
-            self.programs.constants(self.active_program)
-        ));
-        // SAFETY: `active_constants` is re-derived whenever the active program or its constants
-        // change, and an installed constant buffer stays put until the store is reset, which
-        // reactivates the main program.
-        unsafe { (&*self.active_constants).get(index).copied() }
+        // SAFETY: the active context is derived again whenever the active program or its
+        // constants change, and an installed constant buffer stays put until the store is
+        // reset, which reactivates the main program.
+        let constants = unsafe { (*self.active_context).constants };
+        debug_assert!(std::ptr::eq(constants, self.programs.constants(self.active_program)));
+        unsafe { (&*constants).get(index).copied() }
     }
 
     /// Makes `program` the executing program and returns the one it replaces, which
@@ -3298,11 +3473,11 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
-        debug_assert_eq!(
-            self.active_layout,
-            self.program_cache_layouts[self.active_program.raw() as usize]
-        );
-        self.active_layout
+        // SAFETY: a context stays in its box while the VM lives.
+        let layout = unsafe { (*self.active_context).layout };
+        // Before any program the default context is active, with the default layout.
+        debug_assert_eq!(layout, self.program_cache_layouts.get(self.active_program.raw() as usize).copied().unwrap_or_default());
+        layout
     }
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
@@ -3311,7 +3486,7 @@ impl<H: Host> Vm<H> {
     /// Whether the active program may record cache entries at `index`: every index but its
     /// shared overflow site, if it has one.
     pub(super) fn field_cache_records(&self, index: usize) -> bool {
-        self.active_layout.shared_uncached_field != Some(index)
+        self.active_cache_layout().shared_uncached_field != Some(index)
     }
     pub(super) fn method_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().method_base + site

@@ -61,6 +61,8 @@ pub(super) const fn error_native_length(native: Native) -> Option<f64> {
     })
 }
 use crate::Value;
+mod thrown_primitive;
+pub(super) use thrown_primitive::primitive_detail;
 use crate::host::{CapabilityId, HostContext};
 use std::fmt;
 
@@ -90,6 +92,8 @@ struct ErrorSourceLocation {
 #[derive(Debug)]
 enum ErrorDescription {
     Text { message: String },
+    /// A thrown primitive, whose message is made only when read (`thrown_primitive`).
+    ThrownPrimitive,
     ExecutionTerminated,
     DataClone(String),
     WasmTrap(crate::WasmTrap),
@@ -121,6 +125,7 @@ impl fmt::Display for JsError {
             ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => {
                 f.write_str(message)
             }
+            ErrorDescription::ThrownPrimitive => f.write_str(&self.primitive_message()),
             ErrorDescription::DataClone(message) => write!(f, "DataCloneError: {message}"),
             ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
             ErrorDescription::WasmException => f.write_str("uncaught Wasm exception"),
@@ -130,14 +135,12 @@ impl fmt::Display for JsError {
 }
 
 impl JsError {
+    fn described(description: ErrorDescription, thrown: Option<Value>) -> Self {
+        Self(ErrorMessage { payload: Box::new(ErrorPayload { description, thrown, source_location: None }) })
+    }
+
     pub(crate) fn execution_terminated() -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::ExecutionTerminated,
-                thrown: None,
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::ExecutionTerminated, None)
     }
     /// A host termination is uncatchable, not a guest Error object or throw.
     /// A JavaScript exception: thrown by guest code or raised as a JavaScript error, as
@@ -145,20 +148,14 @@ impl JsError {
     pub fn is_javascript_exception(&self) -> bool {
         matches!(
             self.0.payload.description,
-            ErrorDescription::Text { .. } | ErrorDescription::DataClone(_)
+            ErrorDescription::Text { .. } | ErrorDescription::ThrownPrimitive | ErrorDescription::DataClone(_)
         )
     }
 
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
 
     pub(crate) fn thrown(value: Value, message: String) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::Text { message },
-                thrown: Some(value),
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::Text { message }, Some(value))
     }
 
     pub(crate) fn data_clone(value: Value, message: &str) -> Self {
@@ -228,35 +225,19 @@ impl JsError {
     }
 
     pub(crate) fn thrown_wasm_exception(value: Value) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmException,
-                thrown: Some(value),
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::WasmException, Some(value))
     }
 
     /// Inspect a typed WebAssembly trap without treating it as a JS throw.
     pub fn wasm_trap(&self) -> Option<crate::WasmTrap> {
         match self.0.payload.description {
             ErrorDescription::WasmTrap(trap) => Some(trap),
-            ErrorDescription::Text { .. }
-            | ErrorDescription::WasmLink(_)
-            | ErrorDescription::DataClone(_)
-            | ErrorDescription::WasmException
-            | ErrorDescription::ExecutionTerminated => None,
+            _ => None,
         }
     }
 
     pub(crate) fn wasm_trap_error(trap: crate::WasmTrap) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmTrap(trap),
-                thrown: None,
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::WasmTrap(trap), None)
     }
 
     /// Link failures are neither guest traps nor unsupported residual operations.
@@ -268,13 +249,7 @@ impl JsError {
     }
 
     pub(crate) fn wasm_link(message: impl Into<String>) -> Self {
-        Self(ErrorMessage {
-            payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmLink(message.into()),
-                thrown: None,
-                source_location: None,
-            }),
-        })
+        Self::described(ErrorDescription::WasmLink(message.into()), None)
     }
 
     pub(crate) fn validation(message: String) -> Self {
@@ -286,10 +261,13 @@ impl JsError {
     /// Whether this is a JavaScript error whose message is `text`.
     pub(super) fn has_message(&self, text: &str) -> bool {
         matches!(&self.0.payload.description, ErrorDescription::Text { message, .. } if message == text)
+            || matches!(self.0.payload.description, ErrorDescription::ThrownPrimitive) && self.primitive_message_is(text)
     }
 
     pub(super) fn into_message(self) -> String {
+        if matches!(self.0.payload.description, ErrorDescription::ThrownPrimitive) { return self.primitive_message(); }
         match self.0.payload.description {
+            ErrorDescription::ThrownPrimitive => unreachable!("answered above"),
             ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => message,
             ErrorDescription::DataClone(message) => format!("DataCloneError: {message}"),
             ErrorDescription::WasmTrap(trap) => trap.to_string(),
@@ -585,7 +563,8 @@ impl<H: Host> Vm<H> {
         } else {
             residual.source_position(frame.function, pc)?
         };
-        let name = frame.context.callable().map_or_else(
+        // A call-only closure (`Value::known_closure`) has no function object to name it.
+        let name = frame.context.callable().filter(|callee| callee.as_known_closure().is_none()).map_or_else(
             || {
                 function.name.map_or(CallSiteName::Anonymous, |name| {
                     CallSiteName::Static(self.atom_value(name))
@@ -627,7 +606,8 @@ impl<H: Host> Vm<H> {
             let Some(function) = program.function_get(frame.function as usize) else { return Ok(fallback()); };
             let primary_constructor = self.programs.is_function_constructor_body(frame.program, frame.function);
             let name = function.name.or_else(|| (!primary_constructor)
-                .then(|| frame.context.callable().and_then(|callee| self.original_function_name(callee)))
+                .then(|| frame.context.callable().filter(|callee| callee.as_known_closure().is_none())
+                    .and_then(|callee| self.original_function_name(callee)))
                 .flatten()).map(|name| self.atom_value(name));
             (record, module, name.filter(|name| !name.units().is_empty()))
         };
@@ -1076,6 +1056,16 @@ impl<H: Host> Vm<H> {
         crate::stack::StackGuard::enter().map_err(|crate::stack::StackExhausted| self.stack_exhaustion_error())
     }
 
+    /// The error a call into a guest of `kind` raises when the guest call budget is spent:
+    /// a Wasm callee traps, a JavaScript one throws `stack_exhaustion_error`.
+    pub(super) fn guest_exhaustion_error(&mut self, kind: crate::bytecode::ProgramKind) -> JsError {
+        if kind == crate::bytecode::ProgramKind::Wasm {
+            JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted)
+        } else {
+            self.stack_exhaustion_error()
+        }
+    }
+
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
         let prototype =
@@ -1178,12 +1168,14 @@ impl<H: Host> Vm<H> {
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         // A String wrapper's index properties are its text's (`string_wrapper`).
-        if let Some(text) = self.heap.string(value).cloned() {
+        // Its length is read without the units: boxing a rope for a sloppy function's `this`
+        // left it flat for its life (V8-v7 RegExp's harness check: 491 input variants, 1.6 MB).
+        if let Some(units) = self.heap.string(value).map(JsString::len) {
             let length = self.length_atom;
             self.set_property_with_attributes(
                 object,
                 length,
-                Value::number(text.units().len() as f64),
+                Value::number(units as f64),
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,

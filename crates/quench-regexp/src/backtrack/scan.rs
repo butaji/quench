@@ -1,7 +1,10 @@
 //! The block scans of an ASCII subject for the units in a few byte ranges (`StartRanges`).
-use super::{SCAN_BLOCK, START_SCAN_RANGES, StartRanges};
+use super::StartRanges;
+#[cfg(target_arch = "x86_64")]
+use super::{SCAN_BLOCK, START_SCAN_RANGES};
 
 /// The longest subject `class_mask` answers for: one bit of a `u64` each.
+#[cfg(target_arch = "x86_64")]
 const CLASS_MASK_UNITS: usize = u64::BITS as usize;
 
 /// The broadcast bounds of a `StartRanges`, made once per scan rather than per block.

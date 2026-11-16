@@ -11,7 +11,7 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopOutcome, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, NATIVE_JS_STOPPED, TERMINATED_STATUS};
+use super::{lane_unit, LaneExit, LoopOutcome, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, LANE_BODY_THREW, NATIVE_JS_STOPPED, TERMINATED_STATUS};
 use super::entry_cell::LANE_BODY_NOT_ENTERED;
 use crate::value::Value;
 
@@ -47,6 +47,11 @@ impl ExitKind {
 }
 
 impl LaneExit {
+    /// Whether the run ended the activation, by its return or by an exception, rather than
+    /// leaving it to the lane.
+    pub(in crate::vm) fn completes(self) -> bool {
+        matches!(self, Self::Returned { .. } | Self::Threw { .. })
+    }
     /// The word a leave is emitted as; a completion is a status, which has none.
     pub(super) fn word(self) -> u64 {
         match self {
@@ -54,7 +59,7 @@ impl LaneExit {
             Self::Inlined { frame, pc } => ExitKind::Inlined.word((frame as u64) << ExitKind::FRAME_SHIFT | u64::from(pc)),
             Self::Callee => ExitKind::Callee.word(0),
             Self::Entry => ExitKind::Entry.word(0),
-            Self::Returned { .. } | Self::Terminated | Self::Stub => unreachable!("a completion or an unentered call is a status, not a leave word"),
+            Self::Returned { .. } | Self::Threw { .. } | Self::Terminated | Self::Stub => unreachable!("a completion, an exception or an unentered call is a status, not a leave word"),
         }
     }
 
@@ -74,6 +79,7 @@ impl LaneExit {
         match status {
             _ if i64::from(status) == TERMINATED_STATUS => Self::Terminated,
             LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
+            LANE_BODY_THREW => Self::Threw { pc: returned_pc() },
             NATIVE_JS_STOPPED => Self::decode(word),
             LANE_BODY_NOT_ENTERED => Self::Stub,
             _ if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
@@ -87,7 +93,7 @@ impl LaneExit {
     pub(in crate::vm) fn inside(self, range: std::ops::RangeInclusive<u32>) -> bool {
         match self {
             Self::At(pc) => range.contains(&(pc as u32)),
-            Self::Returned { .. } | Self::Terminated => false,
+            Self::Returned { .. } | Self::Threw { .. } | Self::Terminated => false,
             _ => true,
         }
     }
@@ -109,6 +115,7 @@ impl LoopOutcome {
             LaneExit::Callee => Self::Callee,
             LaneExit::Inlined { frame, pc } => Self::Inlined { frame, pc },
             LaneExit::Returned { pc, value } => Self::Returned { pc: pc as u32, value },
+            LaneExit::Threw { pc } => Self::Threw { pc: pc as u32 },
         }
     }
 }

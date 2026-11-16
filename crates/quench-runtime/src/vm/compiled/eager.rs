@@ -4,6 +4,12 @@
 //! function the lane lowering does not take keeps the call-threaded body. Everything is
 //! addressed directly because nothing is linked.
 use super::*;
+#[cfg(feature = "aot")]
+use super::emit_machine::lane_of;
+#[cfg(feature = "aot")]
+use super::object_slots::emit;
+#[cfg(feature = "aot")]
+use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 
 #[cfg(feature = "aot")]
 pub(crate) fn compile_eager_native<H: Host>(
@@ -146,7 +152,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
         let program = self.program;
         let unnamed_atoms = super::method_cache::AtomBits::default();
         let facts = VmFacts { frozen: true, frozen_fields: Some(self.fields), frozen_constants: Some(self.constants),
-            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[] }),
+            online: Some(OnlineFacts { method_cache_atoms: &unnamed_atoms, invalidation: self.invalidation.address(), constants: &[], instanceofs: &|_| None, shape_stable: &|_| false, names: None }),
             ..VmFacts::STATIC };
         let reads = frozen_global_reads(program, program.function_get(function_id as usize)?, self.globals);
         let (body, atoms) = lower_lane_body(program, function_id, isa,
@@ -168,16 +174,16 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
                 body: &mut |builder, words| {
                     let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
                         lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
-                    let target = builder.ins().iconst(isa.pointer_type(), body.pointer() as usize as i64);
-                    let call = builder.ins().call_indirect(signature, target, words);
-                    let results = builder.inst_results(call);
+                    let mut stage = emit(builder);
+                    let target = stage.raw_const(lane_of(isa.pointer_type()), body.pointer() as usize as i64);
+                    let results = stage.call_signature(signature, target, words);
                     (results[0], results[1])
                 },
                 fallback: &mut |builder, [context, pc, result]| {
                     let signature = *fallback_signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
-                    let target = builder.ins().iconst(isa.pointer_type(), fallback.pointer() as usize as i64);
-                    let call = builder.ins().call_indirect(signature, target, &[context, pc, result, result]);
-                    builder.inst_results(call)[0]
+                    let mut stage = emit(builder);
+                    let target = stage.raw_const(lane_of(isa.pointer_type()), fallback.pointer() as usize as i64);
+                    stage.call_signature(signature, target, &[context, pc, result, result])[0]
                 },
             })?;
         let entry = publish_eager_graph(entry, isa)?;
@@ -200,10 +206,9 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
             |builder, index, context, pc, result| {
                 let signature = *signature.get_or_insert_with(|| builder.import_signature(
                     native_entry_signature(isa.pointer_type(), isa.default_call_conv())));
-                let target = builder.ins().iconst(isa.pointer_type(), code[index].pointer() as usize as i64);
+                let target = emit(builder).raw_const(lane_of(isa.pointer_type()), code[index].pointer() as usize as i64);
                 let arguments = super::native_graph::region_call_arguments(builder, isa, context, pc, result);
-                let call = builder.ins().call_indirect(signature, target, &arguments);
-                builder.inst_results(call)[0]
+                emit(builder).call_signature(signature, target, &arguments)[0]
             })?;
         code.push(publish_eager_graph(wrapper, isa)?);
         Ok(code)
@@ -247,13 +252,14 @@ fn lower_eager_fallback(
     let pc = params[1];
     let valid_pc = builder.create_block();
     let invalid = builder.create_block();
-    let valid = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, pc, i64::from(count));
-    builder.ins().brif(valid, valid_pc, &[], invalid, &[]);
+    let valid = emit(&mut builder).raw_compare_imm(Relation::UnsignedLess, pc, i64::from(count));
+    emit(&mut builder).branch_if(valid, (valid_pc, &[]), (invalid, &[]));
     builder.switch_to_block(valid_pc);
     emit_eager_fallback_call(&mut builder, isa, &params, entries, operands);
     builder.switch_to_block(invalid);
-    let status = builder.ins().iconst(types::I64, i64::from(NATIVE_JS_STOPPED));
-    builder.ins().return_(&[status]);
+    let mut stage = emit(&mut builder);
+    let status = stage.raw_const(Lane::I64, i64::from(NATIVE_JS_STOPPED));
+    stage.leave(&[status]);
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
     Ok(native)
@@ -271,17 +277,18 @@ fn emit_eager_fallback_call(
     const PC_PARAMETER: usize = 1;
     const RESULT_PARAMETER: usize = 3;
     let pc = params[PC_PARAMETER];
-    let table = builder.ins().iconst(isa.pointer_type(), entries as usize as i64);
-    let offset = builder.ins().imul_imm_u(pc, i64::from(isa.pointer_bytes()));
-    let slot = builder.ins().iadd(table, offset);
-    let callee = builder.ins().load(isa.pointer_type(), MemFlagsData::trusted(), slot, 0);
-    let base = builder.ins().iconst(isa.pointer_type(), operands as usize as i64);
-    let operands_offset = builder.ins().imul_imm_u(pc, std::mem::size_of::<super::NativeJsOperands>() as i64);
-    let record = builder.ins().iadd(base, operands_offset);
+    let pointer = lane_of(isa.pointer_type());
     let signature = builder.import_signature(native_js_operation_signature(isa));
-    let call = builder.ins().call_indirect(signature, callee, &[params[0], pc, record, params[RESULT_PARAMETER]]);
-    let status = builder.inst_results(call)[0];
-    builder.ins().return_(&[status]);
+    let mut stage = emit(builder);
+    let table = stage.raw_const(pointer, entries as usize as i64);
+    let offset = stage.raw_binary_imm(Binary::Mul, pc, i64::from(isa.pointer_bytes()));
+    let slot = stage.raw_binary(Binary::Add, table, offset);
+    let callee = stage.raw_load(pointer, super::regions::heap_meta(), slot, 0);
+    let base = stage.raw_const(pointer, operands as usize as i64);
+    let operands_offset = stage.raw_binary_imm(Binary::Mul, pc, std::mem::size_of::<super::NativeJsOperands>() as i64);
+    let record = stage.raw_binary(Binary::Add, base, operands_offset);
+    let status = stage.call_signature(signature, callee, &[params[0], pc, record, params[RESULT_PARAMETER]])[0];
+    stage.leave(&[status]);
 }
 
 #[cfg(feature = "aot")]
@@ -293,11 +300,12 @@ fn compile_eager_body<H: Host>(
     let native = super::native_graph::lower_body(sites, function_id, isa, region,
         |builder, site, context, result| {
             let signature = *signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(isa)));
-            let target = builder.ins().iconst(isa.pointer_type(), site.op.native_semantic_entry::<H>() as usize as i64);
-            let arguments = builder.ins().iconst(isa.pointer_type(), site.operands.as_ptr() as i64);
-            let pc = builder.ins().iconst(types::I64, site.pc as i64);
-            let call = builder.ins().call_indirect(signature, target, &[context, pc, arguments, result]);
-            builder.inst_results(call)[0]
+            let pointer = lane_of(isa.pointer_type());
+            let mut stage = emit(builder);
+            let target = stage.raw_const(pointer, site.op.native_semantic_entry::<H>() as usize as i64);
+            let arguments = stage.raw_const(pointer, site.operands.as_ptr() as i64);
+            let pc = stage.raw_const(Lane::I64, site.pc as i64);
+            stage.call_signature(signature, target, &[context, pc, arguments, result])[0]
         })?;
     publish_eager_graph(native, isa).map_err(|error| format!("native function {function_id}: {error}"))
 }

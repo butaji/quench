@@ -50,6 +50,14 @@ pub(crate) const NATIVE_PROPERTY_BUFFER_LAYOUT: NativePropertyBufferLayout = Nat
 unsafe impl Send for PropertyBuffer {}
 unsafe impl Sync for PropertyBuffer {}
 
+impl PropertyBuffer {
+    /// Whether the values never move to another allocation: none is made yet, or they live in
+    /// the fixed reservation, which growth extends in place and compaction rewrites in place.
+    pub(super) fn stays_in_place(&self) -> bool {
+        !matches!(self.allocation, Allocation::Heap)
+    }
+}
+
 impl Default for PropertyBuffer {
     fn default() -> Self {
         Self {
@@ -115,6 +123,20 @@ impl PropertyBuffer {
         }
         self.length = length;
         true
+    }
+
+    /// `resize` to a longer `length` whose new values hold whatever bits their memory holds,
+    /// where it is a reservation's (zero on first touch, else values a run held before): for
+    /// space whose every run is written before it is read (`ValueArena::grow_nursery`), so
+    /// pages are made resident by the runs that use them, not by a fill ahead of them. A
+    /// heap allocation's tail is filled, as `resize` fills it.
+    pub(super) fn extend_unfilled(&mut self, length: usize) -> bool {
+        #[cfg(unix)]
+        if length > self.length && (length <= self.capacity || self.grow(length)) && matches!(self.allocation, Allocation::Reserved { .. }) {
+            self.length = length;
+            return true;
+        }
+        self.resize(length)
     }
 
     pub(super) fn truncate(&mut self, length: usize) {

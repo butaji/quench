@@ -60,7 +60,9 @@ pub enum Kind {
     Ge,
     Eq,
     Ne,
-    /// Go to `taken` (and poll the interrupt flag first, for `JumpPoll`).
+    /// Go to `taken` (and poll the interrupt flag first, for `JumpPoll`, which also counts the
+    /// edge in the loop entry record; for `JumpWatch`, which counts nothing, a function body
+    /// having no such record).
     Jump,
     JumpPoll,
     /// Go to `taken` unless the operand is a Number; into a pinned destination an int word, which
@@ -70,6 +72,18 @@ pub enum Kind {
     TagInit,
     /// Write a pinned double (operand `a`) to the frame slot at hole 0 as a canonical Number word.
     Spill,
+    JumpWatch,
+    /// Poll the interrupt flag, then continue at the next row: a conditional branch back is
+    /// preceded by it, as an unconditional one is by its own poll.
+    Poll,
+    /// Go to `taken` when the operand is truthy (`JumpTrue`) or falsy (`JumpFalse`); a heap value
+    /// whose cell decides its truthiness leaves.
+    JumpTrue,
+    JumpFalse,
+    /// The destination takes the logical negation of the operand's truthiness (`Not`), or the
+    /// Number negation of a Number operand (`Neg`).
+    Not,
+    Neg,
 }
 
 impl Kind {

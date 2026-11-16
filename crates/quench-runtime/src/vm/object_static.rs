@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
         let index_key = match key {
             PropertyKey::String(atom) => self.atom_class(atom).contains(AtomClass::ARRAY_INDEX),
             PropertyKey::Symbol(_) => false,
-            PropertyKey::Private(_) => return false,
+            PropertyKey::Private(..) => return false,
         };
         !index_key
             && self
@@ -129,7 +129,7 @@ impl<H: Host> Vm<H> {
             let key = match key {
                 PropertyKey::String(atom) => self.heap.alloc_string(self.atom_value(atom)),
                 PropertyKey::Symbol(symbol) => symbol,
-                PropertyKey::Private(_) => {
+                PropertyKey::Private(..) => {
                     return Err(JsError::validation(
                         "private names are not public class-field keys".into(),
                     ));
@@ -216,7 +216,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
                 Some(Cell::DataView { .. }) => "DataView",
-                Some(Cell::TypedArray { kind, .. }) => kind.name(),
+                Some(Cell::TypedArray { object, .. }) => object.native.kind().name(),
                 Some(Cell::WeakRef { .. }) => "WeakRef",
                 Some(Cell::FinalizationRegistry { .. }) => "FinalizationRegistry",
                 Some(Cell::Error(_)) => "Error",
@@ -231,12 +231,8 @@ impl<H: Host> Vm<H> {
                 .map(|symbol| self.get_index(p, value, symbol))
                 .transpose()?
         };
-        let brand = tag
-            .and_then(|tag| self.heap.string(tag).map(|text| text.to_string()))
-            .unwrap_or_else(|| brand.to_owned());
-        Ok(self
-            .heap
-            .alloc_string(format!("[object {brand}]").into()))
+        let tag = tag.and_then(|tag| self.heap.string(tag).map(|text| text.to_string()));
+        Ok(self.builtin_brand_string(tag.as_deref().unwrap_or(brand)))
     }
 
     pub(super) fn descriptor_field(
@@ -743,7 +739,7 @@ impl<H: Host> Vm<H> {
             .shape_entries(data.shape())
             .filter_map(|(key, slot)| match *key {
                 PropertyKey::String(atom) => Some((atom, *slot as usize)),
-                PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
+                PropertyKey::Symbol(_) | PropertyKey::Private(..) => None,
             })
             .collect::<Vec<_>>();
         // Shape entries are already in insertion order; only integer indices and module
@@ -811,7 +807,7 @@ impl<H: Host> Vm<H> {
         let existing = match key {
             PropertyKey::String(atom) => self.own_property(target, atom),
             PropertyKey::Symbol(symbol) => self.symbol_property(target, symbol),
-            PropertyKey::Private(_) => None,
+            PropertyKey::Private(..) => None,
         };
         let current = self
             .property_attributes(target, key)
@@ -839,7 +835,7 @@ impl<H: Host> Vm<H> {
         }
         if descriptor_accessor {
             if is_new
-                && !matches!(key, PropertyKey::Private(_))
+                && !matches!(key, PropertyKey::Private(..))
                 && let Some(shape) = self.object_data(target).map(Object::shape)
                 && self.property_shape_slot(shape, key).is_none()
             {
@@ -856,7 +852,7 @@ impl<H: Host> Vm<H> {
         // A new data property is added with its attributes in one shape transition, as
         // `set_shape_property` and `set_property_attributes` would leave it in two.
         if is_new
-            && !matches!(key, PropertyKey::Private(_))
+            && !matches!(key, PropertyKey::Private(..))
             && let Some(data) = DataAttributes::of(attributes)
             && self.object_data(target).is_some()
         {

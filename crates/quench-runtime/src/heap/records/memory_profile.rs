@@ -1,7 +1,7 @@
 //! Page coverage derived from record occupancy, without reading dead record storage.
 use super::RecordSpace;
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// Fully enclosed pages below the allocation high-water mark and whether each contains
     /// any live record bytes. Partial boundary pages are excluded: they can share allocator
     /// metadata or storage outside this range. A record may straddle several pages.

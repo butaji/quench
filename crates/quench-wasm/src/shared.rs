@@ -8,6 +8,10 @@ use quench_runtime::{
 };
 use wasmparser::{Encoding, ExternalKind, Parser, Payload, ValType};
 
+/// Defined functions from which the interpreter lowers a module's functions on their first
+/// calls; a smaller module lowers at once, as compiled code always does.
+const LAZY_LOWERING_FUNCTIONS: usize = 64;
+
 impl Module<'_> {
     /// Lower i32 module functions with one selected exported entry into the
     /// JavaScript VM's residual bytecode. Stateful modules and start functions
@@ -74,14 +78,15 @@ impl Module<'_> {
         let mut tags = Vec::new();
         let mut exports = Vec::new();
         let mut custom_sections = Vec::new();
+        let mut code_section = None;
         for payload in Parser::new(0).parse_all(self.bytes()) {
             match payload.map_err(parse_error)? {
                 Payload::Version {
                     encoding: Encoding::Module,
                     ..
                 }
-                | Payload::CodeSectionStart { .. }
                 | Payload::End(_) => {}
+                Payload::CodeSectionStart { range, .. } => code_section = Some(range),
                 Payload::CustomSection(reader) => {
                     custom_sections.push(quench_runtime::WasmCustomSection {
                         name: reader.name().into(),
@@ -256,6 +261,51 @@ impl Module<'_> {
                     ));
                 }
             }
+        }
+        // The interpreter lowers a large module's functions on their first calls, from one
+        // kept copy of its code section: most of a toolchain's output never runs.
+        let lazy_range = code_section.filter(|_| {
+            export.is_none()
+                && mode == quench_runtime::ExecutionMode::Interpreted
+                && bodies.len() >= LAZY_LOWERING_FUNCTIONS
+                && functions.len() == bodies.len()
+        });
+        if let Some(range) = lazy_range {
+            let code = quench_runtime::WasmLazyCode::new(
+                self.bytes()[range.clone()].into(),
+                range.start,
+                functions
+                    .iter()
+                    .zip(&bodies)
+                    .map(|(ty, body)| {
+                        let span = body.range();
+                        quench_runtime::WasmLazyBody {
+                            ty: *ty,
+                            start: span.start as u32,
+                            end: span.end as u32,
+                        }
+                    })
+                    .collect(),
+            );
+            return Engine::lower_wasm_module_lazily(
+                export.unwrap_or("wasm-instance"),
+                code,
+                &types,
+                &globals,
+                &memories,
+                &data,
+                &tables,
+                &elements,
+                &function_imports,
+                &tags,
+            )
+            .and_then(|module| match start {
+                Some(index) => module.with_start(index),
+                None => Ok(module),
+            })
+            .map(|module| module.with_exports(exports).with_custom_sections(custom_sections))
+            .map(|module| (module, selected))
+            .map_err(|error| Error::Unsupported(error.to_string()));
         }
         let mut inputs = Vec::with_capacity(bodies.len());
         for (type_index, body) in functions.into_iter().zip(bodies) {

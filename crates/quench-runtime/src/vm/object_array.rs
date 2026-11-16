@@ -2,6 +2,8 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
+mod arguments;
+
 /// Cost of probing one array index (format, atom lookup, descriptor lookup) relative to examining
 /// one descriptor-table entry.
 const INDEX_PROBE_COST_RATIO: usize = 8;
@@ -22,7 +24,24 @@ fn array_length_uint32(number: f64) -> u32 {
 }
 
 impl<H: Host> Vm<H> {
+    /// An own array's `length`: inline for a direct array without extras, whose dense
+    /// elements' count is its length (no arguments object, no sparse elements:
+    /// `Object::mark_sparse_elements`), as `emit_array_length_read` reads it; any other
+    /// target out of line.
+    #[inline(always)]
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+        // An array with extras (named properties) has its elements' length too, unless it
+        // ever held sparse elements, whose length the side table keeps.
+        if let Some(object) = self.heap.record_array(target)
+            && (!object.has_extras() || (!object.has_sparse_elements() && !object.is_arguments_object()))
+        {
+            return Some(object.elements().len());
+        }
+        self.own_array_length_general(target)
+    }
+
+    #[inline(never)]
+    fn own_array_length_general(&self, target: Value) -> Option<usize> {
         // A direct array's record is found inline, as nearly every `length` read finds it.
         let object = match self.heap.record_array(target) {
             Some(object) => object,
@@ -49,7 +68,7 @@ impl<H: Host> Vm<H> {
                     && !data.is_arguments_object()
                     && !data.has_indexed_descriptors()
                     && data.elements().len() == length
-                    && self.holes_unobserved(object, data.elements())
+                    && self.holes_unobserved(object, &data.elements().values_cow())
             });
         let writable_length = self
             .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
@@ -78,40 +97,6 @@ impl<H: Host> Vm<H> {
     /// prototype can shadow.
     pub(super) fn string_length(&self, value: Value) -> Option<usize> {
         self.heap.string(value).map(|string| string.len())
-    }
-
-    /// The own data `length` of an arguments object that keeps the layout it was made with
-    /// (a realm's `ArgumentsObjectTemplate` shape, which fixes the property, its attributes
-    /// and its slot); `None` for any other value or layout.
-    pub(super) fn arguments_object_length(&self, target: Value) -> Option<Value> {
-        let object = self.heap.object(target)?;
-        if !self.heap.array(target)?.is_arguments_object() {
-            return None;
-        }
-        let shape = object.shape();
-        [true, false].into_iter().find_map(|expose_callee| {
-            let template =
-                self.realm.intrinsics.arguments_objects.get(&(self.realm.globals, expose_callee))?;
-            (self.heap.object(template.anchor)?.shape() == shape)
-                .then(|| self.heap.property_get(object, template.length_slot))
-                .flatten()
-        })
-    }
-
-    /// Own data element `index` of an arguments object, where no parameter mapping reaches
-    /// it and no descriptor stands for it: its stored element, as `[[Get]]` finds it before
-    /// any prototype. `None` for a mapped, absent, accessor or redefined element, or any other
-    /// value.
-    pub(super) fn plain_arguments_element(&self, target: Value, index: usize) -> Option<Value> {
-        let object = self.heap.object(target)?;
-        if !object.is_arguments_object()
-            || object.has_indexed_descriptors()
-            || object.mapped_argument_slot(index).is_some()
-        {
-            return None;
-        }
-        let value = *self.heap.array_elements(target)?.get(index)?;
-        (!value.is_deleted()).then_some(value)
     }
 
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
@@ -278,7 +263,7 @@ impl<H: Host> Vm<H> {
             .filter(|index| {
                 elements
                     .get(*index)
-                    .copied()
+                    
                     .filter(|value| !value.is_deleted())
                     .or_else(|| {
                         self.heap
@@ -396,7 +381,7 @@ impl<H: Host> Vm<H> {
             .and_then(|elements| {
                 elements
                     .get(index)
-                    .copied()
+                    
                     .filter(|value| !value.is_deleted())
             })
             .or_else(|| {
@@ -461,7 +446,7 @@ impl<H: Host> Vm<H> {
         let present = self.heap.array_elements(target).is_some_and(|elements| {
             elements
                 .get(index)
-                .copied()
+                
                 .filter(|value| !value.is_deleted())
                 .is_some()
         }) || self.heap.sparse_get(target, index).is_some();

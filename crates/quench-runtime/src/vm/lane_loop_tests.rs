@@ -1,6 +1,7 @@
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
 use std::{cell::RefCell, rc::Rc};
 
 /// A call-free loop that allocates at every iteration runs in its loop region, which makes
@@ -322,6 +323,65 @@ fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
     assert_eq!(printed(source, "lane-direct-natives.js", crate::ExecutionMode::Compiled, true), interpreted);
 }
 
+/// A lane body whose activation holds an environment runs it natively: its own locals
+/// (`LoadEnvLocal`/`StoreEnvLocal`) and the closure over them (`MakeClosure`), which
+/// materializes the environment the body then keeps reading and writing. The values are the
+/// interpreter's, before and after the environment is made.
+#[test]
+fn lane_bodies_run_environment_activations() {
+    let source = r#"
+      function counter(start) {
+        let value = start;
+        const bump = () => { value = value + 1; };
+        const read = () => value;
+        for (let i = 0; i < 200; i++) { bump(); value = value + 0; }
+        return read() + value;
+      }
+      let total = 0;
+      for (let calls = 0; calls < 3000; calls++) total = (total + counter(calls)) | 0;
+      print(total);
+    "#;
+    let interpreted = printed(source, "lane-env-activation.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(source, "lane-env-activation.js", crate::ExecutionMode::Compiled, true), interpreted);
+    assert_eq!(printed(source, "lane-env-activation.js", crate::ExecutionMode::Compiled, false), interpreted);
+}
+
+/// A lane body reads its own `arguments`: the count and the kept values a keeping activation
+/// holds, and the object's own data once a binding is materialized. The values are the
+/// interpreter's in both cases.
+#[test]
+fn lane_bodies_read_their_arguments_binding() {
+    let kept = r#"
+      function total(first) {
+        let sum = 0;
+        for (let i = 0; i < arguments.length; i = (i + 1) | 0) sum = (sum + arguments[i]) | 0;
+        return (sum + first) | 0;
+      }
+      let t = 0;
+      for (let calls = 0; calls < 3000; calls = (calls + 1) | 0) t = (t + total(calls, 1, 2, 3)) | 0;
+      print(t);
+    "#;
+    let interpreted = printed(kept, "lane-arguments.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(interpreted.len(), 1);
+    assert_eq!(printed(kept, "lane-arguments.js", crate::ExecutionMode::Compiled, true), interpreted);
+    assert_eq!(printed(kept, "lane-arguments.js", crate::ExecutionMode::Compiled, false), interpreted);
+    // The binding is materialized before the loop reads it: the object's own data answers.
+    let materialized = r#"
+      function gather(first) {
+        const all = arguments;
+        let sum = 0;
+        for (let i = 0; i < all.length; i = (i + 1) | 0) sum = (sum + all[i]) | 0;
+        return (sum + first) | 0;
+      }
+      let t = 0;
+      for (let calls = 0; calls < 3000; calls = (calls + 1) | 0) t = (t + gather(calls, 4, 5)) | 0;
+      print(t);
+    "#;
+    let interpreted = printed(materialized, "lane-arguments-object.js", crate::ExecutionMode::Interpreted, false);
+    assert_eq!(printed(materialized, "lane-arguments-object.js", crate::ExecutionMode::Compiled, true), interpreted);
+}
+
 /// What `source`, wrapped in a function, prints when run in `mode`, with lane bodies where
 /// `lane_methods`.
 fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: bool) -> Vec<String> {
@@ -332,4 +392,58 @@ fn printed(source: &str, name: &str, mode: crate::ExecutionMode, lane_methods: b
     if lane_methods { vm.programs.enable_js_lane_methods(); }
     vm.execute(&program).unwrap();
     output.take()
+}
+
+/// The measured tier model prices a function's compile against the time the interpreter has
+/// spent in it, so an n-body step (nested loops, entered often, a few microseconds each) that
+/// has run a short while compiles to a u-jit body, whatever its entry count.
+#[test]
+fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
+    let source = r#"(function () {
+      const bodies = Array.from({ length: 5 }, (_, k) => ({ x: k, y: 2 * k, vx: 0, vy: 0, m: 1 + k }));
+      function step(bodies, dt) {
+        for (let i = 0; i < 5; i++) {
+          const a = bodies[i];
+          for (let j = i + 1; j < 5; j++) {
+            const b = bodies[j];
+            const dx = a.x - b.x, dy = a.y - b.y;
+            const d2 = dx * dx + dy * dy + 0.01;
+            const mag = dt / (d2 * Math.sqrt(d2));
+            a.vx -= dx * b.m * mag; a.vy -= dy * b.m * mag;
+            b.vx += dx * a.m * mag; b.vy += dy * a.m * mag;
+          }
+        }
+        for (let i = 0; i < 5; i++) { const body = bodies[i]; body.x += dt * body.vx; body.y += dt * body.vy; }
+      }
+      for (let n = 0; n < 30000; n++) step(bodies, 0.01);
+      globalThis.answer = bodies[0].x;
+    })();"#;
+    let program = Engine::specialize(source, "lane-loop-nbody.js").unwrap();
+    let mut vm = Vm::with_tier_rows(TestHost::default(), super::compiled::tier_policy::TierRows::Measured);
+    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    vm.programs.enable_js_lane_methods();
+    crate::jit_mode::with_mode(crate::JitMode::UltraOnly, || vm.execute(&program)).unwrap();
+    assert!(vm.tier_events().count(crate::vm::tier_events::Event::Published) > 0, "the step runs as a lane body: {:?}", vm.tier_events());
+}
+
+/// A loop over a typed array runs as a b-jit region whose element and `length` rows read the typed view its entry
+/// recorded (`LoopEntry::push_array`), one row per element kind; the stores convert as the interpreter's do (the clamp,
+/// ToInt32, the binary32 rounding). The functions that index a typed parameter have no body (it would leave at its
+/// first element), so nothing leaves.
+#[test]
+fn a_loop_over_a_typed_array_runs_as_a_base_region_that_never_leaves() {
+    for kind in ["Float64Array", "Int32Array", "Uint8ClampedArray", "Float32Array", "Int8Array"] {
+        let source = format!(r#"(function () {{
+          function fill(a) {{ for (let i = 0; i < a.length; i++) a[i] = i * 0.25 - 3; }}
+          function sum(a) {{ let s = 0; for (let i = 0; i < a.length; i++) s = s + a[i]; return s; }}
+          const a = new {kind}(2000);
+          let total = 0;
+          for (let round = 0; round < 12; round++) {{ fill(a); total = total + sum(a); }}
+          globalThis.answer = total;
+        }})();"#);
+        let run = assert_tier_agrees(&source, Tier::BJit, Expect { completed: 0, leaves: 0 });
+        assert!(run.regions() > 0, "{kind}: the loops run as regions: {:?}", run.events);
+        assert!(run.outcome.answer.is_some());
+    }
 }

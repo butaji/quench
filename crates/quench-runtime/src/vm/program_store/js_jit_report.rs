@@ -229,11 +229,11 @@ fn write_tables(out: &mut impl Write, counters: &JsJitCounters, osr: &OsrDiagnos
 
 /// A lane body's report line, or its state where it has no stats.
 fn report_lane_body(program: usize, function: u32, view: &LaneView, op_at: &dyn Fn(u32, u32) -> Option<String>) {
-    if let Some(line) = view.body_stats.report(program, view.lane_body_state(), op_at) {
+    if let Some(line) = view.tier().body_stats.report(program, view.lane_body_state(), op_at) {
         eprintln!("{line}");
     } else {
         let (state, entries, claimed, warming) = view.lane_body_detail();
-        eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", entries.map_or(String::from("null"), |entries| entries.to_string()), view.body_stats.declined.get());
+        eprintln!("QUENCH_LANE_STATE {{\"program\":{program},\"function\":{function},\"state\":\"{state}\",\"entries\":{},\"claimed\":{claimed},\"warming\":{warming},\"declined\":\"{}\"}}", entries.map_or(String::from("null"), |entries| entries.to_string()), view.tier().body_stats.declined.get());
     }
 }
 
@@ -244,7 +244,7 @@ impl ProgramStore {
             return;
         };
         self.report_lane_bodies();
-        eprintln!("{}", super::super::dispatch_fast::lane_miss_report());
+        eprintln!("{}", super::super::dispatch_fast::lane_miss_report(&self.tier_events));
         eprintln!("{}", super::super::dispatch_fast::lane_unlowered_report());
         let mut records: Vec<_> = diagnostics.iter().collect();
         records.sort_unstable_by_key(|(key, _)| **key);

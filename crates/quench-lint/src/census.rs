@@ -31,7 +31,7 @@ enum Source {
     File(&'static str),
     /// A file counted when present.
     Optional(&'static str),
-    /// Every Rust file under a directory whose name contains one of the fragments (any when empty).
+    /// Every Rust file under a directory, outside test paths, whose name contains one of the fragments (any when empty).
     Tree(&'static str, &'static [&'static str]),
 }
 
@@ -51,6 +51,8 @@ struct Metric {
 
 const COMPILED: &str = "crates/quench-runtime/src/vm/compiled";
 const LOWERING_FRAGMENTS: &[&str] = &["lower", "region"];
+const RUNTIME: &str = "crates/quench-runtime/src";
+const LANE_DISPATCH: &str = "crates/quench-runtime/src/vm/dispatch_fast";
 
 const METRICS: &[Metric] = &[
     Metric {
@@ -62,7 +64,7 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "opcodes_with_staged_operation",
         direction: Direction::Up,
-        sources: &[Source::File("crates/quench-runtime/src/staged.rs")],
+        sources: &[Source::File("crates/quench-runtime/src/bytecode.rs")],
         extract: Extract::Syntax(extract::staged_opcodes),
     },
     Metric {
@@ -80,6 +82,7 @@ const METRICS: &[Metric] = &[
             Source::Optional("crates/quench-runtime/src/vm/compiled/osr_loop.rs"),
             Source::Optional("crates/quench-runtime/src/vm/compiled.rs"),
             Source::Optional("crates/quench-runtime/src/vm/js_compiled.rs"),
+            Source::Optional("crates/quench-runtime/src/vm/compiled/base_region/decode.rs"),
             Source::Tree(COMPILED, LOWERING_FRAGMENTS),
         ],
         extract: Extract::Syntax(extract::opcode_arms),
@@ -120,6 +123,42 @@ const METRICS: &[Metric] = &[
         sources: &[Source::File("crates/quench-runtime/src/vm/compiled/base_region/decode.rs")],
         extract: Extract::Syntax(extract::decoder_classes),
     },
+    Metric {
+        name: "fact_homes",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::fact_homes),
+    },
+    Metric {
+        name: "epoch_fields",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::epoch_fields),
+    },
+    Metric {
+        name: "guest_reentries",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::guest_reentries),
+    },
+    Metric {
+        name: "wall_clock_reads",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::wall_clock_reads),
+    },
+    Metric {
+        name: "stable_epoch_reads",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[])],
+        extract: Extract::Syntax(extract::stable_epoch_reads),
+    },
+    Metric {
+        name: "lane_dispatch_lines",
+        direction: Direction::Down,
+        sources: &[Source::File("crates/quench-runtime/src/vm/dispatch_fast.rs"), Source::Tree(LANE_DISPATCH, &[])],
+        extract: Extract::Text(extract::text_lines),
+    },
 ];
 
 /// One metric's total and its per-file counts (files that count zero are left out).
@@ -135,6 +174,7 @@ fn rust_files_under(directory: &Path, fragments: &[&str], found: &mut Vec<PathBu
         if path.is_dir() {
             rust_files_under(&path, fragments, found)?;
         } else if path.extension().is_some_and(|extension| extension == "rs")
+            && !crate::test_paths::named_as_test(&path)
             && (fragments.is_empty() || fragments.iter().any(|fragment| stem.contains(fragment)))
         {
             found.push(path);

@@ -3,7 +3,6 @@
 //! position is found in source on the dynamic error path. Native images freeze the same
 //! descriptions before publication, so their error path needs no syntax frontend.
 
-use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrayExpressionElement, CallExpression, ChainElement, Comment, Expression, MemberExpression,
     NewExpression, SimpleAssignmentTarget,
@@ -212,7 +211,9 @@ fn parse_call_sites(source: &str, goal: SourceType, found: CallSites) -> Result<
 /// `parse_call_sites` of `source` parsed as `text`, which blanks the data literal at `blank`;
 /// a literal that is not a top-level value is parsed as it is.
 fn parse_call_sites_in(source: &str, text: &str, blank: Option<u32>, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
-    let allocator = Allocator::with_capacity(text.len());
+    // The parse arena compiles share: its pages go back when it is handed back, and a
+    // diagnostic's parse leaves none of the malloc heap behind.
+    let allocator = crate::compile::lazy_bodies::sized_arena(text);
     let options = ParseOptions { allow_return_outside_function: true, ..ParseOptions::default() };
     let parsed = Parser::new(&allocator, text, goal).with_options(options).with_config(TokensParserConfig).parse();
     if blank.is_some_and(|start| !crate::compile::data_literal::is_top_level_value(&parsed.program, start)) {

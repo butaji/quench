@@ -7,14 +7,7 @@ use super::{JsString, ShortAscii};
 use std::mem::offset_of;
 use std::rc::Rc;
 
-/// `FlatUnits::Short`: ASCII text inline in the record.
-pub(crate) const TAG_SHORT: u8 = 0;
-/// `FlatUnits::Ascii`: ASCII text in a shared allocation of its bytes.
-pub(crate) const TAG_ASCII: u8 = 1;
-/// `FlatUnits::AsciiSlice`, which follows `Ascii`.
-const TAG_ASCII_SLICE: u8 = TAG_ASCII + 1;
-/// `FlatUnits::Wide`: UTF-16 text in a shared allocation of its units.
-pub(crate) const TAG_WIDE: u8 = TAG_ASCII_SLICE + 1;
+pub(crate) use quench_bjit::shared_words::string_tag::{TAG_ASCII, TAG_OFFSET, TAG_SHORT, TAG_WIDE};
 
 #[repr(C)]
 struct ShortForm {
@@ -30,8 +23,6 @@ struct SharedForm<T: ?Sized> {
 
 /// Bytes a string record occupies.
 pub(crate) const RECORD_SIZE: usize = size_of::<JsString>();
-/// Where a record keeps its form's tag: the record is its `FlatUnits`.
-pub(crate) const TAG_OFFSET: i32 = 0;
 /// Where a `Short` record keeps its unit count, and its units.
 pub(crate) const SHORT_LENGTH_OFFSET: i32 = (offset_of!(ShortForm, text) + offset_of!(ShortAscii, length)) as i32;
 pub(crate) const SHORT_UNITS_OFFSET: u64 = (offset_of!(ShortForm, text) + offset_of!(ShortAscii, bytes)) as u64;

@@ -3,7 +3,7 @@
 use crate::heap::ArrayObject;
 use super::{BLOCK_WORDS, OCCUPANCY_WORD_BITS, RECORDS_PER_BLOCK, RecordId, RecordSpace};
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// Sets what `warm_ahead` touches for each dead record: the memory its drop frees.
     pub(in crate::heap) fn warm_before_drop(&mut self, warm: fn(&T)) {
         self.warm = Some(warm);

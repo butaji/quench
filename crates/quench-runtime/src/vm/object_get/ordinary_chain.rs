@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         private_name: bool,
     ) -> ControlFlow<Result<Value, JsError>, Value> {
-        let read = if private_name { None } else { self.ordinary_chain_read(object, atom) };
+        let read = if private_name { None } else { self.ordinary_chain_read_proved(object, atom) };
         match read {
             Some(ChainRead::Value(value)) => ControlFlow::Break(Ok(value)),
             Some(ChainRead::Absent) => ControlFlow::Break(Ok(Value::UNDEFINED)),
@@ -67,6 +67,61 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `ordinary_chain_read` through the (shape, key) proofs (`symbol_load_proofs`), which
+    /// answer an ordinary receiver's own, inherited or absent key in one probe; a miss walks
+    /// once, recording what the walk proves (`Vm::prove_load`). Keys no proof covers, and
+    /// receivers no proof starts from, take the plain walk.
+    pub(in crate::vm) fn ordinary_chain_read_proved(&mut self, object: Value, atom: Atom) -> Option<ChainRead> {
+        use super::super::symbol_load_proof::SymbolLoadAnswer;
+        if !self.plain_named_key(atom) {
+            return self.ordinary_chain_read(object, atom);
+        }
+        let key = PropertyKey::string(atom);
+        let Some(data) = self.proved_read_receiver(object, key) else {
+            return self.ordinary_chain_read(object, atom);
+        };
+        // A proof's shape is an ordinary one; side descriptors could name the key off it.
+        let inherits = !data.has_side_descriptors();
+        match self.symbol_load_proofs.answer(data.layout_id(), key) {
+            // SAFETY: the proof recorded this slot for an own data property of this shape.
+            Some(SymbolLoadAnswer::Own(slot)) => {
+                return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
+            }
+            Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
+                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
+                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    _ => self.proof_holder(data, hops)?,
+                };
+                // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
+                if let Some(value) = unsafe { self.heap.property_get_shaped(holder, slot as usize) } {
+                    return Some(ChainRead::Value(value));
+                }
+            }
+            Some(SymbolLoadAnswer::Absent) if inherits => {
+                return Some(ChainRead::Absent);
+            }
+            // An inherited accessor (a class getter, as reactive state's computed reads are):
+            // its getter from the holder's slot, without the walk.
+            Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits => {
+                let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
+                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    _ => self.proof_holder(data, hops)?,
+                };
+                if let Some(attributes) = self.slot_attributes(holder, slot as usize)
+                    && attributes.accessor
+                {
+                    return Some(ChainRead::Getter(attributes.getter));
+                }
+            }
+            _ => {}
+        }
+        match self.prove_load(object, key) {
+            super::ProvedLoad::Value(value) => Some(ChainRead::Value(value)),
+            super::ProvedLoad::Absent => Some(ChainRead::Absent),
+            super::ProvedLoad::Getter | super::ProvedLoad::Unproved => self.ordinary_chain_read(object, atom),
+        }
+    }
+
     /// What the shape-held property at `slot` of `data`, the record of `object`, reads as.
     fn chain_slot_read(&self, object: Value, data: &crate::heap::Object, slot: usize) -> ChainRead {
         if self.shape_may_have_accessors(data.shape())
@@ -82,12 +137,12 @@ impl<H: Host> Vm<H> {
     /// where shapes alone decide it: an ordinary record's chain, or an array's `length` and
     /// its non-index names. `None` for any other target or key, and wherever the walk meets an
     /// exotic link.
-    pub(in crate::vm) fn reflect_chain_read(&self, target: Value, key: Value) -> Option<ChainRead> {
+    pub(in crate::vm) fn reflect_chain_read(&mut self, target: Value, key: Value) -> Option<ChainRead> {
         if let Some(array) = self.heap.array(target) {
             let index = super::super::object_static::array_index(self.heap.string(key)?.host_string());
             if let Some(index) = index {
                 // A present dense element is an own data property; any other index is the general read's.
-                let element = array.elements().get(index as usize).copied().filter(|element| !element.is_deleted());
+                let element = array.elements().get(index as usize).filter(|element| !element.is_deleted());
                 return element.map(ChainRead::Value);
             }
         }
@@ -96,7 +151,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         if self.heap.object_record(target).is_some() {
-            return self.ordinary_chain_read(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
+            return self.ordinary_chain_read_proved(target, atom).filter(|read| !matches!(read, ChainRead::Exotic(_)));
         }
         self.heap.array(target)?;
         if atom == self.length_atom {

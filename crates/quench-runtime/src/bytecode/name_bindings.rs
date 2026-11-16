@@ -11,12 +11,17 @@ use super::Op;
 use super::WideInstruction;
 use std::rc::Rc;
 
+/// One word: most functions bind no names a dynamic lookup can see (`None`), and every
+/// compiled function record holds one of these.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct NameBindings {
+pub(crate) struct NameBindings(Option<Rc<NameBindingLists>>);
+
+#[derive(Debug)]
+pub(crate) struct NameBindingLists {
     /// Bindings resolved before anything else, sorted by atom.
-    direct: Rc<[EvalBinding]>,
+    direct: Box<[EvalBinding]>,
     /// Names declared by the function that hide captured bindings, sorted.
-    hidden: Rc<[Atom]>,
+    hidden: Box<[Atom]>,
     /// The innermost captured scope.
     captured: Option<Rc<CapturedNames>>,
 }
@@ -69,10 +74,16 @@ impl NameBindings {
         hidden: Vec<Atom>,
         captured: Option<Rc<CapturedNames>>,
     ) -> Self {
-        Self {
-            direct: direct.into(),
-            hidden: hidden.into(),
-            captured,
+        if direct.is_empty() && hidden.is_empty() && captured.is_none() {
+            return Self(None);
+        }
+        Self(Some(Rc::new(NameBindingLists { direct: direct.into(), hidden: hidden.into(), captured })))
+    }
+
+    fn lists(&self) -> (&[EvalBinding], &[Atom], Option<&Rc<CapturedNames>>) {
+        match &self.0 {
+            Some(lists) => (&lists.direct, &lists.hidden, lists.captured.as_ref()),
+            None => (&[], &[], None),
         }
     }
 
@@ -82,13 +93,11 @@ impl NameBindings {
     }
 
     pub(crate) fn get(&self, atom: Atom) -> Option<EvalBinding> {
-        if let Ok(index) = self
-            .direct
-            .binary_search_by_key(&atom, |binding| binding.atom)
-        {
-            return Some(self.direct[index]);
+        let (direct, hidden, _) = self.lists();
+        if let Ok(index) = direct.binary_search_by_key(&atom, |binding| binding.atom) {
+            return Some(direct[index]);
         }
-        if self.hidden.binary_search(&atom).is_ok() {
+        if hidden.binary_search(&atom).is_ok() {
             return None;
         }
         self.captured_levels()
@@ -96,17 +105,18 @@ impl NameBindings {
     }
 
     pub(crate) fn direct(&self) -> &[EvalBinding] {
-        &self.direct
+        self.lists().0
     }
 
     pub(crate) fn hidden(&self) -> &[Atom] {
-        &self.hidden
+        self.lists().1
     }
 
     /// Each captured scope with its depth from this function.
     pub(crate) fn captured_levels(&self) -> impl Iterator<Item = (u16, &CapturedNames)> {
-        self.captured
-            .iter()
+        self.lists()
+            .2
+            .into_iter()
             .flat_map(|captured| captured.levels())
             .zip(0..=u16::MAX)
             .map(|(level, depth)| (depth, level))
@@ -114,8 +124,9 @@ impl NameBindings {
 
     /// Every visible binding, sorted by atom: the flat projection residual programs store.
     pub(crate) fn resolved(&self) -> Vec<EvalBinding> {
-        let mut seen: rustc_hash::FxHashSet<Atom> = self.hidden.iter().copied().collect();
-        let mut bindings: Vec<EvalBinding> = self.direct.to_vec();
+        let (direct, hidden, _) = self.lists();
+        let mut seen: rustc_hash::FxHashSet<Atom> = hidden.iter().copied().collect();
+        let mut bindings: Vec<EvalBinding> = direct.to_vec();
         seen.extend(bindings.iter().map(|binding| binding.atom));
         for (depth, level) in self.captured_levels() {
             bindings.extend(

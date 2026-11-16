@@ -40,7 +40,7 @@ mod atoms;
 #[cfg(feature = "aot")]
 mod native_sources;
 #[cfg(feature = "aot")]
-pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation};
+pub use native_sources::{NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, SourceDemands};
 /// The parse goal shared by module compile-cache and linked native source keys.
 pub const STATIC_MODULE_GOAL: &str = "static-module";
 pub const STATIC_TYPESCRIPT_MODULE_GOAL: &str = "static-module:typescript";
@@ -54,12 +54,14 @@ mod capture_layout;
 mod capture_profile;
 mod call_only;
 mod capture_scope;
-mod class;
+mod class; mod class_private;
 mod early;
 mod frame_registers;
-mod lazy_bodies;
+pub(crate) mod lazy_bodies;
+mod eval_reach;
+mod literal_singletons;
 mod semantic_stats;
-pub(crate) use lazy_bodies::release_warm_arena;
+pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
 #[cfg(feature = "verify-replay")]
 mod free_names;
 mod syntax_message;
@@ -81,6 +83,7 @@ mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIEL
 mod rewrite;
 mod sequence;
 pub(crate) mod stack;
+pub(crate) mod statement_stream;
 mod string;
 mod template;
 mod typescript;
@@ -1079,7 +1082,9 @@ impl Engine {
         // not compile with them compiles eagerly, which reports its own diagnostics.
         // TypeScript admission currently validates runtime-changing syntax over the
         // complete AST, including declarations inside functions, before execution.
-        if expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len())
+        // A streamed body's first run parses the body lazily, to compile one run of it.
+        let first_run = matches!(expected_shape, ParsedProgramShape::FirstCallChunk(window) if window.first_run());
+        if (expected_shape.lazy_functions(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len()) || first_run)
             && !source_type.is_typescript()
             && let Ok(program) = compile(true)
         {
@@ -1118,10 +1123,14 @@ impl Engine {
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
         let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len());
+        // A recognized body's check needs its call-only facts deferred, or none to find
+        // (`BodyFacts::check`): only bodies with no function inside are recognized then.
+        let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
         #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy, &facts, inherited_strict, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy, &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
         let data_literal = match &located {
             Some(literal) if parsed.diagnostics.is_empty()
@@ -1249,7 +1258,7 @@ impl Engine {
         let semantic = semantic_stats::checked_semantic(&parsed.program, name)?;
         let mut private_name_ids = private_name_ids(&semantic.semantic);
         let mut private_name_labels = private_name_labels(&semantic.semantic);
-        let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+        let mut prototype_unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
         #[cfg(feature = "verify-replay")]
         let free_names = free_names::free_names(&semantic.semantic, &parsed.program);
         let inherited_private_ids = if wrapped_eval
@@ -1302,7 +1311,7 @@ impl Engine {
         if lazy {
             // The lazily parsed bodies, checked and analyzed one at a time as the parser
             // released them (`lazy_bodies::BodyFacts::check`).
-            if facts.failed {
+            if facts.failed || parsed.lazy_methods_kept {
                 return Err(vec![Diagnostic::unsupported(name, "SyntaxError: a lazily parsed function body does not check alone")]);
             }
             let first_private_id = private_name_ids.values().max().map_or(0, |id| id + 1);
@@ -1358,6 +1367,14 @@ impl Engine {
         // function compiles again from its replay on first call (`ResidualProgram::function`).
         compiler.replayable_source = expected_shape.replayable(private_name_overrides, annex_b_forbidden_names);
         compiler.first_call.plan(expected_shape, compiler.replayable_source, &parsed.program, inherited_strict, (std::mem::take(&mut facts.free_names), std::mem::take(&mut facts.call_only_found)));
+        compiler.streamed = std::mem::take(&mut facts.streamed);
+        compiler.stream_candidates = std::mem::take(&mut facts.stream_candidates);
+        if let ParsedProgramShape::FirstCallChunk(window) = expected_shape {
+            // The chunk's text parsed alone; its functions now lie at their place.
+            let delta = window.start();
+            compiler.streamed = compiler.streamed.iter().map(|start| start + delta).collect();
+            compiler.stream_candidates = compiler.stream_candidates.iter().map(|start| start + delta).collect();
+        }
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
         compiler.private_name_labels = private_name_labels;
@@ -1834,7 +1851,6 @@ struct Compiler<'a> {
     /// line's start.
     last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
-    directives: crate::bytecode::SourceDirectives,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
@@ -1865,6 +1881,13 @@ struct Compiler<'a> {
     /// functions, each reset and reused: an arena per function interleaved its blocks with
     /// the program's long-lived records, and the heap kept the holes between them.
     lazy_arenas: Vec<Allocator>,
+    /// The starts of the lazily parsed functions whose bodies compile as a stream of statement
+    /// runs (`statement_stream`), and the body the next function compiled streams.
+    streamed: FxHashSet<u32>,
+    stream_candidates: FxHashSet<u32>,
+    body_stream: Option<statement_stream::StreamedBody>,
+    /// The run of a streamed function's body this chunk compiles (`StreamRun`).
+    stream_run: Option<&'a statement_stream::StreamRun>,
     /// Each function's free names (`free_names`), which `verify_predicted_captures` checks
     /// against what the function's compilation captured.
     #[cfg(feature = "verify-replay")]
@@ -2206,6 +2229,18 @@ pub(crate) struct LoweringTables<'t> {
     pub(crate) undefined_constant: u32,
 }
 
+/// The largest body whose copies are coalesced though it has no loop: a leaf small enough for
+/// a call entry to recognise by its shape (`capture_append::recognizes`).
+const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
+
+/// Whether coalescing the copies frame-register promotion left repays its cost: a body that
+/// loops runs its instructions many times and its loops' tiers read the coalesced shape, and a
+/// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
+/// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
+fn coalescing_repays(function: &BcFunction) -> bool {
+    function.code.len() <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+}
+
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
 /// numeric and plain-local specialization and frame registers. They add no table entries,
 /// so they run equally at load and on a function's first read from its finished program.
@@ -2225,7 +2260,9 @@ pub(crate) fn lower_settled<'a>(
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
     frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
     if specialized {
-        rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+        if coalescing_repays(function) {
+            rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
+        }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
     if function
@@ -2404,7 +2441,7 @@ impl<'a> Compiler<'a> {
             source_line_starts,
             last_source_line: std::cell::Cell::new(0),
             last_utf16_excess: Default::default(),
-            source_comments: Vec::new(), directives: Default::default(),
+            source_comments: Vec::new(),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -2420,6 +2457,10 @@ impl<'a> Compiler<'a> {
             lazy_bodies: FxHashSet::default(),
             lazy_compiled: Vec::new(),
             lazy_arenas: Vec::new(),
+            streamed: FxHashSet::default(),
+            stream_candidates: FxHashSet::default(),
+            body_stream: None,
+            stream_run: None,
             #[cfg(feature = "verify-replay")]
             free_names: FxHashMap::default(),
             private_name_labels: FxHashMap::default(),
@@ -2708,6 +2749,12 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         context: replay::PlainFunctionContext,
     ) -> u32 {
+        if self.replay_target.is_none()
+            && (self.streamed.contains(&function.span.start) || self.stream_candidates.contains(&function.span.start) && self.body_streams(function, &context))
+            && let Some(id) = self.compile_streamed_function(function, &context)
+        {
+            return id;
+        }
         let snippet = &self.text[function.span.start as usize..function.span.end as usize];
         let (text, offset) = lazy_bodies::text_alone(
             snippet,
@@ -2720,6 +2767,62 @@ impl<'a> Compiler<'a> {
         lazy_bodies::release_after(&mut allocator);
         self.lazy_arenas.push(allocator);
         id
+    }
+
+    /// `compile_lazy_function` of a function whose body streams (`statement_stream`): its
+    /// text with an empty body parsed again, and its body compiled from its text a run of
+    /// statements at a time; None where the text with an empty body does not parse alone.
+    /// Whether the body of `function`, a stream candidate checked without its tree, streams.
+    /// The run a chunk compiles of a streamed function after its first: the function at
+    /// `span`, compiled with its header alone, takes its body from where the run starts.
+    fn later_run(&self, parent: Option<u32>, span: Option<crate::bytecode::SourceSpan>) -> Option<statement_stream::StreamedBody> {
+        let run = self.stream_run?;
+        let (from, body) = run.from?;
+        (parent.is_some() && span?.start == run.start).then(|| {
+            run.found.set(Some((body, None)));
+            statement_stream::StreamedBody { start: from, end: body.close, strict: body.strict, one_run: true }
+        })
+    }
+
+    /// Where the run after the one a chunk compiled starts, if any.
+    fn found_next_run(&self, next: Option<u32>) {
+        if let Some(run) = self.stream_run
+            && let Some((body, _)) = run.found.get()
+        {
+            run.found.set(Some((body, next)));
+        }
+    }
+
+    fn body_streams(&self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> bool {
+        let Some(body) = function.body.as_ref().map(|body| body.span) else { return false };
+        statement_stream::body_streams(self.text, self.source_type, statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict: context.inherited_strict, one_run: false })
+    }
+
+    fn compile_streamed_function(&mut self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> Option<u32> {
+        let body = function.body.as_ref()?.span;
+        let strict = context.inherited_strict;
+        let header = format!("{}{{}}", &self.text[function.span.start as usize..body.start as usize]);
+        let (text, offset) = lazy_bodies::text_alone(&header, replay::plain_function_wrapper(context), strict, self.source_type);
+        let allocator = Allocator::default();
+        let mut reparsed = lazy_bodies::reparse(
+            &allocator,
+            &text,
+            offset,
+            function.span.start.wrapping_sub(offset),
+            self.source_type,
+            lazy_bodies::Nesting::Recorded(&FxHashSet::default()),
+        )
+        .ok()?;
+        let again = reparsed.function_mut().filter(|again| again.span.start == function.span.start)?;
+        again.span.end = function.span.end;
+        again.body.as_mut()?.span = body;
+        let one_run = self.stream_run.is_some_and(|run| run.start == function.span.start && run.from.is_none());
+        if one_run && let Some(run) = self.stream_run {
+            run.found.set(Some((statement_stream::StreamedRun { open: body.start, close: body.end - 1, strict }, None)));
+        }
+        self.body_stream = Some(statement_stream::StreamedBody { start: body.start + 1, end: body.end - 1, strict, one_run });
+        let again = reparsed.function().expect("checked above");
+        Some(self.compile_plain_function(again, context.clone()))
     }
 
     /// `compile_lazy_function`, with `text` (the function's source at `offset`, wrapped)
@@ -2745,6 +2848,14 @@ impl<'a> Compiler<'a> {
             self.source_type,
             nesting,
         );
+        let reparsed = match reparsed {
+            Ok(reparsed) => Some(reparsed),
+            Err(lazy_bodies::ReparseFailure::StackExhausted) => {
+                self.errors.push(Diagnostic::stack_exhausted(self.source));
+                return self.compile_plain_function(function, context);
+            }
+            Err(lazy_bodies::ReparseFailure::Diagnostics) => None,
+        };
         let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
             self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
             return self.compile_plain_function(function, context);
@@ -2961,13 +3072,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Reads the parse's comment table once: the spans that delimiter scans skip, and the
-    /// magic comments the program's source keeps.
-    fn read_comments(&mut self, comments: &[oxc_ast::ast::Comment]) {
-        self.source_comments = comments.iter().map(|comment| comment.span).collect();
-        self.directives = crate::bytecode::SourceDirectives::of_comments(self.text, comments);
-    }
-
     /// The index of the line holding `offset` (`source_line_index`).
     fn source_line_index(&self, offset: usize) -> usize {
         source_line_index(&self.source_line_starts, &self.last_source_line, offset)
@@ -2981,7 +3085,7 @@ impl<'a> Compiler<'a> {
         module_goal: bool,
         inherited_strict: bool,
     ) -> Result<(Self, ModuleParts), Vec<Diagnostic>> {
-        self.read_comments(&program.comments);
+        self.source_comments = program.comments.iter().map(|comment| comment.span).collect();
         self.module_goal = module_goal;
         let module_requests = if module_goal {
             module_requests(&program.body)
@@ -3435,7 +3539,6 @@ impl<'a> Compiler<'a> {
                 column_offset: 0,
                 line_starts: Default::default(),
                 call_sites: Default::default(),
-                directives: self.directives,
             })),
             atoms,
             constants: crate::bytecode::append_vec::AppendVec::with_headroom(constants, room.constants()),
@@ -3446,7 +3549,7 @@ impl<'a> Compiler<'a> {
                 slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
                     match function {
                         Some(function) if lowered_here(id) => FunctionSlot::compiled(function),
-                        Some(function) => FunctionSlot::unlowered(function),
+                        Some(function) => FunctionSlot::unlowered_packed(function),
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));
@@ -3494,6 +3597,7 @@ impl<'a> Compiler<'a> {
             validated: Default::default(),
             undefined_constant: Default::default(),
             closure_reads,
+            wasm_lazy: None,
             load_encoding: crate::bytecode::LoadRecords::new(self.load_encoding.take()),
         };
         #[cfg(feature = "profile-aggregate")]
@@ -3889,6 +3993,7 @@ impl<'a> Compiler<'a> {
             FunctionBody::Statements(body) => (body, None),
             FunctionBody::Expression(expression) => (&[][..], Some(expression)),
         };
+        let streamed = self.body_stream.take().or_else(|| self.later_run(parent, options.source_span));
         if let Some(id) = self.skip_replayed_child() {
             return id;
         }
@@ -3975,11 +4080,7 @@ impl<'a> Compiler<'a> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
-        let dynamic_eval = options
-            .defaults
-            .is_some_and(early::parameters_contain_direct_eval)
-            || early::body_contains_direct_eval(body)
-            || expression_body.is_some_and(early::expression_contains_direct_eval);
+        let dynamic_eval = eval_reach::function_contains_direct_eval(options.defaults, body, expression_body);
         let simple_parameters = !options.rest_override
             && options
                 .defaults
@@ -4062,6 +4163,7 @@ impl<'a> Compiler<'a> {
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;
+        function.literal_singletons = literal_singletons::Owner { parent, binds_dynamically, options: &options }.declarations(&function.owner.atoms, &params, body);
         if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
             function.arguments_alias = early::arguments_alias(options.defaults, body);
         }
@@ -4104,7 +4206,14 @@ impl<'a> Compiler<'a> {
         if let Some(body) = options.implicit_body {
             function.emit_implicit_body(body);
         }
-        function.function_body_statements(body);
+        match streamed {
+            Some(streamed) => {
+                if !function.streamed_body(streamed) {
+                    function.owner.reject(Span::new(streamed.start, streamed.end), "SyntaxError: a streamed function body does not parse as checked");
+                }
+            }
+            None => function.function_body_statements(body),
+        }
         let result = if let Some(expression) = expression_body {
             function.expression(expression)
         } else {

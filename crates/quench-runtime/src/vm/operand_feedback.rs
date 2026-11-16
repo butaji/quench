@@ -50,7 +50,7 @@ impl OperandKinds {
     /// The kinds that make a Number site's int32 step fail.
     const WIDER_NUMBER: Self = Self(Self::DOUBLE.0 | Self::WIDENED.0);
 
-    #[inline(always)]
+    #[inline]
     pub(crate) const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
@@ -100,10 +100,12 @@ impl OperandKinds {
             Self::INT32
         } else if value.is_double() {
             Self::DOUBLE
-        } else if heap.is_string(value) {
-            Self::STRING
         } else if value.is_record() {
+            // An object or array record, by its handle's family: no cell lookup, and no call
+            // per execution for the `===` of two objects that notes its operands every time.
             Self::OTHER
+        } else if value.direct_string_index().is_some() {
+            Self::STRING
         } else {
             Self::of_cell(heap, value)
         }
@@ -162,6 +164,32 @@ pub(super) unsafe fn note_operands<H: Host>(cx: *mut LaneContext<H>, ip: Ip, lef
     }
 }
 
+/// Adds both Number kinds to the feedback byte of the record at `ip`, for a handler that
+/// stops noting Number pairs (`requicken_number_relation`).
+///
+/// # Safety
+/// As `note_operands`.
+pub(super) unsafe fn note_number_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
+    // SAFETY: as the function's own.
+    let cell = unsafe { feedback_cell((*cx).base, ip) };
+    cell.set(OperandKinds(cell.get()).union(OperandKinds::INT32).union(OperandKinds::DOUBLE).0);
+}
+
+/// Adds the BigInt kind to the feedback byte of the record at `ip`: what `note_operands`
+/// adds for two BigInt operands, without classifying them again.
+///
+/// # Safety
+/// As `note_operands`.
+#[inline(always)]
+pub(super) unsafe fn note_bigint_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
+    // SAFETY: as the function's own.
+    let cell = unsafe { feedback_cell((*cx).base, ip) };
+    let kinds = OperandKinds(cell.get()).union(OperandKinds::BIGINT);
+    if kinds.0 != cell.get() {
+        cell.set(kinds.0);
+    }
+}
+
 /// `note_operands` for a handler's first miss, out of line so the handler's own code stays as it is.
 ///
 /// # Safety
@@ -195,7 +223,9 @@ pub(super) unsafe fn note_widened<H: Host>(cx: *mut LaneContext<H>, ip: Ip, resu
 /// As `note_operands`.
 #[inline(always)]
 pub(super) unsafe fn note_pair_result<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
-    if Value::int_pair(left, right).is_some() {
+    // Per operand on the tag field the Number step already tested, not `Value::int_pair`'s
+    // xor of both words: that recomputed both tags after every double operation.
+    if left.has_int_tag_field() && right.has_int_tag_field() {
         // SAFETY: the caller's.
         unsafe { note_widened(cx, ip, result) };
     }
@@ -207,6 +237,8 @@ pub(super) struct Records {
     cells: Box<[std::cell::UnsafeCell<LaneInstruction>]>,
     /// The records of `cells` before the first record, which hold the feedback bytes.
     front: usize,
+    /// The first record, kept so each activation's entry reads it with one load (`base`).
+    first: Ip,
 }
 
 impl Records {
@@ -225,15 +257,19 @@ impl Records {
     /// `records`, with feedback bytes (all `NONE`) in front of them where `feedback`.
     pub(super) fn new(records: Box<[LaneInstruction]>, feedback: bool) -> Self {
         let front = if feedback { records.len().div_ceil(RECORD_BYTES) } else { 0 };
-        let cells = std::iter::repeat_with(Self::blank).take(front).chain(records).map(std::cell::UnsafeCell::new).collect();
-        Self { cells, front }
+        let cells: Box<[std::cell::UnsafeCell<LaneInstruction>]> =
+            std::iter::repeat_with(Self::blank).take(front).chain(records).map(std::cell::UnsafeCell::new).collect();
+        // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
+        // allocation's provenance, which the feedback bytes before it need, and the boxed
+        // records never move.
+        let first = unsafe { std::cell::UnsafeCell::raw_get(cells.as_ptr().add(front)).cast_const() };
+        Self { cells, front, first }
     }
 
     /// The first record.
-    #[inline(always)] pub(super) fn base(&self) -> Ip {
-        // SAFETY: `front` records lie before the end of `cells`; the pointer keeps the whole
-        // allocation's provenance, which the feedback bytes before it need.
-        unsafe { std::cell::UnsafeCell::raw_get(self.cells.as_ptr().add(self.front)).cast_const() }
+    #[inline(always)]
+    pub(super) fn base(&self) -> Ip {
+        self.first
     }
 
     fn has_feedback(&self) -> bool {

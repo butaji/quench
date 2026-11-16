@@ -1,6 +1,33 @@
 //! No guest property access during owned clone metadata/materialization.
 use super::*;
 use crate::owned_clone::{Metadata, Node};
+/// What an owned clone's view covers of its backing buffer, whose byte length is `bytes_len`: from
+/// `offset` bytes, `length` units, or the buffer's length when `tracking` it.
+#[derive(Clone, Copy)]
+struct ViewSpan {
+    buffer: Value,
+    bytes_len: usize,
+    offset: usize,
+    length: usize,
+    tracking: bool,
+}
+
+/// The typed array kinds an owned clone names, by their name without the `Array` suffix.
+const OWNED_TYPED_ARRAY_KINDS: [(&str, TypedArrayKind); 12] = [
+    ("Uint8", TypedArrayKind::Uint8),
+    ("Uint8Clamped", TypedArrayKind::Uint8Clamped),
+    ("Uint16", TypedArrayKind::Uint16),
+    ("Uint32", TypedArrayKind::Uint32),
+    ("Int8", TypedArrayKind::Int8),
+    ("Int16", TypedArrayKind::Int16),
+    ("Int32", TypedArrayKind::Int32),
+    ("BigInt64", TypedArrayKind::BigInt64),
+    ("BigUint64", TypedArrayKind::BigUint64),
+    ("Float16", TypedArrayKind::Float16),
+    ("Float32", TypedArrayKind::Float32),
+    ("Float64", TypedArrayKind::Float64),
+];
+
 impl<H: Host> Vm<H> {
     pub(crate) fn embedding_clone_metadata(
         &mut self,
@@ -59,12 +86,11 @@ impl<H: Host> Vm<H> {
                 resizable: *resizable,
             }),
             Some(Cell::TypedArray {
-                kind,
                 object,
                 buffer,
                 length,
             }) => Some(Metadata::View {
-                kind: format!("{:?}", kind),
+                kind: format!("{:?}", object.native.kind()),
                 buffer: *buffer,
                 offset: object.offset,
                 length: length.get().unwrap_or(0),
@@ -142,14 +168,14 @@ impl<H: Host> Vm<H> {
             Node::Map(_) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Map);
                 self.heap.alloc(Cell::Map {
-                    object: Box::new(Self::empty_object(proto)),
+                    object: Self::empty_object(proto),
                     entries: Default::default(),
                 })
             }
             Node::Set(_) => {
                 let proto = self.intrinsic_builtin_prototype(Native::Set);
                 self.heap.alloc(Cell::Set {
-                    object: Box::new(Self::empty_object(proto)),
+                    object: Self::empty_object(proto),
                     entries: Default::default(),
                 })
             }
@@ -200,89 +226,96 @@ impl<H: Host> Vm<H> {
                 ..
             } => {
                 let buffer = operand(self, 0)?;
-                let Some(Cell::ArrayBuffer {
-                    bytes,
-                    detached,
-                    resizable,
-                    ..
-                }) = self.heap.get(buffer)
-                else {
-                    return Err(self.type_error(&p, "Owned view needs ArrayBuffer".into()));
-                };
-                let bytes_len = bytes.len();
-                if *detached || (*tracking && !*resizable) {
-                    return Err(self.type_error(&p, "Invalid owned view backing".into()));
-                }
-                if kind == "DataView" {
-                    if *offset > bytes_len || (!*tracking && *length > bytes_len - *offset) {
-                        return Err(self.range_error(&p, "Owned DataView out of bounds".into()));
-                    }
-                    let proto = self.intrinsic_builtin_prototype(Native::DataView);
-                    self.heap.alloc(Cell::DataView {
-                        object: Box::new(crate::heap::BufferViewObject {
-                            object: Self::empty_object(proto),
-                            offset: *offset,
-                        }),
-                        buffer,
-                        length: crate::heap::ViewLength::new(*length, *tracking),
-                    })
-                } else {
-                    let kind = match kind.as_str() {
-                        "Uint8" | "Uint8Array" => TypedArrayKind::Uint8,
-                        "Uint8Clamped" | "Uint8ClampedArray" => TypedArrayKind::Uint8Clamped,
-                        "Uint16" | "Uint16Array" => TypedArrayKind::Uint16,
-                        "Uint32" | "Uint32Array" => TypedArrayKind::Uint32,
-                        "Int8" | "Int8Array" => TypedArrayKind::Int8,
-                        "Int16" | "Int16Array" => TypedArrayKind::Int16,
-                        "Int32" | "Int32Array" => TypedArrayKind::Int32,
-                        "BigInt64" | "BigInt64Array" => TypedArrayKind::BigInt64,
-                        "BigUint64" | "BigUint64Array" => TypedArrayKind::BigUint64,
-                        "Float16" | "Float16Array" => TypedArrayKind::Float16,
-                        "Float32" | "Float32Array" => TypedArrayKind::Float32,
-                        "Float64" | "Float64Array" => TypedArrayKind::Float64,
-                        _ => return Err(self.type_error(&p, "Unknown owned view kind".into())),
-                    };
-                    let width = kind.width();
-                    let required = if *tracking {
-                        0
-                    } else {
-                        length.checked_mul(width).ok_or_else(|| {
-                            self.range_error(&p, "Owned view size overflow".into())
-                        })?
-                    };
-                    if offset % width != 0 || *offset > bytes_len || required > bytes_len - *offset
-                    {
-                        return Err(self.range_error(&p, "Owned TypedArray out of bounds".into()));
-                    }
-                    let proto = self.typed_array_proto(kind);
-                    self.heap.alloc(Cell::TypedArray {
-                        kind,
-                        object: Box::new(crate::heap::BufferViewObject {
-                            object: Self::empty_object(proto),
-                            offset: *offset,
-                        }),
-                        buffer,
-                        length: crate::heap::ViewLength::new(*length, *tracking),
-                    })
-                }
+                self.embedding_clone_view(&p, buffer, (kind, *offset, *length, *tracking))?
             }
-            Node::Error { kind, .. } => {
-                let native = match kind.as_str() {
-                    "Error" => Native::Error,
-                    "EvalError" => Native::EvalError,
-                    "RangeError" => Native::RangeError,
-                    "ReferenceError" => Native::ReferenceError,
-                    "SyntaxError" => Native::SyntaxError,
-                    "TypeError" => Native::TypeError,
-                    "URIError" => Native::URIError,
-                    _ => return Err(self.type_error(&p, "Unknown owned Error kind".into())),
-                };
-                let proto = self.intrinsic_builtin_prototype(native);
-                self.heap.alloc(Cell::Object(Object::error(proto)))
-            }
+            Node::Error { kind, .. } => self.embedding_clone_error(&p, kind)?,
         };
         Ok(target)
     }
+
+    /// The view of kind `kind` (`DataView` or a typed array's name) over `buffer`, at `offset` bytes
+    /// and `length` units, or tracking the buffer's length, as an owned clone describes it.
+    fn embedding_clone_view(
+        &mut self,
+        p: &ResidualProgram,
+        buffer: Value,
+        (kind, offset, length, tracking): (&str, usize, usize, bool),
+    ) -> Result<Value, JsError> {
+        let Some(Cell::ArrayBuffer { bytes, detached, resizable, .. }) = self.heap.get(buffer) else {
+            return Err(self.type_error(p, "Owned view needs ArrayBuffer".into()));
+        };
+        let bytes_len = bytes.len();
+        if *detached || (tracking && !*resizable) {
+            return Err(self.type_error(p, "Invalid owned view backing".into()));
+        }
+        let span = ViewSpan { buffer, bytes_len, offset, length, tracking };
+        if kind == "DataView" {
+            self.embedding_clone_data_view(p, &span)
+        } else {
+            self.embedding_clone_typed_view(p, kind, &span)
+        }
+    }
+
+    fn embedding_clone_data_view(&mut self, p: &ResidualProgram, span: &ViewSpan) -> Result<Value, JsError> {
+        let ViewSpan { buffer, bytes_len, offset, length, tracking } = *span;
+        if offset > bytes_len || (!tracking && length > bytes_len - offset) {
+            return Err(self.range_error(p, "Owned DataView out of bounds".into()));
+        }
+        let proto = self.intrinsic_builtin_prototype(Native::DataView);
+        Ok(self.heap.alloc(Cell::DataView {
+            object: Box::new(crate::heap::BufferViewObject {
+                native: Default::default(),
+                object: Self::empty_object(proto),
+                offset,
+            }),
+            buffer,
+            length: crate::heap::ViewLength::new(length, tracking),
+        }))
+    }
+
+    fn embedding_clone_typed_view(&mut self, p: &ResidualProgram, kind: &str, span: &ViewSpan) -> Result<Value, JsError> {
+        let ViewSpan { buffer, bytes_len, offset, length, tracking } = *span;
+        let stem = kind.strip_suffix("Array").unwrap_or(kind);
+        let Some(&(_, kind)) = OWNED_TYPED_ARRAY_KINDS.iter().find(|(name, _)| *name == stem) else {
+            return Err(self.type_error(p, "Unknown owned view kind".into()));
+        };
+        let width = kind.width();
+        let required = if tracking {
+            0
+        } else {
+            length.checked_mul(width).ok_or_else(|| self.range_error(p, "Owned view size overflow".into()))?
+        };
+        if offset % width != 0 || offset > bytes_len || required > bytes_len - offset {
+            return Err(self.range_error(p, "Owned TypedArray out of bounds".into()));
+        }
+        let proto = self.typed_array_proto(kind);
+        Ok(self.heap.alloc(Cell::TypedArray {
+            object: Box::new(crate::heap::BufferViewObject {
+                native: crate::heap::NativeView::typed(kind),
+                object: Self::empty_object(proto),
+                offset,
+            }),
+            buffer,
+            length: crate::heap::ViewLength::new(length, tracking),
+        }))
+    }
+
+    /// The error object of the class named `kind`.
+    fn embedding_clone_error(&mut self, p: &ResidualProgram, kind: &str) -> Result<Value, JsError> {
+        let native = match kind {
+            "Error" => Native::Error,
+            "EvalError" => Native::EvalError,
+            "RangeError" => Native::RangeError,
+            "ReferenceError" => Native::ReferenceError,
+            "SyntaxError" => Native::SyntaxError,
+            "TypeError" => Native::TypeError,
+            "URIError" => Native::URIError,
+            _ => return Err(self.type_error(p, "Unknown owned Error kind".into())),
+        };
+        let proto = self.intrinsic_builtin_prototype(native);
+        Ok(self.heap.alloc(Cell::Object(Object::error(proto))))
+    }
+
     pub(crate) fn embedding_clone_collection_insert(
         &mut self,
         target: RootId,

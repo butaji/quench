@@ -17,7 +17,7 @@ pub(crate) enum Part {
 /// The most parts a `Parts` string holds.
 pub(crate) const MAX_PARTS: usize = 3;
 /// The fewest parts: one part is the string itself.
-const MIN_PARTS: usize = 2;
+pub(crate) const MIN_PARTS: usize = 2;
 const NO_NUMBER: u8 = 3;
 /// Bytes of a string part's record id and of a Number's bits.
 const ID_BYTES: usize = 4;
@@ -77,19 +77,22 @@ impl Parts {
         true
     }
 
-    /// Whether the parts pushed make a string of parts: at least `MIN_PARTS`.
-    #[inline(always)]
-    pub(crate) fn is_complete(&self) -> bool {
-        self.count() >= MIN_PARTS
-    }
-
     /// The string parts' record ids, in order: what a collector traces.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn for_each_text(&self, mut visit: impl FnMut(u32)) {
-        self.each().for_each(|part| if let Part::Text(id) = part { visit(id) });
+        // A plain loop: the iterator's fold stayed out of line, a call per string marked.
+        let (count, at) = (usize::from(self.shape & COUNT_MASK), usize::from(self.shape >> NUMBER_SHIFT));
+        for position in 0..count {
+            if position != at {
+                let mut id = [0; ID_BYTES];
+                id.copy_from_slice(&self.ids[ID_BYTES * position..ID_BYTES * (position + 1)]);
+                visit(u32::from_le_bytes(id));
+            }
+        }
     }
 
     /// The parts, in order.
+    #[inline(always)]
     pub(crate) fn each(&self) -> impl Iterator<Item = Part> + '_ {
         let (count, at) = (usize::from(self.shape & COUNT_MASK), self.shape >> NUMBER_SHIFT);
         (0..count).map(move |position| {
@@ -103,6 +106,53 @@ impl Parts {
 }
 
 impl JsString {
+    /// The tag byte (`native_string::TAG_OFFSET`) of a string of parts.
+    pub(crate) fn parts_tag() -> u8 {
+        let string = std::mem::ManuallyDrop::new(Self::from_parts(Parts::EMPTY));
+        // SAFETY: the record starts with its form's initialized tag byte.
+        unsafe { *(&*string as *const Self).cast::<u8>().add(super::native_string::TAG_OFFSET as usize) }
+    }
+
+    /// Whether the string record at `string` holds parts, by its tag byte read atomically.
+    ///
+    /// # Safety
+    /// `string` points to an initialized record that stays allocated during the call.
+    #[inline(always)]
+    pub(crate) unsafe fn concurrent_has_parts(string: *const Self, parts_tag: u8) -> bool {
+        // SAFETY: the caller's contract; the tag is the record's first byte.
+        unsafe { std::sync::atomic::AtomicU8::from_ptr(string.cast::<u8>().cast_mut()).load(std::sync::atomic::Ordering::Relaxed) == parts_tag }
+    }
+
+    /// Visits the part ids of the string record at `string` for a concurrent marker, read with
+    /// relaxed atomic loads while the mutator may write it out; possibly a torn read, so the
+    /// ids may be another state's bytes. `parts_tag` is `JsString::parts_tag()`.
+    ///
+    /// # Safety
+    /// `string` points to an initialized record that stays allocated during the call.
+    pub(crate) unsafe fn concurrent_parts(string: *const Self, parts_tag: u8, visit: impl FnMut(u32)) {
+        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+        const WORDS: usize = size_of::<JsString>() / size_of::<u64>();
+        const _: () = assert!(size_of::<JsString>() % size_of::<u64>() == 0 && align_of::<JsString>() >= align_of::<u64>());
+        const _: () = assert!(super::native_string::TAG_OFFSET == 0);
+        let mut copy = std::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: the record is word aligned and sized; the copy is a local buffer.
+        unsafe {
+            let (source, target) = (string.cast::<u64>().cast_mut(), copy.as_mut_ptr().cast::<u64>());
+            for word in 0..WORDS {
+                target.add(word).write(AtomicU64::from_ptr(source.add(word)).load(Relaxed));
+            }
+            // Only a parts tag makes the copy a valid string whatever its other bytes: a parts
+            // string's payload is bytes alone.
+            if *copy.as_ptr().cast::<u8>() != parts_tag {
+                return;
+            }
+            let copy = std::mem::ManuallyDrop::new(copy.assume_init());
+            if let Some(parts) = copy.parts() {
+                parts.for_each_text(visit);
+            }
+        }
+    }
+
     /// A string that is these parts' text, not yet written out.
     #[inline] pub(crate) fn from_parts(parts: Parts) -> Self {
         Self { repr: Repr::Flat(FlatUnits::Parts(parts)) }

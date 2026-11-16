@@ -2,6 +2,9 @@
 
 use super::numeric::selectors;
 use super::{WasmTrap, WasmType, WasmValue};
+use crate::staged::ConcreteWasm;
+use crate::staged::wasm::Width;
+use crate::staged::wasm_float::{Float, Truncation, convert};
 
 macro_rules! scalar_conversions {
     ($value:ident; $($name:ident, $wasm:ident, $source:ident => $result:ident, $body:expr;)+) => {
@@ -26,11 +29,52 @@ macro_rules! scalar_conversions {
     };
 }
 
+impl ScalarConversionOperator {
+    /// The integers a trapping float-to-integer conversion may produce; `None` for every other
+    /// conversion, which cannot trap.
+    pub(crate) fn truncation(self) -> Option<Truncation> {
+        let signed = match self {
+            Self::TruncateF32SignedI32
+            | Self::TruncateF64SignedI32
+            | Self::TruncateF32SignedI64
+            | Self::TruncateF64SignedI64 => true,
+            Self::TruncateF32UnsignedI32
+            | Self::TruncateF64UnsignedI32
+            | Self::TruncateF32UnsignedI64
+            | Self::TruncateF64UnsignedI64 => false,
+            _ => return None,
+        };
+        Some(Truncation {
+            float: Float::of(self.source_type())?,
+            width: Width::of(self.result_type())?,
+            signed,
+        })
+    }
+
+    /// `apply` through the staged rules (`staged::wasm_float`).
+    #[inline(always)]
+    pub(crate) fn evaluate(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
+        let word = convert(&mut ConcreteWasm, self, value.word())?;
+        Ok(WasmValue::from_bits(self.result_type(), word))
+    }
+}
+
 /// The truncated values a `bits`-wide integer represents: `lower <= value <
 /// limit`.
 pub(crate) fn truncation_bounds(bits: u32, signed: bool) -> (f64, f64) {
     let limit = 2.0_f64.powi(if signed { bits as i32 - 1 } else { bits as i32 });
     (if signed { -limit } else { 0.0 }, limit)
+}
+
+/// `value` truncated toward zero and clamped to the `bits`-wide integers; a NaN is 0.
+pub(crate) fn saturate(value: f64, bits: u32, signed: bool) -> i64 {
+    match (bits, signed) {
+        (i32::BITS, true) => i64::from(value as i32),
+        (i32::BITS, false) => i64::from(value as u32 as i32),
+        (i64::BITS, true) => value as i64,
+        (i64::BITS, false) => value as u64 as i64,
+        _ => unreachable!("Wasm integer width"),
+    }
 }
 
 fn trunc_to_integer(
@@ -40,14 +84,7 @@ fn trunc_to_integer(
     saturating: bool,
 ) -> Result<i64, WasmTrap> {
     if saturating {
-        let converted = match (bits, signed) {
-            (i32::BITS, true) => i64::from(value as i32),
-            (i32::BITS, false) => i64::from(value as u32 as i32),
-            (i64::BITS, true) => value as i64,
-            (i64::BITS, false) => value as u64 as i64,
-            _ => unreachable!("Wasm integer width"),
-        };
-        return Ok(converted);
+        return Ok(saturate(value, bits, signed));
     }
     if value.is_nan() {
         return Err(WasmTrap::InvalidConversionToInteger);

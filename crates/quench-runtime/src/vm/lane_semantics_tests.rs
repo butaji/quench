@@ -90,3 +90,61 @@ print(JSON.stringify(out));
     vm.execute(&Engine::specialize(source, "symbol-accessor-shapes.js").unwrap()).unwrap();
     assert_eq!(output.borrow().as_slice(), [r#"[1,2,"get1","get2",1,"now-getter",2,"undefined",3]"#]);
 }
+
+#[test]
+fn arrows_read_their_makers_this_through_field_bases() {
+    // An arrow's `this.x` compiles to a field read of base `this` with no `LoadThis`; the arrow
+    // still reads its maker's `this`, so it keeps its maker's environment (WSL's
+    // `name => this._program.functions.get(name)` read undefined when it did not).
+    let source = r#"
+class Checker {
+  constructor() { this._program = { functions: new Map([["f", 1]]) }; this.n = 2; }
+  check(resolve) { return resolve("f"); }
+  visit() { return this.check(name => this._program.functions.get(name)); }
+  sum() { return [1, 2].map(x => x + this.n).join(); }
+  nested() { return (() => () => this.n * 10)()(); }
+}
+const c = new Checker();
+let out = '';
+for (let i = 0; i < 5000; i++) {
+  const row = [c.visit(), c.sum(), c.nested()].join();
+  if (i % 2500 === 0) out += row + ';';
+}
+print(out);
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "arrow-this-fields.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1,3,4,20;1,3,4,20;"]);
+}
+
+#[test]
+fn hot_typed_array_length_reads_follow_detach_and_resize() {
+    // A hot `length` read answers from the typed view cache while the view epoch holds;
+    // detaching (`transfer`) and resizing end it, and a length-tracking view never caches.
+    let source = r#"
+const out = [];
+const buf = new ArrayBuffer(64);
+const a = new Uint16Array(buf);
+let sum = 0;
+for (let i = 0; i < 5000; i++) { sum += a.length; a[i % a.length] = i; }
+out.push(sum, a.length);
+const moved = buf.transfer(128);
+out.push(a.length, a.byteLength, new Uint16Array(moved).length);
+const rab = new ArrayBuffer(16, { maxByteLength: 64 });
+const t = new Uint8Array(rab);
+let s2 = 0;
+for (let i = 0; i < 3000; i++) { s2 += t.length; t[0] = i; }
+rab.resize(48);
+out.push(s2, t.length);
+const fixed = new Uint8Array(rab, 8, 4);
+for (let i = 0; i < 3000; i++) { s2 += fixed.length; fixed[0] = 1; }
+rab.resize(10);
+out.push(s2, fixed.length);
+print(out.join(','));
+"#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&Engine::specialize(source, "typed-length-epoch.js").unwrap()).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["160000,32,0,0,64,48000,48,60000,0"]);
+}

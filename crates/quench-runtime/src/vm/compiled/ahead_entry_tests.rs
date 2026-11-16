@@ -50,14 +50,14 @@ fn trampoline() -> (CodeMemory, crate::NativeJsFunctionEntry) {
         body: &mut |builder, words| {
             let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
                 lane_body_signature(isa.pointer_type(), isa.default_call_conv())));
-            let target = builder.ins().iconst(isa.pointer_type(), stub_body as usize as i64);
+            let target = builder.ins().iconst(isa.pointer_type(), stub_body as *const () as usize as i64);
             let call = builder.ins().call_indirect(signature, target, words);
             let results = builder.inst_results(call);
             (results[0], results[1])
         },
         fallback: &mut |builder, [context, pc, result]| {
             let signature = *fallback_signature.get_or_insert_with(|| builder.import_signature(native_js_operation_signature(&*isa)));
-            let target = builder.ins().iconst(isa.pointer_type(), stub_fallback as usize as i64);
+            let target = builder.ins().iconst(isa.pointer_type(), stub_fallback as *const () as usize as i64);
             let call = builder.ins().call_indirect(signature, target, &[context, pc, result, result]);
             builder.inst_results(call)[0]
         },

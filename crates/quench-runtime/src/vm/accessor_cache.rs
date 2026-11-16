@@ -6,15 +6,24 @@ impl<H: Host> Vm<H> {
     /// The getter a field read of `atom` at cache index `site` calls on `object`, when the
     /// site's recorded accessor still answers it.
     pub(super) fn cached_field_getter(&self, object: Value, atom: Atom, site: usize) -> Option<Value> {
+        if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
+            return None;
+        }
+        // The fact table first: one probe for the receiver's layout, whatever entries the
+        // site rotates through.
+        if let Some(receiver) = self.heap.object_record(object)
+            && let Some(getter) = self.fact_accessor(receiver, atom, false)
+        {
+            return getter;
+        }
         self.cached_field_accessor(object, atom, site)?.0
     }
 
     /// Whether the accessor the site's recorded entry answers for `object` lives on its
     /// immediate prototype, whose values a hint's watch covers (`hold_getter_hint`).
     pub(super) fn cached_accessor_on_prototype(&self, object: Value, atom: Atom, site: usize) -> bool {
-        self.accessor_receiver(object, atom)
-            .and_then(|receiver| Some((self.accessor_entry(receiver, site)?, receiver.proto())))
-            .is_some_and(|(cache, prototype)| cache.holder != OWN_ACCESSOR && cache.holder == prototype)
+        self.receiver_entry(object, atom, site)
+            .is_some_and(|(receiver, cache)| cache.holder != OWN_ACCESSOR && cache.holder == receiver.proto())
     }
 
     /// The accessor functions the site's recorded entry answers for `object` (a store's
@@ -24,8 +33,13 @@ impl<H: Host> Vm<H> {
         if self.accessor_field_indices.get(site) == NO_ACCESSOR_FIELD {
             return None;
         }
-        let receiver = self.accessor_receiver(object, atom)?;
-        let cache = self.accessor_entry(receiver, site)?;
+        let (receiver, cache) = self.receiver_entry(object, atom, site)?;
+        self.entry_accessors(cache, receiver)
+    }
+
+    /// The accessor functions `cache` names, which proves `receiver`'s shape and chain.
+    #[inline(always)]
+    fn entry_accessors(&self, cache: &AccessorFieldCache, receiver: &Object) -> Option<ShapeAccessors> {
         let holder = if cache.holder == OWN_ACCESSOR {
             (!receiver.has_side_descriptors()).then_some(receiver)?
         } else {
@@ -44,32 +58,73 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The object whose shape an accessor entry may match. An ordinary object's is its own:
-    /// an entry is recorded only for a shape `shape_property_lookup` answers (never a private
-    /// name's, a dictionary's or a module namespace's, whose shape is its own), so a shape
-    /// that matches one has been proved, and the lookup's checks are not made again. Any other
-    /// receiver is checked as it was recorded.
-    #[inline(always)]
-    fn accessor_receiver(&self, object: Value, atom: Atom) -> Option<&Object> {
-        match self.heap.object_record(object) {
-            Some(record) => Some(record),
-            None => self.shape_property_lookup(object, atom),
+    /// `object`'s record and the site's entry for it, while the prototype layout epoch it was
+    /// proved under still holds. An ordinary receiver matches its entry by layout, which holds
+    /// its shape and prototype: a recorded layout is of a shaped receiver outside dictionary
+    /// mode, so a match proves what `shape_property_lookup` would.
+    fn receiver_entry(&self, object: Value, atom: Atom, site: usize) -> Option<(&Object, &AccessorFieldCache)> {
+        let epoch = crate::heap::prototype_layout_epoch();
+        if let Some(receiver) = self.heap.object_record(object) {
+            let layout = receiver.layout_id();
+            return Some((receiver, self.site_entry(site, |cache| layout == cache.layout && epoch == cache.epoch)?));
         }
+        let receiver = self.shape_property_lookup(object, atom)?;
+        let (shape, proto) = (receiver.shape(), receiver.proto());
+        Some((receiver, self.site_entry(site, |cache| shape == cache.receiver && proto == cache.prototype && epoch == cache.epoch)?))
     }
 
-    /// The site's entry for a receiver of `receiver`'s shape and prototype, while the
-    /// prototype layout epoch it was proved under still holds.
-    #[inline(always)]
-    fn accessor_entry(&self, receiver: &Object, site: usize) -> Option<&AccessorFieldCache> {
+    /// The newest of the site's entries that `matches`.
+    fn site_entry(&self, site: usize, matches: impl Fn(&AccessorFieldCache) -> bool) -> Option<&AccessorFieldCache> {
         let mut index = self.accessor_field_indices.get(site);
-        let epoch = crate::heap::prototype_layout_epoch();
         while index != NO_ACCESSOR_FIELD {
             let cache = self.accessor_fields.get(index as usize)?;
-            if receiver.shape() == cache.receiver && receiver.proto() == cache.prototype && epoch == cache.epoch {
+            if matches(cache) {
                 return Some(cache);
             }
             index = cache.next;
         }
         None
+    }
+
+    /// A getter read at cache index `site` that the site's newest accessor entry memoizes
+    /// (`memoize_getter_answer`): the getter's own field read of the receiver, made where the
+    /// entry still proves `object`'s shape, prototype and chain and its holder still holds
+    /// that getter. `None` leaves the read to `cached_field_getter`.
+    #[inline(always)]
+    pub(super) fn memoized_getter_answer(&self, object: Value, site: usize) -> Option<Value> {
+        let entry = self.accessor_fields.get(self.accessor_field_indices.get(site) as usize)?;
+        let (getter, answer) = (entry.getter, entry.answer);
+        if getter.is_undefined() {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        if receiver.shape() != entry.receiver
+            || receiver.proto() != entry.prototype
+            || crate::heap::prototype_layout_epoch() != entry.epoch
+            || self.entry_accessors(entry, receiver)?.0? != getter
+        {
+            return None;
+        }
+        self.record_field_entry_hit(answer, object)
+    }
+
+    /// Records at the site's newest accessor entry, where it proves `object`, that its
+    /// getter `getter` returns the field read `answer` of the receiver
+    /// (`memoized_getter_answer`).
+    pub(super) fn memoize_getter_answer(&mut self, object: Value, site: usize, getter: Value, answer: FieldCache) {
+        let Some(receiver) = object.direct_object_index().map(|id| self.heap.object_record_by_id(id)) else {
+            return;
+        };
+        let (shape, proto) = (receiver.shape(), receiver.proto());
+        if self.shape_is_dictionary(shape) {
+            return;
+        }
+        let index = self.accessor_field_indices.get(site);
+        if let Some(entry) = self.accessor_fields.get_mut(index as usize)
+            && entry.receiver == shape
+            && entry.prototype == proto
+        {
+            (entry.getter, entry.answer) = (getter, answer);
+        }
     }
 }

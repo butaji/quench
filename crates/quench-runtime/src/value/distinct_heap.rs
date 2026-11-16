@@ -30,16 +30,16 @@ impl Value {
     /// (legacy slot cells) are equal by contents; every other value equals only itself, which
     /// distinctness decided.
     #[inline(always)] pub(crate) fn distinct_heap_pair(self, other: Self) -> DistinctHeapPair {
-        debug_assert!(self != other);
-        let (family, other_family) = (self.0 & HEAP_FAMILY_MASK, other.0 & HEAP_FAMILY_MASK);
-        if family != other_family {
-            DistinctHeapPair::Unequal
-        } else if family == TAG_HEAP | DIRECT_STRING_HANDLE_BITS {
-            DistinctHeapPair::Strings
-        } else if family == TAG_HEAP {
-            DistinctHeapPair::Slots
-        } else {
-            DistinctHeapPair::Unequal
+        debug_assert!(self.is_heap() && other.is_heap() && self != other);
+        // Both words carry the heap tag, so their families agree when the xor of their
+        // reference bits is zero, and one word's reference bits then name the pair's family.
+        if (self.0 ^ other.0) & HEAP_REFERENCE_BITS != 0 {
+            return DistinctHeapPair::Unequal;
+        }
+        match self.0 & HEAP_REFERENCE_BITS {
+            0 => DistinctHeapPair::Slots,
+            DIRECT_STRING_HANDLE_BITS => DistinctHeapPair::Strings,
+            _ => DistinctHeapPair::Unequal,
         }
     }
 }

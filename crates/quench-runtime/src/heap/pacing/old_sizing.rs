@@ -6,6 +6,12 @@
 use super::Ratio;
 use std::time::Instant;
 
+/// Work-clock costs, in nanoseconds of a typical host: a full collection's per live weight
+/// kept and the mutator's per weight allocated (median of Splay's full intervals, no-JIT,
+/// x86_64, 2026-11-15: 16-95 ns per live weight, 126-214 ns per allocated weight).
+pub(super) const WORK_GC_PER_LIVE: usize = 35;
+pub(super) const WORK_MUTATOR_PER_ALLOCATED: usize = 170;
+
 /// The unit of the growth bounds: eighths of what the last full collection kept.
 const GROWTH_DENOMINATOR: usize = 8;
 
@@ -31,6 +37,10 @@ pub(crate) struct OldGenerationSizing {
     /// below which it tightens: where collections cost little, a tighter headroom buys memory.
     pub(super) headroom_widen_from: Ratio,
     pub(super) headroom_tighten_below: Ratio,
+    /// The most garbage, in resident bytes, a full-only interval may let accumulate, in
+    /// eighths of the record and payload bytes the last full collection kept
+    /// (`GenerationalPacing::plan`); zero leaves the time-share headroom alone.
+    pub(super) resident_headroom_eighths: u32,
 }
 
 /// Where a heap's sizing stands and the clock readings that move it.
@@ -75,7 +85,12 @@ impl OldGenerationSizing {
 
     /// After a collection, when `full`: widens or tightens the growth one eighth from the
     /// share of the time since the previous full collection's end that this one took.
-    pub(super) fn after_collection(&self, full: bool, state: &mut OldGenerationState) {
+    ///
+    /// Under the work clock (`crate::clock::is_work`) the shares come from work, not wall time:
+    /// the full collection costs `WORK_GC_PER_LIVE` per live weight it kept (`live_weight`) and
+    /// the mutator `WORK_MUTATOR_PER_ALLOCATED` per weight allocated since the previous full
+    /// collection (`allocated`), so the same program makes the same decisions on any host.
+    pub(super) fn after_collection(&self, full: bool, state: &mut OldGenerationState, allocated: usize, live_weight: usize) {
         if !full {
             return;
         }
@@ -85,9 +100,14 @@ impl OldGenerationSizing {
         let (Some(started), Some(previous)) = (started, previous) else {
             return;
         };
-        let full = now.saturating_duration_since(started).as_nanos();
-        let cycle = now.saturating_duration_since(previous).as_nanos();
-        let (full, cycle) = (usize::try_from(full).unwrap_or(usize::MAX), usize::try_from(cycle).unwrap_or(usize::MAX));
+        let (full, cycle) = if crate::clock::is_work() {
+            let full = live_weight.saturating_mul(WORK_GC_PER_LIVE);
+            (full, allocated.saturating_mul(WORK_MUTATOR_PER_ALLOCATED).saturating_add(full))
+        } else {
+            let full = now.saturating_duration_since(started).as_nanos();
+            let cycle = now.saturating_duration_since(previous).as_nanos();
+            (usize::try_from(full).unwrap_or(usize::MAX), usize::try_from(cycle).unwrap_or(usize::MAX))
+        };
         let range = self.widest_eighths.saturating_sub(self.tightest_eighths);
         if full >= self.widen_from.of(cycle) {
             state.tightened = state.tightened.saturating_sub(1);
@@ -117,6 +137,7 @@ pub(super) const THROUGHPUT_OLD_SIZING: OldGenerationSizing = OldGenerationSizin
     headroom_step_eighths: THROUGHPUT_FULL_ONLY_HEADROOM_STEP,
     headroom_widen_from: THROUGHPUT_FULL_ONLY_TIME_TARGET,
     headroom_tighten_below: THROUGHPUT_FULL_ONLY_TIME_TARGET,
+    resident_headroom_eighths: THROUGHPUT_FULL_ONLY_RESIDENT_HEADROOM_EIGHTHS,
 };
 /// The share of time full collections may take before the old generation widens: G1's
 /// default `GCTimeRatio` of 12, one part in thirteen.
@@ -133,6 +154,7 @@ pub(super) const MEMORY_FIRST_OLD_SIZING: OldGenerationSizing = OldGenerationSiz
     headroom_step_eighths: 0,
     headroom_widen_from: THROUGHPUT_FULL_TIME_TARGET,
     headroom_tighten_below: THROUGHPUT_FULL_TIME_TARGET,
+    resident_headroom_eighths: 0,
 };
 
 /// Allocation between full collections, as a share of the live set, once most of each young
@@ -151,6 +173,13 @@ const THROUGHPUT_FULL_ONLY_HEADROOM_TIGHTEST: u32 = 12;
 const THROUGHPUT_FULL_ONLY_HEADROOM_STEP: u32 = 4;
 /// The share of time a full collection takes at which the headroom turns from tightening to widening: a quarter.
 const THROUGHPUT_FULL_ONLY_TIME_TARGET: Ratio = Ratio::new(1, 4);
+/// Garbage between full-only collections, in resident bytes, at most this many eighths of
+/// what the last one kept; zero is off. The time-share headroom is counted in records, and
+/// its three live sets of weight reached about 2.15 live sets of bytes on V8-v7 Splay. Splay
+/// no-JIT max RSS by eighths (experiment profile, 2026-11-14): off 73.4 MB, 12: 64, 8: 52,
+/// 6: 47, 4: 40.4, at Scores falling with the GC share (stop-the-world full collections
+/// mark the whole live set), so it stays off until full collections cost less.
+const THROUGHPUT_FULL_ONLY_RESIDENT_HEADROOM_EIGHTHS: u32 = 0;
 
 /// Memory-first lets half a live set of allocation pass between full collections once most of
 /// each young generation survives, not a whole one, which let the heap reach twice its live
@@ -177,6 +206,7 @@ mod tests {
         headroom_step_eighths: 4,
         headroom_widen_from: Ratio::new(1, 4),
         headroom_tighten_below: Ratio::new(1, 4),
+        resident_headroom_eighths: 0,
     };
 
     /// A full collection that took `full` of a cycle of `cycle` since the last one ended.
@@ -184,14 +214,14 @@ mod tests {
         let now = Instant::now();
         state.last_full_end = now.checked_sub(cycle);
         state.full_started = now.checked_sub(full);
-        SIZING.after_collection(true, state);
+        SIZING.after_collection(true, state, 0, 0);
     }
 
     #[test]
     fn cheap_full_collections_tighten_to_the_bound_and_costly_ones_widen() {
         let mut state = OldGenerationState::default();
         assert_eq!(SIZING.growth(&state), Ratio::new(8, 8));
-        SIZING.after_collection(false, &mut state);
+        SIZING.after_collection(false, &mut state, 0, 0);
         assert_eq!(SIZING.growth(&state), Ratio::new(8, 8), "a minor collection moves nothing");
         for _ in 0..8 {
             full_taking(&mut state, Duration::from_millis(1), Duration::from_secs(1));
@@ -219,7 +249,7 @@ mod tests {
     fn the_first_full_collection_only_starts_the_clock() {
         let mut state = OldGenerationState::default();
         state.start_full();
-        SIZING.after_collection(true, &mut state);
+        SIZING.after_collection(true, &mut state, 0, 0);
         assert_eq!(SIZING.growth(&state), Ratio::new(8, 8));
         assert!(state.last_full_end.is_some());
     }

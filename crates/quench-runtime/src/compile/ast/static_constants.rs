@@ -83,6 +83,7 @@ impl FunctionCompiler<'_, '_> {
         pattern: &BindingPattern<'_>,
         init: &Expression<'_>,
     ) {
+        self.record_literal_singleton(pattern, init);
         let BindingPattern::BindingIdentifier(name) = pattern else { return };
         if kind != VariableDeclarationKind::Const || self.dynamic_eval {
             return;
@@ -104,7 +105,54 @@ impl FunctionCompiler<'_, '_> {
             return None;
         }
         let atom = self.owner.atom(name);
-        self.binding_scope(atom)?.constants.as_ref()?.get(&atom).cloned()
+        if let Some(scope) = self.binding_scope(atom) {
+            return scope.constants.as_ref()?.get(&atom).cloned();
+        }
+        self.folded_capture(atom)
+    }
+
+    /// The constant a read of `atom` here takes where it resolves to an enclosing function's
+    /// literal singleton (`early::literal_singleton_vars`) that this closure was created after
+    /// the initialization of: no binding of this function shadows it, and no `with` or eval
+    /// can rebind it.
+    pub(super) fn folded_capture(&mut self, atom: Atom) -> Option<Constant> {
+        if self.with_depth != 0 || self.dynamic_eval || self.is_compiler_binding(atom) {
+            return None;
+        }
+        let atom = self.parameter_binding_atom(atom);
+        if self.active_lexical_binding(atom).is_some()
+            || self.local_slots.contains_key(&atom)
+            || self.function_scope.contains(&atom)
+        {
+            return None;
+        }
+        self.scopes.fold(atom)
+    }
+
+    /// Reads the capture `atom` names at `depth` and `slot` into a new register: its constant
+    /// where the binding is a literal singleton this closure was created after
+    /// (`folded_capture`), else a `LoadCapture`.
+    pub(super) fn capture_read(&mut self, atom: Atom, depth: usize, slot: u16) -> Register {
+        if let Some(constant) = self.folded_capture(atom) {
+            return self.literal(constant);
+        }
+        let dst = self.reg();
+        self.emit(Op::LoadCapture, dst, 0, 0, crate::bytecode::ImmediateLayout::capture_immediate(depth, slot));
+        dst
+    }
+
+    /// Records `var name = literal` after its initialization where it is one of this
+    /// function's literal singletons: closures created from here on fold its reads.
+    fn record_literal_singleton(&mut self, pattern: &BindingPattern<'_>, init: &Expression<'_>) {
+        let BindingPattern::BindingIdentifier(name) = pattern else { return };
+        if self.literal_singletons.binary_search(&name.span.start).is_err() {
+            return;
+        }
+        let Some(constant) = binding_time::expression(init) else { return };
+        let atom = self.owner.atom(name.name.as_str());
+        let mut folds = self.capture_folds.to_vec();
+        folds.push((atom, constant));
+        self.capture_folds = folds.into();
     }
 
     /// The innermost lexical scope binding `atom` that a read here resolves to, as
@@ -169,6 +217,12 @@ mod tests {
             ("function f(){ let s = 0; for (let i = 0; i < 3; i++) { const k = 2; s += k * i } return s } print(f());", "6"),
             ("function f(){ const s = 'a' + 'b'; const t = s + 'c'; return t === 'abc' ? 1 : 0 } print(f());", "1"),
             ("function f(){ const x = 3; return eval('x') * 2 } print(f());", "6"),
+            // Literal singletons: a hoisted closure reads the binding before its declaration
+            // ran, a later one the literal; reassigned, shadowed or evaled names stay reads.
+            ("function f(){ function e(){ return X } var a = e(); var X = 4; var g = function(){ return X + 1 }; \
+              return [a, e(), g()].join() } print(f() + f());", ",4,5,4,5"),
+            ("function f(){ var Z = 1; Z = 2; var Q = 3; return function(){ return Z + function(Q){ return Q }(9) }() } print(f());", "11"),
+            ("function f(){ var Y = 1; return function(){ return eval('var Y = 7'), Y }() } print(f());", "7"),
         ] {
             assert_eq!(answer(source), expected, "{source}");
         }

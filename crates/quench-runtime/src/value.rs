@@ -7,6 +7,16 @@ pub(crate) const TAG_NULL: u64 = 0x7ffa_0000_0000_0000;
 pub(crate) const TAG_BOOL: u64 = 0x7ffb_0000_0000_0000;
 const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
+/// The high dword of every int32's word (`Registers::int` compares it in memory).
+pub(crate) const INT_TAG_HIGH: u32 = (TAG_INT >> 32) as u32;
+
+/// Whether a word's high 16 bits (`TAG_SHIFT` is 48) name a tag rather than a double's bits:
+/// `Value::is_tagged` from the tag field alone, for a reader that loads only that half-word.
+#[inline(always)]
+pub(crate) fn tag_field_is_tagged(field: u16) -> bool {
+    const { assert!(TAG_SHIFT == 48) };
+    u32::from(field).wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
+}
 pub(crate) const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 
@@ -24,8 +34,7 @@ use number_conversion::truncate_to_i32;
 const FIRST_TAG: u64 = TAG_UNDEFINED;
 /// The tag field's position: above the payload.
 const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
-/// ECMAScript Word32 shifts use the low log2(Word32::BITS) count bits.
-pub(crate) const WORD32_SHIFT_MASK: u32 = u32::BITS - 1;
+pub(crate) use crate::vm::operations::WORD32_SHIFT_MASK;
 const LAST_TAG: u64 = TAG_DELETED;
 const _: () = {
     let tags = [
@@ -73,6 +82,11 @@ pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PR
 const DIRECT_V128_HANDLE_BIT: u64 = 1 << 44;
 /// The payload bits that code a heap value's reference family (`Value::heap_reference`).
 const HEAP_REFERENCE_BITS: u64 = HEAP_FAMILY_BITS | DIRECT_V128_HANDLE_BIT;
+/// Where a `Value::known_closure` keeps its function id: the payload bits above the 32-bit
+/// slot index and below `HEAP_REFERENCE_BITS`.
+const KNOWN_CLOSURE_FUNCTION_SHIFT: u32 = u32::BITS;
+const KNOWN_CLOSURE_FUNCTION_MASK: u64 = (1 << (DIRECT_V128_HANDLE_BIT.trailing_zeros() - KNOWN_CLOSURE_FUNCTION_SHIFT)) - 1;
+const KNOWN_CLOSURE_FUNCTION_BITS: u64 = KNOWN_CLOSURE_FUNCTION_MASK << KNOWN_CLOSURE_FUNCTION_SHIFT;
 /// The bits that name a heap value's reference family.
 const HEAP_FAMILY_MASK: u64 = TAG_MASK | HEAP_REFERENCE_BITS;
 
@@ -123,8 +137,8 @@ impl NarrowLayout {
     pub(crate) const CODE_MASK: u32 = (1 << NARROW_CODE_BITS) - 1;
     pub(crate) const INDEX_SHIFT: u32 = NARROW_INDEX_SHIFT;
     pub(crate) const INDEX_BITS: u32 = NARROW_INDEX_BITS;
-    pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
-    pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
+    #[cfg(test)] pub(crate) const DIRECT_OBJECT_UPPER: u64 = DIRECT_OBJECT_UPPER;
+    #[cfg(test)] pub(crate) const DIRECT_OBJECT_CODE: u32 = DIRECT_OBJECT_NARROW_CODE;
 
     /// Only codes selected by the decoder belong in a native image.
     #[cfg(feature = "aot")]
@@ -159,6 +173,9 @@ pub(crate) const NARROW_HEAP_FAMILIES: usize = 1 << HEAP_FAMILY_BITS.count_ones(
 const _: () = assert!(HEAP_FAMILY_BITS >> HEAP_FAMILY_SHIFT == NARROW_HEAP_FAMILIES as u64 - 1);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 4 <= 1 << NARROW_CODE_BITS);
 const _: () = assert!(NARROW_HEAP_FAMILIES + 3 + NARROW_HEAP_FAMILIES <= NARROW_LOOKUP_CODES);
+/// `null`'s narrow form, as `to_narrow` computes it.
+const NULL_NARROW: u32 = ((NARROW_HEAP_FAMILIES + 1) as u32) << NARROW_CODE_SHIFT;
+const _: () = assert!(NARROW_UPPER_WORDS[NARROW_HEAP_FAMILIES + 1] == TAG_NULL);
 /// The upper word of a direct object handle and its narrow code, its family bits, as
 /// `to_narrow`'s table names them; `to_narrow_reference` packs it without the lookup.
 pub(crate) const DIRECT_OBJECT_UPPER: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
@@ -172,6 +189,9 @@ impl Value {
         let lower = self.0 as u32;
         if upper == TAG_INT {
             return Self::narrow_integer(lower as i32);
+        }
+        if self.0 == TAG_NULL {
+            return Some(NULL_NARROW);
         }
         // The code of the value's tag plus its family bits; only an upper word the code names
         // exactly is narrow, which also rejects numbers and family bits on a constant.
@@ -195,10 +215,19 @@ impl Value {
     /// integer first, keep `to_narrow`.
     #[inline(always)] pub(crate) fn to_narrow_reference(self) -> Option<u32> {
         if self.0 & !LOWER_WORD != DIRECT_OBJECT_UPPER {
+            // `null`, a list's end, the other common value of a new object's field, takes
+            // `to_narrow`'s first test past the integer's.
             return self.to_narrow();
         }
         let lower = self.0 as u32;
         (lower >> NARROW_INDEX_BITS == 0).then_some(lower << NARROW_INDEX_SHIFT | DIRECT_OBJECT_NARROW_CODE << NARROW_CODE_SHIFT)
+    }
+
+    /// Whether `narrow` packs a heap reference (`is_heap`), read from its code alone: heap
+    /// families take the codes below `NARROW_HEAP_FAMILIES`, constants the codes above.
+    #[inline(always)] pub(crate) fn narrow_is_heap(narrow: u32) -> bool {
+        narrow & NARROW_INTEGER_FLAG == 0
+            && (narrow >> NARROW_CODE_SHIFT) & ((1 << NARROW_CODE_BITS) - 1) < NARROW_HEAP_FAMILIES as u32
     }
 
     /// The value `narrow` packs (`to_narrow`).
@@ -254,9 +283,6 @@ pub struct Value(u64);
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub(crate) struct IntegerEncoding(u64);
-
-/// The tag bits an encoded i32 carries; compiled code encodes in place.
-pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
 
 /// The encoding facts compiled code tests and builds values with (`Value::number`,
 /// `Value::is_tagged`).
@@ -346,6 +372,27 @@ impl Value {
             .then_some(self.0 as u32)
     }
 
+    /// A call-only closure of `function` over `environment`, made without a function object
+    /// (`Function::prototype_unobservable` names the functions whose closure value only ever
+    /// reaches a binding read as a callee): the environment's legacy slot reference with the
+    /// function id in the payload bits between the slot index and the reference family, which
+    /// no other heap value sets. The collector reads it as the environment it names; a call
+    /// enters `function` of the running program over that environment, and any other consumer
+    /// first makes the real closure (`Vm::known_closure_function`). `None` when the
+    /// environment is not a legacy slot or the id does not fit.
+    #[inline(always)] pub(crate) fn known_closure(function: u32, environment: Self) -> Option<Self> {
+        let fits = function != 0 && u64::from(function) <= KNOWN_CLOSURE_FUNCTION_MASK;
+        (fits && environment.0 & (TAG_MASK | HEAP_REFERENCE_BITS | KNOWN_CLOSURE_FUNCTION_BITS) == TAG_HEAP)
+            .then(|| Self(environment.0 | (u64::from(function) << KNOWN_CLOSURE_FUNCTION_SHIFT)))
+    }
+
+    /// The function id and environment of a `known_closure`.
+    #[inline(always)] pub(crate) fn as_known_closure(self) -> Option<(u32, Self)> {
+        let function = (self.0 >> KNOWN_CLOSURE_FUNCTION_SHIFT) & KNOWN_CLOSURE_FUNCTION_MASK;
+        (self.0 & (TAG_MASK | HEAP_REFERENCE_BITS) == TAG_HEAP && function != 0)
+            .then(|| (function as u32, Self(self.0 & !KNOWN_CLOSURE_FUNCTION_BITS)))
+    }
+
     /// The owner environment of a `shared_environment_slot`.
     #[inline(always)] pub(crate) fn shared_environment_owner(self) -> Option<Self> {
         (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
@@ -357,14 +404,32 @@ impl Value {
     /// same bits, which also excludes -0 (+0's bits differ) and NaN.
     #[inline] pub fn number(value: f64) -> Self {
         let integer = truncate_to_i32(value);
-        if f64::from(integer).to_bits() == value.to_bits() {
+        let back = f64::from(integer);
+        // Ordered and unequal (`fcmp one`, one `ucomisd` and `jne`): a non-integral double,
+        // never NaN, stored as its bits with no further test. Equal or unordered is left.
+        if back < value || back > value {
+            return Self(value.to_bits());
+        }
+        if value.is_nan() {
+            std::hint::cold_path();
+            return Self(CANONICAL_NAN);
+        }
+        // Integral; -0 (which equals +0) keeps its sign as a double.
+        if integer != 0 || value.to_bits() == 0 {
             return Self::integer(integer);
         }
-        Self(if value.is_nan() {
-            CANONICAL_NAN
-        } else {
-            value.to_bits()
-        })
+        Self(value.to_bits())
+    }
+
+    /// `number` without branches, for loops over many values: the same encoding, chosen by
+    /// selects so that a column of mixed integral and fractional doubles costs the same per value.
+    #[inline(always)]
+    pub(crate) fn number_unpredictable(value: f64) -> Self {
+        let integer = truncate_to_i32(value);
+        // `&` and `|`, not `&&` and `||`: no branch between the tests.
+        let integral = (f64::from(integer) == value) & ((integer != 0) | (value.to_bits() == 0));
+        let double = std::hint::select_unpredictable(value.is_nan(), CANONICAL_NAN, value.to_bits());
+        Self(std::hint::select_unpredictable(integral, Self::integer(integer).0, double))
     }
 
     /// `number` of a value an `i32` operation overflowed to: outside the `i32` integers and
@@ -381,7 +446,18 @@ impl Value {
     /// A count or index as a Number, as `number` stores it: an integer within `i32`, without
     /// the float round trip `number` makes to find that out.
     #[inline(always)] pub(crate) fn length(value: usize) -> Self {
-        i32::try_from(value).map_or_else(|_| Self::number(value as f64), Self::integer)
+        match i32::try_from(value) {
+            Ok(value) => Self::integer(value),
+            Err(_) => Self::long_length(value),
+        }
+    }
+
+    /// `length` of a count past the `i32` integers, out of line so that `length` stays a
+    /// tag `or` wherever it is mapped over an option.
+    #[cold]
+    #[inline(never)]
+    fn long_length(value: usize) -> Self {
+        Self::number(value as f64)
     }
 
     /// A 64-bit Wasm payload held in place. Every payload outside the tag
@@ -441,6 +517,15 @@ impl Value {
         self.0 as u32
     }
 
+    /// The word's distance above the int32 tag, as an index: an int32 `k >= 0` gives `k`; a
+    /// negative int32 gives at least 2^31; any other value gives at least 2^32 or wraps past
+    /// 2^48, since no double's bits fall in the int32 tag's range (NaN is canonical). So one
+    /// unsigned compare against a bound below 2^31 is the tag test, the sign test and the
+    /// bounds test together.
+    #[inline(always)] pub(crate) fn int_key_offset(self) -> usize {
+        self.0.wrapping_sub(TAG_INT) as usize
+    }
+
     #[inline(always)] pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
         let tags = (left.0 ^ TAG_INT) | (right.0 ^ TAG_INT);
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
@@ -482,19 +567,37 @@ impl Value {
         Self(TAG_HEAP | DIRECT_PROMISE_HANDLE_BIT | u64::from(index))
     }
 
+    /// Whether the value is an int32, tested on the shifted tag field as `as_number` tests
+    /// it, so that after an `as_number` of the same value LLVM reuses that test (a double's
+    /// field already failed it) instead of masking the word again.
+    #[inline(always)] pub(crate) fn has_int_tag_field(self) -> bool {
+        (self.0 >> TAG_SHIFT) as u32 == (TAG_INT >> TAG_SHIFT) as u32
+    }
+
     /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
     /// conversion has already handled the integer pair.
     #[inline(always)]
     pub fn as_number(self) -> Option<f64> {
-        // One tag field decides all three: a double, an integer, or neither.
+        // One shifted tag field for both tests: a mask-and-compare integer test beside the
+        // range test let LLVM evaluate both with flag materializations and a select (14
+        // instructions per operand) where a double needs four.
         let field = (self.0 >> TAG_SHIFT) as u32;
-        if !Self::tagged_field(field) {
+        if !self.is_tagged() {
             Some(f64::from_bits(self.0))
-        } else if u64::from(field) == TAG_INT >> TAG_SHIFT {
+        } else if field == (TAG_INT >> TAG_SHIFT) as u32 {
             Some(f64::from(self.0 as u32 as i32))
         } else {
             None
         }
+    }
+
+    /// `as_number` without branches, for loops over many values: whether the value is a
+    /// Number, whether it is an int32 (whose payload is its low 32 bits), and its bits as a
+    /// double (the Number itself when it is a double).
+    #[inline(always)]
+    pub(crate) fn number_parts(self) -> (bool, bool, f64) {
+        let int = self.has_int_tag_field();
+        (int || !self.is_tagged(), int, f64::from_bits(self.0))
     }
 
     /// Both operands as Numbers.
@@ -660,7 +763,7 @@ impl Value {
         self.0 & TAG_MASK == TAG_DELETED
     }
 
-    #[inline(always)] fn is_tagged(self) -> bool { Self::tagged_field((self.0 >> TAG_SHIFT) as u32) }
+    #[inline(always)] pub(crate) fn is_tagged(self) -> bool { Self::tagged_field((self.0 >> TAG_SHIFT) as u32) }
 
     /// Whether a tag field (`bits >> TAG_SHIFT`) lies in the tag range: one small range test.
     #[inline(always)] fn tagged_field(field: u32) -> bool {
@@ -705,6 +808,12 @@ impl fmt::Debug for Value {
 mod tests {
     use super::Value;
     use std::mem::size_of;
+
+    #[test]
+    fn a_reference_narrowing_of_null_is_the_general_one() {
+        assert_eq!(Value::NULL.to_narrow_reference(), Value::NULL.to_narrow());
+        assert_eq!(Value::from_narrow(Value::NULL.to_narrow_reference().unwrap()), Value::NULL);
+    }
 
     #[test]
     fn to_uint32_of_large_magnitudes_is_the_value_modulo_two_to_the_32() {

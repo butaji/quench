@@ -3,7 +3,75 @@
 //! specializers use.
 
 use crate::typed_ir::Type;
-use super::region::Access;
+use super::region::{Access, Region};
+
+/// Bytes in one word of memory a stage addresses (a register of a window is one).
+const WORD_BYTES: u32 = std::mem::size_of::<u64>() as u32;
+
+/// The byte offset of word `index` from a base.
+#[inline(always)]
+pub(crate) fn word_offset(index: u16) -> i32 {
+    (u32::from(index) * WORD_BYTES) as i32
+}
+
+/// The byte count of `index` words.
+#[inline(always)]
+pub(crate) fn word_bytes(index: u16) -> u64 {
+    u64::from(u32::from(index) * WORD_BYTES)
+}
+
+/// The arguments a call passes, where the caller's registers hold them.
+#[derive(Clone, Copy)]
+pub(crate) enum Passed<'a, W> {
+    /// `count` consecutive words at `arguments`.
+    Window { arguments: W, count: u16 },
+    /// The words of the caller's file at `file` that the register numbers `registers` name, in order.
+    List { file: W, registers: &'a [u16] },
+}
+
+impl<W> Passed<'_, W> {
+    /// How many arguments are passed.
+    pub(crate) fn count(&self) -> usize {
+        match self {
+            Self::Window { count, .. } => usize::from(*count),
+            Self::List { registers, .. } => registers.len(),
+        }
+    }
+}
+
+/// `fill_window` as one store per register of the window: the prefix, the arguments the window
+/// holds room for, then `undefined`.
+#[inline(always)]
+pub(crate) fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S::Word, prefix: &[u64],
+    passed: Passed<'_, S::Word>, registers: u16) {
+    let mut next = 0_u16;
+    for bits in prefix.iter().take(usize::from(registers)) {
+        let value = stage.constant(*bits);
+        stage.store_u64(Region::Frame.mutable(), top, word_offset(next), value);
+        next += 1;
+    }
+    for index in 0..passed.count().min(usize::from(registers - next)) {
+        let value = match passed {
+            Passed::Window { arguments, .. } => stage.load_u64(Region::Frame.mutable(), arguments, word_offset(index as u16)),
+            Passed::List { file, registers } => stage.load_u64(Region::Frame.mutable(), file, word_offset(registers[index])),
+        };
+        stage.store_u64(Region::Frame.mutable(), top, word_offset(next), value);
+        next += 1;
+    }
+    for register in next..registers {
+        stage.store_u64(Region::Frame.mutable(), top, word_offset(register), undefined);
+    }
+}
+
+/// The record space whose barrier a store consults (`Stage::store_gate`): an ordinary object's, or
+/// a function record's, whose own properties are an `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`.
+/// The two spaces share one block layout, so the gate's reading is one implementation that differs
+/// only in the mark block list it starts from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum RecordSpace {
+    Object,
+    Function,
+}
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
 /// a failed guard goes. A 32-bit load zero-extends.
@@ -38,11 +106,17 @@ pub(crate) trait Stage {
     fn load_table(&mut self, at: Access, address: Self::Word) -> Self::Word;
     fn add(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn or(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
+    /// Bitwise and of two words: the b-jit stencil rows' `Stage` impl uses it, not this crate's.
+    #[allow(dead_code)]
+    fn and(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     fn add_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn mul_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn and_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn or_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Word;
     fn shr_imm(&mut self, a: Self::Word, shift: impl Into<Self::Imm>) -> Self::Word;
+    /// `a` shifted left by `b` (a word, not a site constant: a mask's bit index). As `and`.
+    #[allow(dead_code)]
+    fn shl(&mut self, a: Self::Word, b: Self::Word) -> Self::Word;
     /// The low 32 bits shifted right arithmetically, zero-extended to the word.
     fn sar32_imm(&mut self, a: Self::Word, shift: u32) -> Self::Word;
     fn eq_imm(&mut self, a: Self::Word, imm: impl Into<Self::Imm>) -> Self::Cond;
@@ -59,11 +133,41 @@ pub(crate) trait Stage {
     /// Stores the low 32 bits of `value`.
     fn store_u32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    /// A byte (`load_i8`) or a 16-bit element (`load_i16`, `load_u16`'s address need not be
+    /// aligned) as an int32 word, sign-extended; `load_i32` is `load_u32`'s bits as an int32.
+    fn load_i8(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    fn load_i16(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    fn load_i32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// A binary32 element: an `f32` word, which only `f32_to_f64` and `store_f32` take.
+    fn load_f32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// A binary64 element: an `f64` word (the IEEE bits in an interpreter's word).
+    fn load_f64(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
+    fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_f32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    fn store_f64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
+    /// The `f64` word of an `f32` word, exactly.
+    fn f32_to_f64(&mut self, a: Self::Word) -> Self::Word;
+    /// The `f32` word nearest an `f64` word, ties to even.
+    fn f64_to_f32(&mut self, a: Self::Word) -> Self::Word;
+    /// ToUint8Clamp of an `f64` word, as an int32 word: NaN is zero, the rest clamps to 0..=255
+    /// and rounds half to even.
+    fn clamp_u8(&mut self, a: Self::Word) -> Self::Word;
+    /// `store_u32` of a word no other thread observes (a loop's verified-integer slot write): a
+    /// specializer may defer it to an exit. The interpreter has nothing to defer.
+    fn store_private_u32(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word) {
+        self.store_u32(at, base, offset, value);
+    }
+    /// `store_u64` of a word no other thread observes (`store_private_u32`).
+    fn store_private_u64(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word) {
+        self.store_u64(at, base, offset, value);
+    }
     /// Whether a store of `value` into object record `record_id` may proceed unobserved and
     /// without a barrier log: no slot representation observes the write, and the record is not
     /// one the barrier logs for this value. The one place the store barrier's layout is read;
     /// a stage without that layout answers no, and the store leaves at its miss.
-    fn store_gate(&mut self, record_id: Self::Word, value: Self::Word) -> Self::Cond;
+    fn store_gate(&mut self, space: RecordSpace, record_id: Self::Word, value: Self::Word) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
     /// assumption registry retires the code when it breaks); a stage without a registry answers
@@ -79,6 +183,12 @@ pub(crate) trait Stage {
     fn any(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond;
     /// `then` where `cond` holds, else `otherwise`.
     fn pick(&mut self, cond: Self::Cond, then: Self::Cond, otherwise: Self::Cond) -> Self::Cond;
+    /// Whether both `a` and `b` hold.
+    fn all(&mut self, a: Self::Cond, b: Self::Cond) -> Self::Cond {
+        let (neither_a, neither_b) = (self.not(a), self.not(b));
+        let either = self.any(neither_a, neither_b);
+        self.not(either)
+    }
     /// ToBoolean of the Number whose IEEE double bits are `bits` (`number_is_truthy`).
     fn number_truthy(&mut self, bits: Self::Word) -> Self::Cond;
     /// Whether the shape word `shape` is one of `shapes`, sorted.
@@ -103,11 +213,35 @@ pub(crate) trait Stage {
     }
     /// Continues where `cond` holds; `None` where it does not, so nothing runs past it.
     fn guard(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()>;
+    /// `guard` on a status the code already holds (a callee's end), which dispatches and
+    /// speculates nothing: a forced-deopt switch has nothing to force here.
+    fn guard_status(&mut self, cond: Self::Cond, miss: Self::Miss) -> Option<()> { self.guard(cond, miss) }
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer
     /// never does for a value read from the heap.
     fn known(&self, cond: Self::Cond) -> Option<bool>;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
+
+    /// A call's window of `registers` words at `top`: the `prefix` constants (a bound function's
+    /// arguments), then the `passed` arguments, the rest `undefined` (a word the caller made). A
+    /// stage with a tuned fill runs it instead (`Concrete`).
+    #[inline(always)]
+    fn fill_window(&mut self, top: Self::Word, undefined: Self::Word, prefix: &[u64], passed: Passed<'_, Self::Word>,
+        registers: u16) {
+        fill_by_rows(self, top, undefined, prefix, passed, registers);
+    }
+
+    /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain
+    /// of the object record `object`, as `(decided, holds)`: at most `max_depth` links past the
+    /// first are followed, in the object record table at `records`, and a link naming no object
+    /// record (a proxy, an array, a function) or a longer chain leaves it undecided, for the
+    /// caller's residual. The default unrolls the walk, one nested conditional per link, as a
+    /// specializer emits it; a stage that knows its words loops.
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: Self::Word, object: Self::Word, target: Self::Word, max_depth: u32)
+        -> (Self::Cond, Self::Cond) where Self: Sized {
+        super::object::walk_prototypes(self, records, object, target, max_depth)
+    }
 
     // Stage v2: additions with defaults, so a stage written before them is unchanged.
 
@@ -142,8 +276,8 @@ pub(crate) trait Stage {
 pub(crate) enum Table {
     /// The property arena's values, where a flat object's run starts at its position.
     PropertyValues,
+    /// The object layout table (`heap::layouts`): a record's header words at its layout id
+    /// times eight. Entries never change once written.
+    Layouts,
 }
 
-impl Table {
-    pub(crate) const COUNT: usize = 1;
-}

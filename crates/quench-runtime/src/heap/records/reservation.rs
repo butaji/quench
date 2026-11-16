@@ -14,7 +14,7 @@ pub(super) enum Reservation {
     Failed,
 }
 
-impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
     /// Whether `base` names its address range.
     #[inline(always)]
     pub(super) fn is_reserved(&self) -> bool {
@@ -40,11 +40,15 @@ impl<T, const CAPACITY: usize> RecordSpace<T, CAPACITY> {
         };
         self.base = base;
         self.reservation = Reservation::Reserved;
+        // The block metadata never moves either: room for every block the range can hold
+        // is taken now, as address space only, and a block's pages are touched when it is
+        // made. A pointer into it (`native_mark_blocks`) stays valid for the space's life.
+        self.blocks.reserve_exact(CAPACITY / RECORDS_PER_BLOCK);
         true
     }
 }
 
-impl<T, const CAPACITY: usize> Drop for RecordSpace<T, CAPACITY> {
+impl<T, const CAPACITY: usize, const HOLE: usize> Drop for RecordSpace<T, CAPACITY, HOLE> {
     fn drop(&mut self) {
         if !self.is_reserved() {
             return;

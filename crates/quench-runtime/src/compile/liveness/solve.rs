@@ -5,7 +5,7 @@
 //! initializer, mandreel's `global_init`) is tens of megabytes at a load's peak.
 
 use super::{RegisterSet, register_bit};
-use crate::bytecode::{ControlFlowLayout, Function, Op};
+use crate::bytecode::{ControlEdge, ControlFlowLayout, Function, Op};
 use std::ops::{BitAnd, BitOr, BitOrAssign, Not};
 
 /// A set of registers, one bit each, at a width that holds every register of the function.
@@ -19,6 +19,12 @@ pub(crate) trait LiveMask:
 impl LiveMask for u64 {
     fn narrow(set: RegisterSet) -> Self {
         u64::try_from(set & RegisterSet::from(u64::MAX)).unwrap_or_default()
+    }
+}
+
+impl LiveMask for u128 {
+    fn narrow(set: RegisterSet) -> Self {
+        (set & RegisterSet::from(u128::MAX)).as_u128().unwrap_or_default()
     }
 }
 
@@ -51,16 +57,26 @@ pub(crate) fn analyze_transfers<M: LiveMask>(function: &Function, transfers: &[(
     analyze_successors(function, transfers, &crate::bytecode::Successors::of_code(function))
 }
 
-/// `analyze_successors` of wide masks, solved at one word when the function's registers fit
-/// it: most do, and a word's solve costs a fraction of a set's.
+/// `analyze_successors` of wide masks, solved at the narrowest of one word, two words or a
+/// whole set that holds the function's registers: most fit a word, and a set's eight words
+/// cost a function of 65 to 128 registers four times a pair's on every transfer.
 pub(crate) fn analyze_wide(
     function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
 ) -> Vec<RegisterSet> {
-    if usize::from(function.registers) > u64::BITS as usize {
-        return analyze_successors(function, transfers, successors);
+    match usize::from(function.registers) {
+        registers if registers <= u64::BITS as usize => analyze_narrowed::<u64>(function, transfers, successors),
+        registers if registers <= u128::BITS as usize => analyze_narrowed::<u128>(function, transfers, successors),
+        _ => analyze_successors(function, transfers, successors),
     }
-    let words: Vec<(u64, u64)> = transfers.iter().map(|(read, written)| (read.word(0), written.word(0))).collect();
-    analyze_successors(function, &words, successors).into_iter().map(RegisterSet::from).collect()
+}
+
+/// `analyze_successors` of `transfers` at the width `M`, which holds every register of the
+/// function, widened back to sets.
+fn analyze_narrowed<M: LiveMask>(
+    function: &Function, transfers: &[(RegisterSet, RegisterSet)], successors: &crate::bytecode::Successors,
+) -> Vec<RegisterSet> {
+    let narrowed: Vec<(M, M)> = transfers.iter().map(|&(read, written)| (M::narrow(read), M::narrow(written))).collect();
+    analyze_successors(function, &narrowed, successors).into_iter().map(Into::into).collect()
 }
 
 /// `analyze_transfers` over the function's successor table, `successors`.
@@ -77,7 +93,7 @@ pub(crate) fn analyze_successors<M: LiveMask>(
         M::narrow(function.local_registers.iter().filter(|entry| entry.local < function.params)
             .fold(RegisterSet::default(), |mask, entry| mask | register_bit(entry.register)))
     };
-    let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), |_| observable);
+    let mut live = analyze_graph(transfers, successors.starts(), successors.targets(), successors.edges(), |_| observable);
     add_suspended_exception_roots(function, &mut live);
     live
 }
@@ -85,8 +101,12 @@ pub(crate) fn analyze_successors<M: LiveMask>(
 /// Solve shared instruction transfers with per-PC recovery requirements.
 /// `starts` indexes a compact successor table; the final requirement describes
 /// falling off the graph. Rewritten native units add their recovery floors here.
+/// `kinds` gives how control reaches each successor (empty: every one in order). An
+/// instruction an abrupt completion may leave by a handler reaches the handler's live-in set
+/// whatever the instruction writes, since the write is not made on that edge: it is live
+/// before every instruction the handler covers.
 pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
-    transfers: &[(M, M)], starts: &[P], successors: &[P], required: impl Fn(usize) -> M,
+    transfers: &[(M, M)], starts: &[P], successors: &[P], kinds: &[ControlEdge], required: impl Fn(usize) -> M,
 ) -> Vec<M> {
     let length = transfers.len();
     assert_eq!(starts.len(), length + 1);
@@ -96,11 +116,14 @@ pub(crate) fn analyze_graph<M: LiveMask, P: Pc>(
     loop {
         let mut changed = false;
         for pc in (0..length).rev() {
-            let output = edges(pc).iter().fold(M::default(), |output, successor| {
-                output | live.get(successor.index()).copied().unwrap_or_default()
-            });
+            let (mut output, mut thrown) = (M::default(), M::default());
+            for edge in starts[pc].index()..starts[pc + 1].index() {
+                let reached = live.get(successors[edge].index()).copied().unwrap_or_default();
+                output |= reached;
+                if kinds.get(edge) == Some(&ControlEdge::Handler) { thrown |= reached; }
+            }
             let (read, written) = transfers[pc];
-            let next = required(pc) | read | (output & !written);
+            let next = required(pc) | read | thrown | (output & !written);
             if live[pc] != next {
                 live[pc] = next;
                 changed = true;

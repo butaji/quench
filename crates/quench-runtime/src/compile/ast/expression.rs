@@ -235,7 +235,7 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::CreateRegExpLiteral, destination, 0, 0, site);
         destination
     }
-    fn parameter_binding_atom(&self, atom: Atom) -> Atom {
+    pub(super) fn parameter_binding_atom(&self, atom: Atom) -> Atom {
         if self.parameter_context
             && &self.owner.atoms[atom as usize] == "arguments"
             && let Some(slot) = self.parameter_arguments_slot
@@ -321,15 +321,7 @@ impl FunctionCompiler<'_, '_> {
         } else if (compiler_binding || (self.with_depth == 0 && !self.dynamic_eval))
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
-            let dst = self.reg();
-            self.emit(
-                Op::LoadCapture,
-                dst,
-                0,
-                0,
-                crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
-            );
-            Some(dst)
+            Some(self.capture_read(atom, depth, slot))
         } else {
             None
         }

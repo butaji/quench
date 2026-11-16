@@ -16,7 +16,8 @@ script_handler! {
     fn lane_script_call_leaf<LEAF: u8, ARGC: u16>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        let target = if unsafe { (*cx).script_calls } && !lane_constructing(vm, callee) {
+        // A pending construction refuses every cached target (`LaneStack::set_refused`).
+        let target = if unsafe { (*cx).script_calls } {
             vm.linked_script_call_entry(callee, &i.call_link)
         } else {
             None
@@ -31,21 +32,15 @@ script_handler! {
         if target.entry != CallEntry::leaf(LEAF) {
             std::hint::cold_path();
             if target.entry == CallEntry::Activates {
-                lane_plain_activation!(cx, vm, r, ip, i, target, ARGC)
+                lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, false)
             }
-            let other: Handler = match target.entry.leaf_form() {
-                PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
-                CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
-                CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
-                _ => lane_script_call_full::<H>,
-            };
-            sibling!(other, r, ip, Carried::script(cx))
+            sibling!(other_leaf_form::<H, ARGC>(target.entry), r, ip, Carried::script(cx))
         }
         // Only a leaf reading its receiver binds it here; any other binds it if it
         // materializes (`lane_materialize_leaf`), which a binding past the receiver's own
         // bits could not.
         let receiver = r.get(i.c);
-        let this = if LEAF == CONTEXT_LEAF {
+        let this = if leaf_binds_this(LEAF) {
             lane_direct_call_this(vm, target, receiver)
         } else {
             lane_binds_directly(target, receiver).then_some(receiver)
@@ -55,19 +50,24 @@ script_handler! {
         };
         // The cached target is of the running program (`Vm::script_call_holds`).
         debug_assert!(!lane_crosses::<H, true>(cx, target));
+        // An admitted target runs under no `with` scope (`LaneStack::refuse_cached_calls`).
+        debug_assert!(!vm.with_scope_entered);
         if !lane_admits_window(vm, target, ARGC) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
-        vm.programs.record_js_jit_lane_entry(target.program, target.function);
+        vm.programs.record_js_jit_lane_entry(target.program(), target.function);
         let stack = &mut vm.lane_stack;
         // SAFETY: as `lane_push_passed`'s window, which the stack's length covers only once
         // the leaf is materialized: no collection runs before.
         let registers = unsafe {
-            let registers = stack.values.as_mut_ptr().add(stack.values.len());
-            fill_admitted_window(registers, usize::from(target.registers));
+            let registers = stack.values.top();
+            fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
             copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
             Registers(registers)
         };
+        if leaf_binds_this(LEAF) {
+            registers.set_this(this);
+        }
         // SAFETY: the program store keeps a derived view alive with its program; the tier
         // claims no leaf's view, so its activation starts at its first record.
         let base = unsafe { (*target.view).records() };
@@ -78,20 +78,30 @@ script_handler! {
             leaf.caller_registers = r;
             leaf.caller_base = (*cx).base;
             leaf.target = target;
-            if LEAF == CONTEXT_LEAF {
-                leaf.caller_this = (*cx).this;
-                (*cx).this = this;
-            }
-            if LEAF != PLAIN_LEAF {
-                leaf.caller_env = (*cx).env;
-                leaf.caller_capture = (*cx).capture;
-                (*cx).env = target.env;
-                (*cx).capture = target.capture;
+            leaf.caller_program = None;
+            if leaf_swaps_env(LEAF) {
+                registers.set_env(target.env);
+                registers.set_capture(target.capture);
             }
             (*cx).registers = registers;
             (*cx).base = base;
         }
         next!(cx, registers, base, Carried::script(cx))
+    }
+}
+
+/// The `lane_script_call_leaf` form of `entry` for a record of `ARGC` arguments, or
+/// `lane_script_call_full` for no leaf, out of line: a site meeting another form's callee
+/// takes it from the leaf it was made for.
+#[cold]
+#[inline(never)]
+fn other_leaf_form<H: Host, const ARGC: u16>(entry: CallEntry) -> Handler {
+    match entry.leaf_form() {
+        PLAIN_LEAF => lane_script_call_leaf::<H, PLAIN_LEAF, ARGC>,
+        CAPTURE_LEAF => lane_script_call_leaf::<H, CAPTURE_LEAF, ARGC>,
+        CONTEXT_LEAF => lane_script_call_leaf::<H, CONTEXT_LEAF, ARGC>,
+        THIS_LEAF => lane_script_call_leaf::<H, THIS_LEAF, ARGC>,
+        _ => lane_script_call_full::<H>,
     }
 }
 
@@ -119,6 +129,7 @@ pub(super) fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) 
     match entry.leaf_form() {
         CONTEXT_LEAF => leaf!(CONTEXT_LEAF),
         CAPTURE_LEAF => leaf!(CAPTURE_LEAF),
+        THIS_LEAF => leaf!(THIS_LEAF),
         _ => leaf!(PLAIN_LEAF),
     }
 }
@@ -146,16 +157,13 @@ pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value,
     }
     let call = std::mem::replace(&mut leaf.call, std::ptr::null());
     let caller = leaf.caller_registers;
+    if let Some(program) = leaf.caller_program.take() {
+        std::hint::cold_path();
+        lane_enter_program(cx, program);
+    }
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
         debug_assert!(leaf.form == form);
-        if form == CONTEXT_LEAF {
-            (*cx).this = leaf.caller_this;
-        }
-        if form != PLAIN_LEAF {
-            (*cx).env = leaf.caller_env;
-            (*cx).capture = leaf.caller_capture;
-        }
         (*cx).registers = caller;
         (*cx).base = leaf.caller_base;
         caller.set((*call).a & crate::bytecode::REGISTER_MASK, value);
@@ -172,4 +180,70 @@ pub(super) fn lane_materialize_running_leaf<H: Host>(cx: *mut LaneContext<H>) {
     if !unsafe { (*cx).leaf.call }.is_null() {
         lane_materialize_leaf(cx);
     }
+}
+
+/// A plain call record `i` of `target`, another program's leaf (`CallEntry::leaf`), run as
+/// `lane_script_call_leaf` runs its own program's: its records on a window at the lane
+/// stack's top without an activation, in its program, which its return leaves
+/// (`lane_complete_leaf`) and its materialization records as a crossing activation's
+/// (`Completion::Cross`). `None`, which changes nothing, for a call the leaf form does not
+/// make (more values than `FIXED_ARGUMENT_COPIES` or past the parameters, a receiver whose
+/// binding reads the heap, no room, a call returning its completion, refused cached calls).
+#[inline(always)]
+pub(super) fn lane_cross_leaf_call<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    i: &LaneInstruction,
+    target: &ScriptCallTarget,
+) -> Option<(Registers, Ip)> {
+    let form = target.entry.leaf_form();
+    let argc = ImmediateLayout::argument_count(i.imm());
+    if form == NOT_LEAF || argc > FIXED_ARGUMENT_COPIES || i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let vm = unsafe { vm(cx) };
+    if vm.with_scope_entered || vm.lane_stack.refuses() || !unsafe { (*cx).leaf.call }.is_null() {
+        return None;
+    }
+    let receiver = r.get(i.c);
+    let this = if leaf_binds_this(form) {
+        lane_direct_call_this(vm, target, receiver)?
+    } else {
+        lane_binds_directly(target, receiver).then_some(receiver)?
+    };
+    if !lane_admits_window(vm, target, argc) {
+        return None;
+    }
+    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    // SAFETY: as `lane_script_call_leaf`'s window.
+    let registers = unsafe {
+        let registers = vm.lane_stack.values.top();
+        fill_admitted_window(registers, usize::from(target.fill), usize::from(target.registers));
+        copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), argc);
+        Registers(registers)
+    };
+    if leaf_binds_this(form) {
+        registers.set_this(this);
+    }
+    // SAFETY: as `lane_script_call_leaf`'s first record.
+    let base = unsafe { (*target.view).records() };
+    unsafe {
+        let caller_program = (*cx).program;
+        let leaf = &mut (*cx).leaf;
+        leaf.call = ip;
+        (leaf.form, leaf.argc) = (form, argc);
+        leaf.caller_registers = r;
+        leaf.caller_base = (*cx).base;
+        leaf.target = target;
+        leaf.caller_program = Some(caller_program);
+        if leaf_swaps_env(form) {
+            registers.set_env(target.env);
+            registers.set_capture(target.capture);
+        }
+        lane_enter_program(cx, target.program());
+        (*cx).registers = registers;
+        (*cx).base = base;
+    }
+    Some((registers, base))
 }

@@ -12,6 +12,7 @@ use std::{
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
 pub mod backtrack;
+mod ascii_search;
 mod range_search;
 pub use range_search::{LiteralMatches, RangeSearcher};
 mod stack;
@@ -103,6 +104,11 @@ impl Match {
     pub fn groups(&self) -> impl Iterator<Item = Option<Range<usize>>> + '_ {
         std::iter::once(Some(self.range.clone())).chain(self.captures.iter().cloned())
     }
+    /// Drops this match, handing its captures vector to the next match found on this thread.
+    pub fn recycle(self) {
+        backtrack::recycle_captures(self.captures);
+    }
+
     pub fn named_groups(&self) -> impl Iterator<Item = (&str, Option<Range<usize>>)> + '_ {
         self.named
             .iter()
@@ -154,7 +160,7 @@ enum Expr {
 }
 
 #[derive(Clone, Copy)]
-enum Assertion {
+pub enum Assertion {
     Start,
     End,
     StartBuffer,
@@ -296,6 +302,23 @@ struct CompleteMatcher {
     /// The fewest code points any match consumes (`min_length`). A code point is at least
     /// one unit of any subject, so a search with fewer units left has no match.
     min_length: usize,
+    /// Whether some path through the pattern matches the empty string unconditionally: with
+    /// no assertion, lookaround or backreference on it. A search from any position then
+    /// succeeds at that position (`Regex::matches_at_every_start`).
+    empty_everywhere: bool,
+}
+
+/// Whether some path through `expr` matches empty whatever the subject and position: as
+/// `nullable`, but an assertion, lookaround or backreference may fail, so it never counts.
+fn empty_everywhere(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Dot | Expr::Class(_) => false,
+        Expr::Sequence(parts) => parts.iter().all(empty_everywhere),
+        Expr::Alternation(alternatives) => alternatives.iter().any(empty_everywhere),
+        Expr::Capture { body, .. } | Expr::Mode { body, .. } => empty_everywhere(body),
+        Expr::Repeat { body, min, .. } => *min == 0 || empty_everywhere(body),
+        Expr::Assertion(_) | Expr::Lookaround { .. } | Expr::Backreference(_) => false,
+    }
 }
 
 /// A searcher for a literal byte run. The searcher is several hundred bytes, so it is boxed:
@@ -332,6 +355,7 @@ impl CompleteMatcher {
         })
         .map(|bytes| literal_finder(&bytes));
         let min_length = min_length(&program);
+        let empty_everywhere = empty_everywhere(&program);
         let literal_run = range_search::LiteralRun::of(&program, &required_literal);
         let tree = OnceCell::new();
         if backtracking.is_none() {
@@ -345,6 +369,7 @@ impl CompleteMatcher {
             required_wide: OnceCell::new(),
             literal_run,
             min_length,
+            empty_everywhere,
         }
     }
 }
@@ -531,60 +556,6 @@ impl Regex {
         }
         let mut matches = if sticky { self.find_sticky_in_subject(subject, start) } else { self.find_in_subject(subject, start) };
         matches.next().map(|matched| matched.range)
-    }
-
-    /// `backtracking_find` of an ASCII subject's bytes, for a caller that holds them and needs
-    /// no `Subject`: `None` when the pattern did not compile to the backtracking matcher.
-    pub fn find_ascii(&self, bytes: &[u8], start: usize, sticky: bool, captures: bool) -> Option<Option<Match>> {
-        let program = match self.ascii_program(bytes, start, sticky)? {
-            Some(program) => program,
-            None => return Some(None),
-        };
-        Some(program.find(bytes, start, sticky, captures).map(|found| self.offset_match(found, captures)))
-    }
-
-    /// The range `find_ascii` finds, for a caller that observes no captures.
-    pub fn find_range_ascii(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<Range<usize>>> {
-        let program = match self.ascii_program(bytes, start, sticky)? {
-            Some(program) => program,
-            None => return Some(None),
-        };
-        Some(program.find_bounds(bytes, start, sticky))
-    }
-
-    /// The ranges of every match of a scan over an ASCII subject's `bytes`, passed to `found`
-    /// in order (each search starts where the one before ended, one unit on from an empty
-    /// match), in one run of the matcher's workspace; `false` where the pattern did not
-    /// compile to the backtracking matcher.
-    pub fn find_all_ranges_ascii(&self, bytes: &[u8], found: impl FnMut(Range<usize>)) -> bool {
-        match self.ascii_program(bytes, 0, false) {
-            None => false,
-            Some(None) => true,
-            Some(Some(program)) => {
-                program.find_all_bounds(bytes, 0, found);
-                true
-            }
-        }
-    }
-
-    /// The backtracking program to run over an ASCII subject's `bytes` from `start`, or
-    /// `Some(None)` where the search finds nothing before a run: the rest is shorter than
-    /// any match, or lacks the literal every match consumes (a sticky search tries the one
-    /// start, whose start-set check costs less than scanning the remainder for it, and a
-    /// program that begins with the literal scans for it itself, `Program::searches_prefix`).
-    /// `None` where the pattern did not compile to the backtracking matcher.
-    fn ascii_program(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<&backtrack::Program>> {
-        let complete = self.complete();
-        let program = complete.backtracking.as_ref()?;
-        if start > bytes.len() || bytes.len() - start < complete.min_length {
-            return Some(None);
-        }
-        if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
-            if !program.searches_prefix(literal.needle()) && literal.find(&bytes[start..]).is_none() {
-                return Some(None);
-            }
-        }
-        Some(Some(program))
     }
 
     /// The match the compiled backtracking matcher finds from `start` (only at `start` when
@@ -2759,15 +2730,22 @@ fn canonical_preimages_of(key: u32, unicode: bool) -> impl Iterator<Item = u32> 
         .map(|(_, member)| *member)
 }
 
+/// The units `\w` matches, as inclusive ranges.
+const WORD_UNITS: [(u32, u32); 4] = [(b'0' as u32, b'9' as u32), (b'A' as u32, b'Z' as u32), (b'_' as u32, b'_' as u32), (b'a' as u32, b'z' as u32)];
+/// The units `\w` also matches under unicode case folding: long s and the Kelvin sign.
+const FOLDED_WORD_UNITS: [(u32, u32); 2] = [(0x017F, 0x017F), (0x212A, 0x212A)];
+const LINE_TERMINATORS: [(u32, u32); 3] = [(0x000A, 0x000A), (0x000D, 0x000D), (0x2028, 0x2029)];
+fn in_units(value: u32, ranges: &[(u32, u32)]) -> bool {
+    ranges.iter().any(|&(first, last)| first <= value && value <= last)
+}
 fn is_word(value: u32) -> bool {
-    char::from_u32(value)
-        .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
+    in_units(value, &WORD_UNITS)
 }
 fn is_word_mode(value: u32, ignore_case: bool) -> bool {
-    is_word(value) || (ignore_case && matches!(char::from_u32(value), Some('ſ' | 'K')))
+    is_word(value) || (ignore_case && in_units(value, &FOLDED_WORD_UNITS))
 }
 fn is_line_terminator(value: u32) -> bool {
-    matches!(value, 0x000A | 0x000D | 0x2028 | 0x2029)
+    in_units(value, &LINE_TERMINATORS)
 }
 
 #[cfg(test)]

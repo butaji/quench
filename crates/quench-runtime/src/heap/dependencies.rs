@@ -39,6 +39,10 @@ pub(crate) struct InheritedFieldCache {
     pub(crate) proved: bool,
     /// The receiver's prototype link the proof holds for, compared undecoded.
     pub(crate) proved_prototype: super::ProtoLink,
+    /// The layout id (`heap::layouts`) of a receiver the proof last answered, or
+    /// `NO_PROVED_LAYOUT`: its header word holds the receiver shape and the prototype link,
+    /// so a receiver of that layout matches both on one compare. Reset with each new proof.
+    pub(crate) proved_layout: u32,
     pub(crate) proved_holder: Value,
     /// The value a `Slot` answer read under the current proof, held while `constant_watch`
     /// is published (`heap::watch_prototype_values` of the holder): a use then reads it
@@ -49,6 +53,9 @@ pub(crate) struct InheritedFieldCache {
     /// `INHERITED_FIELD_CACHE_WAYS` receiver shapes, newest first.
     pub(crate) next: u32,
 }
+/// An `InheritedFieldCache::proved_layout` no layout id reaches.
+pub(crate) const NO_PROVED_LAYOUT: u32 = u32::MAX;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InheritedFieldAnswer {
     /// The last recorded prototype holds the data property at this slot.
@@ -72,6 +79,18 @@ pub(crate) enum ProofKind {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct IndexFreeChainProof {
     pub(crate) first: Value,
+    /// `first`'s prototype, whose chain the proof covers as well: a watched `first` keeps it.
+    pub(crate) next: Value,
+    /// `first` and `next` as prototype links (`ProtoLink::bits`), which a holder's header
+    /// matches without decoding its link.
+    pub(crate) links: [u32; 2],
+}
+
+impl IndexFreeChainProof {
+    pub(crate) fn new(first: Value, next: Value) -> Self {
+        let links = [first, next].map(|proto| super::cell::ProtoLink::of(proto).bits());
+        Self { first, next, links }
+    }
 }
 
 /// The proofs the table holds, each cleared when a subject it read changes.
@@ -101,6 +120,10 @@ struct Table {
     /// The inherited field cache's entries (`Vm::inherited_field_indices`), each of whose
     /// chain proofs the table retires.
     inherited: Vec<InheritedFieldCache>,
+    /// Per subject, the fact-table entries (`FactStore`) whose answer read it.
+    fact_readers: Vec<Vec<u32>>,
+    /// The fact table whose entries a retirement clears.
+    fact_store: Option<FactStore>,
     /// Subjects a dead prototype released, for reuse.
     free: Vec<u32>,
     /// The intrinsic-builtin fuses, which watched prototypes hold.
@@ -110,6 +133,11 @@ struct Table {
 impl Table {
     fn retire(&mut self, subject: u32) {
         self.fuses.note_layout_change(subject);
+        if let (Some(store), Some(entries)) = (self.fact_store, self.fact_readers.get_mut(subject as usize)) {
+            for entry in std::mem::take(entries) {
+                store.clear(entry);
+            }
+        }
         if let Some(entries) = self.inherited_readers.get_mut(subject as usize) {
             for entry in std::mem::take(entries) {
                 if let Some(cache) = self.inherited.get_mut(entry as usize) {
@@ -139,6 +167,32 @@ impl Table {
 /// How many times its entries a subject's inherited reader list may hold before it is
 /// deduplicated (`Dependencies::prove_inherited`).
 const INHERITED_READERS_SLACK: usize = 2;
+
+/// The fact table's entries as a retirement sees them: 16-byte entries whose first word is
+/// the tag, zero for an empty one (`vm::symbol_load_proof`). A retirement zeroes the tag of
+/// each entry a subject's reader list names, so a later probe misses on its tag compare and
+/// pays nothing for the retirement; an entry since reused for another fact is cleared as
+/// well, which only costs that fact a walk.
+#[derive(Clone, Copy)]
+pub(crate) struct FactStore {
+    entries: NonNull<[std::cell::Cell<u64>; 2]>,
+    count: u32,
+}
+
+impl FactStore {
+    /// The store whose `count` entries start at `entries`, which stay mapped for as long as
+    /// the heap does.
+    pub(crate) fn new(entries: NonNull<[std::cell::Cell<u64>; 2]>, count: u32) -> Self {
+        Self { entries, count }
+    }
+
+    fn clear(self, entry: u32) {
+        if entry < self.count {
+            // SAFETY: `entry` is below the mapping's entry count (`new`).
+            unsafe { (*self.entries.as_ptr().add(entry as usize))[0].set(0) };
+        }
+    }
+}
 
 /// The heap's dependency table.
 pub(crate) struct Dependencies(Box<UnsafeCell<Table>>);
@@ -170,7 +224,7 @@ impl Dependencies {
     }
 
     /// The held index-free chain proof, if any (`ProofKind::IndexFreeChain`).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn index_free_chain(&self) -> Option<IndexFreeChainProof> {
         self.table().proofs.index_free_chain
     }
@@ -183,6 +237,7 @@ impl Dependencies {
             None => {
                 table.readers.push(0);
                 table.inherited_readers.push(Vec::new());
+                table.fact_readers.push(Vec::new());
                 (table.readers.len() - 1) as u32
             }
         };
@@ -218,6 +273,9 @@ impl Dependencies {
         table.readers.iter_mut().for_each(|readers| *readers = 0);
         table.inherited_readers.iter_mut().for_each(Vec::clear);
         table.inherited.iter_mut().for_each(|cache| cache.proved = false);
+        if let Some(store) = table.fact_store {
+            table.fact_readers.iter_mut().flat_map(std::mem::take).for_each(|entry| store.clear(entry));
+        }
         table.fuses.forget_all();
     }
 
@@ -285,6 +343,23 @@ impl Dependencies {
             }
         }
         table.inherited[entry as usize].proved = true;
+    }
+
+    /// Holds fact-table entry `entry` of `store` as read from `subjects`: a change to any of
+    /// them clears it (`Table::retire`). A list past twice the store's entries is
+    /// deduplicated, amortized over the pushes that grew it.
+    pub(crate) fn prove_fact(&self, store: FactStore, entry: u32, subjects: &[u32]) {
+        // SAFETY: as `table`: no reference to the table is live across this call.
+        let table = unsafe { &mut *self.0.get() };
+        table.fact_store = Some(store);
+        for subject in subjects {
+            let readers = &mut table.fact_readers[*subject as usize];
+            readers.push(entry);
+            if readers.len() > INHERITED_READERS_SLACK * store.count as usize {
+                readers.sort_unstable();
+                readers.dedup();
+            }
+        }
     }
 
     /// Drops every inherited entry's proof: the caches were cleared.

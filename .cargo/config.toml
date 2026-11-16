@@ -4,7 +4,12 @@
 # Every function keeps its own address: LLVM's MergeFunctions folds generic instances with
 # identical bodies, and a lane record's handler address names its form until each record
 # carries an explicit kind (quench-lint `fn-identity`, shrink-only).
-rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "merge-functions=disabled"]
+# Relaxable GOT relocations: rustc emitted plain R_X86_64_GOTPCREL for every cross-crate call
+# and address (`call *__rust_dealloc@GOTPCREL(%rip)`), which the linker cannot rewrite, so
+# the -no-pie executable kept a 71 KB GOT of link-time constants that every run reads
+# (16 resident pages at JS3 Air's peak) and an extra load per such call. Relaxed, the linker
+# turns them into direct calls and LEAs and the GOT is 4.7 KB.
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6", "-Z", "relax-elf-relocations=yes", "-Z", "merge-functions=disabled"]
 
 # Use LLVM's target alignment on Apple ARM; the forced alignment above is a
 # Linux measurement. Host-specific qualification and code residency: Linear TOD-8.

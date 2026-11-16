@@ -76,7 +76,10 @@ impl Heap {
             *record |= KEPT;
             self.string_atoms.young_kept.borrow_mut().push(atom);
         }
-        Some(Value::direct_string(*record & !KEPT))
+        let string = Value::direct_string(*record & !KEPT);
+        // An atom's string is held weakly unless kept: a cycle may not reach it otherwise.
+        self.shade(string);
+        Some(string)
     }
 
     /// Records that the string `string`, a record or not, names `atom`; it becomes the atom's
@@ -92,6 +95,10 @@ impl Heap {
             return;
         };
         debug_assert!(record_id & KEPT == 0, "string record ids leave the kept bit free");
+        // A small string keeps no atom: its id would size these tables past the string records.
+        if super::is_small_string(record_id) {
+            return;
+        }
         set(&mut self.string_atoms.atoms.borrow_mut(), record_id, atom, UNKNOWN);
         let mut records = self.string_atoms.records.borrow_mut();
         let current = records.get(atom as usize).copied().unwrap_or(UNKNOWN);

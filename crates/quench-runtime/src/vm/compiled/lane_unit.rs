@@ -10,9 +10,13 @@
 //! outermost first, through the lane's own call path, and continues at the innermost one's
 //! record (`Vm::lane_body_inlined_activation`).
 
-use crate::bytecode::{Class, FieldLookup, ImmediateLayout, Op, Register, Traits, WideInstruction};
+use crate::bytecode::{FieldLookup, ImmediateLayout, Op, Register, WideInstruction};
 use crate::bytecode::Function;
+use crate::staged::{plan_entry, CallEntry, CalleeKind, DirectPlan, Identity, Resolved};
+use crate::typed_ir::BindingTime;
 use crate::value::Value;
+#[path = "lane_unit/admission.rs"] mod admission;
+use admission::{inlinable, restartable, returns_or_keeps};
 #[path = "lane_unit/weights.rs"] mod weights;
 #[cfg(all(test, feature = "aot"))] #[path = "lane_unit/static_hints.rs"] mod static_hints;
 #[cfg(all(test, feature = "aot"))] pub(crate) use static_hints::static_call_targets;
@@ -210,73 +214,19 @@ impl Unit {
             }
         }
         starts.push(successors.len());
-        let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, |pc| masks[pc]);
+        let live = crate::compile::liveness::analyze_graph(&transfers, &starts, &successors, &[], |pc| masks[pc]);
         Some(std::borrow::Cow::Owned(RegisterMasks::new(live)))
     }
 }
 
-/// The longest callee copy the unit inlines, in code bytes (three pages): each copy costs code
-/// and compile time at every call site, and short bodies (accessors, field updates) are where
-/// a call costs most relative to its work.
-const MAX_INLINED_CALLEE_BYTES: usize = 12 * 1024;
-const MAX_INLINED_INSTRUCTIONS: usize = MAX_INLINED_CALLEE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
 /// The callee instructions one unit inlines in all, the region's budget: what a lane body's
 /// code-size budget holds (`lane_region::LANE_BODY_MAX_CODE_BYTES`), TurboFan's cumulative
 /// inlining budget (`max_inlined_bytecode_size_cumulative`). The planner spends it on the call
 /// sites by weight per instruction (`weights::select`).
 pub(super) const MAX_UNIT_INLINED_INSTRUCTIONS: usize =
     super::lane_region::LANE_BODY_MAX_CODE_BYTES / super::lane_region::LANE_BODY_CODE_BYTES_PER_INSTRUCTION;
-const _: () = assert!(MAX_INLINED_INSTRUCTIONS <= MAX_UNIT_INLINED_INSTRUCTIONS);
 /// How deep calls nest inside a unit: JSC's inlining depth (`maximumInliningDepth`).
 const MAX_INLINING_DEPTH: usize = 5;
-
-/// Whether the lane-body lowering runs `instruction` of an inlined callee: a capture of its
-/// own environment only, no fusion but a returning one, which splits into the
-/// computation and the return (`osr_loop::inlined_returning`). A call is the plan's to admit:
-/// only one it inlines in turn.
-fn inlinable(instruction: WideInstruction) -> bool {
-    let plain = instruction.result_flags() == 0 || super::osr_loop::inlined_returning(instruction);
-    match instruction.op().class() {
-        _ if instruction.op().traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
-        // The callee's own captures, which its frame reads from its environment
-        // (`Lowering::frame_captures`).
-        Class::LoadCapture => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
-        // A nested lookup's chain names its base by the function's registers; the lowering
-        // renames it through the frame (`Lowering::get_field`), and its sink stores to `this`.
-        Class::GetField => match instruction.field_lookup() {
-            Some(FieldLookup::Atom { .. }) => plain,
-            Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
-            None => false,
-        },
-        _ if instruction.op().is_field_store() => plain,
-        // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
-        // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
-        Class::Unary => plain,
-        // Operations native code leaves at, exactly, through the inlined frame's recovery: a
-        // global name's read, a construction and a throw, typically a callee's error path.
-        Class::LoadName | Class::Construct | Class::Throw => instruction.result_flags() == 0,
-        Class::Call => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
-        _ => plain && instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
-    }
-}
-
-/// The shared lowering performs only guarded, non-guest operations for an inlinable pure
-/// leaf. A miss may restart that call without replaying effects.
-fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
-    if super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    code.iter().enumerate().all(|(pc, instruction)| match instruction.op().class() {
-        Class::SetIndex | Class::Call => false,
-        _ if instruction.op().is_field_store() => false,
-        Class::IncDec => instruction.numeric_local_target().is_none(),
-        Class::Jump | Class::JumpFalse | Class::JumpTrue | Class::JumpBinaryFalse => instruction.jump_target() as usize > pc,
-        _ => true, // `inlinable` owns the supported instruction/effect set.
-    })
-}
-
-/// Whether a call keeps its result in its register or returns it: the two a unit inlines.
-fn returns_or_keeps(instruction: WideInstruction) -> bool {
-    matches!(instruction.result_flags(), 0 | crate::bytecode::RETURN_REGISTER)
-}
 
 /// The unit PCs occupied by a call's alternatives, including each admission marker.
 /// Returning calls continue at an existing completion; they add no synthetic `Return`.
@@ -294,9 +244,9 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
 /// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
 /// unit it plans always emits.
 fn renamable(instruction: WideInstruction) -> bool {
-    match instruction.op().class() {
-        Class::Call | Class::Return | Class::LoadThis | Class::LoadName | Class::Construct | Class::Throw => true,
-        Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
+    match instruction.op() {
+        opcode if opcode.is_unit_rewritten() => true,
+        opcode if opcode.is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => true,
         _ => {
             let plain = if super::osr_loop::inlined_returning(instruction) {
                 WideInstruction::new(instruction.op(), instruction.result_register(), instruction.b(), instruction.c(), instruction.imm())
@@ -311,7 +261,7 @@ fn renamable(instruction: WideInstruction) -> bool {
 /// The unit PCs an inlined callee instruction takes: a completion of the call (a `Return`, or
 /// an instruction that computes and returns) adds the result's move and the jump past the call.
 fn completion_length(instruction: WideInstruction) -> u32 {
-    if instruction.op().class().eq(Class::Return) {
+    if instruction.op().is_return() {
         2
     } else if super::osr_loop::inlined_returning(instruction) {
         3
@@ -375,6 +325,8 @@ struct Planner<'t, 'f> {
     body: &'t dyn Fn(u32) -> Option<&'f Function>,
     registers: u32,
     budget: usize,
+    /// The longest callee body one call inlines (`LaneBody::max_inlined_instructions`).
+    max_inlined: usize,
     /// The loop trip counts the caller's run observed, by function and loop header.
     trips: &'t dyn Fn(u32, u32) -> Option<u64>,
     /// The expected executions of the call being planned, relative to the caller's entry.
@@ -400,7 +352,7 @@ impl Planner<'_, '_> {
                 let through = self.through_call(function, pc as u32, *instruction);
                 // Strict terminal calls retain the VM's proper-tail-call policy.
                 // A root completion must name a real Return, never the completed Call.
-                let (calls, ran) = if instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()
+                let (calls, ran) = if instruction.op().is_call() && instruction.returns_from_frame()
                     && (strict || (depth == 0 && terminal_return(&code).is_none())) {
                     (Vec::new(), true)
                 } else { self.inline(function, pc as u32, through.map_or(*instruction, |(call, _)| call), depth, through.is_some(), self.weight.saturating_mul(site_weights[pc])) };
@@ -425,7 +377,7 @@ impl Planner<'_, '_> {
     fn through_call(&self, function: u32, pc: u32, instruction: WideInstruction) -> Option<(WideInstruction, (Register, Value))> {
         let imm = instruction.imm();
         let (base, count) = (ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm));
-        (instruction.op().class().eq(Class::Call) && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
+        (instruction.op().is_call() && count > 0 && !instruction.direct_eval() && !instruction.parameter_eval()).then_some(())?;
         let through = (self.targets)(function, pc).into_iter().find_map(CallTarget::through)?;
         let call = WideInstruction::new(Op::Call, instruction.a(), instruction.register_c(), base,
             ImmediateLayout::call_immediate(base + 1, count - 1, false, false));
@@ -436,7 +388,7 @@ impl Planner<'_, '_> {
     /// inlines within the budget, as the call's switch; any other callee takes the call.
     /// With whether the call has run: a call the plan may not inline counts as run.
     fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize, forwarded: bool, weight: u64) -> (Vec<InlinedPlan>, bool) {
-        if !instruction.op().class().eq(Class::Call) {
+        if !instruction.op().is_call() {
             return (Vec::new(), false);
         }
         if !returns_or_keeps(instruction) || instruction.direct_eval()
@@ -464,8 +416,8 @@ impl Planner<'_, '_> {
     }
 
     /// Whether the callee's code fits the inlining budget and the call's arguments fit its registers.
-    fn within_budget(&self, instruction: WideInstruction, callee: &Function, code: &[WideInstruction]) -> bool {
-        code.len() <= MAX_INLINED_INSTRUCTIONS && code.len() <= self.budget
+    fn within_budget(&self, target: CallTarget, instruction: WideInstruction, callee: &Function, code: &[WideInstruction]) -> bool {
+        matches!(self.entry(target, callee, code.len()), CallEntry::Inline(_))
             && ImmediateLayout::argument_count(instruction.imm()) <= callee.registers
     }
 
@@ -475,11 +427,25 @@ impl Planner<'_, '_> {
             || (callee.plain_activation(self.program) && super::super::js_compiled::eligible(callee, self.program))
     }
 
+    /// The entry the call's callee takes, which the staged planner decides (`staged::plan_entry`): a
+    /// linked identity is Stable, a function binding Static, and the callee's body inlines within
+    /// the unit's remaining budget, capped by the policy's longest inlined body.
+    fn entry(&self, target: CallTarget, callee: &Function, size: usize) -> CallEntry {
+        let binding = match target.callee {
+            CalleeBinding::Function => BindingTime::Static,
+            CalleeBinding::Identity(_) | CalleeBinding::Forwarded { .. } => BindingTime::Stable,
+        };
+        let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Guarded(target.identity().map_or(0, Value::to_bits)),
+            sloppy: None, registers: callee.registers, returned: super::LANE_BODY_RETURNED, bound: None };
+        let budget = self.budget.min(self.max_inlined);
+        plan_entry(Some(Resolved { plan, binding, body: Some(size) }), budget)
+    }
+
     /// The callee of `target`, whole, if it inlines within the budget (`inline_target` chooses).
     fn inline_body(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if !self.within_budget(instruction, callee, &code) || !lowerable(&code) || !self.eligible_callee(target, callee) {
+        if !self.within_budget(target, instruction, callee, &code) || !lowerable(&code) || !self.eligible_callee(target, callee) {
             return None;
         }
         let recovery = if super::lane_region::restartable_numeric_function(self.program, callee, &code)
@@ -506,7 +472,7 @@ impl Planner<'_, '_> {
 fn lowerable(code: &[WideInstruction]) -> bool {
     code.iter().all(|instruction| inlinable(*instruction) && renamable(*instruction))
         && code.iter().any(|instruction| completion_length(*instruction) > 1
-            || (instruction.op().class().eq(Class::Call) && instruction.returns_from_frame()))
+            || (instruction.op().is_call() && instruction.returns_from_frame()))
 }
 
 /// The unit's instructions, origins and frames as a plan lays them out.
@@ -617,19 +583,19 @@ impl Emitter {
         if super::osr_loop::inlined_returning(instruction) {
             return self.emit_returning(instruction, origin, register, receiver, result, continuation, target_of);
         }
-        let rewritten = match instruction.op().class() {
-            Class::Return => {
+        let rewritten = match instruction.op() {
+            opcode if opcode.is_return() => {
                 self.unit.instructions.push(WideInstruction::new(Op::Move, result, register(instruction.register_a()), 0, 0));
                 self.unit.origins.push(origin);
                 WideInstruction::new(Op::Jump, 0, 0, 0, continuation)
             }
-            Class::LoadThis => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
+            opcode if opcode.is_load_this() => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
             // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
             // the lowering leaves at each, and recovery runs the callee's own instruction.
-            Class::LoadName | Class::Throw => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
-            Class::Construct => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
+            opcode if opcode.is_load_name() || opcode.is_throw() => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+            opcode if opcode.is_construct() => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
                 register(instruction.c()), instruction.imm()),
-            Class::GetField if matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
+            opcode if opcode.is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) => {
                 let flags = instruction.result_flags();
                 WideInstruction::new(Op::GetField, flags | register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
             }
@@ -645,7 +611,7 @@ impl Emitter {
     #[allow(clippy::too_many_arguments)]
     fn emit_returning(&mut self, instruction: WideInstruction, origin: Origin, register: &dyn Fn(Register) -> Register,
         receiver: Register, result: Register, continuation: u32, target_of: &dyn Fn(u32) -> Option<u32>) -> Option<()> {
-        let computed = if instruction.op().class().eq(Class::GetField) && instruction.b() == crate::bytecode::FieldBase::NESTED {
+        let computed = if instruction.op().is_get_field() && instruction.b() == crate::bytecode::FieldBase::NESTED {
             // A nested lookup keeps its site, whose base the lowering renames.
             WideInstruction::new(instruction.op(), register(instruction.result_register()), instruction.b(), instruction.c(), instruction.imm())
         } else {
@@ -682,7 +648,7 @@ pub(crate) fn with_budget<'f>(
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
-    with_trips(program, function_id, function, budget, targets, &|_, _| None, body)
+    with_trips(program, function_id, function, (budget, super::tier_policy::STATIC_ROWS.lane_body.max_inlined_instructions), targets, &|_, _| None, body)
 }
 
 /// `with_budget` weighing each call site by the loop trip counts `trips` gives (by function
@@ -692,13 +658,13 @@ pub(crate) fn with_trips<'f>(
     program: &crate::ResidualProgram,
     function_id: u32,
     function: &Function,
-    budget: usize,
+    (budget, max_inlined): (usize, usize),
     targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
     trips: &dyn Fn(u32, u32) -> Option<u64>,
     body: &dyn Fn(u32) -> Option<&'f Function>,
 ) -> Option<Unit> {
     let caller_registers = function.registers;
-    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
+    let mut planner = Planner { program, targets: &|function, pc| targets(function, pc).into_iter().filter(|target| target.function != function_id).collect(), body, registers: u32::from(caller_registers), budget, max_inlined, trips, weight: 1, path: Vec::new(), choice: weights::Choice::default() };
     let plan = planner.plan_weighted(function_id, function, budget);
     let registers = u16::try_from(planner.registers).ok()?;
     let mut emitter = Emitter {

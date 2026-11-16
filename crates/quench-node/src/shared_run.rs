@@ -524,7 +524,7 @@ pub(crate) fn finish_shared_execution(
     reporting?;
     // Teardown's drops run code the program never touched; the run's code pages are no
     // longer needed, so only teardown's own become resident beside its memory.
-    crate::host::resident_pages::release_read_only_pages();
+    crate::host::resident_pages::release_read_only_pages_at_boundary();
     if let Some(code) = shared_state.borrow().process_control.exit_code() {
         return Ok(SharedCompletion::GuestExit { code });
     }

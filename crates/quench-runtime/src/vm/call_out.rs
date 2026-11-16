@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NumericFrame, Operation, Protocol, Step};
+use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
@@ -26,11 +26,13 @@ pub(crate) mod counts {
     }
 }
 
-/// Where a call-out runs: the running frame, and the PC after its instruction, which the
-/// binding rules of a name read for their error site.
+/// Where a call-out runs: the owner of the running activation's variables and registers, the
+/// function whose code holds the instruction (the strictness a refusal throws by), and the PC
+/// after its instruction, which the binding rules of a name read for their error site.
 #[derive(Clone, Copy)]
 pub(super) struct CallSite {
-    pub(super) frame: usize,
+    pub(super) owner: VarOwner,
+    pub(super) function: u32,
     pub(super) resume: usize,
 }
 
@@ -38,7 +40,8 @@ impl<H: Host> Vm<H> {
     /// The VM's operation `operation` at `site` of its operand values (`CallOut::operands`): the
     /// value it defines, if any. A for-in step defines `Value::DELETED` once no key is left.
     pub(super) fn call_out(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut,
-        [first, second]: [Option<Value>; 2]) -> Result<Option<Value>, JsError> {
+        operands: OperandValues<Value>) -> Result<Option<Value>, JsError> {
+        let OperandValues { fixed: [first, second], list } = operands;
         let operand = second.unwrap_or(Value::UNDEFINED);
         #[cfg(test)]
         if matches!(operation, CallOut::GlobalWrite { .. } | CallOut::GlobalTypeof { .. }) {
@@ -46,100 +49,133 @@ impl<H: Host> Vm<H> {
         }
         match operation {
             CallOut::PropertyKey { .. } => self.to_property_key(p, operand).map(Some),
-            CallOut::Equality { strict, negated, .. } => {
-                let left = first.expect("an equality names its left operand");
-                let equal = if strict { self.strict_equal(left, operand) } else { self.equal(p, left, operand)? };
-                Ok(Some(Value::boolean(equal != negated)))
-            }
-            CallOut::Binary { operator, .. } =>
-                self.binary(p, operator, first.expect("a binary names its left operand"), operand).map(Some),
+            CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
+                self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
+            CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),
+            CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
             _ => self.name_step(p, site, operation, first),
         }
     }
 
+    /// The operator steps of `call_out` over the operands `(left, right)`: equality, a binary
+    /// operator, a delete and a branch decision.
+    fn operator_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, (left, right): (Option<Value>, Value))
+        -> Result<Option<Value>, JsError> {
+        let left = left.expect("an operator names its left operand");
+        match operation {
+            CallOut::Equality { strict, negated, .. } => {
+                let equal = if strict { self.strict_equal(left, right) } else { self.equal(p, left, right)? };
+                Ok(Some(Value::boolean(equal != negated)))
+            }
+            CallOut::Binary { operator, .. } => self.binary(p, operator, left, right).map(Some),
+            CallOut::Delete { strict, .. } => {
+                let strict = strict || p.function(site.function as usize).strict;
+                self.delete_reference_property_mode(p, left, right, strict).map(Some)
+            }
+            CallOut::Decide { operator, .. } => self.binary_truthy(p, operator, left, right).map(|holds| Some(Value::boolean(holds))),
+            _ => unreachable!("{operation:?} is no operator step"),
+        }
+    }
+
     /// The name, environment and arguments steps of `call_out`, by the binding rules of the
-    /// running frame; `value` is the operand a store takes.
+    /// running activation; `value` is the operand a store takes.
     fn name_step(&mut self, p: &ResidualProgram, site: CallSite, operation: CallOut, value: Option<Value>)
         -> Result<Option<Value>, JsError> {
-        let site = if operation.reads_frame_locals() { self.own_frame(site) } else { site };
-        let CallSite { frame, resume } = site;
+        let CallSite { owner, resume, .. } = site;
         let value = value.unwrap_or(Value::UNDEFINED);
         match operation {
-            CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, frame, usize::from(slot), None).map(Some),
+            CallOut::LoadEnvLocal { slot } => self.load_local_binding(p, owner, usize::from(slot), None).map(Some),
             CallOut::StoreEnvLocal { slot, initialize, .. } => {
-                Ok(self.store_env_local(p, frame, usize::from(slot), value, initialize)?.then_some(value))
+                Ok(self.store_env_local(p, owner, usize::from(slot), value, initialize)?.then_some(value))
             }
             CallOut::ArgumentsLength { slot } => {
-                let binding = self.load_local_binding(p, frame, usize::from(slot), None)?;
+                let frame = self.own_frame();
+                let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
                 self.read_arguments_binding(p, frame, binding, None).map(Some)
             }
             CallOut::GlobalWrite { atom, site, initialize, .. } => {
-                self.at_binding_site(frame, resume, |vm| vm.store_name(p, atom, value, site, initialize))?;
+                self.at_binding_site(owner, resume, |vm| vm.store_name(p, owner, atom, value, site, initialize))?;
                 Ok(None)
             }
             CallOut::GlobalTypeof { atom, site } =>
-                self.at_binding_site(frame, resume, |vm| vm.load_name_typeof(p, atom, site)).map(Some),
+                self.at_binding_site(owner, resume, |vm| vm.load_name_typeof(p, owner, atom, site)).map(Some),
+            CallOut::LoadName { atom, site } =>
+                self.at_binding_site(owner, resume, |vm| vm.load_name(p, owner, atom, Some(site))).map(Some),
             _ => unreachable!("{operation:?} is no name step"),
         }
     }
 
-    /// The store of `value` to environment local `slot` of frame `f`: a `with` scope's binding
-    /// first, then the initialization, constant and function-name rules, a global `var`'s property,
-    /// and at last the frame's binding with its mirrors. Whether the store defines the
-    /// instruction's result: a sloppy assignment to a function's own name does not.
-    pub(super) fn store_env_local(&mut self, p: &ResidualProgram, f: usize, slot: usize, value: Value,
+    /// The store of `value` to environment local `slot` of the activation `owner` names: a `with`
+    /// scope's binding first, then the initialization, constant and function-name rules, a global
+    /// `var`'s property, and at last the activation's binding with its mirrors. Whether the store
+    /// defines the instruction's result: a sloppy assignment to a function's own name does not.
+    pub(super) fn store_env_local(&mut self, p: &ResidualProgram, owner: VarOwner, slot: usize, value: Value,
         initialize: bool) -> Result<bool, JsError> {
-        let function = p.function(self.frames[f].function as usize);
+        let (program, running) = (self.owner_view(owner).program(), self.owner_view(owner).function());
+        let function = p.function(running as usize);
         let atom = function.local_atoms.get(slot).copied();
         if let Some(atom) = atom
-            && self.store_with_binding(p, f, atom, value, function.strict)?
+            && self.store_with_binding(p, owner, atom, value, function.strict)?
         {
             return Ok(true);
         }
-        self.check_local_assignment_initialized(p, f, slot, initialize)?;
-        if let Some(atom) = atom
-            && function.declares_global_immutable(atom)
-            && !initialize
-        {
-            return Err(self.type_error(p, "assignment to constant binding".into()));
+        self.check_local_assignment_initialized(p, owner, slot, initialize)?;
+        if let Some(atom) = atom {
+            self.refuse_immutable_store(p, function, atom, initialize)?;
         }
         if function.is_self_binding_slot(slot) {
-            if function.strict {
-                return Err(self.type_error(p, "assignment to function name binding".into()));
-            }
-            return Ok(false);
+            return if function.strict { Err(self.type_error(p, "assignment to function name binding".into())) } else { Ok(false) };
         }
-        let global_var = self.root_global_var_atom(p, self.frames[f].program, self.frames[f].function, slot);
-        if let Some(atom) = global_var {
-            let globals = self.realm.globals;
-            let written = self.set_property_with_receiver(p, globals, atom, value, globals)?;
-            if !written && function.strict {
-                return Err(self.type_error(p, "cannot assign to read-only global binding".into()));
-            }
+        if let Some(atom) = self.root_global_var_atom(p, program, running, slot) {
+            self.store_global_var(p, atom, value, function.strict)?;
             return Ok(true);
         }
-        self.mirror_global_lexical_binding(p, f, slot, value);
-        *self.frame_binding_mut(p, f, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
-        self.mapped_argument_store(p, f, slot, value);
+        self.mirror_global_lexical_binding(p, owner, slot, value);
+        *self.owner_binding_mut(p, owner, slot).ok_or_else(|| JsError("invalid local environment".into()))? = value;
+        self.mapped_argument_store(p, owner, slot, value);
         Ok(true)
     }
 
-    /// `site` in the running function's own frame. A step made beside frameless activations
-    /// (`lane_in_place`) has the caller's frame innermost, which holds none of the function's
-    /// locals: the activations become frames first, as guest code would make them.
-    fn own_frame(&mut self, site: CallSite) -> CallSite {
-        if self.lane_deferred.is_none() { return site; }
-        self.materialize_deferred_lane();
-        CallSite { frame: self.frames.len() - 1, ..site }
+    /// The refusal of a store to a global immutable binding after its initialization.
+    fn refuse_immutable_store(&mut self, p: &ResidualProgram, function: &crate::bytecode::Function, atom: Atom, initialize: bool) -> Result<(), JsError> {
+        if function.declares_global_immutable(atom) && !initialize {
+            return Err(self.type_error(p, "assignment to constant binding".into()));
+        }
+        Ok(())
     }
 
-    /// `action` with `resume` as the frame's binding-site PC, restored after.
-    fn at_binding_site<T>(&mut self, frame: usize, resume: usize, action: impl FnOnce(&mut Self) -> T) -> T {
-        let previous = self.frames[frame].binding_site_pc.replace(resume as u32);
+    /// The store of `value` to the global `var` `atom`, which is the global object's property.
+    fn store_global_var(&mut self, p: &ResidualProgram, atom: Atom, value: Value, strict: bool) -> Result<(), JsError> {
+        let globals = self.realm.globals;
+        let written = self.set_property_with_receiver(p, globals, atom, value, globals)?;
+        if !written && strict {
+            return Err(self.type_error(p, "cannot assign to read-only global binding".into()));
+        }
+        Ok(())
+    }
+
+    /// The running function's own frame, for the steps that read state only a frame has (its
+    /// `arguments` object). A step made beside frameless activations (`lane_in_place`) has the
+    /// caller's frame innermost: the activations become frames first, as guest code would make them.
+    fn own_frame(&mut self) -> usize {
+        self.materialize_deferred_lane();
+        self.frames.len() - 1
+    }
+
+    /// The owner a call-out of `operation` made by a lane's helper runs for: the running
+    /// activation where the step reads its names or locals (`CallOut::names_activation`), else
+    /// the innermost frame.
+    pub(super) fn call_out_owner(&mut self, operation: CallOut) -> VarOwner {
+        if operation.names_activation() { self.running_owner() } else { VarOwner::Frame(self.frames.len().saturating_sub(1)) }
+    }
+
+    /// `action` with `resume` as the activation's binding-site PC, restored after.
+    pub(super) fn at_binding_site<T>(&mut self, owner: VarOwner, resume: usize, action: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = self.replace_binding_site(owner, Some(resume as u32));
         let result = action(self);
-        self.frames[frame].binding_site_pc = previous;
+        self.replace_binding_site(owner, previous);
         result
     }
 
@@ -157,6 +193,7 @@ impl<H: Host> Vm<H> {
                 self.append_array_literal_holes(array, length)?;
                 match operand {
                     Some(value) if spread => self.spread_into_array(p, array, value)?,
+                    Some(value) if self.appends_in_room(array, value, length) => {}
                     Some(value) => self.append_array_literal_elements(p, array, [value])?,
                     None => {}
                 }
@@ -165,11 +202,31 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// An `AppendArray` of one element after no elisions (`holes`) made by the staged row the b-jit
+    /// runs (`elements::append_in_room`): the array's capacity word proves a slot, so nothing grows.
+    #[inline(always)]
+    fn appends_in_room(&mut self, array: Value, value: Value, holes: usize) -> bool {
+        holes == 0
+            && self.heap.array_record_base().is_some_and(|records| crate::staged::elements::concrete_append_in_room(records, array, value))
+    }
+
     /// The call-out row `i` (`ToPropertyKey`, `GetIterator`, `ForInStart`, `IteratorClose`,
-    /// `AppendArray`) at `site`, by its staged row on the interpreter's stage: the words
+    /// `AppendArray`, `Delete`) at `site`, by its staged row on the interpreter's stage: the words
     /// decide a string key, and the VM makes every other step.
     pub(super) fn staged_value_step(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
-        let row = Operation::<u64, ()>::decode(i, |_| None).expect("a value step decodes");
+        let row = Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::of(p)).expect("a value step decodes");
+        self.staged_row(p, site, row)
+    }
+
+    /// The name read `i` (`LoadName`) at `site`, by its staged row on the interpreter's stage: the
+    /// interpreter proves nothing of a global, so the VM's binding rules read it.
+    pub(super) fn staged_load_name(&mut self, p: &ResidualProgram, site: CallSite, i: WideInstruction) -> Result<(), JsError> {
+        let row = Operation::<u64, ()>::decode_load_name(i, ()).expect("a name read decodes");
+        self.staged_row(p, site, row)
+    }
+
+    /// `row` on the interpreter's stage over the running frame: an error the VM raised is thrown.
+    fn staged_row(&mut self, p: &ResidualProgram, site: CallSite, row: Operation<u64, ()>) -> Result<(), JsError> {
         let mut frame = HostFrame { vm: self, program: p, site, raised: None };
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Unresolved => Err(frame.raised.expect("a step left to the VM raised")),
@@ -195,11 +252,11 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     fn fact(&self, _register: Register) {}
 
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
-        self.vm.read(self.site.frame, register).to_bits()
+        self.vm.owner_register(self.site.owner, register).to_bits()
     }
 
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: ()) {
-        self.vm.write(self.site.frame, register, Value::from_bits(value));
+        self.vm.set_owner_register(self.site.owner, register, Value::from_bits(value));
     }
 
     fn this(&mut self, _stage: &mut Concrete) -> u64 { Value::DELETED.to_bits() }
@@ -223,7 +280,8 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     }
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
-        let operands = operation.operands().map(|register| register.map(|register| self.vm.read(self.site.frame, register)));
+        let (vm, owner) = (&*self.vm, self.site.owner);
+        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.owner_register(owner, register));
         match self.vm.call_out(self.program, self.site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), ())),
             Err(error) => {
@@ -236,12 +294,22 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
 impl<H: Host> GlobalFrame<Concrete> for HostFrame<'_, H> {}
 
+impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
+    type Plans = NoPlans;
+
+    fn plans(&self) -> NoPlans { NoPlans }
+}
+
+impl<H: Host> crate::staged::ElementFrame<Concrete> for HostFrame<'_, H> {}
+
+impl<H: Host> crate::staged::CallFrame<Concrete> for HostFrame<'_, H> {}
+
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 {
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
         unreachable!("a call-out row has no numeric operand")
     }
 
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> u64 {
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {
         unreachable!("a call-out row has no numeric operand")
     }
 

@@ -102,7 +102,7 @@ fn append_shape_roots(
             .flat_map(|(key, attributes)| {
                 // Slot-held accessors (a getter, a pair cell) are traced with their object's slots.
                 let (getter, setter) = attributes.functions(accessors, || (None, None));
-                key.symbol_value()
+                key.gc_value()
                     .into_iter()
                     .chain([getter, setter].into_iter().flatten())
             }),
@@ -323,6 +323,7 @@ impl<H: Host> Vm<H> {
     /// to validate root ownership and weak/finalization ordering without
     /// reaching into heap internals.
     pub(crate) fn collect_now(&mut self, program: &ResidualProgram) {
+        self.heap.finish_cycle_now();
         self.collect_slow(program, true);
     }
 
@@ -331,8 +332,23 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
+        self.collect_due(program);
+    }
+
+    /// An allocation threshold passed: a running concurrent cycle's poll, which remarks once
+    /// its marking is done, else a collection, or a cycle's start when its gates pass.
+    #[cold]
+    #[inline(never)]
+    fn collect_due(&mut self, program: &ResidualProgram) {
+        if self.heap.cycle_running() {
+            if self.heap.cycle_poll() {
+                self.collect_slow(program, true);
+            }
+            return;
+        }
         let full = self.heap.should_full_collect();
-        self.collect_slow(program, full);
+        let begin_cycle = full && self.heap.concurrent_cycle_refusal().is_none();
+        self.collect_inner(program, full, begin_cycle);
     }
 
     #[cold]
@@ -369,15 +385,63 @@ impl<H: Host> Vm<H> {
             .retain(|(program, _, _), _| !reclaimed.contains(program));
     }
 
-    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+    /// Drops the unlowered copies of the functions lowered since the last full collection
+    /// that no frame runs (`ResidualProgram::release_lowered_tier0`); one a frame runs waits
+    /// for the next. Frames match by residual: programs share one.
+    fn release_lowered_tier0(&mut self) {
+        let mut lowered = std::mem::take(self.lowered_tier0.get_mut());
+        if lowered.is_empty() {
+            return;
+        }
+        let key = |code: &crate::bytecode::ResidualProgram| std::ptr::from_ref(code) as usize;
+        let live = self.programs.decoded_residuals().map(|code| (key(code), code)).collect::<rustc_hash::FxHashMap<_, _>>();
+        let active = self
+            .frames
+            .iter()
+            .filter_map(|frame| Some((key(self.programs.residual(frame.program)?), frame.function)))
+            .collect::<FxHashSet<_>>();
+        lowered.retain(|&(address, function)| {
+            // A residual no program holds any more was dropped with its copies.
+            let Some(code) = live.get(&address) else { return false };
+            if active.contains(&(address, function)) {
+                return true;
+            }
+            // SAFETY: a full collection, and no frame of any program sharing the residual runs
+            // the function; references into a copy are held only while a frame runs it.
+            unsafe { code.release_lowered_tier0(function as usize) };
+            false
+        });
+        *self.lowered_tier0.get_mut() = lowered;
+    }
+
+    /// Recursion leaves one pooled frame per level it reached; a full collection keeps the few that
+    /// ordinary call depth reuses, and later deeper calls allocate their own.
+    fn trim_frame_pool(&mut self) {
+        self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+        self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+    }
+
+    pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
+        self.collect_inner(program, full, false);
+    }
+
+    /// A collection, or with `begin_cycle` the start of a concurrent cycle: the same roots
+    /// plus every edge a collection finds only through a marked owner (shapes' keys and
+    /// constructors, owned edges) and the VM's weak caches, all held strongly from the
+    /// snapshot, and no sweep until the cycle's remark.
+    fn collect_inner(&mut self, _program: &ResidualProgram, full: bool, begin_cycle: bool) {
         // Frameless activations' registers are no roots; their frames are.
         self.materialize_deferred_lane();
+        // The active for-in names words a collection may move or free.
+        self.for_in_forget_active();
         self.clear_call_targets();
+        self.forget_outer_environments();
         self.resolved_module_requests.clear();
-        self.invalidate_wasm_reference_caches();
         let full = self.heap.collection_is_full(full);
-        if full {
+        if full && !begin_cycle {
             self.host.at_collection_boundary(self.memory_policy());
+        } else {
+            self.host.before_collection();
         }
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::FunctionUse.on() {
@@ -390,10 +454,7 @@ impl<H: Host> Vm<H> {
         // would keep a dropped subject's text alive however large, as no string holds them.
         self.regexp_subjects.clear();
         if full {
-            // Recursion leaves one pooled frame per level it reached; a full collection keeps the
-            // few that ordinary call depth reuses, and later deeper calls allocate their own.
-            self.frame_pool.truncate(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
-            self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
+            self.trim_frame_pool();
         }
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
@@ -444,9 +505,19 @@ impl<H: Host> Vm<H> {
         // costs each root a step through every nesting level. They go into the previous
         // collection's mark stack, which holds as many already.
         let mut roots = self.heap.take_mark_stack();
-        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
+        // Under counts, a minor collection may free any old record nothing counted names. The
+        // edges the VM writes once (program constants, kept atom strings, startup roots, shape
+        // edges) are taken as a minor would take them, where they may name young records, and
+        // their records are pinned (`Heap::rc_pin`) so no epoch frees them; when counts
+        // restarted, which drops pins, every one is taken and pinned again.
+        let rc = self.heap.rc_active();
+        let repin = rc && self.rc_pin_epoch != self.heap.rc_pin_epoch();
+        let all_roots = full || repin;
+        let mut pins = Vec::new();
+        self.programs.extend_roots(if rc { &mut pins } else { &mut roots }, all_roots, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
+        roots.extend(self.native_roots.live().iter().copied());
         roots.extend([
             self.realm.globals,
             self.object_proto,
@@ -682,7 +753,8 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(self.heap.kept_atom_roots(full));
+        let kept_atoms = self.heap.kept_atom_roots(all_roots);
+        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -739,38 +811,32 @@ impl<H: Host> Vm<H> {
                 .flat_map(|((global, _), template)| [*global, template.anchor]),
         );
         roots.extend(self.with_stack.iter().copied());
+        self.lane_stack.extend_roots(&self.programs, &mut roots);
+        self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
         roots.extend(std::iter::once(self.instanceof_has_instance_holder));
         roots.extend(self.active_call_roots.iter().copied());
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        roots.extend(self.startup_intrinsic_roots());
-        roots.extend(self.frames.iter().flat_map(|frame| {
-            // A missing map means the function uses a register form
-            // the liveness pass cannot represent; keep the safe
-            // conservative scan for that activation.
-            let register_masks = self
-                .programs
-                .residual(frame.program)
-                .and_then(|program| program.register_root_masks(frame.function));
-            [frame.env, frame.this]
-                .into_iter()
-                .chain(frame.context.callee())
-                .chain(frame.original_arguments.iter().copied())
-                .chain(frame.locals.iter().copied())
-                .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
-                .chain(
-                    frame
-                        .registers
-                        .iter()
-                        .enumerate()
-                        .filter_map(move |(register, value)| {
-                            register_masks
-                                .and_then(|masks| masks.live_at(frame.pc, register))
-                                .unwrap_or(true).then_some(*value)
-                        }),
-                )
-        }));
+        // Old startup roots stay marked until a full collection, which takes them all. Under
+        // counts they are pinned when taken, as a minor collection may free old records too.
+        if all_roots || begin_cycle || !self.startup_roots_old() || self.heap.satb_active() {
+            let startup = self.startup_intrinsic_roots();
+            if rc { pins.extend(startup) } else { roots.extend(startup) }
+        }
+        for frame in &self.frames {
+            // A missing map means the function uses a register form the liveness pass cannot
+            // represent; keep the safe conservative scan for that activation.
+            roots.extend([frame.env, frame.this]);
+            roots.extend(frame.context.callee());
+            roots.extend(frame.original_arguments.iter().copied());
+            roots.extend(frame.locals.iter().copied());
+            roots.extend(frame.dynamic_bindings.iter().map(|(_, value)| *value));
+            match self.programs.residual(frame.program).and_then(|program| crate::compile::liveness::RegisterMasks::for_collection(program, frame.function)) {
+                Some(masks) => masks.extend_live(frame.pc as usize, &frame.registers, &mut roots),
+                None => roots.extend(frame.registers.iter().copied()),
+            }
+        }
         roots.extend(external_roots);
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::MemoryPeak.on() {
@@ -809,10 +875,55 @@ impl<H: Host> Vm<H> {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
-        let parallel_object_roots =
+        // A cycle's snapshot, and a minor collection under counts (which re-marks the
+        // zero-count old records anything uncounted names, `Heap::rc_pre_mark`), take every
+        // edge the VM holds outside the heap as a root; under counts the edges of the shapes
+        // made since the last minor collection are pinned instead, being written once, but an
+        // owned dictionary's change in place, so they are roots every time.
+        if begin_cycle {
+            for shape in 0..shape_count as u32 {
+                shape_trace.append_shape_edges(GcTraceKind::Collection, shape, false, &mut roots);
+            }
+        } else if !full && rc {
+            let pinned = if repin { 0 } else { self.rc_pinned_shapes.min(shape_count) };
+            for shape in 0..pinned {
+                if shape_lookup::is_owned_dictionary(&self.shapes[shape]) {
+                    shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut roots);
+                }
+            }
+            for shape in pinned..shape_count {
+                shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut pins);
+            }
+            self.rc_pinned_shapes = shape_count;
+        }
+        if begin_cycle || !full && rc {
+            roots.extend(owned_roots.values().flatten().copied());
+            if let Some(strings) = &self.dynamic_strings {
+                roots.extend(strings.values().copied());
+            }
+            roots.extend(self.holder_hints.holder.iter().flat_map(|hint| [hint.holder, hint.value]));
+            roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
+            roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
+            self.private_site_homes.for_each_value(|value| roots.push(value));
+        }
+        if rc {
+            self.heap.rc_pin(&pins);
+            self.rc_pin_epoch = self.heap.rc_pin_epoch();
+        }
+        roots.append(&mut pins);
+        if begin_cycle {
+            self.heap.begin_cycle(roots);
+            return;
+        }
+        let parallel_trace =
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
             };
+        // `ParallelShapeTrace::append`'s own early return, which markers then test inline.
+        let parallel_object_roots = crate::heap::ParallelObjectRootTrace {
+            trace: &parallel_trace,
+            seen_shapes: if owned_roots.is_empty() { &marked_constructor_shape_bits } else { &[] },
+        };
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(2, phase_started);
         let closure_reads = ProgramClosureReads {
@@ -828,6 +939,13 @@ impl<H: Host> Vm<H> {
             Some(&closure_reads),
             full,
         );
+        // Whether every startup root is old now, so the next minor collection may leave
+        // them out (`StartupIntrinsics::roots_old`).
+        if !self.startup_roots_old() {
+            let heap = &self.heap;
+            let old = self.startup_intrinsic_roots().all(|value| value.heap_reference().is_none() || heap.is_old(value));
+            self.startup_intrinsics.roots_old = old;
+        }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
@@ -841,8 +959,8 @@ impl<H: Host> Vm<H> {
         // no cleanup allocation can yet reuse a dead function locator.
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
-        self.programs.clear_wasm_reference_caches();
-        self.prune_function_values(full);
+        // Under reference counts a minor collection frees old closures too.
+        self.prune_function_values(full || self.heap.rc_active());
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
         // before their slots can name new cells.
@@ -854,21 +972,30 @@ impl<H: Host> Vm<H> {
             self.reclaim_unreferenced_programs();
         }
         if full {
+            self.release_lowered_tier0();
+        }
+        if full {
             self.heap.set_reclaimable_programs_after_full(self.programs.settled_reclaimable_bytes());
         }
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        if full && self.should_compact_live_shapes(&live_shapes) {
+        // A remark marks only what its cycle had not: its shape bitmap misses the rest.
+        let shapes_complete = !self.heap.last_collection_kept_cycle_marks();
+        if full && shapes_complete && self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);
+            // Compaction renumbers the shapes: pins taken stay, but which shapes they cover is
+            // not known by index any more.
+            self.rc_pinned_shapes = 0;
         } else {
             self.retain_live_method_caches();
         }
         self.prune_first_chunks();
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));
         self.realm.jobs.extend(
             finalization_jobs
@@ -916,7 +1043,7 @@ impl<H: Host> Vm<H> {
         H::after_collection(&mut crate::CollectionContext::new(&mut self.host, &mut self.heap));
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         self.heap.record_vm_gc_phase(3, after_collection_started);
-        self.collection_boundary();
+        self.collection_boundary(full);
         #[cfg(feature = "profile-memory")]
         if crate::trace::Channel::MemoryPeak.on() {
             let phase = format!("gc_{}_after", self.heap.collection_count());
@@ -982,6 +1109,8 @@ impl<H: Host> Vm<H> {
         self.shape_constructors.clear();
         self.transitions = transitions;
         self.shape_slot_memo.clear();
+        self.private_site_homes.forget_shapes();
+        self.shape_attribute_memo.clear();
         self.plain_copy_shapes.clear();
         self.plain_assign_shapes.clear();
         self.embedding_record_shapes.clear();
@@ -990,9 +1119,10 @@ impl<H: Host> Vm<H> {
         self.invalidate_field_caches();
         self.holder_hints.clear();
         self.programs.invalidate_shape_bindings();
-        self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
+        self.method_caches.clear_all();
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
+        self.method_cache_sites.clear();
         #[cfg(feature = "profile-aggregate")]
         self.remap_invalidated_method_shapes(&mapping);
         #[cfg(feature = "profile-memory")]
@@ -1153,8 +1283,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         loop {
             self.run_job_queue(program, |vm| vm.promise_record(promise)
-                .is_some_and(|record| record.state == PromiseState::Pending))?;
-            if self.promise_record(promise).is_none_or(|record| record.state != PromiseState::Pending)
+                .is_some_and(|record| record.state() == PromiseState::Pending))?;
+            if self.promise_record(promise).is_none_or(|record| record.state() != PromiseState::Pending)
                 || !self.realm.jobs.is_empty() { return Ok(()); }
             self.advance_static_module_jobs(program)?;
             self.advance_dynamic_import_jobs(program, true)?;

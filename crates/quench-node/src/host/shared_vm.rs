@@ -326,7 +326,7 @@ node_bindings! {
         method "nodeTestDirective" (1) => crate::modules::test_runner::directive,
         method "nodeTestSubtest" (0) => crate::modules::test_runner::subtest,
         method "nodeTestContextHook" (1) => crate::modules::test_runner::context_hook,
-        method "nodeTestAssert" (0) => crate::modules::test_runner::planned_assert,
+        method "nodeTestAssert" (0) => crate::modules::test_runner::assertions::planned_assert,
         method "nodeTestBeforeExit" (0) => crate::modules::test_runner::run::before_exit,
         method "nodeTestSettledFulfilled" (1) => crate::modules::test_runner::run::settled_fulfilled,
         method "nodeTestSettledRejected" (1) => crate::modules::test_runner::run::settled_rejected,
@@ -2437,6 +2437,10 @@ impl quench_runtime::Host for NodeHost {
         crate::host::resident_pages::note_collection();
     }
 
+    fn before_collection(&mut self) {
+        crate::host::resident_pages::release_before_first_collection();
+    }
+
     fn after_collection(context: &mut quench_runtime::CollectionContext<'_, Self>) {
         #[cfg(quench_openssl_provider)]
         crate::modules::crypto_hash_shared_vm::prune(context);
@@ -2697,6 +2701,7 @@ impl quench_runtime::Host for NodeHost {
             .map(quench_runtime::HostExecutionContext)
     }
 
+    #[inline]
     fn end_unobserved_job(&mut self) -> Vec<quench_runtime::RootId> {
         crate::modules::async_hooks_shared_vm::end_unobserved_job(&self.shared_state)
     }

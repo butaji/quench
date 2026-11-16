@@ -7,7 +7,7 @@ use super::region::Access;
 /// so a guard never fails and each `choose` runs one arm.
 #[derive(Clone, Copy)]
 pub(crate) struct Concrete {
-    tables: [u64; Table::COUNT],
+    tables: [u64; 1],
     /// The heap whose store barrier `store_gate` reads; null where no store runs.
     heap: *const crate::heap::Heap,
 }
@@ -16,6 +16,20 @@ impl Concrete {
     #[inline(always)]
     pub(crate) fn new(property_values: *const crate::Value) -> Self {
         Self { tables: [property_values as u64], heap: std::ptr::null() }
+    }
+
+    /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
+    #[inline(always)]
+    fn read<T>(&self, base: u64, offset: i32) -> T {
+        // SAFETY: a staged operation loads only from a live record, backing or buffer at a layout offset.
+        unsafe { ((base as *const u8).offset(offset as isize) as *const T).read_unaligned() }
+    }
+
+    /// Writes `value` at `base + offset`, which need not be aligned.
+    #[inline(always)]
+    fn write<T>(&self, base: u64, offset: i32, value: T) {
+        // SAFETY: as `read`; a store writes only a live backing or buffer.
+        unsafe { ((base as *mut u8).offset(offset as isize) as *mut T).write_unaligned(value) }
     }
 
     /// The stage of stores into `heap`'s objects.
@@ -56,21 +70,13 @@ impl Stage for Concrete {
         unsafe { ((base as *const u8).offset(offset as isize) as *const u64).read() }
     }
     #[inline(always)]
-    fn load_u8(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
-        // SAFETY: as `load_u32`.
-        u64::from(unsafe { ((base as *const u8).offset(offset as isize)).read() })
-    }
-    #[inline(always)]
-    fn load_u16(&mut self, _at: Access, base: u64, offset: i32) -> u64 {
-        // SAFETY: as `load_u32`; a wide string's units are 2-byte aligned.
-        u64::from(unsafe { ((base as *const u8).offset(offset as isize) as *const u16).read() })
-    }
-    #[inline(always)]
     fn load_table(&mut self, at: Access, address: u64) -> u64 { self.load_u64(at, address, 0) }
     #[inline(always)]
     fn add(&mut self, a: u64, b: u64) -> u64 { a.wrapping_add(b) }
     #[inline(always)]
     fn or(&mut self, a: u64, b: u64) -> u64 { a | b }
+    fn and(&mut self, a: u64, b: u64) -> u64 { a & b }
+    fn shl(&mut self, a: u64, b: u64) -> u64 { a << (b & 63) }
     #[inline(always)]
     fn add_imm(&mut self, a: u64, imm: impl Into<u64>) -> u64 { let imm = imm.into(); a.wrapping_add(imm) }
     #[inline(always)]
@@ -108,6 +114,49 @@ impl Stage for Concrete {
         unsafe { ((base as *mut u8).offset(offset as isize) as *mut u64).write(value) }
     }
     #[inline(always)]
+    fn load_u8(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<u8>(base, offset)) }
+    #[inline(always)]
+    fn load_i8(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<i8>(base, offset) as i32 as u32) }
+    #[inline(always)]
+    fn load_u16(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<u16>(base, offset)) }
+    #[inline(always)]
+    fn load_i16(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<i16>(base, offset) as i32 as u32) }
+    #[inline(always)]
+    fn load_i32(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<u32>(base, offset)) }
+    #[inline(always)]
+    fn load_f32(&mut self, _at: Access, base: u64, offset: i32) -> u64 { u64::from(self.read::<u32>(base, offset)) }
+    #[inline(always)]
+    fn load_f64(&mut self, _at: Access, base: u64, offset: i32) -> u64 { self.read::<u64>(base, offset) }
+    #[inline(always)]
+    fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
+    #[inline(always)]
+    fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }
+    #[inline(always)]
+    fn store_f32(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u32) }
+    #[inline(always)]
+    fn store_f64(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value) }
+    #[inline(always)]
+    fn f32_to_f64(&mut self, a: u64) -> u64 { f64::from(f32::from_bits(a as u32)).to_bits() }
+    #[inline(always)]
+    fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
+    #[inline(always)]
+    fn clamp_u8(&mut self, a: u64) -> u64 {
+        let number = f64::from_bits(a);
+        if number.is_nan() { 0 } else { u64::from(number.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u8) }
+    }
+    #[inline(always)]
+    fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: super::Passed<'_, u64>, registers: u16) {
+        match passed {
+            // SAFETY: the window at `top` holds `registers` words, none live, and the `count` arguments lie
+            // outside it (`protocol::fill_window`): the interpreter's own fill and argument copy.
+            super::Passed::Window { arguments, count } if prefix.is_empty() => unsafe {
+                crate::vm::fill_registers(top as *mut crate::Value, usize::from(registers), crate::Value::from_bits(undefined));
+                crate::vm::copy_arguments(top as *mut crate::Value, arguments as *const crate::Value, count.min(registers));
+            },
+            _ => super::fill_by_rows(self, top, undefined, prefix, passed, registers),
+        }
+    }
+    #[inline(always)]
     fn not(&mut self, cond: bool) -> bool { !cond }
     #[inline(always)]
     fn any(&mut self, a: bool, b: bool) -> bool { a | b }
@@ -123,14 +172,21 @@ impl Stage for Concrete {
     fn choose(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> u64, otherwise: impl FnOnce(&mut Self) -> u64) -> u64 {
         if cond { then(self) } else { otherwise(self) }
     }
+    /// The branch `cond` takes, with its leaving kept as its `None`: the default's
+    /// `Cell` flag and closure frame cost each staged `pop()` a call.
+    #[inline(always)]
+    fn choose_leaving(&mut self, cond: bool, then: impl FnOnce(&mut Self) -> Option<u64>,
+        otherwise: impl FnOnce(&mut Self) -> Option<u64>) -> Option<u64> {
+        if cond { then(self) } else { otherwise(self) }
+    }
     #[inline(always)]
     fn guard(&mut self, cond: bool, _miss: ()) -> Option<()> { cond.then_some(()) }
     #[inline(always)]
     fn known(&self, cond: bool) -> Option<bool> { Some(cond) }
     #[inline(always)]
-    fn store_gate(&mut self, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: super::RecordSpace, record_id: u64, value: u64) -> bool {
         // SAFETY: a stage that stores holds its live heap.
-        !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(record_id as u32, crate::Value::from_bits(value)) }
+        !self.heap.is_null() && unsafe { (*self.heap).store_unlogged(space, record_id as u32, crate::Value::from_bits(value)) }
     }
     #[inline(always)]
     fn number_operator(&mut self, operator: u64, passed: u64, constant: u64) -> (u64, bool) {
@@ -148,5 +204,15 @@ impl Stage for Concrete {
         unsafe { (*(watch as *const crate::code_dependencies::PublishedCode<()>)).is_published() }
     }
     #[inline(always)]
-    fn table(&mut self, table: Table) -> u64 { self.tables[table as usize] }
+    fn table(&mut self, table: Table) -> u64 {
+        match table {
+            Table::PropertyValues => self.tables[0],
+            // A static's address: no field to load.
+            Table::Layouts => crate::heap::layouts::table_base() as u64,
+        }
+    }
+    #[inline(always)]
+    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
+        super::object::walk_prototypes_loop(self, records, object, target, max_depth)
+    }
 }

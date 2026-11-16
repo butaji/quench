@@ -18,13 +18,13 @@ script_handler! {
 
 /// `base[key]` of a string `key` that names no array index (`Vm::plain_string_keyed_get`).
 #[inline(always)]
-fn named_key_read<H: Host>(vm: &Vm<H>, base: Value, key: Value) -> Option<Value> {
+fn named_key_read<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
     vm.plain_string_keyed_get(base, key)
 }
 
 /// `named_key_read` in the generic order (`lane_index_slot_element`): the site then reads
 /// name keys first (`lane_get_index_named`).
-pub(super) fn lane_named_key_element<H: Host>(ip: Ip, vm: &Vm<H>, base: Value, key: Value) -> Option<Value> {
+pub(super) fn lane_named_key_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
     let value = named_key_read(vm, base, key)?;
     requicken::<H>(ip, lane_get_index_named::<H>);
     Some(value)

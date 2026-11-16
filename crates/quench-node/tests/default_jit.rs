@@ -53,7 +53,9 @@ fn the_jit_mode_flags_select_one_mode_and_the_old_flag_is_gone() {
     assert!(!run_flags(&["--jit"]).0, "--jit is removed");
     let (ok, stderr) = run_flags(&["--zz-jit"]);
     assert!(!ok && stderr.contains("unknown JIT flag --zz-jit"), "any other --*-jit flag is an unknown-flag error: {stderr}");
-    assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
+    if cfg!(target_arch = "x86_64") {
+        assert!(compiles(&["--b-jit"]) > 0, "--b-jit: the hot number loop runs from stencils");
+    }
     assert!(compiles(&["--q-jit"]) > 0, "--q-jit: the hot loop runs quick-compiled code");
     assert!(compiles(&["--u-jit"]) > 0, "--u-jit: the hot loop runs compiled code");
 }
@@ -100,7 +102,10 @@ fn function_attempts_and_region_runs(flag: &str) -> (u64, u64) {
 fn b_jit_compiles_no_function_and_runs_base_regions() {
     let (attempts, runs) = function_attempts_and_region_runs("--b-jit");
     assert_eq!(attempts, 0, "--b-jit: no Cranelift function compile is attempted");
-    assert!(runs > 0, "--b-jit: the hot loop runs its stencil region");
+    // The stencil strip emits the x86-64 frame shapes; another host runs the lanes instead.
+    if cfg!(target_arch = "x86_64") {
+        assert!(runs > 0, "--b-jit: the hot loop runs its stencil region");
+    }
 }
 
 /// Runs the fixture under `flag` with the JIT statistics on; the loop counters named by `keys`,
@@ -131,8 +136,13 @@ fn osr_transitions_between_tiers_keep_the_output() {
     }
     let keys = ["native_region_runs", "tier_ups", "body_runs"];
     let [regions, published, ran] = fixture_osr_counts("--", "osr_transitions.js", keys);
-    assert!(regions > 0, "the default mode: the hot loop runs a region");
+    // The default mode runs the loop in its body: a region is entered only where a trial
+    // beats the lane's loop rate (`LoopTier`), so the loop's native tier here is the body.
+    assert!(regions + ran > 0, "the default mode: the hot loop runs a native tier");
     assert!(published > 0 && ran > 0, "the default mode: a loop body publishes ({published}) and runs ({ran})");
-    let [regions, published, _] = fixture_osr_counts("--b-jit", "osr_transitions.js", keys);
-    assert!(regions > 0 && published == 0, "--b-jit: stencil regions only ({regions} runs, {published} bodies)");
+    // The stencil strip emits x86-64's frame shapes; another host's `--b-jit` runs the lanes.
+    if cfg!(target_arch = "x86_64") {
+        let [regions, published, _] = fixture_osr_counts("--b-jit", "osr_transitions.js", keys);
+        assert!(regions > 0 && published == 0, "--b-jit: stencil regions only ({regions} runs, {published} bodies)");
+    }
 }

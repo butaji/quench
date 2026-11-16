@@ -1,5 +1,6 @@
 //! The words and registers the rows compute on: the state (`S`), a row's outcome (`Out`), the
 //! patched holes, tagged-word tests and the float to int conversions that need no constant pool.
+//! Value representation only: what a Number operation computes is `staged::numeric`'s.
 
 use crate::layout::words::{CANONICAL_NAN, FIRST_TAG_FIELD, INT_TAG, TAG_SHIFT};
 
@@ -142,17 +143,41 @@ pub(crate) fn int_word(v: i32) -> u64 {
 
 /// `cvttsd2si` to 32 bits: the truncated int32, or `i32::MIN` where `f` is out of range or NaN
 /// (Rust's saturating `as` would load its bounds from a constant pool, which a stencil may not use).
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn truncate32(f: f64) -> i32 {
     // SAFETY: SSE2 is the x86-64 baseline.
     unsafe { core::arch::x86_64::_mm_cvttsd_si32(core::arch::x86_64::_mm_set_sd(f)) }
 }
 
+/// `fcvtzs` to 32 bits, the row's conversion on AArch64: NaN takes `i32::MIN` and a value out of
+/// range saturates, which the int32 rows' back-conversion rejects exactly as `cvttsd2si`'s
+/// out-of-range result does. Written in assembly because a stencil may use no constant pool.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) fn truncate32(f: f64) -> i32 {
+    let out: i32;
+    // SAFETY: one scalar conversion, no memory or flags touched.
+    unsafe { core::arch::asm!("fcvtzs {out:w}, {input:d}", out = out(reg) out, input = in(vreg) f) };
+    out
+}
+
 /// `cvttsd2si` to 64 bits: the truncated integer, or `i64::MIN` out of range or for NaN.
+#[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub(crate) fn truncate64(f: f64) -> i64 {
     // SAFETY: SSE2 is the x86-64 baseline.
     unsafe { core::arch::x86_64::_mm_cvttsd_si64(core::arch::x86_64::_mm_set_sd(f)) }
+}
+
+/// `fcvtzs` to 64 bits, the 64-bit rows' conversion on AArch64 (`truncate32`'s contract).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub(crate) fn truncate64(f: f64) -> i64 {
+    let out: i64;
+    // SAFETY: one scalar conversion, no memory or flags touched.
+    unsafe { core::arch::asm!("fcvtzs {out:x}, {input:d}", out = out(reg) out, input = in(vreg) f) };
+    out
 }
 
 /// `Value::number(f)`.
@@ -170,34 +195,19 @@ pub(crate) fn canonical(f: f64) -> u64 {
 }
 
 #[inline(always)]
-pub(crate) fn to_f64(x: u64) -> Option<f64> {
-    if is_int(x) {
-        Some(x as u32 as i32 as f64)
-    } else if is_double(x) {
-        Some(f64::from_bits(x))
-    } else {
-        None
-    }
-}
-
-#[inline(always)]
 pub(crate) fn f64_to_i32(f: f64) -> Option<i32> {
     let wide = truncate64(f);
     if wide != i64::MIN { Some(wide as i32) } else { None }
 }
 
+/// Whether both tagged words are int words (one test of their upper halves).
 #[inline(always)]
-pub(crate) fn to_i32(x: u64) -> Option<i32> {
-    if is_int(x) {
-        Some(x as u32 as i32)
-    } else if is_double(x) {
-        f64_to_i32(f64::from_bits(x))
-    } else {
-        None
-    }
+pub(crate) fn both_int(x: u64, y: u64) -> bool {
+    ((x ^ INT_TAG) | (y ^ INT_TAG)) >> HIGH_SHIFT == 0
 }
 
+/// Whether the tagged word's upper half is the int tag (an int word).
 #[inline(always)]
-pub(crate) fn unsigned_word(v: i32) -> u64 {
-    if v >= 0 { int_word(v) } else { (v as u32 as f64).to_bits() }
+pub(crate) fn has_int_high(x: u64) -> bool {
+    x >> HIGH_SHIFT == INT_HIGH
 }

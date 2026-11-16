@@ -317,7 +317,7 @@ impl SharedEventLoop {
     ) {
         self.shared.timers.push_back(SharedTimer {
             id,
-            due: std::time::Instant::now() + delay,
+            due: quench_runtime::clock::instant_now() + delay,
             interval,
             refed: true,
             callback,
@@ -381,14 +381,14 @@ impl SharedEventLoop {
 
     pub fn begin_shared_timer_repeat(&mut self, id: u64) {
         if let Some(timer) = self.shared.firing_timers.get_mut(&id) {
-            timer.repeat_started = Some(std::time::Instant::now());
+            timer.repeat_started = Some(quench_runtime::clock::instant_now());
         }
     }
 
     /// Refresh the existing queue/firing owner; the caller creates a new owner
     /// only when the previous callback has completed and been released.
     pub fn refresh_shared_timer(&mut self, id: u64, delay: std::time::Duration) -> bool {
-        let due = std::time::Instant::now() + delay;
+        let due = quench_runtime::clock::instant_now() + delay;
         if let Some(index) = self.shared.timers.iter().position(|timer| timer.id == id) {
             let mut timer = self
                 .shared

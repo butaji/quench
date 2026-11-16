@@ -39,14 +39,14 @@ impl SiteEntry for u32 {
 
 /// The granule a table's mapping is sized by: the smallest page size of the supported
 /// hosts.
-const MAPPING_GRANULE_BYTES: usize = 4096;
+pub(super) const MAPPING_GRANULE_BYTES: usize = 4096;
 
 #[cfg(unix)]
-mod storage {
+pub(in crate::vm) mod storage {
     use std::ptr::NonNull;
 
     /// A private anonymous mapping of `bytes` zero bytes.
-    pub(super) fn map_zeroed(bytes: usize) -> NonNull<u8> {
+    pub(in crate::vm) fn map_zeroed(bytes: usize) -> NonNull<u8> {
         // SAFETY: a fresh anonymous private mapping aliases no existing memory.
         let base = unsafe {
             libc::mmap(
@@ -66,14 +66,14 @@ mod storage {
     ///
     /// # Safety
     /// `base` and `bytes` name a live mapping from `map_zeroed` that nothing reads again.
-    pub(super) unsafe fn unmap(base: NonNull<u8>, bytes: usize) {
+    pub(in crate::vm) unsafe fn unmap(base: NonNull<u8>, bytes: usize) {
         // SAFETY: per the contract.
         unsafe { libc::munmap(base.as_ptr().cast(), bytes) };
     }
 }
 
 #[cfg(not(unix))]
-mod storage {
+pub(in crate::vm) mod storage {
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::ptr::NonNull;
 
@@ -81,7 +81,7 @@ mod storage {
         Layout::from_size_align(bytes, super::MAPPING_GRANULE_BYTES).expect("cache site table layout")
     }
 
-    pub(super) fn map_zeroed(bytes: usize) -> NonNull<u8> {
+    pub(in crate::vm) fn map_zeroed(bytes: usize) -> NonNull<u8> {
         // SAFETY: a nonzero size.
         NonNull::new(unsafe { alloc_zeroed(layout(bytes)) })
             .unwrap_or_else(|| std::alloc::handle_alloc_error(layout(bytes)))
@@ -89,7 +89,7 @@ mod storage {
 
     /// # Safety
     /// `base` and `bytes` name a live allocation from `map_zeroed`.
-    pub(super) unsafe fn unmap(base: NonNull<u8>, bytes: usize) {
+    pub(in crate::vm) unsafe fn unmap(base: NonNull<u8>, bytes: usize) {
         // SAFETY: per the contract.
         unsafe { dealloc(base.as_ptr(), layout(bytes)) };
     }

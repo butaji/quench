@@ -150,7 +150,7 @@ pub(crate) fn unreferenced<S: Stage>(stage: &mut S, value: S::Word, miss: S::Mis
 #[inline(always)]
 pub(crate) fn pop_last<S: Stage>(stage: &mut S, values: S::Word, length: S::Word, miss: S::Miss) -> Option<S::Word> {
     let empty = stage.eq_imm(length, 0u32);
-    stage.choose_leaving(empty, |stage| Some(stage.constant(Value::UNDEFINED.to_bits())), |stage| {
+    stage.choose_leaving(empty, #[inline(always)] |stage| Some(stage.constant(Value::UNDEFINED.to_bits())), #[inline(always)] |stage| {
         let one = stage.constant(1);
         let last = stage.sub(length, one);
         let offset = stage.mul_imm(last, size_of::<Value>() as u64);
@@ -300,9 +300,10 @@ mod tests {
         let header = elements.as_ptr() as u64;
         let record_address = record.as_mut_ptr() as u64;
         let mut stage = stage();
-        stage.store_u64(Region::Records.mutable(), record_address, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32, header);
-        stage.store_u32(Region::Records.mutable(), record_address, (ARRAY.object_offset + OBJECT.meta_offset) as i32, u64::from(meta));
-        stage.store_u64(Region::Payload.mutable(), record_address, (ARRAY.object_offset + OBJECT.payload_offset) as i32, 0);
+        // Without extras, the object's payload word is the backing's header pointer.
+        stage.store_u64(Region::Payload.mutable(), record_address, (ARRAY.elements_offset + ARRAY.elements_header_offset) as i32, header);
+        let layout = crate::heap::layouts::intern(u64::from(meta) << u32::BITS);
+        stage.store_u32(Region::Records.mutable(), record_address, (ARRAY.object_offset + OBJECT.layout_offset) as i32, u64::from(layout));
         let values = header + ARRAY.header_values_offset as u64;
         let length = stage.load_u32(Region::Elements.mutable(), header, ARRAY.header_length_offset as i32);
         (Backing { record: record_address, header, values, length }, capacity)

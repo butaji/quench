@@ -283,14 +283,43 @@ pub(super) fn lane_planned_construction<H: Host>(
     planned_construction(vm, callee, lane_construct_argument(r, i))
 }
 
+/// `lane_planned_construction` of a plan of passed fields that fit the inline slots, where it
+/// calls nothing out of line (`Heap::alloc_planned_inline_quick`); `None`, before any effect,
+/// for anything else, which `lane_planned_construction` makes.
+#[inline(always)]
+pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    let index = holding_construct_plan_index(vm, callee)?;
+    let plan = &vm.lane_stack.construct_plans[index];
+    let len = usize::from(plan.fields);
+    if plan.kind != ConstructPlanKind::Passed || len > INLINE_PROPERTY_COUNT {
+        return None;
+    }
+    const _: () = assert!(INLINE_PROPERTY_COUNT == 2, "the inline slots are filled one by one");
+    let argument = lane_construct_argument(r, i);
+    let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+    if len > 0 { inline[0] = plan.passed_value(0, &argument); }
+    if len > 1 { inline[1] = plan.passed_value(1, &argument); }
+    let header = plan.header;
+    vm.heap.alloc_planned_inline_quick(header, inline, len)
+}
+
 /// `lane_planned_construction` from the parameters' values `argument` gives.
 #[inline(always)]
-fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
+pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     // The plan in place: the allocation borrows the heap beside it, not a copy.
     let plan = &vm.lane_stack.construct_plans[index];
     if plan.kind != ConstructPlanKind::Passed {
         return lane_defaulted_construction(vm, index, argument);
+    }
+    let len = usize::from(plan.fields);
+    if len <= INLINE_PROPERTY_COUNT {
+        // Fields that fit the inline slots are those slots: no values array gathered first.
+        const _: () = assert!(INLINE_PROPERTY_COUNT == 2, "the inline slots are filled one by one");
+        let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+        if len > 0 { inline[0] = plan.passed_value(0, &argument); }
+        if len > 1 { inline[1] = plan.passed_value(1, &argument); }
+        return Some(vm.heap.alloc_planned_inline(plan.header, plan.prototype, inline, len));
     }
     Some(plan.allocate(&mut vm.heap, |field| plan.passed_value(field, &argument)))
 }
@@ -481,5 +510,12 @@ pub(super) fn lane_initialize_stores<H: Host>(
 /// the frame's own return of it (`lane_frame_return`).
 #[inline(always)]
 pub(super) fn lane_return_constructed<H: Host>(cx: *mut LaneContext<H>, ip: Ip, this: Value) -> Resumed {
+    // The common return first, as a `Return` record takes it (`lane_complete_plain_activation`),
+    // where no leaf call runs.
+    if unsafe { (*cx).leaf.call }.is_null()
+        && let Some(resumed) = lane_complete_plain_activation::<H, NOT_LEAF>(cx, this)
+    {
+        return resumed;
+    }
     lane_complete_activation(cx, ip, this).unwrap_or_else(|| Resumed::Exit(lane_frame_return(unsafe { vm(cx) }, ip, this)))
 }

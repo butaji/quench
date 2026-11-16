@@ -6,6 +6,8 @@
 //! reassigned (shape compaction, VM reset).
 
 use std::cell::{Cell, OnceCell};
+use std::mem::MaybeUninit;
+use std::ptr::NonNull;
 use std::hash::{Hash, Hasher};
 
 /// Direct-mapped entries: a power of two. Memory-first (TOD-123): 1024 entries, a quarter
@@ -15,10 +17,53 @@ const SHAPE_MEMO_ENTRIES: usize = 1 << 10;
 /// A direct-mapped memo of `ENTRIES` entries (a power of two) that allocates them on its
 /// first record. A memo a program never records into costs no memory: built at VM
 /// construction, the memos cost every run 48 to 254 KiB of peak RSS on V8-v7 whether or
-/// not it used private names, symbol keys or enumeration.
+/// not it used private names, symbol keys or enumeration. The entries are fresh zero pages
+/// (`site_table::storage`) whose zero bits are empty entries, so only a page an entry was
+/// recorded on becomes resident: writing every entry empty had made the whole table
+/// resident at its first record (the symbol-load proofs' 224 KiB on every V8-v7 row).
 pub(super) struct DirectMappedTable<T: Copy, const ENTRIES: usize> {
-    entries: OnceCell<Box<[Cell<Option<T>>]>>,
+    entries: OnceCell<ZeroedEntries<T>>,
 }
+
+/// One entry: empty while `full` is false, which is its zero bits.
+struct Entry<T: Copy> {
+    full: Cell<bool>,
+    value: Cell<MaybeUninit<T>>,
+}
+
+/// A table's entries, in a zeroed mapping it owns.
+struct ZeroedEntries<T: Copy> {
+    base: NonNull<Entry<T>>,
+    len: usize,
+}
+
+impl<T: Copy> ZeroedEntries<T> {
+    fn bytes(len: usize) -> usize {
+        (len * size_of::<Entry<T>>()).next_multiple_of(super::site_table::MAPPING_GRANULE_BYTES)
+    }
+
+    fn new(len: usize) -> Self {
+        const { assert!(align_of::<Entry<T>>() <= super::site_table::MAPPING_GRANULE_BYTES) };
+        let base = super::site_table::storage::map_zeroed(Self::bytes(len)).cast();
+        Self { base, len }
+    }
+
+    #[inline(always)]
+    fn entries(&self) -> &[Entry<T>] {
+        // SAFETY: the mapping holds `len` entries, and zero bits are a valid (empty) entry.
+        unsafe { std::slice::from_raw_parts(self.base.as_ptr(), self.len) }
+    }
+}
+
+impl<T: Copy> Drop for ZeroedEntries<T> {
+    fn drop(&mut self) {
+        // SAFETY: the mapping is this table's, and nothing reads it after the drop.
+        unsafe { super::site_table::storage::unmap(self.base.cast(), Self::bytes(self.len)) };
+    }
+}
+
+// SAFETY: the entries own their mapping as a `Box` owns its slice.
+unsafe impl<T: Copy + Send> Send for ZeroedEntries<T> {}
 
 impl<T: Copy, const ENTRIES: usize> Default for DirectMappedTable<T, ENTRIES> {
     fn default() -> Self {
@@ -32,7 +77,9 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
     /// The entry at `index`, if one was recorded since the last clear.
     #[inline(always)]
     pub(super) fn get(&self, index: usize) -> Option<T> {
-        self.entries.get()?[index].get()
+        let entry = &self.entries.get()?.entries()[index];
+        // SAFETY: a full entry holds the value `set` wrote.
+        entry.full.get().then(|| unsafe { entry.value.get().assume_init() })
     }
 
     /// Records `value` at `index`, replacing what the entry held.
@@ -42,7 +89,9 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
             Some(entries) => entries,
             None => self.allocate(),
         };
-        entries[index].set(Some(value));
+        let entry = &entries.entries()[index];
+        entry.value.set(MaybeUninit::new(value));
+        entry.full.set(true);
     }
 
     /// The first record's allocation, kept out of line so the record and probe paths that
@@ -50,9 +99,9 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
     /// `--jit` about 8%.
     #[cold]
     #[inline(never)]
-    fn allocate(&self) -> &[Cell<Option<T>>] {
+    fn allocate(&self) -> &ZeroedEntries<T> {
         let () = Self::POWER_OF_TWO;
-        self.entries.get_or_init(|| (0..ENTRIES).map(|_| Cell::new(None)).collect())
+        self.entries.get_or_init(|| ZeroedEntries::new(ENTRIES))
     }
 
     pub(super) fn clear(&self) {
@@ -61,9 +110,10 @@ impl<T: Copy, const ENTRIES: usize> DirectMappedTable<T, ENTRIES> {
 
     /// Keeps the recorded entries `keep` accepts and empties the rest.
     pub(super) fn retain(&self, keep: impl Fn(&T) -> bool) {
-        for entry in self.entries.get().into_iter().flat_map(|entries| entries.iter()) {
-            if entry.get().is_some_and(|value| !keep(&value)) {
-                entry.set(None);
+        for entry in self.entries.get().into_iter().flat_map(ZeroedEntries::entries) {
+            // SAFETY: a full entry holds the value `set` wrote.
+            if entry.full.get() && !keep(&unsafe { entry.value.get().assume_init() }) {
+                entry.full.set(false);
             }
         }
     }
@@ -76,6 +126,8 @@ pub(super) struct ShapeMemo<K: Copy + Eq + Hash, V: Copy> {
 
 /// The slot a property key has in a shape, or `None` for its absence.
 pub(super) type ShapeSlotMemo = ShapeMemo<super::property_key::PropertyKey, Option<u32>>;
+/// The attributes a slot has in a shape, as its transition chain gives them.
+pub(super) type ShapeAttributeMemo = ShapeMemo<u32, Option<super::ShapeAttributes>>;
 /// The shape an empty object of a shape reaches by a plain copy (`Vm::copy_plain_properties`)
 /// of a source of the keyed shape: its enumerable data properties added in order.
 pub(super) type PlainCopyShapeMemo = ShapeMemo<u32, u32>;
@@ -116,6 +168,7 @@ pub(super) fn direct_mapped_index_by_shift(key: impl Hash, shift: u32) -> usize 
 }
 
 impl<K: Copy + Eq + Hash, V: Copy> ShapeMemo<K, V> {
+    #[inline(always)]
     fn index(shape: u32, key: K) -> usize {
         direct_mapped_index((shape, key), SHAPE_MEMO_ENTRIES)
     }

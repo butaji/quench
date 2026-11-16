@@ -1,7 +1,7 @@
 //! The facts a binary operator gives: a string or BigInt operand takes the interpreter's own
 //! definition, any other proves its operands Numbers or leaves.
 
-use super::{Flow, boolean_binary, constant_number, operand_type, prove_number, set};
+use super::{ranges, Flow, boolean_binary, constant_number, operand_type, prove_number, set};
 use crate::bytecode::{Constant, Register, WideInstruction};
 use crate::typed_ir::Type;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -57,11 +57,12 @@ fn number_result(types: &mut [Type], instruction: WideInstruction, constants: &[
     if let Some(bitwise) = NumberBitwise::from_js_instruction(op, operator) {
         // ToInt32 of any Number runs natively; anything else leaves.
         prove_number(types, operands);
-        return Some(if bitwise.result_is_int32(constant_number(constants, operands[1])) { Type::INT32 } else { Type::NUMBER });
+        let range = ranges::bitwise(&ranges::lookup(types, constants), bitwise, operands);
+        return Some(if bitwise.result_is_int32(constant_number(constants, operands[1])) { Type::int(range) } else { Type::NUMBER });
     }
     if NumberArithmetic::from_js_instruction(op, operator).is_some() {
         prove_number(types, operands);
-        return Some(Type::NUMBER);
+        return Some(ranges::arithmetic_type(&ranges::lookup(types, constants), instruction));
     }
     if NumberRelation::from_operator(operator).is_some() {
         // An equality decides operands of any type (`lane_region::relation`) and proves

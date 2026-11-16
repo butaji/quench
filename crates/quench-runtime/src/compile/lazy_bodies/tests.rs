@@ -69,7 +69,7 @@ fn lazy_free_names(source: &str, skim: bool) -> Option<Vec<(u32, Vec<String>)>> 
     let mut skimmer = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: both live through the parse, which alone calls them.
     let (check, skim) = unsafe { (oxc_parser::LazyBodyCheck::new(&mut check), skim.then(|| oxc_parser::LazyBodySkim::new(&mut skimmer))) };
-    let parsed = super::parse(&allocator, source, SourceType::script(), Some(0), Some(check), skim, false);
+    let parsed = super::parse(&allocator, source, SourceType::script(), Some(0), Some(check), skim, false, false, crate::compile::annex_b_targets::Recognize::No, None);
     assert!(parsed.diagnostics.is_empty(), "{source}");
     let facts = facts.into_inner();
     let mut found: Vec<(u32, Vec<String>)> = facts.free_names.iter().map(|(start, names)| (*start, names.iter().map(|name| name.to_string()).collect())).collect();

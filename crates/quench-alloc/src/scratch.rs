@@ -34,6 +34,8 @@ const MAX_SHIFT: u32 = 20;
 const CLASSES: usize = (MAX_SHIFT - MIN_SHIFT + 1) as usize;
 /// The largest request served: its alignment is the smallest class's, which every block has.
 const MAX_ALIGN: usize = 1 << MIN_SHIFT;
+/// The system page, the unit `release` returns.
+const PAGE_BYTES: usize = 4096;
 /// Address space reserved for the arena, faulted by first touch: a compile's scratch peaked
 /// near 100 MB on the largest bodies; past this the system allocator serves the rest.
 const ARENA_BYTES: usize = 1 << 30;
@@ -42,6 +44,8 @@ const ARENA_BYTES: usize = 1 << 30;
 const PARTIAL_RELEASE_SHIFT: u32 = 16;
 
 const _: () = assert!(MAX_SMALL_BYTES.is_power_of_two() && MIN_SHIFT > MAX_SMALL_BYTES.trailing_zeros());
+// One smallest-class block fills the gap below a page-aligned block.
+const _: () = assert!(PAGE_BYTES == 2 << MIN_SHIFT);
 const _: () = assert!(ARENA_BYTES.is_multiple_of(1 << MAX_SHIFT));
 
 struct FreeBlock {
@@ -99,6 +103,12 @@ pub fn adopt() {
     let _ = ADOPTED.try_with(|adopted| adopted.set(true));
 }
 
+/// Ends the calling thread's adoption: its later large blocks come from the system allocator
+/// again, and blocks it took stay the arena's until freed.
+pub fn leave() {
+    let _ = ADOPTED.try_with(|adopted| adopted.set(false));
+}
+
 /// Whether `layout` is served from the arena on this thread.
 pub(crate) fn applies(layout: Layout) -> bool {
     layout.size() > MAX_SMALL_BYTES
@@ -130,6 +140,15 @@ fn alloc(layout: Layout) -> *mut u8 {
         head
     } else {
         let bytes = 1usize << (class as u32 + MIN_SHIFT);
+        if bytes >= PAGE_BYTES && !arena.used.is_multiple_of(PAGE_BYTES) {
+            // A block of a page or more starts on a page, or `release` could not return its
+            // pages; the gap below it (one smallest-class block) goes to that class.
+            let gap = BASE.load(Ordering::Relaxed) + arena.used;
+            // SAFETY: the gap is unused span of the smallest class's size.
+            unsafe { (*(gap as *mut FreeBlock)).next = arena.free[0] as *mut FreeBlock };
+            arena.free[0] = gap;
+            arena.used += PAGE_BYTES - arena.used % PAGE_BYTES;
+        }
         if arena.used + bytes > ARENA_BYTES {
             return ptr::null_mut();
         }
@@ -155,6 +174,16 @@ pub(crate) fn free(block: *mut u8, layout: Layout) {
 /// Returns the arena's pages to the system. With no live block the arena resets and its used
 /// span goes in one call; otherwise only the free blocks of the largest classes go.
 pub fn release() {
+    release_from(PARTIAL_RELEASE_SHIFT);
+}
+
+/// `release`, returning every free block of a page or more while blocks stay live: a phase
+/// that ends (`leave`) with a few of its blocks kept returns the rest of its pages.
+pub fn release_phase() {
+    release_from(12);
+}
+
+fn release_from(partial_release_shift: u32) {
     let mut arena = lock();
     let base = BASE.load(Ordering::Relaxed);
     if base == 0 || arena.used == 0 {
@@ -167,17 +196,17 @@ pub fn release() {
         arena.used = 0;
         return;
     }
-    for class in (PARTIAL_RELEASE_SHIFT - MIN_SHIFT) as usize..CLASSES {
+    for class in (partial_release_shift.max(MIN_SHIFT) - MIN_SHIFT) as usize..CLASSES {
         let bytes = 1usize << (class as u32 + MIN_SHIFT);
         let mut block = arena.free[class];
         while block != 0 {
-            // SAFETY: free blocks are page-aligned multiples of the class and hold nothing in
-            // use. The link in the first word is saved before it is zeroed, and rewritten after.
+            // SAFETY: free blocks of a page or more start on a page and hold nothing in use;
+            // the first page, which holds the link, stays.
             unsafe {
-                let next = (*(block as *mut FreeBlock)).next;
-                libc::madvise(block as *mut libc::c_void, bytes, libc::MADV_DONTNEED);
-                (*(block as *mut FreeBlock)).next = next;
-                block = next as usize;
+                if bytes > PAGE_BYTES {
+                    libc::madvise((block + PAGE_BYTES) as *mut libc::c_void, bytes - PAGE_BYTES, libc::MADV_DONTNEED);
+                }
+                block = (*(block as *mut FreeBlock)).next as usize;
             }
         }
     }
@@ -238,6 +267,9 @@ mod tests {
         let blocks: Vec<_> = sizes.iter().map(|&size| alloc(layout(size))).collect();
         for (&block, &size) in blocks.iter().zip(&sizes) {
             assert_eq!(block as usize % MAX_ALIGN, 0);
+            if size > PAGE_BYTES {
+                assert_eq!(block as usize % PAGE_BYTES, 0, "release returns whole pages only");
+            }
             // SAFETY: the block holds `size` bytes.
             unsafe { block.write_bytes(0xAB, size) };
         }

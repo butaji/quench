@@ -5,10 +5,10 @@ pub(super) use increment::{integer_increment, number_increment};
 
 // Publish the current resume PC only while a binding-site consumer runs.
 macro_rules! with_binding_site_pc {
-    ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
-        let previous = $vm.frames[$frame].binding_site_pc.replace($resume_pc as u32);
+    ($vm:expr, $owner:expr, $resume_pc:expr, $action:expr) => {{
+        let previous = $vm.replace_binding_site($owner, Some($resume_pc as u32));
         let result = $action;
-        $vm.frames[$frame].binding_site_pc = previous;
+        $vm.replace_binding_site($owner, previous);
         result
     }};
 }
@@ -73,13 +73,6 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        // A generator's `next()` resumes its suspended frame in place.
-        if i.op() == Op::Call && i.call_window().count == 0 {
-            let generator = self.read(f, i.register_c());
-            if self.steps_as_generator(generator, callee) {
-                return self.try_in_loop_generator_step(f, pc, callee, generator, i.a(), false);
-            }
-        }
         let Some(entry) = self.in_loop_call_entry(p, callee) else { return self.try_forwarded_user_call(p, f, i, pc, callee) };
         let target = (entry.program, entry.function, entry.env);
         if entry.push == super::InLoopPush::Settles {
@@ -233,10 +226,10 @@ impl<H: Host> Vm<H> {
             self.set_active_program(program);
         }
         let constructs = matches!(completion, CallCompletion::Constructor(_));
-        if constructs { self.construct_target = Some(ConstructionTarget { callee, new_target: callee }); }
+        if constructs { self.set_construct_target(Some(ConstructionTarget { callee, new_target: callee })); }
         let call_guard = self.push_general_user_frame(callee_residual.as_deref().unwrap_or(p), id, env, this, arguments,
             CallContext::user_function(id, callee));
-        if constructs { self.construct_target = None; }
+        if constructs { self.set_construct_target(None); }
         if call_guard.is_err() {
             self.set_active_program(caller_program);
         }
@@ -530,8 +523,30 @@ impl<H: Host> Vm<H> {
         } else {
             elements.len()
         };
-        let values = elements.get(..length)?;
-        (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
+        let values = elements.range(0..length.min(elements.len()));
+        (length <= elements.len() && !elements.range(0..length.min(elements.len())).any(|value| value.is_deleted())).then(|| values.collect())
+    }
+
+    /// The length of `list` where CreateListFromArrayLike reads its first elements as they
+    /// are stored: a dense array without holes, or an arguments object that keeps its
+    /// template's data `length` (`arguments_object_length`), no indexed descriptor and no
+    /// hole below it. A mapped parameter's element holds the parameter's value, as its loads
+    /// and stores keep it. `None` for any other list, whose reads may run guest code.
+    pub(super) fn dense_list_length(&self, list: Value) -> Option<usize> {
+        let array = self.heap.array(list)?;
+        if self.heap.sparse_length(list).is_some() {
+            return None;
+        }
+        let elements = array.elements();
+        let length = if array.is_arguments_object() {
+            if array.has_indexed_descriptors() {
+                return None;
+            }
+            usize::try_from(self.arguments_object_length(list)?.as_int()?).ok()?
+        } else {
+            elements.len()
+        };
+        (length <= elements.len() && !elements.range(0..length).any(|value| value.is_deleted())).then_some(length)
     }
 
     #[quench_macros::operation_semantics(resolve_step_operation)]
@@ -569,53 +584,9 @@ impl<H: Host> Vm<H> {
                 let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocal | Op::LoadEnvLocal => {
-                let value = self.load_local_binding(p, f, i.local_slot(), None)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::StoreVarBinding => {
-                self.store_var_binding(p, f, i.local_slot(), self.read(f, i.register_a()))?;
-            }
-            Op::StoreLocal => {
-                let value = self.read(f, i.register_a());
-                let slot = i.local_slot();
-                let function = &p.function(self.frames[f].function as usize);
-                if function.is_self_binding_slot(slot) {
-                    if function.strict {
-                        return Err(
-                            self.type_error(p, "assignment to function name binding".into())
-                        );
-                    }
-                    if let Some(register) = i.optional_register_b() {
-                        self.write(f, register, value);
-                    }
-                    return Ok(StepResult::Continue);
-                }
-                self.check_local_assignment_initialized(
-                    p,
-                    f,
-                    slot,
-                    i.boolean_field(crate::bytecode::InstructionField::C)
-                        .unwrap_or(false),
-                )?;
-                if self.frames[f].function == 0
-                    && function
-                        .local_atoms
-                        .get(slot)
-                        .is_some_and(|atom| function.declares_global_immutable(*atom))
-                        && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
-                    {
-                        return Err(self.type_error(p, "assignment to constant binding".into()));
-                    }
-                *self
-                    .frame_binding_mut(p, f, slot)
-                    .ok_or_else(|| JsError("invalid local slot".into()))? = value;
-                self.mirror_global_lexical_binding(p, f, slot, value);
-                self.mapped_argument_store(p, f, slot, value);
-                if let Some(register) = i.optional_register_b() {
-                    self.write(f, register, value);
-                }
-            }
+            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
+            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+            | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             Op::StoreLocalPlain => {
                 let value = self.read(f, i.register_a());
                 // SAFETY: validated bytecode bounds the slot by Function.locals,
@@ -624,70 +595,6 @@ impl<H: Host> Vm<H> {
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
-            }
-            Op::StoreEnvLocal => {
-                let value = self.read(f, i.register_a());
-                let initialize = i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false);
-                if self.store_env_local(p, f, i.local_slot(), value, initialize)?
-                    && let Some(register) = i.optional_register_b()
-                {
-                    self.write(f, register, value);
-                }
-            }
-            Op::LoadCapture => {
-                let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::StoreCapture => self.store_capture(
-                p,
-                f,
-                i.capture_depth(),
-                i.capture_slot(),
-                self.read(f, i.register_a()),
-            )?,
-            Op::LoadName => {
-                let v = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name(p, i.atom_index(), Some(i.cache_site_index()))
-                )?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::LoadNameCall => {
-                let (callee, this) = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()), false)
-                )?;
-                self.write(f, i.result_register(), callee);
-                self.write(f, i.register_b(), this);
-            }
-            Op::LoadNameTypeof => {
-                let v = with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.load_name_typeof(p, i.atom_index(), i.cache_site_index())
-                )?;
-                self.write(f, i.result_register(), v);
-            }
-            Op::StoreName => {
-                let value = self.read(f, i.register_a());
-                with_binding_site_pc!(
-                    self,
-                    f,
-                    *pc,
-                    self.store_name(
-                        p,
-                        i.atom_index(),
-                        value,
-                        i.cache_site_index(),
-                        i.boolean_field(crate::bytecode::InstructionField::B)
-                            .expect("validated initialization flag"),
-                    )
-                )?;
             }
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
@@ -772,7 +679,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
-                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(f))?;
+                let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
                 let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
@@ -947,7 +854,7 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError::validation("invalid resolve-name flag".into()))?;
                 let value = with_binding_site_pc!(
                     self,
-                    f,
+                    VarOwner::Frame(f),
                     *pc,
                     self.resolve_name(p, i.atom_index(), strict)
                 )?;
@@ -970,7 +877,7 @@ impl<H: Host> Vm<H> {
             }
             Op::DeleteName => {
                 let value =
-                    with_binding_site_pc!(self, f, *pc, self.delete_name(p, i.atom_index()))?;
+                    with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.delete_name(p, i.atom_index()))?;
                 self.write(f, i.result_register(), value);
             }
             Op::StoreResolvedName => {
@@ -991,8 +898,8 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart => {
-                self.staged_value_step(p, super::call_out::CallSite { frame: f, resume: *pc }, i)?;
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
+                self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
                 self.require_object_coercible(p, self.read(f, i.register_b()))?;
@@ -1013,13 +920,13 @@ impl<H: Host> Vm<H> {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
             Op::ArgumentsLength | Op::ArgumentGet => {
-                let binding = self.load_local_binding(p, f, i.local_slot(), None)?;
+                let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
                 let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
                 let value = self.read_arguments_binding(p, f, binding, key)?;
                 self.write(f, i.result_register(), value);
             }
             Op::SetFunctionName => {
-                self.set_function_name(p, self.read(f, i.register_a()), i.atom_index())?;
+                self.set_function_name(p, self.read(f, i.register_a()), (i.atom_index(), i.cache_site_index()))?;
             }
             Op::SetFunctionNameKey => {
                 self.set_function_name_key(
@@ -1031,7 +938,7 @@ impl<H: Host> Vm<H> {
             Op::InitializeTdz => {
                 let slot = i.local_slot();
                 *self
-                    .frame_binding_mut(p, f, slot)
+                    .owner_binding_mut(p, VarOwner::Frame(f), slot)
                     .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
             }
             Op::GetAsyncIterator => {
@@ -1108,19 +1015,13 @@ impl<H: Host> Vm<H> {
                 };
                 let awaited_result = self.read(f, state_register);
                 let asynchronous = p.function(self.frames[f].function as usize).is_async;
-                // An awaited step's result, or a synchronous step made in place
-                // (`Vm::yield_star_in_place`), waits in the state register.
+                // An awaited step's result, or a synchronous delegate step the lane made as an
+                // activation (`Completion::Delegates`), waits in the state register.
                 let result = if !awaited_result.is_undefined() {
                     self.write(f, state_register, Value::UNDEFINED);
                     awaited_result
                 } else {
                     let input = self.read(f, i.result_register());
-                    if !asynchronous
-                        && self.steps_as_generator(iterator, next_method)
-                        && let Some(pushed) = self.yield_star_in_place(f, *pc - 1, next_method, iterator, input, state_register)
-                    {
-                        return pushed;
-                    }
                     let result =
                         self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
                     if asynchronous {
@@ -1302,16 +1203,6 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            Op::Delete => {
-                let result = self.delete_reference_property_mode(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    p.function(self.frames[f].function as usize).strict
-                        || i.boolean_flag().expect("validated boolean immediate"),
-                )?;
-                self.write(f, i.result_register(), result);
-            }
             Op::Jump => {
                 *pc = i.jump_target() as usize;
                 self.frames[f].pc = *pc;
@@ -1376,15 +1267,18 @@ impl<H: Host> Vm<H> {
                 caller.pc = *pc;
                 caller.pc_is_resume = true;
                 debug_assert_eq!(caller.program, self.active_program);
-                let direct_eval = i.direct_eval()
-                    && matches!(
-                        self.heap.function(callee),
-                        Some(FunctionRecord {
-                            kind: FunctionKind::Native(Native::Eval),
-                            realm,
-                            ..
-                        }) if *realm == self.realm.globals
-                    );
+                let direct_eval = i.direct_eval() && self.calls_direct_eval(callee);
+                // The one raise of a function whose parameters' `eval` declares `arguments`
+                // (`Function::parameter_eval_arguments_error`): its activations run as any
+                // other's until that call, which the lane leaves to this step.
+                if direct_eval
+                    && i.parameter_eval()
+                    && p.function(self.frames[f].function as usize).parameter_eval_arguments_error
+                {
+                    return Err(self
+                        .syntax_error_result(p, "arguments binding is not allowed in function parameters")
+                        .expect_err("syntax_error_result must throw"));
+                }
                 let previous_binding_site_pc = if direct_eval {
                     Some(self.frames[f].binding_site_pc.replace(*pc as u32))
                 } else {
@@ -1572,7 +1466,7 @@ impl<H: Host> Vm<H> {
                 }
                 let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
-                let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
+                let parent = self.owner_capture_env(VarOwner::Frame(f), 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
                 self.frames[f].pc_is_resume = true;
@@ -1676,8 +1570,7 @@ impl<H: Host> Vm<H> {
             Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
             Op::Throw => {
                 let value = self.read(f, i.register_a());
-                let message = self.detail_string(value);
-                return Err(JsError::thrown(value, message));
+                return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_wasm(p, f, i, pc),
@@ -1714,7 +1607,7 @@ impl<H: Host> Vm<H> {
                 if p.function(self.frames[frame].function as usize).plain_local(p, slot) {
                     return Ok(self.frames[frame].locals[slot]);
                 }
-                self.load_local_binding(p, frame, slot, None)
+                self.load_local_binding(p, VarOwner::Frame(frame), slot, None)
             }
             None => unreachable!("two-bit operand tag"),
         }
@@ -1783,10 +1676,11 @@ impl<H: Host> Vm<H> {
     /// The new array of the `count` constants from `start` of `program` (a `MakeConstArray`
     /// record's immediate and element count); `None` for a range outside the program's
     /// constants.
+    #[inline]
     pub(super) fn const_array_value(&mut self, program: ProgramId, start: usize, count: usize) -> Option<Value> {
         let elements = self.programs.const_array(program, start, count)?;
         let prototype = self.array_prototype_for_realm(self.realm.globals);
-        Some(self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::fresh(prototype, elements) }))
+        Some(self.heap.alloc_fresh_array(prototype, elements))
     }
 }
 
@@ -1800,6 +1694,5 @@ fn suspends_in_loop(body: &crate::bytecode::Function) -> bool {
         && !body.is_generator
         && !body.is_class_constructor
         && !body.derived_constructor
-        && !body.parameter_eval_arguments_error
         && body.suspends()
 }

@@ -4,10 +4,8 @@
 //! per-PC semantic fallback, which executes one instruction at a time. The body's receiver and
 //! dense captures are the payload's, bound once per activation (`JsStepDispatch::bind_captures`).
 use super::*;
-use crate::staged::{flow::FlowStage, region::Region, Access, NumericStage, Stage};
-
-/// The call context, step dispatch and result words the trampoline reads and writes.
-const DISPATCH: Access = Region::Dispatch.mutable();
+use super::lane_region::DISPATCH;
+use crate::staged::{flow::FlowStage, NumericStage, Stage};
 
 /// The positions of the entry ABI's words the trampoline reads (`native_entry_signature`):
 /// the context is the first, the arguments pointer and the result word address the last two.

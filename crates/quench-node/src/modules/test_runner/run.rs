@@ -6,6 +6,8 @@ use super::{context, function, get, put, with_state, Context, HookKind, Kind, No
 use quench_runtime::{RootId, RootedError};
 use std::time::Instant;
 
+/// A body declaring `(context, done)` is callback style (Node: `fn.length >= 2`).
+const DONE_CALLBACK_ARITY: f64 = 2.0;
 const CANCELLED_BY_PARENT: &str = "test did not finish before its parent and was cancelled";
 const CANCELLED_AT_EXIT: &str = "Promise resolution is still pending but the event loop has already resolved";
 const CALLBACK_AND_PROMISE: &str = "passed a callback but also returned a Promise";
@@ -305,7 +307,7 @@ fn drive(c: &mut Context<'_>, id: NodeId) -> Result<(), RootedError> {
                 start_timeout(c, id)?;
                 let receiver = context(c, id)?;
                 let length = get(c, body, "length")?;
-                let callback = c.rooted_value(length).and_then(|value| value.as_number()).is_some_and(|length| length >= 2.0);
+                let callback = c.rooted_value(length).and_then(|value| value.as_number()).is_some_and(|length| length >= DONE_CALLBACK_ARITY);
                 if !callback {
                     let completion = invoke(c, id, body, receiver, &[receiver])?;
                     return proceed(c, id, completion);
@@ -444,13 +446,7 @@ fn proceed(c: &mut Context<'_>, id: NodeId, completion: Completion) -> Result<()
 /// `createHook`); its children await it before their own hooks.
 pub(super) fn run_before_now(c: &mut Context<'_>, owner: NodeId, hook: RootId) -> Result<(), RootedError> {
     let receiver = context(c, owner)?;
-    let result = c.call_rooted(hook, receiver, &[receiver]);
-    let promise = c.pending_promise_rooted()?;
-    match result {
-        Ok(value) => c.resolve_promise_rooted(promise, value)?,
-        Err(RootedError { exception: Some(error), .. }) => c.reject_promise_rooted(promise, error)?,
-        Err(error) => return Err(error),
-    }
+    let promise = crate::modules::webstreams_shared_vm::promise_call(c, hook, receiver, &[receiver])?;
     let promise = match with_state(c, |state| state.tree[owner].before_pending) {
         Some(previous) => {
             let then = get(c, previous, "then")?;

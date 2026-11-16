@@ -10,7 +10,7 @@ impl Function {
         !self.derived_constructor
             && !self.class_initializer
             && !(self.is_class_constructor
-                && self.instructions().any(|instruction| matches!(instruction.op(),
-                    Op::DefineField | Op::DefinePrivateField | Op::DefineComputedField | Op::MarkPrivateName)))
+                && self.instructions_of(|op| matches!(op,
+                    Op::DefineField | Op::DefinePrivateField | Op::DefineComputedField | Op::MarkPrivateName)).next().is_some())
     }
 }

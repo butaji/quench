@@ -8,7 +8,11 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        debug_assert!(!self.satb_active(), "a snapshot is written of a heap no cycle is marking (`finish_cycle_now`)");
         self.write_out_all_strings();
+        if self.properties.float_slots() {
+            return Err(SnapshotError::unsupported("a heap whose number slots hold raw doubles"));
+        }
         if !self.abandoned_contexts.is_empty() {
             return Err(SnapshotError::unsupported("host contexts awaiting release"));
         }
@@ -34,8 +38,16 @@ impl Heap {
         }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
+        // Every small string was written out above: each is kept as its text.
+        write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
         self.properties.write_snapshot(writer);
         self.roots.write_snapshot(writer);
+        self.write_sparse_arrays(writer);
+        Ok(())
+    }
+
+    /// The sparse arrays' lengths and present elements.
+    fn write_sparse_arrays(&self, writer: &mut Writer) {
         let sparse = self.sparse_arrays.as_deref();
         writer.len(sparse.map_or(0, |arrays| arrays.len()));
         for (array, elements) in sparse.into_iter().flatten() {
@@ -47,7 +59,6 @@ impl Heap {
                 writer.value(*value);
             }
         }
-        Ok(())
     }
 
     /// A snapshot keeps no policy: the restored heap paces under the restoring runtime's.
@@ -79,6 +90,7 @@ impl Heap {
                     heap.free_slabs.push(slab as u32);
                 }
                 heap.free_by_slab[slab].insert(index % SLOTS_PER_SLAB);
+                super::buffer_bytes::bump_view_epoch();
                 heap.free_slots += 1;
             }
         }
@@ -88,6 +100,7 @@ impl Heap {
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
         read_records(reader, &mut heap.iterator_records, IteratorRecord::read_snapshot)?;
         read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
+        read_records(reader, &mut heap.small_strings, |reader| Ok(small_strings::SmallParts::written(JsString::read_snapshot(reader)?)))?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
@@ -143,6 +156,7 @@ impl Heap {
         self.for_each_cell(|cell| payload += cell.payload_bytes());
         self.array_records.for_each_live(|_, array| payload += external::array_payload_bytes(array));
         self.string_records.for_each_live(|_, string| payload += string.flat_unit_bytes());
+        self.small_strings.for_each_live(|_, record| payload += record.text_bytes());
         self.payload_bytes = payload;
         let legacy_live = self.slots.len() - self.free_slots;
         let live = legacy_live
@@ -151,7 +165,8 @@ impl Heap {
             + self.function_records.live_count()
             + self.promise_records.live_count()
             + self.iterator_records.live_count()
-            + self.string_records.live_count();
+            + self.string_records.live_count()
+            + self.small_strings.live_count();
         self.old_live = legacy_live;
         self.live_after_full = live;
         let live_weight = live + self.payload_bytes / payload_unit();
@@ -172,9 +187,9 @@ impl Heap {
     }
 }
 
-fn write_records<T, const CAPACITY: usize>(
+fn write_records<T, const CAPACITY: usize, const HOLE: usize>(
     writer: &mut Writer,
-    space: &records::RecordSpace<T, CAPACITY>,
+    space: &records::RecordSpace<T, CAPACITY, HOLE>,
     mut write: impl FnMut(&mut Writer, &T) -> SnapshotResult<()>,
 ) -> SnapshotResult<()> {
     writer.len(space.live_count());
@@ -190,9 +205,9 @@ fn write_records<T, const CAPACITY: usize>(
     Ok(())
 }
 
-fn read_records<T, const CAPACITY: usize>(
+fn read_records<T, const CAPACITY: usize, const HOLE: usize>(
     reader: &mut Reader<'_>,
-    space: &mut records::RecordSpace<T, CAPACITY>,
+    space: &mut records::RecordSpace<T, CAPACITY, HOLE>,
     mut read: impl FnMut(&mut Reader<'_>) -> SnapshotResult<T>,
 ) -> SnapshotResult<()> {
     let live = reader.len()?;
@@ -235,5 +250,41 @@ mod tests {
         }
         restored.collect([prototype, record_prototype]);
         assert_eq!(restored.prototypes.len(), 2, "live prototypes stay registered");
+    }
+
+    #[test]
+    fn small_strings_survive_a_snapshot_and_collections_as_their_text() {
+        let text = |heap: &Heap, value: Value| heap.string(value).unwrap().to_string();
+        let mut heap = Heap::new();
+        let prefix = heap.alloc_string(JsString::from_str("a prefix long enough "));
+        let suffix = heap.alloc_string(JsString::from_str(" and a suffix"));
+        let (prefix_id, suffix_id) = (prefix.direct_string_index().unwrap(), suffix.direct_string_index().unwrap());
+        let small = heap.alloc_small_string(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((25.0, 1))).unwrap()).unwrap();
+        assert!(SmallParts::new([prefix_id, suffix_id, 0], 2, Some((2.5, 1))).is_none(), "a double beside two strings takes a parts record");
+        assert!(is_small_string(small.direct_string_index().unwrap()));
+        // A double between them takes a template, whose strings stay rooted with the table.
+        let template = heap.small_template(prefix_id, suffix_id).unwrap();
+        assert_eq!(heap.small_template(prefix_id, suffix_id), Some(template));
+        let templated = heap.alloc_small_string(SmallParts::templated(template, 2.5)).unwrap();
+        heap.collect([small, templated]);
+        assert!(heap.is_live(prefix) && heap.is_live(suffix));
+        assert_eq!(text(&heap, templated), "a prefix long enough 2.5 and a suffix");
+        let nested = SmallParts::new([small.direct_string_index().unwrap(), 0, 0], 1, Some((-1.5, 0))).unwrap();
+        let outer = heap.alloc_small_string(nested).unwrap();
+        // The parts outlive collections that root only the small strings, read or not.
+        heap.collect([small, outer]);
+        heap.collect([small, outer]);
+        assert_eq!(text(&heap, outer), "-1.5a prefix long enough 25 and a suffix");
+        heap.collect([small, outer]);
+        assert_eq!(text(&heap, small), "a prefix long enough 25 and a suffix");
+        let mut writer = crate::snapshot::Writer::new();
+        heap.write_snapshot(&mut writer).unwrap();
+        let bytes = writer.finish();
+        let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
+        let mut restored = Heap::read_snapshot(&mut reader, MemoryPolicy::default()).unwrap();
+        assert_eq!(text(&restored, small), "a prefix long enough 25 and a suffix");
+        restored.collect([outer]);
+        assert!(!restored.is_live(small), "a small string no root reaches is freed");
+        assert_eq!(text(&restored, outer), "-1.5a prefix long enough 25 and a suffix");
     }
 }

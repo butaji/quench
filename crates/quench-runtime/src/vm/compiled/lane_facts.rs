@@ -65,11 +65,11 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 
 /// Whether a body has work that amortizes an entry, which costs a few hundred instructions
 /// the lane's own run of a short leaf never pays: a loop, an inlined call, a call of itself
-/// (its recursion runs natively inside the entry), or length (`TIERS.lane_body.min_instructions`).
-pub(super) fn amortizes_entry(unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
+/// (its recursion runs natively inside the entry), or length (`Tiers::amortizing_instructions`).
+pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= TIERS.lane_body.min_instructions
+    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
 }
 
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
@@ -84,10 +84,11 @@ pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
 }
 
 /// Whether the tier model admits compiling `function`'s body for the `entries` it has made
-/// (`tier_model::admits`): the gate every lane-body compile request passes.
-pub(super) fn pays_compile(program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, diagnostics: bool) -> bool {
+/// (`tier_model::admits`), its plan charged too where `unplanned`: the gate every lane-body
+/// compile request passes.
+pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> bool {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::admits(&super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region: caller.enters_region(), ir }, diagnostics)
+    super::tier_model::admits(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region: caller.enters_region(), ir }, unplanned, diagnostics)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
@@ -104,12 +105,15 @@ pub(super) fn bind_callees(direct: &[DirectCallee], caller: &super::super::dispa
 pub(super) struct Census {
     pub(super) function: u32, pub(super) osr: bool, pub(super) unit: usize, pub(super) ir: usize, pub(super) key: u64,
     pub(super) generic: usize, pub(super) direct: usize, pub(super) budget: usize, pub(super) observed: Option<u32>, pub(super) closed: bool,
+    /// The planning, proofs and lowering on the VM's own thread, which the background `us`
+    /// excludes and the measured window pays.
+    pub(super) plan_us: u64,
 }
 
 impl Census {
     pub(super) fn report(&self, took: std::time::Duration, bytes: usize) -> String {
-        let Self { function, osr, unit, ir, key, generic, direct, budget, observed, closed } = self;
-        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes}}}",
+        let Self { function, osr, unit, ir, key, generic, direct, budget, observed, closed, plan_us } = self;
+        format!("QUENCH_LANE_COMPILE {{\"function\":{function},\"osr\":{osr},\"unit\":{unit},\"ir\":{ir},\"generic\":{generic},\"direct\":{direct},\"budget\":{budget},\"observed\":{},\"key\":\"{key:016x}\",\"us\":{},\"closed\":{closed},\"bytes\":{bytes},\"plan_us\":{plan_us}}}",
             observed.map_or(-1, i64::from), took.as_micros())
     }
 }

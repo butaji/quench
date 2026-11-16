@@ -6,15 +6,66 @@
 //! unshared memory detaches its view before the linear bytes can move. Shared views lock
 //! the common backing store on every access and retain their length after memory growth.
 
-use super::array_proofs::retire_array_storage_proofs;
 use crate::shared_backing::{SharedBacking, State};
 use crate::wasm::memory::MemoryStorage;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, MutexGuard};
 
+/// The count of events that move, free or share a buffer's bytes: a copy before a write, a
+/// resize, a detach or replacement, a second handle on the store. A typed array view
+/// published for native code (`NativeView`) names the count it was published at, and is
+/// stale once it moves: the one invalidation of every published address, for the process
+/// (an event of another heap only sends a view back to its publication).
+static BUFFER_RELOCATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// The current `BUFFER_RELOCATIONS`.
+#[inline(always)]
+pub(crate) fn buffer_relocations() -> u64 {
+    BUFFER_RELOCATIONS.load(Ordering::Relaxed)
+}
+
+/// Where native code reads `BUFFER_RELOCATIONS`.
+pub(crate) fn buffer_relocations_address() -> *const u64 {
+    BUFFER_RELOCATIONS.as_ptr().cast_const()
+}
+
+fn note_relocation() {
+    BUFFER_RELOCATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// One word, so an ArrayBuffer cell stays within the heap's cell size.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct BufferBytes(Rc<BufferStore>);
+
+/// The typed array view epoch (`view_epoch`): it changes whenever a typed array's element
+/// bytes may have moved, been unshared or detached, or a slot a view occupied may hold another
+/// cell, so a view's element address and length cached at one epoch
+/// (`Vm::typed_cached_element`) hold while the epoch is unchanged. One counter for the process:
+/// another thread's heap ending an epoch only makes this one's entries refill, and every end
+/// is an atomic increment, so no end is lost. A plain load reads it (no thread-local access
+/// on the element hit path).
+static VIEW_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The current typed array view epoch (`VIEW_EPOCH`).
+#[inline(always)]
+pub(crate) fn view_epoch() -> u64 {
+    VIEW_EPOCH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Ends the current typed array view epoch: every store made, dropped, cloned or written
+/// other than in place (`BufferBytes::lane_mut`), and every sweep that frees slots.
+#[inline]
+pub(crate) fn bump_view_epoch() {
+    VIEW_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+impl Default for BufferBytes {
+    fn default() -> Self {
+        bump_view_epoch();
+        Self(Rc::default())
+    }
+}
 
 /// The largest alignment an embedder observes of a pinned store: the widest typed array
 /// element, which the offsets it computes align views to.
@@ -33,23 +84,26 @@ enum BufferStore {
     AtomicShared(Arc<SharedBacking>),
 }
 
-/// A lane run's typed array proofs name the bytes a store holds and that it is the only owner
-/// of them (`Heap::prove_typed_storage`). They retire wherever a buffer's bytes could move or
-/// gain an owner: a store is shared, unshared or grown, and a handle on one is dropped, which
-/// is how a detached or replaced buffer releases its bytes.
-impl Drop for BufferBytes {
-    fn drop(&mut self) {
-        retire_array_storage_proofs();
-    }
-}
-
 impl Clone for BufferBytes {
     fn clone(&self) -> Self {
-        retire_array_storage_proofs();
+        // A second handle makes the store shared: no view writes it in place after this.
+        bump_view_epoch();
         if matches!(*self.0, BufferStore::AddressPinned(_)) {
             Self::from(self.to_vec())
         } else {
+            // A store two handles share is copied before either writes.
+            note_relocation();
             Self(self.0.clone())
+        }
+    }
+}
+
+/// The last handle on a store frees it: a view published over it points at nothing.
+impl Drop for BufferBytes {
+    fn drop(&mut self) {
+        bump_view_epoch();
+        if Rc::strong_count(&self.0) == 1 {
+            note_relocation();
         }
     }
 }
@@ -168,8 +222,8 @@ impl BufferBytes {
 
     /// Preserve this fixed allocation when future cell snapshots are cloned.
     pub(crate) fn pin_address(&mut self) -> usize {
-        retire_array_storage_proofs();
-        let store = Rc::make_mut(&mut self.0);
+        bump_view_epoch();
+        let store = self.unshared_store();
         match store {
             BufferStore::Owned(bytes) => {
                 let bytes = std::mem::take(bytes);
@@ -177,6 +231,7 @@ impl BufferBytes {
             }
             BufferStore::Shared(bytes) => {
                 *store = BufferStore::AddressPinned(bytes.to_vec());
+                note_relocation();
             }
             BufferStore::AddressPinned(_) | BufferStore::Wasm(_) => {}
             BufferStore::AtomicShared(_) => {
@@ -195,12 +250,21 @@ impl BufferBytes {
         }
     }
 
+    /// The store for writing, copied first where another handle shares it.
+    fn unshared_store(&mut self) -> &mut BufferStore {
+        if Rc::strong_count(&self.0) > 1 {
+            note_relocation();
+        }
+        Rc::make_mut(&mut self.0)
+    }
+
     /// The bytes for writing; an owned store is unshared from other cells first.
     pub(crate) fn make_mut(&mut self) -> BufferWrite<'_> {
-        retire_array_storage_proofs();
-        let store = Rc::make_mut(&mut self.0);
+        bump_view_epoch();
+        let store = self.unshared_store();
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
+            note_relocation();
         }
         match store {
             BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
@@ -216,7 +280,8 @@ impl BufferBytes {
     /// Another handle on these bytes, for reading them while a different buffer is written:
     /// only for stores that any write copies first, so no write can reach the bytes it reads.
     pub(crate) fn unaliased_handle(&self) -> Option<Self> {
-        matches!(*self.0, BufferStore::Owned(_) | BufferStore::Shared(_)).then(|| self.clone())
+        bump_view_epoch();
+        matches!(*self.0, BufferStore::Owned(_) | BufferStore::Shared(_)).then(|| Self(self.0.clone()))
     }
     pub(crate) fn from_shared(backing: Arc<SharedBacking>) -> Self {
         Self(Rc::new(BufferStore::AtomicShared(backing)))
@@ -236,34 +301,29 @@ impl BufferBytes {
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The bytes of a store this heap owns, read in place with no lock: the typed array
+    /// element hit path (`Vm::typed_element_quick`). `None` for a shared, atomic or Wasm
+    /// store, which the general read serves.
+    #[inline(always)]
+    pub(crate) fn owned(&self) -> Option<&[u8]> {
+        match &*self.0 {
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
     pub(crate) fn to_vec(&self) -> Vec<u8> {
         self.read().to_vec()
     }
     pub(crate) fn read(&self) -> BufferRead<'_> {
-        match (self.unlocked(), &*self.0) {
-            (Some(bytes), _) => BufferRead::Borrowed(bytes),
-            (None, BufferStore::AtomicShared(b)) => BufferRead::Shared { state: b.lock(), length: b.len_for_view() },
-            (None, _) => unreachable!("only the atomically shared store is locked"),
-        }
-    }
-
-    /// The bytes of an owned store, which a typed array's elements are read from in place.
-    #[inline(always)]
-    pub(crate) fn owned(&self) -> Option<&[u8]> {
         match &*self.0 {
-            BufferStore::Owned(bytes) => Some(bytes),
-            _ => None,
-        }
-    }
-
-    /// The bytes where no lock guards them (every store but the atomically shared one),
-    /// which `read` would borrow through a guard; `None` leaves the read to `read`.
-    pub(crate) fn unlocked(&self) -> Option<&[u8]> {
-        match &*self.0 {
-            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => Some(bytes),
-            BufferStore::Shared(bytes) => Some(bytes),
-            BufferStore::Wasm(v) => Some(unsafe { std::slice::from_raw_parts(v.base, v.len) }),
-            BufferStore::AtomicShared(_) => None,
+            BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes) => {
+                BufferRead::Borrowed(bytes)
+            }
+            BufferStore::Shared(bytes) => BufferRead::Borrowed(bytes),
+            BufferStore::AtomicShared(b) => BufferRead::Shared { state: b.lock(), length: b.len_for_view() },
+            BufferStore::Wasm(v) => {
+                BufferRead::Borrowed(unsafe { std::slice::from_raw_parts(v.base, v.len) })
+            }
         }
     }
 
@@ -281,11 +341,8 @@ impl BufferBytes {
     }
 
     /// The bytes as one owned vector, without a copy when this is their only owner.
-    pub(crate) fn into_vec(self) -> Vec<u8> {
-        retire_array_storage_proofs();
-        let this = std::mem::ManuallyDrop::new(self);
-        // SAFETY: `this` is never used or dropped again; its handle moves out whole.
-        match Rc::try_unwrap(unsafe { std::ptr::read(&this.0) }) {
+    pub(crate) fn into_vec(mut self) -> Vec<u8> {
+        match Rc::try_unwrap(std::mem::take(&mut self.0)) {
             Ok(BufferStore::Owned(bytes) | BufferStore::AddressPinned(bytes)) => bytes,
             Ok(store) => Self(Rc::new(store)).to_vec(),
             Err(shared) => Self(shared).to_vec(),
@@ -294,8 +351,10 @@ impl BufferBytes {
 
     /// The owned bytes for resizing. Views are never resizable buffers.
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
-        retire_array_storage_proofs();
-        let store = Rc::make_mut(&mut self.0);
+        bump_view_epoch();
+        // The caller resizes the vector, which may move it.
+        note_relocation();
+        let store = self.unshared_store();
         if let BufferStore::Shared(bytes) = store {
             *store = BufferStore::Owned(bytes.to_vec());
         }

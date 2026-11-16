@@ -16,48 +16,16 @@
 //! construction through an initializer is `construct`.
 
 use super::call::admit_room;
-use super::region::Region;
 use super::value::{is_direct_array, is_direct_function, is_direct_object};
-use super::{Stage, Step};
-use crate::bytecode::{ConstructArguments, ImmediateLayout, Op, Register, WideInstruction};
+use super::{word_bytes, Invocation, Passed, Stage, Step};
+use crate::bytecode::Register;
 use crate::value::ValueLayout;
 use crate::Value;
 
-/// Bytes in one register of a window.
-const VALUE_BYTES: i32 = std::mem::size_of::<Value>() as i32;
+const _: () = assert!(std::mem::size_of::<Value>() == std::mem::size_of::<u64>(), "a register of a window is one word");
 
-/// The static operands of a call instruction: where its callee, receiver and arguments live and
-/// where its result goes. A construction has no receiver register: the plan allocates it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Invocation {
-    pub(crate) callee: Register,
-    pub(crate) receiver: Option<Register>,
-    pub(crate) window: Register,
-    pub(crate) argc: u16,
-    pub(crate) result: Register,
-}
-
-impl Invocation {
-    /// The operands of `instruction`, a call through a register window or a construction with its
-    /// arguments in registers; `None` for any other call form (spread, array, method), whose
-    /// window is not in registers.
-    pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
-        let imm = instruction.imm();
-        let (receiver, window, argc) = match instruction.op() {
-            Op::Call | Op::CallForwardingArguments => (Some(instruction.register_c()),
-                ImmediateLayout::call_window_base(imm), ImmediateLayout::argument_count(imm)),
-            Op::Construct => match instruction.construct_arguments() {
-                ConstructArguments::Registers(window) => (None, window.base, window.count),
-                ConstructArguments::Array(_) => return None,
-            },
-            _ => return None,
-        };
-        Some(Self { callee: instruction.register_b(), receiver, window, argc, result: instruction.result_register() })
-    }
-}
-
-/// The callee's window: `registers` words, of which the first `argc` are the arguments at
-/// register `first` of the caller's window.
+/// The callee's window of a plain call: `registers` words, of which the first `argc` are the
+/// arguments at register `first` of the caller's window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct WindowFill {
     pub(crate) first: Register,
@@ -68,6 +36,7 @@ pub(crate) struct WindowFill {
 /// A call-protocol step `step` runs, with the words a tier loaded. Each yields the word it
 /// checked or produced; a failed guard leaves at the frame's miss edge.
 #[derive(Clone, Copy)]
+#[cfg_attr(not(test), allow(dead_code))] // the guards and the window are rows for the form-generic lane helpers
 pub(crate) enum CallOperation<W> {
     /// The operands of a call instruction, which no row runs alone (`Invocation::of`).
     Site(Invocation),
@@ -122,10 +91,10 @@ pub(crate) fn guard_received<S: Stage>(stage: &mut S, receiver: S::Word, miss: S
 }
 
 /// Whether `bits` names an object of any direct family (`Value::is_direct_object_family`): an
-/// ordinary object, array, function, promise or iterator record.
+/// ordinary object, array, function, promise or iterator. `object` is the test of the first, which
+/// the caller made.
 #[inline(always)]
-fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
-    let object = is_direct_object(stage, bits);
+fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word, object: S::Cond) -> S::Cond {
     let array = is_direct_array(stage, bits);
     let function = is_direct_function(stage, bits);
     let family = stage.and_imm(bits, ValueLayout::HEAP_FAMILY_MASK);
@@ -144,7 +113,10 @@ fn is_object_family<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Option<u64>, miss: S::Miss)
     -> Option<S::Word> {
     let Some(global) = sloppy else { return Some(receiver) };
-    let object = is_object_family(stage, receiver);
+    let ordinary = is_direct_object(stage, receiver);
+    // A stage that knows its words (the interpreter) binds the common ordinary object on that one test.
+    if stage.known(ordinary) == Some(true) { return Some(receiver); }
+    let object = is_object_family(stage, receiver, ordinary);
     let undefined = stage.eq_imm(receiver, Value::UNDEFINED.to_bits());
     let null = stage.eq_imm(receiver, Value::NULL.to_bits());
     let nullish = stage.any(undefined, null);
@@ -154,25 +126,28 @@ pub(crate) fn bind_this<S: Stage>(stage: &mut S, receiver: S::Word, sloppy: Opti
     Some(stage.select(object, receiver, global))
 }
 
-/// The byte offset of register `register` in a window.
+/// `bind_this` on machine words for the interpreter's own binding of a sloppy callee's `this`:
+/// the same row the native tiers emit.
 #[inline(always)]
-const fn window_offset(register: u16) -> i32 {
-    register as i32 * VALUE_BYTES
+pub(crate) fn concrete_bind_this(receiver: u64, global: u64) -> Option<u64> {
+    bind_this(&mut super::Concrete::new(std::ptr::null()), receiver, Some(global), ())
 }
 
 /// The callee's window at `top`: parameter `k` lives in register `k` of a plain activation, so
 /// the `argc` arguments at `source` fill its first registers and the rest start undefined.
 #[inline(always)]
 pub(crate) fn fill_window<S: Stage>(stage: &mut S, top: S::Word, source: S::Word, fill: WindowFill) {
+    let arguments = stage.add_imm(source, word_bytes(fill.first));
+    fill_call(stage, top, &[], Passed::Window { arguments, count: fill.argc }, fill.registers);
+}
+
+/// The callee's window at `top` of any call form: the `prefix` words a bound function binds
+/// (constants of the plan), then the `passed` arguments, the rest undefined. One row for the
+/// register window, the register list and the bound prefix.
+#[inline(always)]
+pub(crate) fn fill_call<S: Stage>(stage: &mut S, top: S::Word, prefix: &[u64], passed: Passed<'_, S::Word>, registers: u16) {
     let undefined = stage.constant(Value::UNDEFINED.to_bits());
-    for register in 0..fill.registers {
-        let value = if register < fill.argc {
-            stage.load_u64(Region::Frame.mutable(), source, window_offset(fill.first + register))
-        } else {
-            undefined
-        };
-        stage.store_u64(Region::Frame.mutable(), top, window_offset(register), value);
-    }
+    stage.fill_window(top, undefined, prefix, passed, registers);
 }
 
 /// The value of a call whose callee ended with `status`: the construction's `receiver` where
@@ -184,14 +159,16 @@ pub(crate) fn complete_call<S: Stage>(stage: &mut S, status: S::Word, value: S::
     returned: u32, miss: S::Miss) -> Option<S::Word> {
     let status = stage.uextend32(status);
     let done = stage.eq_imm(status, u64::from(returned));
-    stage.guard(done, miss)?;
+    stage.guard_status(done, miss)?;
     Some(receiver.unwrap_or(value))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::staged::{Arguments, CallFacts, Callee, Receiver};
     use crate::staged::call::concrete_fits;
+    use crate::staged::test_words::FACTS;
     use crate::staged::Concrete;
 
     const RETURNED: u32 = 7;
@@ -205,7 +182,8 @@ mod tests {
 
     #[test]
     fn a_site_runs_no_row_alone_and_a_callee_must_be_the_bound_one() {
-        let site = Invocation { callee: 1, receiver: Some(2), window: 3, argc: 1, result: 0 };
+        let site = Invocation { callee: Callee::Register(1), receiver: Receiver::Register(2), arguments: Arguments::Window { first: 3, count: 1 },
+            result: 0, returns: false, forwards: false };
         assert_eq!(run(CallOperation::Site(site)), None);
         assert_eq!(run(CallOperation::Callee { held: 9, expected: 9 }), Some(9));
         assert_eq!(run(CallOperation::Callee { held: 8, expected: 9 }), None);
@@ -244,7 +222,8 @@ mod tests {
         let text = heap.alloc_string("x".into());
         let mut stage = Concrete::new(std::ptr::null());
         for value in [object, text, Value::UNDEFINED, Value::NULL, Value::integer(1), Value::number(1.5), Value::TRUE] {
-            assert_eq!(is_object_family(&mut stage, value.to_bits()), value.is_direct_object_family(), "{value:?}");
+            let ordinary = is_direct_object(&mut stage, value.to_bits());
+            assert_eq!(is_object_family(&mut stage, value.to_bits(), ordinary), value.is_direct_object_family(), "{value:?}");
         }
     }
 
@@ -280,22 +259,12 @@ mod tests {
         assert!(trace.holes.is_empty());
     }
 
-    fn call_instruction(op: Op, constructs: bool) -> WideInstruction {
-        if constructs {
-            WideInstruction::new(op, 4, 5, 6, ImmediateLayout::construct_immediate(2, false, false))
-        } else {
-            WideInstruction::new(op, 4, 5, 6, ImmediateLayout::call_immediate(7, 2, false, false))
-        }
-    }
-
     #[test]
-    fn the_operands_of_a_call_and_a_construction_decode_once() {
-        let call = Invocation::of(call_instruction(Op::Call, false)).expect("a call decodes");
-        assert_eq!(call, Invocation { callee: 5, receiver: Some(6), window: 7, argc: 2, result: 4 });
-        let construct = Invocation::of(call_instruction(Op::Construct, true)).expect("a construction decodes");
-        assert_eq!((construct.callee, construct.receiver, construct.argc, construct.result), (5, None, 2, 4));
-        assert_eq!(Invocation::of(call_instruction(Op::Move, false)), None);
-        let decoded = crate::staged::Operation::<u64, ()>::decode(call_instruction(Op::Call, false), |_| None);
-        assert!(matches!(decoded, Some(crate::staged::Operation::Call(CallOperation::Site(site))) if site == call));
+    fn a_return_is_admitted_by_its_register_and_the_tier_completing() {
+        let row = crate::staged::Operation::<u64, ()>::Return { source: 9 };
+        assert_eq!(row.admitted(FACTS), Some(true));
+        assert_eq!(crate::staged::Operation::<u64, ()>::Return { source: 10 }.admitted(FACTS), Some(false));
+        assert_eq!(row.admitted(CallFacts { activates: false, ..FACTS }), Some(false));
+        assert_eq!(crate::staged::Operation::<u64, ()>::Jump.admitted(FACTS), None);
     }
 }

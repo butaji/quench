@@ -23,39 +23,36 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
-use tier_policy::TIERS;
+use tier_policy::Tiers;
 use super::dispatch_fast::Activation;
 use super::*;
 use crate::bytecode::{Class, Traits,
     ControlFlowLayout, FieldLookup, Function, JsDenotation, Operand, OperandKind, ResidualProgram,
     WideInstruction,
 };
-use crate::wasm::conversion::ScalarConversionOperator;
-use crate::wasm::float::{
-    F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
-};
-use crate::wasm::integer::{
-    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
-};
-use crate::wasm::memory::{MemoryLoad, MemoryStore};
-use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
-    condcodes::{FloatCC, IntCC},
-    immediates::{Ieee32, Ieee64},
-    types,
-};
+use crate::staged::wasm_call::Call as WasmCall;
+use crate::staged::wasm_flow::Flow;
+use crate::staged::wasm_step::Step;
+use crate::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage};
+use crate::staged::Stage as _;
+use crate::staged::wasm::{Width, integer_binary};
+use crate::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
+use crate::staged::ConcreteWasm;
+use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
+#[cfg(test)]
+use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
-use std::cell::UnsafeCell;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;
+mod region_lend;
 pub(super) use exit_protocol::ExitTable;
-mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_rows; mod stencil_run; use stencil_run::Crossing;
-pub(super) use osr_compile::{start_osr_region, OsrCompile, PendingOsrRegion};
+mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
+pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
@@ -67,6 +64,8 @@ pub(super) mod tier_policy;
 mod stable_fact_tests;
 #[path = "compiled/lane_region.rs"]
 mod lane_region;
+#[path = "compiled/emit_machine.rs"]
+pub(super) mod emit_machine;
 #[path = "compiled/lane_unit.rs"]
 mod lane_unit;
 #[cfg(all(test, feature = "aot"))]
@@ -75,7 +74,7 @@ mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] mod lane_allocations;
-use lane_allocations::{lane_binary, lane_new_array, lane_new_const_array, lane_new_object, lane_new_object_pair};
+use lane_allocations::{lane_binary, lane_new_array, lane_new_closure, lane_new_concat, lane_new_const_array, lane_new_object, lane_new_object_literal, lane_new_object_pair, lane_new_regexp, lane_new_template};
 #[path = "compiled/lane_compile.rs"]
 mod lane_compile;
 #[path = "compiled/site_posterior.rs"]
@@ -95,9 +94,33 @@ pub(super) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 mod static_loops;
 #[path = "compiled/wasm_callable.rs"]
 mod wasm_callable;
+#[path = "compiled/wasm_stage.rs"]
+mod wasm_stage;
+mod wasm_instance_stage;
+mod instance_context;
+mod indirect_profile;
+pub(crate) use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
+#[cfg(test)]
+mod wasm_global_tests;
+mod wasm_memory_stage;
+mod wasm_flow_stage;
+mod wasm_call_stage;
+mod wasm_table_stage;
+mod wasm_instance_switch;
+mod wasm_simd_stage;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
+/// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
+/// protocol is no speculation (`forced_miss::exempt`).
+#[cfg(feature = "aot")]
+#[inline(always)]
+fn unforced<T>(emit: impl FnOnce() -> T) -> T {
+    #[cfg(test)]
+    return forced_miss::exempt(emit);
+    #[cfg(not(test))]
+    emit()
+}
 /// The forced-deopt switch (R26): a test arms the Nth guard `emit_js_guard` emits on this
 /// thread, which then always leaves through its exit; tests compile on the running thread.
 #[cfg(test)]
@@ -108,8 +131,8 @@ pub(in crate::vm) mod forced_miss {
         static EXEMPT: Cell<bool> = const { Cell::new(false) };
     }
     /// Runs `emit`, whose guards are not deopt points: they dispatch on a status the code
-    /// already holds (`direct_finish`), which no speculation could make fail, so they are
-    /// neither counted nor forced.
+    /// already holds, which no speculation could make fail, so they are neither counted nor forced.
+    #[cfg(feature = "aot")]
     pub(in crate::vm::compiled) fn exempt<T>(emit: impl FnOnce() -> T) -> T {
         let outer = EXEMPT.replace(true);
         let result = emit();
@@ -128,15 +151,6 @@ pub(in crate::vm) mod forced_miss {
             forced == Some(count)
         })
     }
-}
-/// `emit` with its guards exempt from the forced-deopt switch: the status dispatch of a call
-/// protocol is no speculation (`forced_miss::exempt`).
-#[inline(always)]
-fn unforced<T>(emit: impl FnOnce() -> T) -> T {
-    #[cfg(test)]
-    return forced_miss::exempt(emit);
-    #[cfg(not(test))]
-    emit()
 }
 /// The successor a guard-shaped branch takes when its condition holds: the forced-deopt switch
 /// makes a test-armed guard take `fail` instead. Sites call it in place of `ok`.
@@ -157,7 +171,7 @@ pub(super) use code_heap::{flush_retired_writers, CodeMemory, CODE_GRANULE};
 #[path = "compiled/direct_call.rs"]
 mod direct_call;
 mod direct_callee;
-pub(super) use direct_callee::{DirectCallee, DirectCandidates, ShadowFrame};
+pub(super) use direct_callee::{names_dead_callee, window_width, DirectCallee, DirectCandidates, ShadowFrame};
 #[path = "compiled/lane_storage.rs"]
 mod lane_storage;
 mod lane_body_run;
@@ -206,267 +220,6 @@ pub(super) use osr_loop::{
 
 pub(super) use crate::staged::Domain as NumberRelationDomain;
 
-/// Emit a Number relation using the same relation dispatch as the interpreter.
-/// The domain selects its Cranelift condition codes; the operation mapping is shared.
-pub(super) fn emit_number_relation(
-    builder: &mut FunctionBuilder<'_>,
-    relation: super::operations::NumberRelation,
-    left: ir::Value,
-    right: ir::Value,
-    domain: NumberRelationDomain,
-) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-        domain: NumberRelationDomain,
-    }
-
-    impl crate::vm::operations::NumberRelationStage<ir::Value> for Emit<'_, '_> {
-        type Output = ir::Value;
-
-        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::Equal, left, right),
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::Equal, left, right)
-                }
-            }
-        }
-        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self.builder.ins().icmp(IntCC::NotEqual, left, right),
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
-                }
-            }
-        }
-        fn less_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => {
-                    self.builder.ins().icmp(IntCC::SignedLessThan, left, right)
-                }
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::LessThan, left, right)
-                }
-            }
-        }
-        fn less_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self
-                    .builder
-                    .ins()
-                    .icmp(IntCC::SignedLessThanOrEqual, left, right),
-                NumberRelationDomain::Float64 => self
-                    .builder
-                    .ins()
-                    .fcmp(FloatCC::LessThanOrEqual, left, right),
-            }
-        }
-        fn greater_than(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self
-                    .builder
-                    .ins()
-                    .icmp(IntCC::SignedGreaterThan, left, right),
-                NumberRelationDomain::Float64 => {
-                    self.builder.ins().fcmp(FloatCC::GreaterThan, left, right)
-                }
-            }
-        }
-        fn greater_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            match self.domain {
-                NumberRelationDomain::Int32 => self
-                    .builder
-                    .ins()
-                    .icmp(IntCC::SignedGreaterThanOrEqual, left, right),
-                NumberRelationDomain::Float64 => self
-                    .builder
-                    .ins()
-                    .fcmp(FloatCC::GreaterThanOrEqual, left, right),
-            }
-        }
-    }
-
-    relation.apply(&mut Emit { builder, domain }, left, right)
-}
-
-/// A Number relation named by its operator, through the shared operator table.
-pub(super) fn emit_number_relation_operator(builder: &mut FunctionBuilder<'_>, operator: u32,
-    left: ir::Value, right: ir::Value, domain: NumberRelationDomain) -> Option<ir::Value> {
-    let relation = crate::vm::operations::NumberRelation::from_operator(operator)?;
-    Some(emit_number_relation(builder, relation, left, right, domain))
-}
-
-/// Native primitive view; callers retain operands for float fallback or exact-PC recovery.
-struct EmitArithmetic<'a, 'f, const CHECKED: bool> {
-    builder: &'a mut FunctionBuilder<'f>,
-}
-
-macro_rules! emit_arithmetic_stages {
-    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
-        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, false> {
-            type Output = ir::Value;
-            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-                self.builder.ins().$float(left, right)
-            })+
-        }
-        impl super::operations::NumberArithmeticStage<ir::Value> for EmitArithmetic<'_, '_, true> {
-            type Output = (ir::Value, ir::Value);
-            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-                emit_arithmetic_stages!(@checked self, left, right, $overflow)
-            })+
-        }
-    };
-    (@checked $stage:ident, $left:ident, $right:ident, None) => {
-        { let _ = ($left, $right); unreachable!("division has a Float64 result") }
-    };
-    (@checked $stage:ident, $left:ident, $right:ident, $opcode:ident) => {
-        $stage.builder.ins().$opcode($left, $right)
-    };
-}
-super::operations::number_arithmetic_rows!(emit_arithmetic_stages);
-
-/// The low-word view is selected only after the shared operation proves that
-/// projecting the Number result commutes with wrapping signed-int32 arithmetic.
-struct EmitWord32Arithmetic<'a, 'f> { builder: &'a mut FunctionBuilder<'f> }
-
-macro_rules! emit_word32_arithmetic_stages {
-    ($($operation:ident => $operator:ident, $method:ident, $instruction:ident, $symbol:tt, $float:ident, $checked:ident, $overflow:ident;)+) => {
-        impl super::operations::NumberArithmeticStage<ir::Value> for EmitWord32Arithmetic<'_, '_> {
-            type Output = ir::Value;
-            $(fn $method(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-                emit_word32_arithmetic_stages!(@emit self, left, right, $symbol)
-            })+
-        }
-    };
-    (@emit $stage:ident, $left:ident, $right:ident, +) => { $stage.builder.ins().iadd($left, $right) };
-    (@emit $stage:ident, $left:ident, $right:ident, -) => { $stage.builder.ins().isub($left, $right) };
-    (@emit $stage:ident, $left:ident, $right:ident, *) => { $stage.builder.ins().imul($left, $right) };
-    (@emit $stage:ident, $left:ident, $right:ident, /) => {
-        { let _ = ($left, $right); unreachable!("division has no wrapping Word32 projection") }
-    };
-}
-super::operations::number_arithmetic_rows!(emit_word32_arithmetic_stages);
-
-pub(super) fn emit_number_arithmetic_operation(
-    builder: &mut FunctionBuilder<'_>,
-    operation: super::operations::NumberArithmetic,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    operation.apply(&mut EmitArithmetic::<false> { builder }, left, right)
-}
-
-/// `operation` of two int32 values: its wrapping result and its overflow flag.
-pub(super) fn emit_checked_int32_arithmetic(builder: &mut FunctionBuilder<'_>,
-    operation: super::operations::NumberArithmetic, left: ir::Value, right: ir::Value,
-) -> (ir::Value, ir::Value) {
-    operation.apply(&mut EmitArithmetic::<true> { builder }, left, right)
-}
-
-/// The shared Number remainder denotation, after the caller's Number guards.
-/// Native entries use the host calling convention. This pure scalar helper cannot
-/// enter the VM or collect, so it does not introduce an effect/recovery boundary.
-pub(super) fn emit_number_remainder(
-    builder: &mut FunctionBuilder<'_>,
-    pointer: ir::Type,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    let mut signature = Signature::new(builder.func.signature.call_conv);
-    signature.params.extend([AbiParam::new(types::F64), AbiParam::new(types::F64)]);
-    signature.returns.push(AbiParam::new(types::F64));
-    let signature = builder.import_signature(signature);
-    let address = super::operations::number_remainder as *const () as usize as i64;
-    let target = builder.ins().iconst(pointer, address);
-    let call = builder.ins().call_indirect(signature, target, &[left, right]);
-    builder.inst_results(call)[0]
-}
-
-pub(super) fn emit_number_bitwise_bits(
-    builder: &mut FunctionBuilder<'_>,
-    operation: crate::vm::operations::NumberBitwise,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-    }
-
-    impl crate::vm::operations::NumberBitwiseStage<ir::Value> for Emit<'_, '_> {
-        type Output = ir::Value;
-
-        fn and(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().band(left, right)
-        }
-        fn or(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().bor(left, right)
-        }
-        fn xor(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            self.builder.ins().bxor(left, right)
-        }
-        fn shift_left(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            let shift = self.builder.ins().band_imm_u(right, 31);
-            self.builder.ins().ishl(left, shift)
-        }
-        fn shift_right(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            let shift = self.builder.ins().band_imm_u(right, 31);
-            self.builder.ins().sshr(left, shift)
-        }
-        fn shift_right_unsigned(&mut self, left: ir::Value, right: ir::Value) -> Self::Output {
-            let shift = self.builder.ins().band_imm_u(right, 31);
-            self.builder.ins().ushr(left, shift)
-        }
-    }
-
-    operation.apply(&mut Emit { builder }, left, right)
-}
-
-pub(super) fn emit_number_bitwise_operation(
-    builder: &mut FunctionBuilder<'_>,
-    operation: crate::vm::operations::NumberBitwise,
-    left: ir::Value,
-    right: ir::Value,
-) -> ir::Value {
-    let bits = emit_number_bitwise_bits(builder, operation, left, right);
-    if operation == crate::vm::operations::NumberBitwise::ShiftRightUnsigned {
-        let unsigned = builder.ins().uextend(types::I64, bits);
-        builder.ins().fcvt_from_uint(types::F64, unsigned)
-    } else {
-        builder.ins().fcvt_from_sint(types::F64, bits)
-    }
-}
-
-/// Emit JavaScript ToBoolean for a Number after the caller has proved its value is numeric.
-fn emit_number_truthiness(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
-    struct Emit<'a, 'f> {
-        builder: &'a mut FunctionBuilder<'f>,
-    }
-
-    impl crate::vm::operations::NumberTruthinessStage<ir::Value> for Emit<'_, '_> {
-        type Predicate = ir::Value;
-
-        fn zero(&mut self) -> ir::Value {
-            self.builder
-                .ins()
-                .f64const(Ieee64::with_bits(0.0_f64.to_bits()))
-        }
-
-        fn equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
-            self.builder.ins().fcmp(FloatCC::Equal, left, right)
-        }
-
-        fn not_equal(&mut self, left: ir::Value, right: ir::Value) -> Self::Predicate {
-            self.builder.ins().fcmp(FloatCC::NotEqual, left, right)
-        }
-
-        fn and(&mut self, left: Self::Predicate, right: Self::Predicate) -> Self::Predicate {
-            self.builder.ins().band(left, right)
-        }
-    }
-
-    crate::vm::operations::number_truthiness(&mut Emit { builder }, number)
-}
-
 /// The most records a native function body covers.
 const MAX_NATIVE_RECORDS: usize = 2048;
 /// Return statuses encode the returning record's PC without colliding with the shared
@@ -478,20 +231,23 @@ const _: () = assert!(RETURN_STATUS_BASE > TERMINATED_STATUS as u32);
 /// Compute ToBoolean for values whose truthiness is encoded without a heap
 /// lookup. Strings, BigInts, and objects take the VM path at the same PC.
 fn emit_js_tagged_truthiness(builder: &mut FunctionBuilder<'_>, bits: ir::Value, fallback: ir::Block) -> ir::Value {
-    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut object_slots::emit(builder), bits);
-    let decided = builder.ins().icmp_imm_u(IntCC::Equal, undecided, 0);
-    emit_js_guard(builder, decided, fallback);
+    use crate::staged::machine::Relation;
+    let mut stage = object_slots::emit(builder);
+    let (undecided, truthy) = crate::staged::value::tagged_truthiness(&mut stage, bits);
+    let decided = stage.raw_compare_imm(Relation::Equal, undecided, 0);
+    stage.guard(decided, fallback);
     truthy
 }
 
 /// Decode an already-proved Number without repeating its semantic type check.
 fn emit_known_number(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    let tag = builder.ins().band_imm_u(bits, crate::value::ValueLayout::TAG_MASK as i64);
-    let integer = builder.ins().icmp_imm_u(IntCC::Equal, tag, crate::value::ValueLayout::INT_TAG as i64);
-    let payload = builder.ins().ireduce(types::I32, bits);
-    let int = builder.ins().fcvt_from_sint(types::F64, payload);
-    let double = builder.ins().bitcast(types::F64, MemFlagsData::new(), bits);
-    builder.ins().select(integer, int, double)
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    let payload = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), payload);
+    let double = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    stage.raw_select(integer, int, double)
 }
 
 /// Unbox a tagged JavaScript Number, branching to the current instruction's
@@ -502,60 +258,32 @@ fn emit_js_tagged_number(
     bits: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    let number = builder
-        .ins()
-        .bitcast(types::F64, ir::MemFlagsData::new(), bits);
-    let unordered = builder.ins().fcmp(FloatCC::Unordered, number, number);
+    use crate::staged::machine::{Lane, Relation, Unary};
     let nan = builder.create_block();
     let tagged = builder.create_block();
     let integer_block = builder.create_block();
     let join = builder.create_block();
     builder.append_block_param(join, types::F64);
-    builder.ins().brif(
-        unordered,
-        nan,
-        &[],
-        join,
-        &[ir::BlockArg::Value(number)],
-    );
+    let mut stage = object_slots::emit(builder);
+    let number = stage.raw_unary(Unary::Bitcast(Lane::F64), bits);
+    let unordered = stage.raw_compare(Relation::FloatUnordered, number, number);
+    stage.branch_if(unordered, (nan, &[]), (join, &[number]));
 
-    builder.switch_to_block(nan);
-    let field = builder
-        .ins()
-        .ushr_imm_u(bits, i64::from(crate::value::ValueLayout::TAG_SHIFT));
-    let offset = builder.ins().iadd_imm_s(
-        field,
-        -(crate::value::ValueLayout::FIRST_TAG_FIELD as i64),
-    );
-    let is_tagged = builder.ins().icmp_imm_u(
-        IntCC::UnsignedLessThanOrEqual,
-        offset,
-        crate::value::ValueLayout::TAG_FIELD_SPAN as i64,
-    );
-    builder.ins().brif(
-        is_tagged,
-        tagged,
-        &[],
-        join,
-        &[ir::BlockArg::Value(number)],
-    );
+    // An integer is the common NaN-space value (a double column holds its integral
+    // values tagged), so its tag is tested first.
+    stage.builder.switch_to_block(nan);
+    let integer = crate::staged::value::is_int(&mut stage, bits);
+    stage.branch_if(integer, (integer_block, &[]), (tagged, &[]));
 
-    builder.switch_to_block(tagged);
-    let int_field = (crate::value::ValueLayout::INT_TAG
-        >> crate::value::ValueLayout::TAG_SHIFT) as i64;
-    let is_integer_tag = builder
-        .ins()
-        .icmp_imm_u(IntCC::Equal, field, int_field);
-    builder
-        .ins()
-        .brif(is_integer_tag, integer_block, &[], fallback, &[]);
+    // Any other tag leaves; an untagged NaN is the double NaN.
+    stage.builder.switch_to_block(tagged);
+    let double = crate::staged::value::is_double(&mut stage, bits);
+    stage.branch_if(double, (join, &[number]), (fallback, &[]));
 
-    builder.switch_to_block(integer_block);
-    let integer = builder.ins().ireduce(types::I32, bits);
-    let integer = builder.ins().fcvt_from_sint(types::F64, integer);
-    builder
-        .ins()
-        .jump(join, &[ir::BlockArg::Value(integer)]);
+    stage.builder.switch_to_block(integer_block);
+    let low = stage.raw_unary(Unary::Narrow(Lane::I32), bits);
+    let int = stage.raw_unary(Unary::FromSigned(Lane::F64), low);
+    stage.goto(join, &[int]);
     builder.seal_block(nan);
     builder.seal_block(tagged);
     builder.seal_block(integer_block);
@@ -567,11 +295,13 @@ fn emit_js_tagged_number(
 /// An exact int32 projection of a Number, including its zero sign. The predicate
 /// rejects fractions, nonfinite values, saturation and -0 before the view is used.
 fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
-    let integer = builder.ins().fcvt_to_sint_sat(types::I32, number);
-    let round_trip = builder.ins().fcvt_from_sint(types::F64, integer);
-    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let round_trip_bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), round_trip);
-    let exact = builder.ins().icmp(IntCC::Equal, bits, round_trip_bits);
+    use crate::staged::machine::{Lane, Relation, Unary};
+    let mut stage = object_slots::emit(builder);
+    let integer = stage.raw_unary(Unary::ToSignedSaturating(Lane::I32), number);
+    let round_trip = stage.raw_unary(Unary::FromSigned(Lane::F64), integer);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let round_trip_bits = stage.raw_unary(Unary::Bitcast(Lane::I64), round_trip);
+    let exact = stage.raw_compare(Relation::Equal, bits, round_trip_bits);
     (integer, exact)
 }
 
@@ -579,46 +309,56 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
     let result = builder.append_block_param(join, types::I64);
-    let bits = builder.ins().bitcast(types::I64, ir::MemFlagsData::new(), number);
-    let truncated = builder.ins().trunc(number);
-    let whole_or_nan = builder.ins().fcmp(FloatCC::UnorderedOrEqual, truncated, number);
-    builder.ins().brif(whole_or_nan, cold, &[], join, &[ir::BlockArg::Value(bits)]);
-    builder.switch_to_block(cold);
-    builder.seal_block(cold);
-    let (integer, is_integer) = emit_js_exact_int32(builder, number);
-    let integer_bits = builder.ins().uextend(types::I64, integer);
-    let integer_bits = builder
-        .ins()
-        .bor_imm_u(integer_bits, crate::value::ValueLayout::INT_TAG as i64);
-    let encoded = builder.ins().select(is_integer, integer_bits, bits);
-    let is_nan = builder.ins().fcmp(FloatCC::Unordered, number, number);
-    let canonical_nan = builder.ins().iconst(
-        types::I64,
-        crate::value::ValueLayout::CANONICAL_NAN as i64,
-    );
-    let encoded = builder.ins().select(is_nan, canonical_nan, encoded);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    let mut stage = object_slots::emit(builder);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let truncated = stage.raw_unary(Unary::Truncate, number);
+    let whole_or_nan = stage.raw_compare(Relation::FloatUnorderedEqual, truncated, number);
+    stage.branch_if(whole_or_nan, (cold, &[]), (join, &[bits]));
+    stage.builder.switch_to_block(cold);
+    stage.builder.seal_block(cold);
+    let (integer, is_integer) = emit_js_exact_int32(stage.builder, number);
+    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
+    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = stage.raw_select(is_integer, integer_bits, bits);
+    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
+    let encoded = stage.raw_select(is_nan, canonical_nan, encoded);
+    stage.goto(join, &[encoded]);
     builder.switch_to_block(join);
     builder.seal_block(join);
     result
 }
 
-/// Continue native code only when one guard holds. All failures share the exact-PC
-/// VM fallback emitted after the direct path.
 /// The ToInt32 of `number`, natively below 2^63 in magnitude; beyond, infinities and NaN
 /// leave through `exit` (`EXACT_I64_TRUNCATION_LIMIT`).
 pub(super) fn emit_number_to_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value, exit: ir::Block) -> ir::Value {
-    let magnitude = builder.ins().fabs(number);
-    let bound = builder.ins().f64const(crate::value::EXACT_I64_TRUNCATION_LIMIT);
-    let exact = builder.ins().fcmp(FloatCC::LessThan, magnitude, bound);
-    emit_js_guard(builder, exact, exit);
-    let wide = builder.ins().fcvt_to_sint_sat(types::I64, number);
-    builder.ins().ireduce(types::I32, wide)
+    use crate::staged::machine::{Lane, Relation, Unary};
+    // A double converted from an int32 is that int32's exact value, so its ToInt32 is the
+    // int32 itself: no round trip through the double, no range guard.
+    let number = builder.func.dfg.resolve_aliases(number);
+    if let Some(def) = builder.func.dfg.value_def(number).inst()
+        && builder.func.dfg.insts[def].opcode() == ir::Opcode::FcvtFromSint
+        && let [integer] = builder.func.dfg.inst_args(def)
+        && builder.func.dfg.value_type(*integer) == types::I32
+    {
+        return *integer;
+    }
+    let mut stage = object_slots::emit(builder);
+    let magnitude = stage.raw_unary(Unary::FloatAbsolute, number);
+    let bound = stage.raw_const(Lane::F64, crate::value::EXACT_I64_TRUNCATION_LIMIT.to_bits() as i64);
+    let exact = stage.raw_compare(Relation::FloatLess, magnitude, bound);
+    stage.guard(exact, exit);
+    let wide = stage.raw_unary(Unary::ToSignedSaturating(Lane::I64), number);
+    stage.raw_unary(Unary::Narrow(Lane::I32), wide)
 }
 
+/// Continue native code only when one guard holds. All failures share the exact-PC
+/// VM fallback emitted after the direct path.
 fn emit_js_guard(
     builder: &mut FunctionBuilder<'_>,
     condition: ir::Value,
@@ -630,69 +370,16 @@ fn emit_js_guard(
     let taken = if forced_miss::next() { fallback } else { passed };
     #[cfg(not(test))]
     let taken = passed;
-    builder.ins().brif(condition, taken, &[], fallback, &[]);
+    object_slots::emit(builder).branch_if(condition, (taken, &[]), (fallback, &[]));
     builder.switch_to_block(passed);
     builder.seal_block(passed);
 }
 
-/// The record of the direct array `base`, tagged; any other value leaves through `fallback`.
-fn emit_array_record(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value, fallback: ir::Block) -> ir::Value {
-
-    let is_array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), base);
-    emit_js_guard(builder, is_array, fallback);
-
-    // A direct array's index names a live record of the reservation.
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-
-    let record_base_address = builder.ins().iadd_imm_s(
-        payload,
-        i64::try_from(std::mem::offset_of!(JsStepDispatch, array_record_base))
-            .expect("JS dispatch offset fits i64"),
-    );
-    let record_base = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record_base_address,
-        0,
-    );
-    let base_is_present = builder
-        .ins()
-        .icmp_imm_u(IntCC::NotEqual, record_base, 0);
-    emit_js_guard(builder, base_is_present, fallback);
-    emit_array_record_address(builder, record_base, record_id)
-}
-
-/// Where record `record_id` (an `i64`) of the array reservation at `record_base` lives.
-fn emit_array_record_address(builder: &mut FunctionBuilder<'_>, record_base: ir::Value, record_id: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let record_size = i64::try_from(ARRAY.record_size).expect("array record size fits i64");
-    let record_offset = builder.ins().imul_imm_u(record_id, record_size);
-    builder.ins().iadd(record_base, record_offset)
-}
-
-/// Whether the array record's object part holds extras: indexed descriptors, an arguments
-/// map, sparse elements or a prototype watch, any of which an element access must consult.
-fn emit_array_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::{NATIVE_ARRAY_LAYOUT as ARRAY, NATIVE_OBJECT_LAYOUT as OBJECT};
-    let object_payload = builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.object_offset + OBJECT.payload_offset).expect("array payload offset fits i32"),
-    );
-    crate::staged::object::has_extras(&mut object_slots::emit(builder), object_payload)
-}
-
-/// The backing header of an array record.
-fn emit_array_header(builder: &mut FunctionBuilder<'_>, record: ir::Value) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    builder.ins().load(
-        types::I64,
-        MemFlagsData::trusted(),
-        record,
-        i32::try_from(ARRAY.elements_offset + ARRAY.elements_header_offset).expect("array header offset fits i32"),
-    )
+/// The array record reservation's base in the dispatch payload: fixed until the arrays change.
+fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
+    use crate::staged::machine::Lane;
+    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -705,22 +392,12 @@ pub(super) fn emit_array_length_read(
     base: ir::Value,
     fallback: ir::Block,
 ) -> ir::Value {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-
-    let record = emit_array_record(builder, payload, base, fallback);
-    let extras = emit_array_extras(builder, record);
-    let ordinary = builder.ins().icmp_imm_u(IntCC::Equal, extras, 0);
-    emit_js_guard(builder, ordinary, fallback);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(
-        types::I32,
-        MemFlagsData::trusted(),
-        header,
-        i32::try_from(ARRAY.header_length_offset).expect("array length offset fits i32"),
-    );
-    let int32 = builder.ins().icmp_imm_s(IntCC::SignedGreaterThanOrEqual, length, 0);
-    emit_js_guard(builder, int32, fallback);
-    length
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let length = crate::staged::elements::array_length(&mut stage, record_base, base, fallback)
+        .expect("the emit stage continues past its guards");
+    stage.raw_unary(Unary::Narrow(Lane::I32), length)
 }
 
 /// A dense own array's elements as one access proved them: the backing's first value and
@@ -740,15 +417,14 @@ pub(super) struct DenseArrayView {
     pub(super) uncounted: bool,
 }
 
-/// The emission proofs a staged value operation carries: a field projection or a dense
-/// array view with the cold block a hole or miss continues at.
+/// The emission proofs a staged value operation carries: a dense array view with the cold
+/// block a hole or miss continues at.
 #[derive(Clone, Copy)]
 pub(in crate::vm::compiled) enum EmitProof {
-    Field(object_slots::CheckedObject),
     /// `in_bounds`: the index is proved below the view's length, so only a hole leaves at `absent`.
     Index { view: DenseArrayView, absent: ir::Block, in_bounds: bool },
-    TypedIndex { values: ir::Value, length: ir::Value, kind: ir::Value, absent: ir::Block }, Allocation { miss: ir::Block },
-    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block> }, FieldStoreMiss { miss: ir::Block },
+    Allocation { miss: ir::Block },
+    Safepoint { interrupt: ir::Value, miss: Option<ir::Block>, fault_poll: bool }, IndexSetHelper { miss: ir::Block }, GlobalRead { miss: Option<ir::Block>, binding: crate::staged::GlobalBinding }, FieldStoreMiss { miss: ir::Block },
 }
 
 /// The view of the dense own array `base` (tagged); `writable` also proves in-place
@@ -760,9 +436,9 @@ pub(super) fn emit_dense_array_view(
     writable: bool,
     fallback: ir::Block,
 ) -> DenseArrayView {
-    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
     let backing = crate::staged::elements::array_backing(&mut stage, record_base, base, fallback)
         .expect("the emit stage continues past its guards");
     let crate::staged::elements::Backing { values, length, .. } = backing;
@@ -771,23 +447,28 @@ pub(super) fn emit_dense_array_view(
             .expect("the emit stage continues past its guards");
     }
     // The view's length is an `i32`, the width an int32 index has.
-    let length = builder.ins().ireduce(types::I32, length);
+    let length = stage.raw_unary(Unary::Narrow(Lane::I32), length);
     DenseArrayView { values, length, writable, uncounted: false }
 }
 
 /// The backing's first value and length of the array `base` (tagged) an earlier view
 /// proved, after a helper that may have grown its backing: the array, its record and its
-/// writability stay what the view proved, so only the backing is read again.
+/// writability stay what the view proved, so only the backing is read again. The helper may
+/// also have given the array extras (a sparse store's facts), which then hold the backing:
+/// `staged::elements::array_header` reads it from either place.
 pub(super) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
-    use crate::heap::NATIVE_ARRAY_LAYOUT as ARRAY;
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let record_base = builder.ins().load(types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, array_record_base) as i32);
-    let record = emit_array_record_address(builder, record_base, record_id);
-    let header = emit_array_header(builder, record);
-    let length = builder.ins().load(types::I32, MemFlagsData::trusted(), header, ARRAY.header_length_offset as i32);
-    (builder.ins().iadd_imm_s(header, ARRAY.header_values_offset as i64), length)
+    use crate::staged::machine::{Lane, Unary};
+    let mut stage = object_slots::emit(builder);
+    let record_base = emit_array_record_base(&mut stage, payload);
+    let record = crate::staged::elements::array_record(&mut stage, record_base, base);
+    let crate::staged::elements::Backing { values, length, .. } = crate::staged::elements::record_backing(&mut stage, record);
+    // A helper may have changed the backing's storage form in place (narrow or double kind,
+    // a flagged length word): the view then reads as empty, so every access through it
+    // misses its bounds test and leaves.
+    let encoded = stage.ugt_imm(length, u64::from(!crate::heap::ENCODED_LEN));
+    let empty = stage.constant(0);
+    let length = stage.select(encoded, empty, length);
+    (values, stage.raw_unary(Unary::Narrow(Lane::I32), length))
 }
 
 /// The address of `view`'s present element `index` (an int32) and its value; an index past
@@ -800,7 +481,7 @@ pub(super) fn emit_dense_element(
     fallback: ir::Block,
     in_bounds: bool,
 ) -> (ir::Value, ir::Value) {
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::emit(builder);
     let element = if in_bounds {
         crate::staged::elements::present_element(&mut stage, view.values, index, fallback)
     } else {
@@ -821,7 +502,7 @@ pub(super) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None };
     if view.uncounted {
         crate::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -835,8 +516,7 @@ pub(super) fn emit_dense_element_replace(
 /// counts the values again.
 pub(super) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
     debug_assert!(view.writable, "only a writable view's backing is this array's own");
-    let unknown = builder.ins().iconst(types::I32, i64::from(crate::heap::OTHERS_UNKNOWN));
-    builder.ins().store(MemFlagsData::trusted(), unknown, view.values, crate::heap::OTHERS_FROM_VALUES);
+    crate::staged::elements::uncount_backing(&mut object_slots::emit(builder), view.values);
 }
 
 /// Flat field input bound once for a no-GC, layout-preserving region. Values
@@ -868,30 +548,23 @@ impl FieldArena {
     #[cfg(feature = "aot")]
     fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
         let Self::Unbound { values, length } = self else { return self; };
-        let fits = builder.ins().icmp(IntCC::UnsignedLessThan, slot, length);
-        let difference = builder.ins().isub(length, slot);
-        let zero = builder.ins().iconst(types::I64, 0);
-        let remaining = builder.ins().select(fits, difference, zero);
-        let offset = builder.ins().imul_imm_u(slot, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-        let base = builder.ins().iadd(values, offset);
+        let (base, remaining) = crate::staged::object::bind_arena_slot(&mut object_slots::emit(builder), values, length, slot);
         Self::BoundSlot { base, remaining }
     }
 
     fn address(self, builder: &mut FunctionBuilder<'_>, storage: ir::Value,
         slot: FieldSlot, fallback: ir::Block) -> ir::Value
     {
-        let (base, position, length) = match self {
+        let (values, length, position) = match self {
             Self::Unbound { values, length } => {
                 let slot = slot.read(builder);
-                (values, builder.ins().iadd(storage, slot), length)
+                (values, length, object_slots::emit(builder).add(storage, slot))
             }
             #[cfg(feature = "aot")]
-            Self::BoundSlot { base, remaining } => (base, storage, remaining),
+            Self::BoundSlot { base, remaining } => (base, remaining, storage),
         };
-        let in_arena = builder.ins().icmp(IntCC::UnsignedLessThan, position, length);
-        emit_js_guard(builder, in_arena, fallback);
-        let offset = builder.ins().imul_imm_u(position, crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64);
-        builder.ins().iadd(base, offset)
+        crate::staged::object::arena_slot_address(&mut object_slots::emit(builder), values, length, position, fallback)
+            .expect("the emit stage continues past its guards")
     }
 }
 
@@ -909,13 +582,7 @@ impl FieldSlot {
         match self {
             #[cfg(feature = "aot")]
             Self::Bound(value) => value,
-            Self::Row(row) => {
-                use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-                let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), row, CACHE.slot_offset as i32);
-                let slot = builder.ins().bxor_imm_u(stored, i64::from(CACHE.slot_complement));
-                let slot = builder.ins().band_imm_u(slot, i64::from(u16::MAX));
-                builder.ins().uextend(types::I64, slot)
-            }
+            Self::Row(row) => crate::staged::entry::entry_slot(&mut object_slots::emit(builder), row),
         }
     }
 }
@@ -923,24 +590,26 @@ impl FieldSlot {
 fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
     site: u16, miss: ir::Block, table: Option<object_slots::CheckedObjectTable>) -> FieldSlotBinding
 {
+    use crate::staged::machine::{Binary, Lane, Relation};
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
     let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, field_entries));
     let records = table.map(|table| table.base()).unwrap_or_else(||
         emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base)));
     let (values, length) = emit_js_property_values(builder, payload);
+    let mut stage = object_slots::emit(builder);
     // ObjectHeader owns record-base admission, including reused region proofs.
     for base in [entries, values] {
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
-        emit_js_guard(builder, present, miss);
+        let present = stage.raw_compare_imm(Relation::NotEqual, base, 0);
+        stage.guard(present, miss);
     }
-    let entry = builder.ins().iadd_imm_s(entries,
-        i64::try_from(usize::from(site) * CACHE.entry_size).expect("field entry offset"));
-    let word = |builder: &mut FunctionBuilder<'_>, offset: usize, complement: u32| {
-        let stored = builder.ins().load(types::I32, MemFlagsData::trusted(), entry, offset as i32);
-        builder.ins().bxor_imm_u(stored, i64::from(complement))
+    let entry = stage.add_imm(entries, (usize::from(site) * CACHE.entry_size) as u64);
+    let mut word = |offset: usize, complement: u32| {
+        let stored = stage.raw_load(Lane::I32, MemFlagsData::trusted(), entry, offset as i32);
+        let complement = stage.raw_const(Lane::I32, i64::from(complement));
+        stage.raw_binary(Binary::Xor, stored, complement)
     };
-    let receiver = word(builder, CACHE.receiver_offset, CACHE.receiver_complement);
-    let holder = word(builder, CACHE.holder_offset, CACHE.holder_complement);
+    let receiver = word(CACHE.receiver_offset, CACHE.receiver_complement);
+    let holder = word(CACHE.holder_offset, CACHE.holder_complement);
     FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
         arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
 }
@@ -960,15 +629,17 @@ fn emit_js_cached_field_slot(
     packed_slot: Option<ir::Block>,
 ) -> (ir::Value, ir::Value) {
     use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
+    use crate::staged::machine::{Binary, Lane, Relation};
+    use crate::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
+    use crate::staged::region::Region;
     use super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
     let base = receiver;
-    let record_id = builder.ins().ireduce(types::I32, base);
-    let record_id = builder.ins().uextend(types::I64, record_id);
+    let record_id = crate::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
 
     let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
-    let own = builder.ins().icmp_imm_u(IntCC::Equal, holder, i64::from(CACHE.own_holder));
+    let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
     if !allow_holder {
         emit_js_guard(builder, own, fallback);
     }
@@ -976,7 +647,7 @@ fn emit_js_cached_field_slot(
     let object_slots::ObjectHeader { record, shape, inline, address: object } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
     // The exact shape includes dictionary storage, which cannot match an own-data row.
-    let same_shape = builder.ins().icmp(IntCC::Equal, shape, receiver_shape);
+    let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
     // A holder read uses only the receiver's shape and prototype link. Its own
     // property representation is unrelated to the holder's slot address.
@@ -984,38 +655,36 @@ fn emit_js_cached_field_slot(
         if let Some(packed_slot) = packed_slot {
             let packed = builder.create_block();
             let arena = builder.create_block();
-            builder.ins().brif(inline, packed, &[], arena, &[]);
+            object_slots::emit(builder).branch_if(inline, (packed, &[]), (arena, &[]));
             builder.switch_to_block(packed);
-            let storage = builder.ins().load(types::I64, MemFlagsData::trusted(), object,
-                OBJECT.payload_offset as i32);
-            let plain = crate::staged::object::plain_payload(&mut object_slots::emit(builder), storage);
-            emit_js_guard(builder, plain, fallback);
-            let slot = slot.read(builder);
-            let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, slot,
-                OBJECT.inline_property_count as i64);
-            emit_js_guard(builder, fits, fallback);
-            let offset = builder.ins().imul_imm_u(slot, std::mem::size_of::<u32>() as i64);
-            let address = record.offset_address(builder, offset);
-            let address = builder.ins().iadd_imm_s(address, OBJECT.payload_offset as i64);
-            builder.ins().jump(packed_slot, &[ir::BlockArg::Value(address)]);
+            let mut stage = object_slots::emit(builder);
+            let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
+            let plain = plain_payload(&mut stage, storage);
+            stage.guard(plain, fallback);
+            let slot = slot.read(stage.builder);
+            let fits = stage.raw_compare_imm(Relation::UnsignedLess, slot, OBJECT.inline_property_count as i64);
+            stage.guard(fits, fallback);
+            let stride = stage.raw_const(Lane::I64, size_of::<u32>() as i64);
+            let offset = stage.raw_binary(Binary::Mul, slot, stride);
+            let address = record.offset_address(stage.builder, offset);
+            let payload_offset = stage.raw_const(Lane::I64, OBJECT.payload_offset as i64);
+            let address = stage.raw_binary(Binary::Add, address, payload_offset);
+            stage.goto(packed_slot, &[address]);
             builder.seal_block(packed);
             builder.seal_block(arena);
             builder.switch_to_block(arena);
         }
+        let mut stage = object_slots::emit(builder);
         if packed_slot.is_none() {
-            let arena_storage = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
-            emit_js_guard(builder, arena_storage, fallback);
+            let arena_storage = stage.raw_compare_imm(Relation::Equal, inline, 0);
+            stage.guard(arena_storage, fallback);
         }
         // Plain storage has the arena start alone in the payload's lower half.
-        let storage = builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            object,
-            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
-        );
-        let upper = builder.ins().ushr_imm_u(storage, i64::from(u32::BITS));
-        let plain = builder.ins().icmp_imm_u(IntCC::Equal, upper, 0);
-        emit_js_guard(builder, plain, fallback);
+        let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
+        let half = stage.raw_const(Lane::I64, i64::from(u32::BITS));
+        let upper = stage.raw_binary(Binary::ShiftRightUnsigned, storage, half);
+        let plain = stage.raw_compare_imm(Relation::Equal, upper, 0);
+        stage.guard(plain, fallback);
         storage
     };
     let address = if allow_holder {
@@ -1023,54 +692,46 @@ fn emit_js_cached_field_slot(
         let holder_block = builder.create_block();
         let join = builder.create_block();
         builder.append_block_param(join, types::I64);
-        builder.ins().brif(own, own_block, &[], holder_block, &[]);
+        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
         builder.switch_to_block(own_block);
         let storage = own_storage(builder);
         let address = arena.address(builder, storage, slot, fallback);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        object_slots::emit(builder).goto(join, &[address]);
 
         builder.switch_to_block(holder_block);
         let mut stage = object_slots::emit(builder);
-        let link = crate::staged::object::proto_link(&mut stage, object);
-        let id = crate::staged::object::proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = crate::staged::object::object_record_at(&mut stage, records, id);
-        let proto_shape = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.auxiliary_offset).expect("auxiliary offset fits i32"),
-        );
-        let same_holder = builder.ins().icmp(IntCC::Equal, proto_shape, holder);
-        emit_js_guard(builder, same_holder, fallback);
-        let inline = object_slots::inline_storage(builder, prototype);
-        let proto_storage = builder.ins().load(
-            types::I64, MemFlagsData::trusted(), prototype,
-            i32::try_from(OBJECT.payload_offset).expect("payload offset fits i32"),
-        );
-        let extras = crate::staged::object::has_extras(&mut object_slots::emit(builder), proto_storage);
-        emit_js_guard(builder, extras, fallback);
-        let extras_pointer = crate::staged::object::extras_pointer(&mut object_slots::emit(builder), proto_storage);
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, extras_pointer, 0);
-        emit_js_guard(builder, present, fallback);
-        let displaced = builder.create_block();
-        let in_arena = builder.create_block();
-        builder.ins().brif(inline, displaced, &[], in_arena, &[]);
-        builder.switch_to_block(displaced);
-        let index = slot.read(builder);
-        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, OBJECT.inline_property_count as i64);
-        emit_js_guard(builder, fits, fallback);
+        let link = proto_link(&mut stage, object);
+        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
+        let prototype = object_record_at(&mut stage, records, id);
+        let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);
+        let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
+        stage.guard(same_holder, fallback);
+        let inline = inline_storage(&mut stage, prototype);
+        let proto_storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
+        let extras = has_extras(&mut stage, proto_storage);
+        stage.guard(extras, fallback);
+        let extras_pointer = extras_pointer(&mut stage, proto_storage);
+        let present = stage.raw_compare_imm(Relation::NotEqual, extras_pointer, 0);
+        stage.guard(present, fallback);
+        let displaced = stage.builder.create_block();
+        let in_arena = stage.builder.create_block();
+        stage.branch_if(inline, (displaced, &[]), (in_arena, &[]));
+        stage.builder.switch_to_block(displaced);
+        let index = slot.read(stage.builder);
+        let fits = stage.raw_compare_imm(Relation::UnsignedLess, index, OBJECT.inline_property_count as i64);
+        stage.guard(fits, fallback);
         // Exact holder shape admits the data slot. Extras hold full Values;
         // keep this projection inside the same no-GC access as the live prototype.
-        let offset = builder.ins().imul_imm_u(index, OBJECT.property_value_size as i64);
-        let address = builder.ins().iadd(extras_pointer, offset);
-        let address = builder.ins().iadd_imm_s(address, OBJECT.extras_inline_values_offset as i64);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
-        builder.switch_to_block(in_arena);
-        let start = builder.ins().load(
-            types::I32, MemFlagsData::trusted(), extras_pointer,
-            i32::try_from(OBJECT.extras_arena_start_offset).expect("extras offset fits i32"),
-        );
-        let start = builder.ins().uextend(types::I64, start);
-        let address = arena.address(builder, start, slot, fallback);
-        builder.ins().jump(join, &[ir::BlockArg::Value(address)]);
+        let stride = stage.raw_const(Lane::I64, OBJECT.property_value_size as i64);
+        let offset = stage.raw_binary(Binary::Mul, index, stride);
+        let address = stage.raw_binary(Binary::Add, extras_pointer, offset);
+        let values_at = stage.raw_const(Lane::I64, OBJECT.extras_inline_values_offset as i64);
+        let address = stage.raw_binary(Binary::Add, address, values_at);
+        stage.goto(join, &[address]);
+        stage.builder.switch_to_block(in_arena);
+        let start = stage.load_u32(Region::Payload.mutable(), extras_pointer, OBJECT.extras_arena_start_offset as i32);
+        let address = arena.address(stage.builder, start, slot, fallback);
+        stage.goto(join, &[address]);
         builder.seal_block(own_block);
         builder.seal_block(holder_block);
         builder.seal_block(join);
@@ -1085,27 +746,33 @@ fn emit_js_cached_field_slot(
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
-    builder.ins().load(types::I64, MemFlagsData::trusted(), payload, offset)
+    object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
+}
+
+/// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
+/// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
+fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    object_slots::emit(builder).load_u64(Region::RecordBases.readonly(), payload, offset)
 }
 
 fn emit_js_property_values(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> (ir::Value, ir::Value) {
-    let header = builder.ins().load(types::I64, invariant(), payload,
+    use crate::staged::{machine::Lane, region::Region};
+    let mut stage = object_slots::emit(builder);
+    let header = stage.raw_load(Lane::I64, invariant(), payload,
         std::mem::offset_of!(JsStepDispatch, property_buffer) as i32);
     let layout = crate::value_vec::NATIVE_PROPERTY_BUFFER_LAYOUT;
-    let values = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.base as i32);
-    let length = builder.ins().load(types::I64, MemFlagsData::trusted(), header, layout.length as i32);
+    let values = stage.load_u64(Region::HeapMeta.mutable(), header, layout.base as i32);
+    let length = stage.load_u64(Region::HeapMeta.mutable(), header, layout.length as i32);
     (values, length)
 }
 
 /// Call a lane helper (`LaneHelpers`) with the payload's VM and residual first.
 fn emit_lane_call(builder: &mut FunctionBuilder<'_>, helper: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-    let mut signature = Signature::new(builder.func.signature.call_conv);
-    signature.params.extend(arguments.iter().map(|_| AbiParam::new(types::I64)));
-    signature.returns.push(AbiParam::new(types::I64));
-    let signature = builder.import_signature(signature);
-    let call = builder.ins().call_indirect(signature, helper, arguments);
-    builder.inst_results(call)[0]
+    object_slots::emit(builder).call_words(helper, arguments)
 }
 
 fn emit_lane_helper_call(
@@ -1123,64 +790,27 @@ fn emit_lane_helper_call(
 }
 
 /// The shared RecordSpace::store_logs test: an immediate or unmarked owner
-/// needs no barrier. Verified Numbers are immediate and discharge the test at
+/// needs no barrier log. Verified Numbers are immediate and discharge the test at
 /// compilation. Otherwise the caller must perform the logged store.
 fn emit_unlogged_property_store_guard(
-    builder: &mut FunctionBuilder<'_>, payload: ir::Value, record_id: ir::Value,
-    value: ir::Value, ty: typed_ir::Type, fallback: ir::Block,
+    builder: &mut FunctionBuilder<'_>, space: crate::staged::RecordSpace, payload: ir::Value, record_id: ir::Value,
+    value: ir::Value, fallback: ir::Block,
 ) {
-    if ty.is_subtype(typed_ir::Type::NUMBER) { return; }
-    use crate::value::ValueLayout;
-    let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-    let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
+    use crate::staged::barrier::{unlogged_store, MarkList};
     // A marked owner would be logged by RecordSpace::store_logs; otherwise the
     // barrier is a no-op. Marks and block bases are refreshed after each callout.
-    let heap_value = builder.create_block();
-    let write = builder.create_block();
-    builder.ins().brif(immediate, write, &[], heap_value, &[]);
-    builder.switch_to_block(heap_value);
-    use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
-    let blocks = emit_js_payload_word(
-        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
-    );
-    let count = emit_js_payload_word(
-        builder, payload, std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
-    );
-    let block = builder.ins().ushr_imm_u(
-        record_id, i64::from(OBJECT.mark_records_per_block.trailing_zeros()),
-    );
-    let block_live = builder.ins().icmp(IntCC::UnsignedLessThan, block, count);
-    emit_js_guard(builder, block_live, fallback);
-    let block_offset = builder.ins().imul_imm_u(
-        block, i64::try_from(OBJECT.mark_block_size).expect("mark block size fits i64"),
-    );
-    let block_address = builder.ins().iadd(blocks, block_offset);
-    let within = builder.ins().band_imm_u(
-        record_id, i64::try_from(OBJECT.mark_records_per_block - 1).expect("block mask fits i64"),
-    );
-    let word_index = builder.ins().ushr_imm_u(
-        within, i64::from(OBJECT.mark_word_bits.trailing_zeros()),
-    );
-    let word_offset = builder.ins().imul_imm_u(
-        word_index, i64::try_from(std::mem::size_of::<u64>()).expect("word size fits i64"),
-    );
-    let word_address = builder.ins().iadd(block_address, word_offset);
-    let marks = builder.ins().load(
-        types::I64, MemFlagsData::trusted(), word_address,
-        i32::try_from(OBJECT.mark_offset).expect("mark offset fits i32"),
-    );
-    let bit_index = builder.ins().band_imm_u(
-        within, i64::try_from(OBJECT.mark_word_bits - 1).expect("word mask fits i64"),
-    );
-    let one = builder.ins().iconst(types::I64, 1);
-    let mask = builder.ins().ishl(one, bit_index);
-    let marked = builder.ins().band(marks, mask);
-    let unmarked = builder.ins().icmp_imm_u(IntCC::Equal, marked, 0);
-    emit_js_guard(builder, unmarked, fallback);
-    builder.ins().jump(write, &[]);
-    builder.seal_block(heap_value);
-    builder.seal_block(write);
-    builder.switch_to_block(write);
+    let list = match space {
+        crate::staged::RecordSpace::Object => MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, object_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, object_mark_block_count),
+        },
+        crate::staged::RecordSpace::Function => MarkList {
+            blocks: std::mem::offset_of!(JsStepDispatch, function_mark_blocks),
+            count: std::mem::offset_of!(JsStepDispatch, function_mark_block_count),
+        },
+    };
+    unlogged_store(&mut object_slots::emit(builder), (regions::dispatch(), MemFlagsData::trusted()), payload, list,
+        (record_id, value), |stage, condition| emit_js_guard(stage.builder, condition, fallback));
 }
 
 /// What a lane body knows of its receiver from entry on: the record, exact shape and
@@ -1198,57 +828,15 @@ struct LaneReceiver {
 /// Encode a proved tagged int32; widening remains the shared store's responsibility.
 fn emit_narrow_integer_write(builder: &mut FunctionBuilder<'_>, value: ir::Value,
     fallback: ir::Block, range: Option<typed_ir::IntRange>) -> ir::Value {
-    use crate::value::NarrowLayout as NARROW;
-    let int = builder.ins().ireduce(types::I32, value);
+    use crate::staged::store::{integer_code, integer_fits};
+    let mut stage = object_slots::emit(builder);
     if range.is_some_and(|range| typed_ir::IntRange::packed().contains(range)) {
         #[cfg(test)] PACKED_RANGE_PROOFS.with(|count| count.set(count.get() + 1));
     } else {
-        let half_range = 1_i64 << (NARROW::INTEGER_BITS - 1);
-        let biased = builder.ins().iadd_imm_s(int, half_range);
-        let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, biased, half_range << 1);
-        emit_js_guard(builder, fits, fallback);
+        let fits = integer_fits(&mut stage, value);
+        stage.guard(fits, fallback);
     }
-    let shifted = builder.ins().ishl_imm_u(int, i64::from(NARROW::CODE_SHIFT));
-    builder.ins().bor_imm_u(shifted, i64::from(NARROW::INTEGER_FLAG))
-}
-
-/// The integer and direct-object cases of `Value::to_narrow_reference`.
-/// Other values and overflowing indices retain the shared store's fallback.
-fn emit_narrow_store_value(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    ty: typed_ir::Type, fallback: ir::Block) -> ir::Value {
-    if ty.is_subtype(typed_ir::Type::INT32) {
-        return emit_narrow_integer_write(builder, value, fallback, None);
-    }
-    use crate::value::NarrowLayout as N;
-    let joined = (!ty.is_direct_object_family()).then(|| {
-        let integer = builder.create_block();
-        let reference = builder.create_block();
-        let done = builder.create_block();
-        let result = builder.append_block_param(done, types::I32);
-        let is_integer = lane_region::is_int_tagged(builder, value);
-        builder.ins().brif(is_integer, integer, &[], reference, &[]);
-        builder.switch_to_block(integer);
-        let narrow = emit_narrow_integer_write(builder, value, fallback, None);
-        builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-        builder.switch_to_block(reference);
-        (done, result)
-    });
-    let upper = builder.ins().ushr_imm_u(value, i64::from(u32::BITS));
-    let direct = builder.ins().icmp_imm_u(IntCC::Equal, upper, (N::DIRECT_OBJECT_UPPER >> u32::BITS) as i64);
-    emit_js_guard(builder, direct, fallback);
-    let index = builder.ins().ireduce(types::I32, value);
-    let fits = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, index, 1_i64 << N::INDEX_BITS);
-    emit_js_guard(builder, fits, fallback);
-    let shifted = builder.ins().ishl_imm_u(index, i64::from(N::INDEX_SHIFT));
-    let narrow = builder.ins().bor_imm_u(shifted, i64::from(N::DIRECT_OBJECT_CODE << N::CODE_SHIFT));
-    match joined {
-        Some((done, result)) => {
-            builder.ins().jump(done, &[ir::BlockArg::Value(narrow)]);
-            builder.switch_to_block(done);
-            result
-        }
-        None => narrow,
-    }
+    integer_code(&mut stage, value)
 }
 
 /// Binding time changes the table address, never the packed-value semantics.
@@ -1259,33 +847,41 @@ enum NarrowTable {
     Linked(u32),
 }
 
+/// The linked data symbol `symbol` as a global value of `builder`'s function.
+#[cfg(feature = "aot")]
+fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::GlobalValue {
+    let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
+        super::native_object::NATIVE_DATA_NAMESPACE, symbol));
+    builder.create_global_value(ir::GlobalValueData::Symbol {
+        name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
+    })
+}
+
 /// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow`,
 /// passed to `join`.
 fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     table: NarrowTable, join: ir::Block)
 {
+    use crate::staged::machine::{Lane, Unary};
     let table = match table {
-        NarrowTable::Process => builder.ins().iconst(types::I64, crate::value::NarrowLayout::upper_words() as i64),
+        NarrowTable::Process => object_slots::emit(builder).constant(crate::value::NarrowLayout::upper_words() as u64),
         #[cfg(feature = "aot")]
         NarrowTable::Linked(symbol) => {
-            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(
-                super::native_object::NATIVE_DATA_NAMESPACE, symbol));
-            let global = builder.create_global_value(ir::GlobalValueData::Symbol {
-                name: ir::ExternalName::user(name), offset: 0.into(), colocated: false, tls: false,
-            });
-            builder.ins().symbol_value(types::I64, global)
+            let global = linked_data_symbol(builder, symbol);
+            object_slots::emit(builder).symbol_address(global)
         }
     };
-    let narrow = builder.ins().uextend(types::I64, narrow);
-    let mut stage = object_slots::Emit { builder, property_values: None };
+    let mut stage = object_slots::emit(builder);
+    let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
     let encoded = crate::staged::object::decode_narrow_through(&mut stage, narrow, table);
-    builder.ins().jump(join, &[ir::BlockArg::Value(encoded)]);
+    stage.goto(join, &[encoded]);
 }
 
 /// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
 /// where the receiver is no direct object or the heap bases are absent, which no folded
 /// field matches.
 fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value) -> LaneReceiver {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
@@ -1296,34 +892,33 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    let none = builder.ins().iconst(types::I32, i64::from(super::NO_FIELD_RECEIVER));
-    let null = builder.ins().iconst(types::I64, 0);
-    builder.def_var(receiver.shape, none);
-    let outside = builder.ins().iconst(types::I8, 0);
-    builder.def_var(receiver.inline, outside);
-    builder.def_var(receiver.object, null);
-    let found = builder.create_block();
-    let done = builder.create_block();
-    let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), this);
-    let record_id = builder.ins().ireduce(types::I32, this);
-    let in_range = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, record_id, layout.record_capacity as i64);
-    let has_records = builder.ins().icmp_imm_u(IntCC::NotEqual, records, 0);
-    let has_properties = builder.ins().icmp_imm_u(IntCC::NotEqual, properties, 0);
-    let ok = builder.ins().band(object, in_range);
-    let ok = builder.ins().band(ok, has_records);
-    let ok = builder.ins().band(ok, has_properties);
-    builder.ins().brif(ok, found, &[], done, &[]);
-    builder.switch_to_block(found);
-    let record_id = builder.ins().uextend(types::I64, record_id);
-    let offset = builder.ins().imul_imm_u(record_id, layout.record_size as i64);
-    let address = builder.ins().iadd(records, offset);
+    let (found, done) = (builder.create_block(), builder.create_block());
+    let mut stage = object_slots::emit(builder);
+    let none = stage.raw_const(Lane::I32, i64::from(super::NO_FIELD_RECEIVER));
+    let null = stage.raw_const(Lane::I64, 0);
+    let outside = stage.raw_const(Lane::I8, 0);
+    stage.builder.def_var(receiver.shape, none);
+    stage.builder.def_var(receiver.inline, outside);
+    stage.builder.def_var(receiver.object, null);
+    let object = crate::staged::value::is_direct_object(&mut stage, this);
+    let record_id = stage.raw_unary(Unary::Narrow(Lane::I32), this);
+    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, record_id, layout.record_capacity as i64);
+    let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
+    let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
+    let ok = stage.raw_binary(Binary::And, object, in_range);
+    let ok = stage.raw_binary(Binary::And, ok, has_records);
+    let ok = stage.raw_binary(Binary::And, ok, has_properties);
+    stage.branch_if(ok, (found, &[]), (done, &[]));
+    stage.builder.switch_to_block(found);
+    let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
+    let address = crate::staged::object::object_record_at(&mut stage, records, record_id);
     // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = builder.ins().load(types::I32, MemFlagsData::trusted(), address, layout.auxiliary_offset as i32);
-    let inline = object_slots::inline_storage(builder, address);
-    builder.def_var(receiver.object, address);
-    builder.def_var(receiver.shape, shape);
-    builder.def_var(receiver.inline, inline);
-    builder.ins().jump(done, &[]);
+    let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
+    let inline = crate::staged::object::inline_storage(&mut stage, address);
+    stage.builder.def_var(receiver.object, address);
+    stage.builder.def_var(receiver.shape, shape);
+    stage.builder.def_var(receiver.inline, inline);
+    stage.goto(done, &[]);
     builder.switch_to_block(done);
     receiver
 }
@@ -1346,8 +941,14 @@ macro_rules! lane_helper_inventory {
 lane_helper_inventory! { H;
     FunctionCapture => lane_function_capture_read::<H>,
     FieldGet => lane_field_get::<H>,
+    /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
+    ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
+    /// One kept `arguments` element (`lane_body_argument_get`).
+    ArgumentGet => super::dispatch_fast::lane_body_argument_get::<H>,
     FieldSet => lane_field_set::<H>,
     Call => super::dispatch_fast::lane_body_call::<H>,
+    /// A loop region's call (`dispatch_fast::lane_region_call`).
+    RegionCall => super::dispatch_fast::lane_region_call::<H>,
     IndexSet => lane_index_set::<H>,
     /// Room for a loop's append to a dense array (`lane_array_append_room`).
     AppendRoom => lane_array_append_room::<H>,
@@ -1372,6 +973,10 @@ lane_helper_inventory! { H;
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
+    /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
+    Raise => lane_raise::<H>,
+    /// The exception a callee left in `Vm::lane_raised`, for a handler of the caller's own (`lane_take_raised`).
+    TakeRaised => lane_take_raised::<H>,
     /// An object literal's and an array literal's allocation.
     NewObject => lane_new_object::<H>,
     NewArray => lane_new_array::<H>,
@@ -1382,7 +987,7 @@ lane_helper_inventory! { H;
     Binary => lane_binary::<H>,
     /// A store that may add its property (`lane_field_add`).
     FieldAdd => lane_field_add::<H>,
-    /// A loop's hoisted typed array view (`lane_typed_array_view`).
+    /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
     /// `+` of strings (`dispatch_fast::lane_body_string_concat`), named by the b-jit call planner
     /// (`base_region::call_plan`), which the whole-function planner will consume.
@@ -1390,10 +995,28 @@ lane_helper_inventory! { H;
     StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
+    /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
+    /// helper steps and stepped calls make (`base_region::steps`).
+    Step => super::dispatch_fast::lane_body_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
     RetireArrayProofs => lane_retire_array_proofs,
+    /// An object literal over a register window (`lane_new_object_literal`).
+    NewObjectLiteral => lane_new_object_literal::<H>,
+    /// A closure over the frame's environment (`lane_new_closure`).
+    NewClosure => lane_new_closure::<H>,
+    /// A literal template's value (`lane_new_template`).
+    NewTemplate => lane_new_template::<H>,
+    /// A string concatenation of pure parts (`lane_new_concat`).
+    NewConcat => lane_new_concat::<H>,
+    /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
+    NewRegExp => lane_new_regexp::<H>,
+    /// A decision of two words the call-out carries, which needs no VM record
+    /// (`dispatch_fast::lane_decide`).
+    Decide => super::dispatch_fast::lane_decide::<H>,
+    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::lane_handler_edge`).
+    HandlerEdge => super::dispatch_fast::lane_handler_edge::<H>,
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's
@@ -1466,6 +1089,10 @@ thread_local! {
     static INT32_PROJECTION_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// An object's atom table is the data symbol after its narrow table.
+#[cfg(feature = "aot")]
+pub(super) const NATIVE_ATOM_TABLE_OFFSET: u32 = 1;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LaneHelpers {
     /// A frameless Number region: no VM helper capability, helpers named by symbol.
@@ -1494,11 +1121,36 @@ impl LaneHelpers {
         !matches!(self, Self::Process(_))
     }
 
+    /// The word of program atom `atom`: its id now for a live lowering; for a linking one the
+    /// symbol of an ahead image, or the object's atom table entry (`NATIVE_ATOM_TABLE_OFFSET`
+    /// symbols after its narrow table) the loader's namespace check proves to hold the id.
+    pub(super) fn atom_word(self, builder: &mut FunctionBuilder<'_>, atom: u32) -> ir::Value {
+        match self {
+            Self::Process(_) => object_slots::emit(builder).constant(u64::from(atom)),
+            Self::Numeric | Self::Ahead => lane_region::atom_symbol(builder, atom),
+            #[cfg(feature = "aot")]
+            Self::Linked(_, narrow) | Self::Bound(_, narrow) => {
+                use crate::staged::machine::{Lane, Unary};
+                let table = linked_data_symbol(builder, narrow + NATIVE_ATOM_TABLE_OFFSET);
+                let mut stage = object_slots::emit(builder);
+                let base = stage.symbol_address(table);
+                let word = stage.raw_load(Lane::I32, invariant(), base, (atom as usize * std::mem::size_of::<u32>()) as i32);
+                stage.raw_unary(Unary::ZeroExtend(Lane::I64), word)
+            }
+        }
+    }
+
     /// The address of `helper`: a symbol, or the table's entry (a symbol per use in live lane
     /// bodies costs raytrace compile Ir +17.5%, run-only +0.6%).
     fn address(self, builder: &mut FunctionBuilder<'_>, helper: LaneHelper) -> ir::Value {
         if self.names_symbols() { return lane_region::helper_symbol(builder, helper); }
-        self.table_address(builder.ins(), helper)
+        let mut stage = object_slots::emit(builder);
+        match self.table_address(helper) {
+            HelperAddress::Embedded(address) => stage.raw_const(crate::staged::machine::Lane::I64, address),
+            #[cfg(feature = "aot")]
+            HelperAddress::Loaded { table, offset } =>
+                stage.raw_load(crate::staged::machine::Lane::I64, invariant(), table, offset),
+        }
     }
 
     /// Whether helpers are symbols a loader resolves, not table entries.
@@ -1506,21 +1158,27 @@ impl LaneHelpers {
         matches!(self, Self::Numeric | Self::Ahead)
     }
 
-    /// The address of `helper` in this process's table, embedded, or loaded from the bound one.
-    fn table_address<'f>(self, builder: impl ir::InstBuilder<'f>, helper: LaneHelper) -> ir::Value {
+    /// Where the address of `helper` in this process's table is: embedded, or loaded from the bound one.
+    fn table_address(self, helper: LaneHelper) -> HelperAddress {
         match self {
             Self::Numeric => unreachable!("a frameless Number region names its helper by symbol"),
             Self::Ahead => unreachable!("an ahead region names its helper by symbol"),
-            Self::Process(addresses) => builder.iconst(types::I64, addresses[helper as usize] as i64),
+            Self::Process(addresses) => HelperAddress::Embedded(addresses[helper as usize] as i64),
             #[cfg(feature = "aot")]
-            Self::Bound(table, _) => {
-                builder.load(types::I64, invariant(), table,
-                    (helper as usize * std::mem::size_of::<usize>()) as i32)
-            },
+            Self::Bound(table, _) => HelperAddress::Loaded {
+                table, offset: (helper as usize * std::mem::size_of::<usize>()) as i32 },
             #[cfg(feature = "aot")]
             Self::Linked(..) => unreachable!("linked helpers bind at region entry"),
         }
     }
+}
+
+/// Where a helper's address is: a constant, or an entry of the table a region bound.
+#[derive(Clone, Copy)]
+enum HelperAddress {
+    Embedded(i64),
+    #[cfg(feature = "aot")]
+    Loaded { table: ir::Value, offset: i32 },
 }
 
 /// Immutable host-specific helper addresses, resolved by the running image.
@@ -1543,23 +1201,6 @@ struct NullishComparison {
     expected: Value,
     strict: bool,
     negated: bool,
-}
-
-impl NullishComparison {
-    fn known_outcome(self, ty: typed_ir::Type) -> Option<bool> {
-        use typed_ir::Type;
-        let equal = if ty.is_subtype(Type::language(crate::ValueType::Null)) {
-            !self.strict || self.expected == Value::NULL
-        } else if ty.is_subtype(Type::language(crate::ValueType::Undefined)) {
-            !self.strict || self.expected == Value::UNDEFINED
-        } else if ty.is_direct_object_family()
-            || ty.is_subtype(Type::NUMBER.join(Type::language(crate::ValueType::Boolean))) {
-            false
-        } else {
-            return None;
-        };
-        Some(if self.negated { equal } else { !equal })
-    }
 }
 
 /// Resolve the constant operand and equality denotation before execution.
@@ -1589,6 +1230,13 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
     pub(super) constants: &'a [Value],
+    /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
+    pub(super) instanceofs: &'a dyn Fn(Value) -> Option<crate::code_dependencies::InstanceofFact>,
+    /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
+    pub(super) shape_stable: &'a dyn Fn(u32) -> bool,
+    /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
+    /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
+    pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
 }
 
 impl OnlineFacts<'_> {
@@ -1608,7 +1256,9 @@ pub(super) fn names_length(program: &ResidualProgram, atom: Atom) -> bool {
 /// Whether `instruction` is a plain read of `length`, which its lowering answers for any base
 /// (`Lowering::array_length`), so the base needs no object record.
 pub(super) fn reads_length(program: &ResidualProgram, instruction: WideInstruction) -> bool {
-    !instruction.writes_current_this() && !instruction.returns_from_frame()
+    // Only a field op reads a `length`: `field_lookup` proves that of its reader.
+    instruction.op().immediate_role() == crate::bytecode::ImmediateRole::FieldLookup
+        && !instruction.writes_current_this() && !instruction.returns_from_frame()
         && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { atom, .. }) if names_length(program, atom))
 }
 
@@ -1620,6 +1270,8 @@ pub(super) struct VmFacts<'a> {
     pub(super) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(super) diagnostics: bool,
+    /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
+    pub(super) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(super) online: Option<OnlineFacts<'a>>,
@@ -1630,70 +1282,23 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_fields: Option<&'a crate::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(super) frozen_constants: Option<usize>,
+    /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
+    pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None };
+    pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
+        frozen_fields: None, frozen_constants: None, scalar: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None }
+        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
+            frozen_fields: None, frozen_constants: None, scalar: None }
     }
-}
-
-/// Whether JumpBinaryFalse takes its target. Where the IsHTMLDDA object may exist
-/// (`html_dda`), a loose test leaves at `fallback` for any heap value but an object record.
-fn emit_nullish_branch(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, html_dda: bool, fallback: ir::Block) -> ir::Value {
-    let taken = builder.create_block();
-    let fall = builder.create_block();
-    let join = builder.create_block();
-    let result = builder.append_block_param(join, types::I8);
-    emit_nullish_edges(builder, value, comparison, html_dda, fallback, taken, fall, None);
-    for (block, bit) in [(taken, 1), (fall, 0)] {
-        builder.switch_to_block(block);
-        let bit = builder.ins().iconst(types::I8, bit);
-        builder.ins().jump(join, &[ir::BlockArg::Value(bit)]);
-    }
-    builder.switch_to_block(join);
-    result
-}
-
-/// Resolve comparison continuations without materializing a Boolean at their join.
-#[allow(clippy::too_many_arguments)]
-fn emit_nullish_edges(builder: &mut FunctionBuilder<'_>, value: ir::Value,
-    comparison: NullishComparison, html_dda: bool, fallback: ir::Block, taken: ir::Block, fall: ir::Block,
-    direct_object: Option<ir::Block>) {
-    use crate::value::ValueLayout;
-    let equal = if comparison.strict {
-        builder.ins().icmp_imm_u(IntCC::Equal, value, comparison.expected.to_bits() as i64)
-    } else {
-        let object = crate::staged::value::is_direct_object(&mut object_slots::emit(builder), value);
-        // A direct object cannot be nullish or IsHTMLDDA. Resolve that family
-        // before inspecting the remaining canonical encodings.
-        let remaining = builder.create_block();
-        let unequal = if comparison.negated { fall } else { taken };
-        builder.ins().brif(object, direct_object.unwrap_or(unequal), &[], remaining, &[]);
-        builder.switch_to_block(remaining);
-        if html_dda {
-            let tag = builder.ins().band_imm_u(value, ValueLayout::TAG_MASK as i64);
-            let immediate = builder.ins().icmp_imm_u(IntCC::NotEqual, tag, ValueLayout::HEAP_TAG as i64);
-            let array = crate::staged::value::is_direct_array(&mut object_slots::emit(builder), value);
-            let safe = builder.ins().bor(immediate, array);
-            emit_js_guard(builder, safe, fallback);
-        }
-        let null = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::NULL.to_bits() as i64);
-        let undefined = builder.ins().icmp_imm_u(IntCC::Equal, value, Value::UNDEFINED.to_bits() as i64);
-        builder.ins().bor(null, undefined)
-    };
-    let (yes, no) = if comparison.negated { (taken, fall) } else { (fall, taken) };
-    builder.ins().brif(equal, yes, &[], no, &[]);
 }
 
 /// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
@@ -1712,7 +1317,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
         fields: &[], global_reads, facts, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
         entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: lane_region::RegionPlan { coverage: lane_region::Coverage::Prefix,
+        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
             completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok().filter(|region| region.native != 0)
 }
@@ -1787,11 +1392,11 @@ impl Kind {
         }
     }
 
-    fn of_ir(ty: ir::Type) -> Self {
-        if ty.bits() == types::I32.bits() {
-            Self::I32
-        } else {
-            Self::I64
+    fn lane(self) -> crate::staged::machine::Lane {
+        use crate::staged::machine::Lane;
+        match self {
+            Self::I32 => Lane::I32,
+            Self::I64 => Lane::I64,
         }
     }
 }
@@ -1843,40 +1448,6 @@ fn counterpart(ty: crate::WasmType) -> crate::WasmType {
         crate::WasmType::F32 => crate::WasmType::I32,
         crate::WasmType::F64 => crate::WasmType::I64,
         _ => unreachable!("compiled values are numeric scalars"),
-    }
-}
-
-/// An i32 integer operator is its i64 namesake: the i64 selectors extend the
-/// shared declaration (`crate::wasm::integer`), so tags agree.
-fn widen_binary(operator: I32BinaryOperator) -> I64BinaryOperator {
-    I64BinaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
-}
-
-fn widen_unary(operator: I32UnaryOperator) -> I64UnaryOperator {
-    I64UnaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
-}
-
-/// A float operator and its operand type; both widths share one declaration
-/// (`crate::wasm::float`), so tags agree.
-fn float_binary_operator(op: Op, tag: u32) -> Option<(F64BinaryOperator, crate::WasmType)> {
-    match op.class() {
-        Class::WasmFloatBinary32 => Some((
-            F64BinaryOperator::from_tag(F32BinaryOperator::from_tag(tag)? as u32)?,
-            crate::WasmType::F32,
-        )),
-        Class::WasmFloatBinary64 => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
-        _ => None,
-    }
-}
-
-fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::WasmType)> {
-    match op.class() {
-        Class::WasmFloatUnary32 => Some((
-            F64UnaryOperator::from_tag(F32UnaryOperator::from_tag(tag)? as u32)?,
-            crate::WasmType::F32,
-        )),
-        Class::WasmFloatUnary64 => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
-        _ => None,
     }
 }
 
@@ -2003,13 +1574,16 @@ impl AnalysisState {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 6] = [
+const TRAPS: [crate::WasmTrap; 9] = [
     crate::WasmTrap::Unreachable,
     crate::WasmTrap::OutOfBoundsMemory,
     crate::WasmTrap::IntegerDivideByZero,
     crate::WasmTrap::IntegerOverflow,
     crate::WasmTrap::CallStackExhausted,
     crate::WasmTrap::InvalidConversionToInteger,
+    crate::WasmTrap::UndefinedElement,
+    crate::WasmTrap::UninitializedElement,
+    crate::WasmTrap::IndirectCallTypeMismatch,
 ];
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
@@ -2166,7 +1740,8 @@ fn jit_memory_snapshot() -> Option<(u64, u64)> {
 /// The status of a callout that raised: the VM's error (or panic) waits in
 /// the context.
 const RAISED_STATUS: i64 = TRAPS.len() as i64 + 1;
-const TERMINATED_STATUS: i64 = RAISED_STATUS + 1;
+const TERMINATED_STATUS: i64 = quench_bjit::call_record::TERMINATED_STATUS as i64;
+const _: () = assert!(TERMINATED_STATUS == RAISED_STATUS + 1, "the stencils' terminated status follows the raised one");
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
     TRAPS
@@ -2195,10 +1770,13 @@ pub(super) struct CallContext {
     /// The guarded memory reservation compiled code may fault in.
     guard_start: usize,
     guard_end: usize,
-    /// Per global the program accesses (`CompiledProgram::globals`), the
-    /// address of the global's value in this instance. Heap cells never move,
-    /// so the addresses outlive callouts.
-    globals: *const *mut Value,
+    /// Per environment slot (the instance's global area), the address of the native slot of the
+    /// global bound there, read and written raw; null for any other binding. Heap cells never
+    /// move, so the addresses outlive callouts.
+    globals: *const *mut u64,
+    /// Per environment slot, the words that publish the table bound there (`TableWords`): the
+    /// table's rows are read in place, its growth rewrites the words.
+    table_words: *const *const crate::heap::TableWords,
     /// `import_callout` for the VM's host type.
     callout: usize,
     /// VM helper for indirect calls, including table checks and invocation.
@@ -2229,11 +1807,6 @@ pub(super) struct CallContext {
     /// terminated; empty when compiled code checks the flag instead.
     poll_start: usize,
     poll_end: usize,
-    /// VM-local epoch advanced by table writes and collections. Fast indirect
-    /// calls are valid only while their artifact-local cached epoch matches.
-    reference_epoch: *const u64,
-    /// Stable per-site cache storage owned by the current compiled artifact.
-    reference_fast_caches: *mut FastReferenceCache,
     /// Diagnostic-only count of direct Emscripten same-memory copies.
     emscripten_memcpy_fast_path_hits: *mut u64,
     /// Per-import attribution, present only during opt-in diagnostic runs.
@@ -2244,6 +1817,11 @@ pub(super) struct CallContext {
     adapter_payload: *mut (),
     /// Borrowed only during a running entry; a non-reentrant region may prove unique ownership.
     interrupt_owner: *const crate::ExecutionInterrupt,
+    /// The record of the instance this context is in (`InstanceContext`), whose words the fields
+    /// it shares by name hold (`SWITCHED`): what a mirror row's instance is compared with.
+    instance: *const InstanceContext,
+    /// The VM's roots for the instances native code enters beyond this one.
+    native_roots: *mut NativeRoots,
 }
 
 impl CallContext {
@@ -2262,6 +1840,7 @@ impl CallContext {
             guard_start: 0,
             guard_end: 0,
             globals: std::ptr::null(),
+            table_words: std::ptr::null(),
             callout: 0,
             call_reference: 0,
             compiled: std::ptr::null(),
@@ -2277,13 +1856,13 @@ impl CallContext {
             reference_call_site_count: 0,
             poll_start: 0,
             poll_end: 0,
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
             interrupt_owner: std::ptr::null(),
+            instance: std::ptr::null(),
+            native_roots: std::ptr::null_mut(),
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -2306,9 +1885,10 @@ impl CallContext {
     }
 
     /// The context of code that reads only the interrupt state: the flag, and the VM's
-    /// poll page, whose fault ends the call as terminated (`guard_fault`).
+    /// poll page, whose fault ends the call as terminated (`guard_fault`), where the entry
+    /// runs through the fault-resuming trampoline (`native_poll_page`).
     fn interrupt_only(interrupt: &crate::execution_interrupt::ExecutionInterrupt) -> Self {
-        let poll = interrupt.poll_page();
+        let poll = native_poll_page(interrupt);
         Self {
             stack_limit: 0,
             interrupt: interrupt.attention_flag(),
@@ -2319,6 +1899,7 @@ impl CallContext {
             guard_start: 0,
             guard_end: 0,
             globals: std::ptr::null(),
+            table_words: std::ptr::null(),
             callout: 0,
             call_reference: 0,
             compiled: std::ptr::null(),
@@ -2334,13 +1915,13 @@ impl CallContext {
             reference_call_site_count: 0,
             poll_start: poll.map_or(0, |(start, _)| start),
             poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-            reference_epoch: std::ptr::null(),
-            reference_fast_caches: std::ptr::null_mut(),
             emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
             import_callout_counts: std::ptr::null(),
             import_callout_count: 0,
             adapter_payload: std::ptr::null_mut(),
             interrupt_owner: interrupt,
+            instance: std::ptr::null(),
+            native_roots: std::ptr::null_mut(),
         }
     }
 
@@ -2365,6 +1946,7 @@ impl CallContext {
             guard_start: self.guard_start,
             guard_end: self.guard_end,
             globals: self.globals,
+            table_words: self.table_words,
             callout: self.callout,
             call_reference: self.call_reference,
             compiled: self.compiled,
@@ -2380,13 +1962,13 @@ impl CallContext {
             reference_call_site_count: self.reference_call_site_count,
             poll_start: self.poll_start,
             poll_end: self.poll_end,
-            reference_epoch: self.reference_epoch,
-            reference_fast_caches: self.reference_fast_caches,
             emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
             import_callout_counts: self.import_callout_counts,
             import_callout_count: self.import_callout_count,
             adapter_payload: std::ptr::null_mut(),
             interrupt_owner: self.interrupt_owner,
+            instance: self.instance,
+            native_roots: self.native_roots,
         }
     }
 }
@@ -2403,78 +1985,20 @@ const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
 const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
+const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
-const CONTEXT_REFERENCE_EPOCH: i32 = std::mem::offset_of!(CallContext, reference_epoch) as i32;
-const CONTEXT_ENV: i32 = std::mem::offset_of!(CallContext, env) as i32;
-const CONTEXT_REFERENCE_FAST_CACHES: i32 =
-    std::mem::offset_of!(CallContext, reference_fast_caches) as i32;
+const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
+const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
-type ReferenceCallout = unsafe extern "C" fn(
-    *mut CallContext,
-    u64,
-    u64,
-    u64,
-    u64,
-    *const u64,
-    *mut u64,
-    *mut FastReferenceCache,
-) -> i64;
+type ReferenceCallout =
+    unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
 type DiagnosticReferenceCallout = ReferenceCallout;
-
-/// A target certificate for same-artifact indirect calls: element `index` of instance `env`'s
-/// table in binding `table` is this artifact's `function`, of type `signature`, whose code is
-/// `body`. An
-/// artifact's call sites share its certificates, one per table index's low bits
-/// (`reference_dispatch_entries`). The body pointer is owned by this artifact's code mapping.
-/// The VM publishes the epoch last after a successful target return and a table-slot recheck;
-/// a nonzero epoch is the validity bit.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct FastReferenceCache {
-    epoch: u64,
-    env: Value,
-    table: u64,
-    index: u64,
-    signature: u64,
-    function: u64,
-    body: u64,
-}
-
-
-/// The most certificates an artifact keeps, however many sites it has: a direct-mapped cache
-/// whose collisions cost only a callout.
-const MAX_REFERENCE_DISPATCH_ENTRIES: usize = 256;
-
-/// The certificates of an artifact with `sites` indirect call sites, indexed by the table
-/// index's low bits: a power of two, none without sites.
-fn reference_dispatch_entries(sites: usize) -> usize {
-    if sites == 0 {
-        return 0;
-    }
-    (sites * tier_policy::POLYMORPHISM)
-        .next_power_of_two()
-        .min(MAX_REFERENCE_DISPATCH_ENTRIES)
-}
-
-impl Default for FastReferenceCache {
-    fn default() -> Self {
-        Self {
-            epoch: 0,
-            env: Value::NULL,
-            table: 0,
-            index: 0,
-            signature: 0,
-            function: 0,
-            body: 0,
-        }
-    }
-}
 
 /// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
@@ -2486,15 +2010,6 @@ unsafe extern "C" fn compiled_memory_fill(address: u64, byte: u64, length: u64) 
         std::ptr::write_bytes(address as usize as *mut u8, byte as u8, length as usize);
     }
     0
-}
-
-/// Whether `field` of `instruction` is the unused second operand of a one-operand SIMD
-/// operator, which lowering leaves naming register 0 and nothing reads.
-fn unary_simd_spare(instruction: WideInstruction, field: crate::bytecode::InstructionField) -> bool {
-    instruction.op().is_wasm_simd()
-        && field == crate::bytecode::InstructionField::C
-        && crate::wasm::simd::SimdKernel::of(instruction.imm())
-            .is_some_and(|(kernel, _)| kernel.right.is_none())
 }
 
 /// The machine type compiled code holds a Wasm vector in (`Slot::Vector`).
@@ -2724,7 +2239,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // A stable call-site id is present even without diagnostics so the VM can
     // find the per-site monomorphic cache without a hash lookup.
@@ -2737,7 +2251,6 @@ unsafe extern "C" fn reference_callout<H: Host>(
             site,
             args,
             out,
-            fast_cache,
         )
     }
 }
@@ -2752,7 +2265,6 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     unsafe {
         reference_callout_inner::<H, true>(
@@ -2763,7 +2275,6 @@ unsafe extern "C" fn diagnostic_reference_callout<H: Host>(
             site,
             args,
             out,
-            fast_cache,
         )
     }
 }
@@ -2779,7 +2290,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     site: u64,
     args: *const u64,
     out: *mut u64,
-    fast_cache: *mut FastReferenceCache,
 ) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
@@ -2792,21 +2302,10 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     let mut same_artifact_direct_hit = false;
     let mut target_same_artifact_native = false;
     let mut reference_target_function = None;
-    let mut fast_target: Option<(usize, Value, Value, u32, u64, u64)> = None;
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let (
-            callee,
-            params,
-            result_type,
-            same_program_function,
-            direct_entry,
-            cache_hit,
-            table,
-            table_slot,
-            signature_index,
-        ) = {
+        let (callee, params, result_type, same_program_function, direct_entry) = {
             // Do all heap/program inspection before entering native code. The
             // VM is re-entered through callouts, so no `&mut Vm` may live
             // across that boundary.
@@ -2819,88 +2318,53 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                 .heap
                 .environment_slot(context.env, table_slot as usize)
                 .ok_or_else(|| JsError::validation("invalid Wasm table binding".into()))?;
-            let cached = usize::try_from(site).ok().and_then(|site| {
-                cached_direct_reference(
+            let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
+            let (params, result_type) = {
+                let signature = vm
+                    .programs
+                    .wasm_signatures(program)
+                    .and_then(|signatures| signatures.type_signature(signature_index))
+                    .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
+                (
+                    signature
+                        .params
+                        .iter()
+                        .copied()
+                        .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
+                    signature.results.first().copied(),
+                )
+            };
+            let same_program_function = match vm.heap.function(callee) {
+                Some(FunctionRecord {
+                    kind: crate::heap::FunctionKind::User(target_program, function),
+                    env,
+                    ..
+                }) if *target_program == program => Some((*target_program, *function, *env)),
+                _ => None,
+            };
+            let same_instance_function = same_program_function
+                .filter(|(_, _, target_env)| *target_env == context.env)
+                .map(|(_, function, _)| function);
+            if let Some(function) = same_instance_function
+                && !context.compiled.is_null()
+                && let Ok(site) = usize::try_from(site)
+            {
+                // SAFETY: the running artifact outlives its own call.
+                unsafe { &*context.compiled }.note_indirect_target(site, function);
+            }
+            let direct_entry = same_instance_function.and_then(|function| {
+                let compiled =
+                    compiled_reference_target(vm, program, function as usize, context.compiled)?;
+                direct_reference_entry(
                     vm,
-                    context,
-                    table_slot,
-                    table,
-                    index,
-                    signature_index,
-                    site,
+                    compiled,
+                    function as usize,
+                    (context.env, program),
+                    context.memory,
+                    Some((&params, result_type)),
                 )
             });
-            if let Some((callee, direct_entry)) = cached {
-                (
-                    callee,
-                    smallvec::SmallVec::new(),
-                    None,
-                    None,
-                    Some(direct_entry),
-                    true,
-                    table,
-                    table_slot,
-                    signature_index,
-                )
-            } else {
-                let callee = vm.wasm_indirect_target(program, table, index, signature_index)?;
-                let (params, result_type) = {
-                    let signature = vm
-                        .programs
-                        .wasm_signatures(program)
-                        .and_then(|signatures| signatures.type_signature(signature_index))
-                        .ok_or_else(|| {
-                            JsError::validation("invalid Wasm signature index".into())
-                        })?;
-                    (
-                        signature
-                            .params
-                            .iter()
-                            .copied()
-                            .collect::<smallvec::SmallVec<[crate::WasmType; 8]>>(),
-                        signature.results.first().copied(),
-                    )
-                };
-                let same_program_function = match vm.heap.function(callee) {
-                    Some(FunctionRecord {
-                        kind: crate::heap::FunctionKind::User(target_program, function),
-                        env,
-                        ..
-                    }) if *target_program == program => Some((*target_program, *function, *env)),
-                    _ => None,
-                };
-                let direct_entry = same_program_function
-                    .filter(|(target_program, _, target_env)| {
-                        *target_program == program && *target_env == context.env
-                    })
-                    .and_then(|(_, function, _)| {
-                        let compiled = compiled_reference_target(
-                            vm,
-                            program,
-                            function as usize,
-                            context.compiled,
-                        )?;
-                        direct_reference_entry(
-                            vm,
-                            compiled,
-                            function as usize,
-                            context.env,
-                            context.memory,
-                            Some((&params, result_type)),
-                        )
-                    });
-                (
-                    callee,
-                    params,
-                    result_type,
-                    same_program_function,
-                    direct_entry,
-                    false,
-                    table,
-                    table_slot,
-                    signature_index,
-                )
-            }
+            (callee, params, result_type, same_program_function, direct_entry)
         };
         if DIAGNOSTICS {
             reference_target_function = direct_entry.as_ref().map(|entry| entry.1).or_else(|| {
@@ -2909,84 +2373,32 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
                     .map(|(_, function, _)| *function as usize)
             });
         }
-        if let Some((compiled, function, entry, (base, length), memory_binding, guard, globals)) =
-            direct_entry
+        if let Some((
+            compiled,
+            function,
+            entry,
+            (base, length),
+            record,
+        )) = direct_entry
         {
             // A re-entrant import can mutate the table and collect while this
             // body is running. Keep its function cell alive until the call
-            // returns so a freed slot cannot be reused before cache publish.
+            // returns.
             let callee_root = unsafe { &mut *vm_pointer }.heap.root(callee);
             direct_target_root = Some(callee_root);
-            if !cache_hit
-                && let Ok(site) = usize::try_from(site)
-                && !context.compiled.is_null()
-            {
-                let target_weak = unsafe { &*vm_pointer }.heap.weak_handle(callee);
-                if let Some(target_weak) = target_weak {
-                    let caller = unsafe { &*context.compiled };
-                    caller.cache_indirect_call(
-                        site,
-                        IndirectCallCacheEntry {
-                            table_slot,
-                            table,
-                            index,
-                            signature_index,
-                            target: callee,
-                            target_weak,
-                            program,
-                            function: function as u32,
-                            env: context.env,
-                            compiled: Rc::downgrade(&compiled),
-                            hits: 0,
-                        },
-                    );
-                }
-            }
             let native_entry_should_sample = compiled.note_direct_reference_entry(function);
             let mut nested = context.nested_entry();
-            nested.compiled = Rc::as_ptr(&compiled);
-            nested.reference_fast_caches = compiled.reference_fast_caches_ptr();
-            nested.table = compiled.table.as_ptr();
-            nested.globals = globals.as_ptr();
-            nested.memory = memory_binding;
-            nested.memory_length = length;
-            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-                (start as usize, start as usize + size)
-            });
-            nested.guard_start = guard_start;
-            nested.guard_end = guard_end;
-            nested.call_reference_diagnostic = compiled.diagnostics.as_ref().map_or(0, |_| {
-                diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
-            });
-            nested.reference_call_sites = compiled
-                .diagnostics
-                .as_ref()
-                .map_or(std::ptr::null(), |stats| {
-                    stats.reference_call_sites.as_ptr()
-                });
-            nested.reference_call_site_count = compiled
-                .diagnostics
-                .as_ref()
-                .map_or(0, |stats| stats.reference_call_sites.len());
+            // SAFETY: the record belongs to the environment the target runs in.
+            nested.enter(unsafe { &*record });
             // SAFETY: the table/signature resolver ran first; same program,
             // exact instance environment, and exact scalar signature were
             // checked above. The caller's raw argument/result buffers have
             // the Wasm ABI shape expected by this compiled entry, and `compiled`
             // keeps its executable mapping alive for the duration of the call.
             native_target_hit = true;
-            let same_artifact = !context.compiled.is_null()
-                && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
-            if same_artifact
-                && let Some(body) = compiled
-                    .table
-                    .get(function)
-                    .copied()
-                    .filter(|body| *body != 0)
-            {
-                fast_target = Some((function, callee, table, table_slot, index, body as u64));
-            }
             if DIAGNOSTICS {
-                same_artifact_direct_hit = same_artifact;
+                same_artifact_direct_hit = !context.compiled.is_null()
+                    && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
                 target_same_artifact_native = same_artifact_direct_hit;
             }
             let native_entry_sample_started =
@@ -3084,39 +2496,6 @@ unsafe fn reference_callout_inner<H: Host, const DIAGNOSTICS: bool>(
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
     let vm = unsafe { &mut *vm_pointer };
-    if let Some((function, target, table, table_slot, index, body)) = fast_target {
-        let target_still_matches = direct_target_root
-            .and_then(|root| vm.heap.root_value(root))
-            .is_some_and(|rooted| {
-                rooted == target
-                    && reference_target_matches(vm, target, program, function as u32, context.env)
-            });
-        if !fast_cache.is_null()
-            && direct_status == Some(0)
-            && called.as_ref().is_ok_and(|result| result.is_ok())
-            && target_still_matches
-        {
-            let table_binding = vm.heap.environment_slot(context.env, table_slot as usize);
-            let current_target = usize::try_from(index)
-                .ok()
-                .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied());
-            if table_binding == Some(table) && current_target == Some(target) {
-                // SAFETY: generated code passes a correctly aligned pointer to
-                // this site's UnsafeCell in the owning artifact. The artifact is
-                // retained throughout the call and native code is suspended until
-                // the callout returns.
-                let cache = unsafe { &mut *fast_cache };
-                cache.epoch = 0;
-                cache.env = context.env;
-                cache.table = u64::from(table_slot);
-                cache.index = index;
-                cache.signature = signature_index;
-                cache.function = function as u64;
-                cache.body = body;
-                cache.epoch = vm.wasm_reference_epoch.get();
-            }
-        }
-    }
     if let Some(root) = direct_target_root {
         vm.heap.release_root(root);
     }
@@ -3238,31 +2617,12 @@ pub(super) struct CompiledFunction {
     direct_reference_entries: std::cell::Cell<u64>,
 }
 
-/// A program's compiled functions, sharing one code mapping and one call
-/// table.
-#[derive(Clone)]
-struct IndirectCallCacheEntry {
-    table_slot: u32,
-    table: Value,
-    index: u64,
-    signature_index: u32,
-    target: Value,
-    target_weak: crate::heap::WeakHandle,
-    program: ProgramId,
-    function: u32,
-    env: Value,
-    compiled: Weak<CompiledProgram>,
-    hits: u64,
-}
-
 type DirectReferenceEntry = (
     Rc<CompiledProgram>,
     usize,
     WasmEntry,
     (u64, u64),
-    Value,
-    Option<(*mut u8, usize)>,
-    smallvec::SmallVec<[*mut Value; 8]>,
+    *const InstanceContext,
 );
 
 /// Build the per-invocation activation for a same-instance compiled indirect
@@ -3272,7 +2632,7 @@ fn direct_reference_entry<H: Host>(
     vm: &mut Vm<H>,
     compiled: Rc<CompiledProgram>,
     function: usize,
-    env: Value,
+    (env, program): (Value, ProgramId),
     context_memory: Value,
     signature: Option<(&[crate::WasmType], Option<crate::WasmType>)>,
 ) -> Option<DirectReferenceEntry> {
@@ -3283,42 +2643,13 @@ fn direct_reference_entry<H: Host>(
         return None;
     }
     let entry = native.entry;
-    let (memory, memory_binding, guard) = match compiled.memory_slot {
-        None => ((0, 0), Value::UNDEFINED, None),
-        Some(slot) => {
-            let binding = vm.heap.environment_slot(env, slot as usize)?;
-            if binding != context_memory {
-                return None;
-            }
-            let (base, length) = super::dispatch_fast::direct_memory(vm, binding)?;
-            let guard = guarded_memory(vm, binding);
-            if compiled.guarded && guard.is_none()
-                || compiled.fixed_base.is_some_and(|fixed| {
-                    guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                })
-            {
-                return None;
-            }
-            ((base as u64, length as u64), binding, guard)
-        }
-    };
-    let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-    for slot in &compiled.globals {
-        let binding = vm.heap.environment_slot(env, *slot as usize)?;
-        match vm.heap.get_mut(binding)? {
-            Cell::WasmGlobal { value, .. } => globals.push(value),
-            _ => return None,
-        }
+    if let Some(slot) = compiled.memory_slot
+        && vm.heap.environment_slot(env, slot as usize)? != context_memory
+    {
+        return None;
     }
-    Some((
-        compiled,
-        function,
-        entry,
-        memory,
-        memory_binding,
-        guard,
-        globals,
-    ))
+    let (record, memory) = vm.publish_wasm_instance(&compiled, env, program)?;
+    Some((compiled, function, entry, memory, record))
 }
 
 /// Pick a compiled artifact for an indirect target, preferring the artifact
@@ -3362,80 +2693,7 @@ fn compiled_reference_target<H: Host>(
         })
 }
 
-/// Check the cache's guards without turning any miss into a Wasm trap. The
-/// ordinary resolver below remains authoritative for OOB, null, and mismatch
-/// cases, and for artifacts that cannot currently activate the cached target.
-fn cached_direct_reference<H: Host>(
-    vm: &mut Vm<H>,
-    context: &CallContext,
-    table_slot: u32,
-    table: Value,
-    index: u64,
-    signature_index: u32,
-    site: usize,
-) -> Option<(Value, DirectReferenceEntry)> {
-    if context.compiled.is_null() {
-        return None;
-    }
-    let caller = unsafe { &*context.compiled };
-    let cache = caller.indirect_call_cache(site)?;
-    if cache.table_slot != table_slot
-        || cache.table != table
-        || cache.index != index
-        || cache.signature_index != signature_index
-        || cache.program != context.program
-        || cache.env != context.env
-    {
-        return None;
-    }
-    let element = usize::try_from(index)
-        .ok()
-        .and_then(|index| vm.wasm_table_elements(table).ok()?.get(index).copied())?;
-    if element != cache.target || vm.heap.weak_value(cache.target_weak) != Some(element) {
-        return None;
-    }
-    match vm.heap.function(element) {
-        Some(FunctionRecord {
-            kind: crate::heap::FunctionKind::User(program, function),
-            env,
-            ..
-        }) if *program == cache.program && *function == cache.function && *env == cache.env => {}
-        _ => return None,
-    }
-    caller.note_indirect_cache_hit(site);
-    let compiled = cache.compiled.upgrade()?;
-    let direct = direct_reference_entry(
-        vm,
-        compiled,
-        cache.function as usize,
-        context.env,
-        context.memory,
-        None,
-    )?;
-    #[cfg(test)]
-    caller
-        .reference_cache_hits
-        .set(caller.reference_cache_hits.get().saturating_add(1));
-    Some((element, direct))
-}
-
-fn reference_target_matches<H: Host>(
-    vm: &Vm<H>,
-    target: Value,
-    program: ProgramId,
-    function: u32,
-    env: Value,
-) -> bool {
-    matches!(
-        vm.heap.function(target),
-        Some(FunctionRecord {
-            kind: crate::heap::FunctionKind::User(target_program, target_function),
-            env: target_env,
-            ..
-        }) if *target_program == program && *target_function == function && *target_env == env
-    )
-}
-
+/// A program's compiled functions, sharing one code mapping and one call table.
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
@@ -3453,22 +2711,12 @@ pub(super) struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     fixed_base: Option<i32>,
-    /// The environment slots of the globals compiled code accesses, in the
-    /// order of the context's global addresses.
-    globals: Vec<u32>,
     diagnostics: Option<WasmJitDiagnostics>,
-    /// One optional monomorphic cache per actual compiled `call_indirect`
-    /// site. The vector is only pointers until a site becomes hot, and each
-    /// cache weakly references its callee artifact to avoid Rc cycles.
-    reference_call_caches: std::cell::RefCell<Vec<Option<Box<IndirectCallCacheEntry>>>>,
-    /// Target certificates for native direct dispatch, by table index
-    /// (`reference_dispatch_entries`). These do not retain heap values and are
-    /// invalidated by the VM epoch.
-    reference_fast_caches: Box<[UnsafeCell<FastReferenceCache>]>,
-    /// The owner and bytecode PC for each entry in `reference_call_caches`.
+    /// How often the VM's callout resolved each target at each actual compiled `call_indirect`
+    /// site.
+    indirect_hits: indirect_profile::SiteHits,
+    /// The owner, bytecode PC and table binding of each site `indirect_hits` counts.
     reference_cache_sites: Vec<(usize, usize, u32)>,
-    #[cfg(test)]
-    reference_cache_hits: std::cell::Cell<u64>,
 }
 
 /// Counters allocated only for opt-in benchmark diagnostics. These runs are
@@ -3613,119 +2861,6 @@ fn jit_diagnostics_enabled() -> bool {
 }
 
 impl CompiledProgram {
-    fn reference_fast_caches_ptr(&self) -> *mut FastReferenceCache {
-        self.reference_fast_caches
-            .first()
-            .map_or(std::ptr::null_mut(), |cache| cache.get())
-    }
-
-    fn indirect_call_cache(&self, site: usize) -> Option<IndirectCallCacheEntry> {
-        self.reference_call_caches
-            .borrow()
-            .get(site)?
-            .as_deref()
-            .cloned()
-    }
-
-    fn cache_indirect_call(&self, site: usize, entry: IndirectCallCacheEntry) {
-        if let Some(slot) = self.reference_call_caches.borrow_mut().get_mut(site) {
-            *slot = Some(Box::new(entry));
-        }
-    }
-
-    fn note_indirect_cache_hit(&self, site: usize) {
-        if let Some(Some(entry)) = self.reference_call_caches.borrow_mut().get_mut(site) {
-            entry.hits = entry.hits.saturating_add(1);
-        }
-    }
-
-    /// Return recently observed targets for call sites in a selective root's
-    /// static closure, hottest first. The target cache already includes the
-    /// exact program and instance environment guards.
-    pub(super) fn profiled_indirect_targets<H: Host>(
-        &self,
-        vm: &Vm<H>,
-        program: ProgramId,
-        env: Value,
-        callers: &[bool],
-    ) -> Vec<usize> {
-        let caches = self.reference_call_caches.borrow();
-        let mut targets = self
-            .reference_cache_sites
-            .iter()
-            .enumerate()
-            .filter(|(_, (caller, _, _))| callers.get(*caller).copied().unwrap_or(false))
-            .filter_map(|(site, (_, _, table_slot))| {
-                let entry = caches.get(site)?.as_deref()?;
-                let current_table = vm.heap.environment_slot(env, *table_slot as usize)?;
-                (entry.table_slot == *table_slot
-                    && entry.program == program
-                    && entry.env == env
-                    && entry.table == current_table
-                    && vm.wasm_table_get(current_table, entry.index).ok() == Some(entry.target)
-                    && vm.heap.weak_value(entry.target_weak) == Some(entry.target)
-                    && reference_target_matches(
-                        vm,
-                        entry.target,
-                        entry.program,
-                        entry.function,
-                        entry.env,
-                    ))
-                .then_some((entry.function as usize, entry.hits))
-            })
-            .collect::<Vec<_>>();
-        targets.sort_unstable_by_key(|(_, hits)| std::cmp::Reverse(*hits));
-        let mut unique = Vec::new();
-        for (target, _) in targets {
-            if !unique.contains(&target) {
-                unique.push(target);
-                if unique.len() == MAX_JIT_PROFILED_INDIRECT_TARGETS {
-                    break;
-                }
-            }
-        }
-        unique
-    }
-
-    pub(super) fn clear_indirect_call_caches(&self) {
-        self.reference_call_caches
-            .borrow_mut()
-            .iter_mut()
-            .for_each(|slot| *slot = None);
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_call_cache_target(&self, site: usize) -> Option<Value> {
-        self.indirect_call_cache(site).map(|entry| entry.target)
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_cache_hits(&self) -> u64 {
-        self.reference_cache_hits.get()
-    }
-
-    #[cfg(test)]
-    pub(super) fn reference_fast_cache_matches_target(
-        &self,
-        index: usize,
-        target_function: usize,
-    ) -> bool {
-        let entries = self.reference_fast_caches.len();
-        let Some(cache) = (entries != 0)
-            .then(|| self.reference_fast_caches.get(index & (entries - 1)))
-            .flatten()
-        else {
-            return false;
-        };
-        let Some(body) = self.table.get(target_function).copied() else {
-            return false;
-        };
-        // The VM has returned from native execution before tests inspect this
-        // cache, and only the owning artifact's callout writes the cell.
-        let cache = unsafe { *cache.get() };
-        cache.function == target_function as u64 && cache.body == body as u64 && body != 0
-    }
-
     #[cfg(test)]
     pub(super) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
         self.diagnostics
@@ -3895,10 +3030,13 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
-#[cfg(test)]
-thread_local! {
-    /// Lane-ABI OSR runs in this test thread.
-    pub(super) static LANE_OSR_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+/// Counts a lane-ABI region's run that ended in `outcome`, `lent` the payload, in the VM's tier events.
+fn note_osr_run(events: &super::tier_events::TierEvents, outcome: &LoopOutcome, lent: bool) {
+    use super::tier_events::Event;
+    let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
+    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, left), (Event::OsrInlined, matches!(outcome, LoopOutcome::Inlined { .. }))] {
+        if happened { events.record(event); }
+    }
 }
 
 /// A native OSR region published by the shared compiler. Its lowerer is private to this
@@ -3908,10 +3046,11 @@ pub(super) struct CompiledOsrRegion {
     entry: BodyEntry,
     pub(super) facts: OsrFacts,
     crossing: Crossing,
-    /// The inline-cache entries of the code a miss may re-patch (`base_region::CacheSites`).
-    sites: std::cell::RefCell<base_region::CacheSites>,
     /// Where a run may re-enter the code mid-region (stencil regions only).
     resumes: base_region::ResumeTable,
+    /// What its code owns of its calls: the callees it runs as their own rows, whose registers
+    /// follow the activation's (`CallCode`).
+    pub(super) calls: CallCode,
 }
 
 
@@ -3931,20 +3070,12 @@ impl CompiledOsrRegion {
         (thunk, base as u64 + stub as u64)
     }
 
-    /// Whether Cranelift made the region (UltraJIT), not BaseJIT's stencils.
-    pub(super) fn is_ultra(&self) -> bool { self.crossing == Crossing::General }
-
-    /// A miss at the cache site of `pc` met `load`'s shape: points the site's one entry at it by
-    /// rewriting its shape and slot in the published code (through the code heap's write view),
-    /// where the entry's slot type and dependencies allow and the site has patches left.
-    /// `watch` is the region's publication, which the new load's slot observation retires.
-    pub(in crate::vm) fn repatch(&self, pc: u32, atom: crate::bytecode::Atom, load: &NativeFieldLoad, watch: &Rc<dyn crate::code_dependencies::DependentCode>, heap: &mut crate::heap::Heap) -> base_region::Repatch {
-        let subscribe = || OsrFacts::of_loads([load]).subscribe(watch, heap);
-        self.sites.borrow_mut().repatch(pc, atom, load, subscribe, |at, value| self.code.write_imm32(at, value))
-    }
+    /// Whether a run builds an activation over the lane's VM frame; a bare run reads the registers alone.
+    pub(super) fn needs_frame(&self) -> bool { self.crossing != Crossing::Bare }
 
     /// Runs the region on `registers` with `entry`'s record, through the lane body ABI
-    /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`.
+    /// (`enter_body`), from its header or, where `can_run_from`, from the instruction at `from`;
+    /// `lane` the lane context and whether the lane may make the activations of direct calls.
     ///
     /// # Safety
     /// `registers` is the running activation's register file, at least `Function::registers`
@@ -3962,13 +3093,15 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        lane: (usize, bool),
         from: u32,
     ) -> LoopOutcome {
         let start = self.start_at(region, from);
+        // SAFETY: the caller's contract covers `vm`.
+        unsafe { (*vm).programs.tier_events().record(super::tier_events::Event::OsrRun) };
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, region, interrupt) }
-            else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane_context) } }
+            else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
     }
 
     /// Runs a loop compiled through the lane region specializer: the shared lane entry ABI,
@@ -3988,17 +3121,21 @@ impl CompiledOsrRegion {
         function: u32,
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
-        lane_context: usize,
+        (lane_context, direct_calls): (usize, bool),
     ) -> LoopOutcome {
-        #[cfg(test)]
-        LANE_OSR_RUNS.with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        unsafe { JsNativeActivation::with(&mut *vm, program, frame, 0, false, self.crossing == Crossing::General, |native, vm| {
+        let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
             let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, frame), registers);
-            osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt)
-        }) }.unwrap_or(LoopOutcome::Terminated)
+            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
+            // A region that calls callees by their entries runs on the lane frame's payload, which their
+            // own helpers read (`region_lend`).
+            let lend = self.calls.enters_callees().then_some(direct_calls);
+            osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt, (lane_context, lend))
+        }) }.unwrap_or(LoopOutcome::Terminated);
+        // SAFETY: as above; the activation that held `vm` has returned.
+        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, self.calls.enters_callees());
+        outcome
     }
 
 }
@@ -4155,8 +3292,6 @@ struct JsStepDispatch {
     frame: usize,
     allow_inline_calls: bool,
     start_pc: usize,
-    #[cfg(feature = "native-execution")]
-    stop_pc: usize,
     native_registers: *mut Value,
     register_count: usize,
     native_locals: *mut Value,
@@ -4169,6 +3304,8 @@ struct JsStepDispatch {
     /// after every semantic callout; generated reads do not cross a safepoint.
     capture_values: *const Value,
     capture_len: usize,
+    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`): the b-jit's capture write rows.
+    capture_stores: usize,
     /// Stable base of this VM's direct-array record reservation. The field is
     /// refreshed after VM callouts because the reservation may be lazy.
     array_record_base: usize,
@@ -4192,6 +3329,8 @@ struct JsStepDispatch {
     method_cache_atoms: usize,
     method_cache_atom_words: usize,
     stores_specialized: usize,
+    /// Whether the property arena records its slots' value classes (`Heap::tracks_slot_values`), which the store gate reads.
+    slots_tracked: usize,
     /// A lane body's receiver; `DELETED` elsewhere.
     receiver: u64,
     /// A lane body's VM and running residual, which its semantic helpers take.
@@ -4209,16 +3348,20 @@ struct JsStepDispatch {
     lane_context: usize,
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
     returned_pc: usize,
-    /// A lane run's free lane-stack values, where a direct call places its callee's
-    /// registers (`DirectCallee`): the next and the end of the stack's capacity.
+    /// A frameless entry's free windows and shadow records (`frameless`): the next and the end
+    /// of each stack.
     native_top: usize,
     native_end: usize,
-    /// The next free and the end of the run's shadow frames (`LaneFrame::shadow`).
     shadow_top: usize,
     shadow_end: usize,
-    /// The first native frame's address (the lane stack's activations' end); `shadow_top`
-    /// equals it while no native frame lives.
-    shadow_base: usize,
+    /// A lane run's lane stack, where a direct call places its callee's registers and its
+    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
+    /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
+    /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
+    lane_values_top: usize,
+    lane_values_end: usize,
+    lane_activations_top: usize,
+    lane_frames_end: usize,
     /// The element read past a present dense element (`general_elements`).
     element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -4239,7 +3382,27 @@ struct JsStepDispatch {
     /// again after one (`refresh_object_bases`).
     string_record_base: usize,
     ascii_unit_strings: usize,
+    /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
+    /// refreshed with the other record bases, and the address of the process's buffer-relocation count
+    /// (`buffer_relocations_address`): what a typed array's view proof reads
+    /// (`staged::typed_view::TypedRecords`).
+    typed_view_directory: usize,
+    typed_view_pages: usize,
+    buffer_relocations: usize,
+    /// The function records' mark blocks and their count, which a store into a function's own
+    /// properties reads as the object records' are (`RecordSpace::Function`); and the empty
+    /// string's word, which a function's inferred name replaces (`staged::naming`).
+    function_mark_blocks: usize,
+    function_mark_block_count: usize,
+    empty_string: u64,
+    /// The word of the storage the running lane body's environment-owned locals live in, which its environment rows
+    /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
+    /// slot where it runs in a frame (`heap::absent_environment_storage`).
+    environment_storage: u64,
     outcome: Option<JsNativeStep>,
+    /// Past every word generated code reads: a feature's field leaves their offsets as they are.
+    #[cfg(feature = "native-execution")]
+    stop_pc: usize,
 }
 
 pub(super) struct LaneMethod {
@@ -4251,6 +3414,9 @@ pub(super) struct LaneMethod {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     _code: CodeMemory,
     entry: BodyEntry,
+    /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
+    /// that proves its numeric arguments calls by the entry cell's `scalar` word.
+    scalar: Option<usize>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -4264,6 +3430,10 @@ pub(super) struct LaneMethod {
     /// The scratch registers a leave inside an inlined call fills (`LaneFrame::scratch`): one
     /// per register of the inlined callees, the unit's past the caller's.
     scratch_width: usize,
+    /// Whether its inlined frames' registers live in the activation's register file past the
+    /// caller's (a stitched body's) and not in the scratch window its code fills: a leave inside
+    /// one adopts them from the file (`Vm::lane_adopt_window`).
+    framed: bool,
     caller_registers: u16,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
@@ -4273,6 +3443,11 @@ pub(super) struct LaneMethod {
     /// frames the lane's helper call misses (`dispatch_fast::lane_body_call`), so only such
     /// a body is called directly.
     closed: bool,
+    /// The call records its code reads (`CallRecord`), by address: the code must not outlive them.
+    _records: Vec<Box<quench_bjit::call_record::CallRecord>>,
+    /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
+    /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
+    pub(super) constructors: Box<[Value]>,
 }
 
 impl LaneMethod {
@@ -4282,14 +3457,25 @@ impl LaneMethod {
         self.caller_registers
     }
 
+    /// Whether its inlined frames' registers are in the activation's register file past the
+    /// caller's (`LaneMethod::framed`).
+    pub(super) fn framed(&self) -> bool {
+        self.framed
+    }
+
     /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
     pub(super) fn entry_address(&self) -> usize {
         self.entry as usize
     }
 
+    /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
+    pub(super) fn scalar_address(&self) -> Option<usize> {
+        self.scalar
+    }
+
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
     /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`TIERS.lane_body.min_instructions`). A short leaf runs in the lane, or inlined.
+    /// (`Tiers::amortizing_instructions`). A short leaf runs in the lane, or inlined.
     pub(super) fn amortizes_entry(&self) -> bool {
         self.amortizes
     }
@@ -4324,6 +3510,9 @@ pub(super) enum LaneExit {
     Callee,
     /// The activation completes with `value`, by the `Return` or the returning call at `pc`.
     Returned { pc: usize, value: Value },
+    /// The activation ends by the exception in `Vm::lane_raised`, raised at the record `pc`,
+    /// which no native handler of its function took: the lane unwinds from there.
+    Threw { pc: usize },
     /// The entry's proof of its inputs failed before any instruction ran: the activation
     /// resumes at its first record, and a plan again proves no input contract.
     Entry,
@@ -4337,13 +3526,17 @@ pub(super) enum LaneExit {
 /// and `JsStepDispatch::returned_pc` the record that completes it (`LaneExit::Returned`). It
 /// sits below the return statuses and above every small status.
 pub(super) const LANE_BODY_RETURNED: u32 = RETURN_STATUS_BASE - 1;
+/// The status of a lane body whose activation ends by an exception no handler of its function
+/// covers: the exception is in `Vm::lane_raised` and `JsStepDispatch::returned_pc` names the
+/// record that raised it (`LaneExit::Threw`). Native callers unwind through it.
+pub(super) const LANE_BODY_THREW: u32 = RETURN_STATUS_BASE - 3;
 
 /// What a lane body's native call (`dispatch_fast::lane_body_call`) did: completed, with its
 /// result in the call's register; missed before any effect, so the body leaves at the call;
 /// or left the lane in the callee's activation it made.
 /// Termination is terminal: the outer native body must not reconstruct or replay a call.
 pub(super) use quench_bjit::call_record::{
-    LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_TERMINATED,
+    LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, LANE_CALL_TERMINATED,
 };
 
 impl LaneExit {
@@ -4358,32 +3551,13 @@ impl LaneExit {
     }
     #[cfg(test)]
     pub(super) fn caller_pc(self) -> Option<usize> {
-        match self { Self::At(pc) | Self::Returned { pc, .. } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
+        match self { Self::At(pc) | Self::Returned { pc, .. } | Self::Threw { pc } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
         if matches!(self, Self::Entry | Self::Stub) { Self::At(0) } else { self }
     }
 }
-
-/// Lane bodies compiled by this process, for tests that a lane activation ran natively.
-#[cfg(test)]
-pub(super) static LANE_METHODS_COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-// Entries `Vm::run_lane_body` made on this thread and the runs they bound
-// (`LaneFrame::bind_run` writing its words), for the crossing-cost test.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_ENTRIES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) }; }
-// Entries on this thread that changed a word of their run (`LaneFrame::run_words`): no more than
-// the runs they bound.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_RUN_REWRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-// Calls of lane bodies made through their entry cells before any activation
-// (`dispatch_fast::lane_enter_cell_body`) on this thread, for the crossing test.
-#[cfg(test)]
-thread_local! { pub(super) static LANE_CELL_CROSSINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
-/// Calls lane bodies compiled by this process inline, for tests that inlining happened.
-#[cfg(test)]
-pub(super) static LANE_CALLS_INLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A lane body's callout. Every unsupported instruction and failed guard leaves native
 /// code here, with nothing of that instruction done; the lane executes it next.
@@ -4491,6 +3665,39 @@ unsafe extern "C" fn lane_call_budget(_vm: u64, _residual: u64) -> u64 {
     crate::stack::GuestCallGuard::remaining() as u64
 }
 
+/// The word naming the record a lane body's `throw` raised at: its function above the record.
+pub(super) fn raise_site(function: u32, record: u32) -> u64 {
+    u64::from(function) << u32::BITS | u64::from(record)
+}
+
+/// The function and record `raise_site` names.
+pub(super) fn raise_site_parts(site: u64) -> (u32, u32) {
+    ((site >> u32::BITS) as u32, site as u32)
+}
+
+/// A lane body's `throw` of `value` that no handler of its function takes: the exception in
+/// `Vm::lane_raised`, with where it was thrown, for native callers and then the lane to find.
+/// The interpreter's `Throw` makes the same error; its source location is captured only if it
+/// escapes native code (`dispatch_fast::lane_raised_exit`).
+unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, site: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the message of a value reads no guest code.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let value = Value::from_bits(value);
+    let message = vm.detail_string(value);
+    vm.lane_raised = Some(JsError::thrown(value, message));
+    vm.lane_raise_site = site;
+    0
+}
+
+/// The exception a callee's body raised (`lane_raise`), taken from `Vm::lane_raised` for the
+/// handler of the caller that catches it.
+unsafe extern "C" fn lane_take_raised<H: Host>(vm: u64, _residual: u64) -> u64 {
+    // SAFETY: as `lane_field_get`.
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let error = vm.lane_raised.take().expect("a raised call left its exception");
+    error.thrown_value().expect("a body raises a thrown value").to_bits()
+}
+
 /// A lane body's global name read (`Vm::lane_global_read`): its value, or `Value::DELETED` for one the lane's own read would not take.
 unsafe extern "C" fn lane_global_get<H: Host>(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the read runs no guest code and allocates nothing.
@@ -4506,12 +3713,17 @@ unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, l
     u64::from(vm.heap_values_strictly_equal(Value::from_bits(left), Value::from_bits(right)))
 }
 
-/// A lane body's `value instanceof constructor` (`Vm::steady_instanceof`): 1 or 0, or
-/// `Value::DELETED` where the full algorithm decides, which leaves the body at the test.
+/// A lane body's `value instanceof constructor`, decided as the interpreter's own record
+/// decides it (`lane_instanceof_jump_true`): the constructor's proof (`Vm::record_instanceof`),
+/// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
+/// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
 unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the steady case reads the heap, calls nothing and allocates nothing.
-    let vm = unsafe { &*(vm as *const Vm<H>) };
-    vm.steady_instanceof(Value::from_bits(value), Value::from_bits(constructor))
+    // SAFETY: as `lane_field_get`; both reads walk the heap, call nothing and allocate nothing
+    // (the walk only fills the constructor-layout memo).
+    let vm = unsafe { &mut *(vm as *mut Vm<H>) };
+    let (value, constructor) = (Value::from_bits(value), Value::from_bits(constructor));
+    vm.record_instanceof(value, constructor)
+        .or_else(|| vm.ordinary_instanceof(value, constructor))
         .map_or_else(|| Value::DELETED.to_bits(), u64::from)
 }
 
@@ -4554,26 +3766,14 @@ unsafe extern "C" fn lane_field_add<H: Host>(vm: u64, residual: u64, payload: u6
     1
 }
 
-/// A hoisted typed array view as `lane_typed_array_view` writes it for native code.
-#[repr(C)]
-pub(super) struct LaneTypedArrayView {
-    pub(super) elements: u64,
-    pub(super) length: u64,
-    /// The `TypedArrayKind` discriminant.
-    pub(super) kind: u64,
-}
-
-/// A lane loop's typed array view (`Vm::lane_typed_array_elements`), written to `out`; zero
-/// where the loop cannot address the elements in place, which leaves at the loop's header.
-unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64, writable: u64, out: u64) -> u64 {
-    // SAFETY: as `lane_field_get`; the view reads cells and allocates nothing.
+/// The slow arm of a loop's hoisted typed array view proof (`Vm::publish_typed_view`): publishes
+/// the typed array's elements in its record, which the proof then reads; zero where the loop
+/// cannot address them in place, which leaves at the loop's header. The count is below 2^31
+/// (`staged::typed_elements::TypedView`): a longer array leaves too.
+unsafe extern "C" fn lane_typed_array_view<H: Host>(vm: u64, _residual: u64, object: u64) -> u64 {
+    // SAFETY: as `lane_field_get`; the publication reads cells and allocates nothing.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let Some((elements, length, kind)) = vm.lane_typed_array_elements(Value::from_bits(object), writable != 0) else {
-        return 0;
-    };
-    // SAFETY: `out` is the caller's stack slot of one view.
-    unsafe { *(out as *mut LaneTypedArrayView) = LaneTypedArrayView { elements: elements as u64, length: length as u64, kind: kind as u64 } };
-    1
+    u64::from(vm.publish_typed_view(Value::from_bits(object)))
 }
 
 /// A lane body's element store: the lane's own in-place replacement of a record array's
@@ -4621,10 +3821,17 @@ impl<H: Host> Vm<H> {
         // A Number store logs nothing.
         let elements = self.heap.record_array_store_mut_unlogged(array, Value::integer(0))?.elements_mut();
         if elements.owner_count() != 1 { return None; }
-        let elements = super::index::mutable_array_elements(elements);
-        let before = elements.capacity();
-        elements.reserve(1);
-        let room = elements.capacity();
+        // A double backing keeps its kind (`ArrayElements::reserve_double`).
+        let (before, room) = if elements.is_double() {
+            let before = elements.capacity();
+            elements.reserve_double(1);
+            (before, elements.capacity())
+        } else {
+            let elements = super::index::mutable_array_elements(elements);
+            let before = elements.capacity();
+            elements.reserve(1);
+            (before, elements.capacity())
+        };
         self.heap.charge_payload_growth((room - before) * size_of::<Value>());
         (!self.heap.should_collect()).then_some(room.min(osr_loop::MAX_INDEXED_LENGTH))
     }
@@ -4700,7 +3907,7 @@ impl<H: Host> Vm<H> {
             .flat_map(|instruction| Self::instruction_field_sites(program, instruction))
             .filter(|(site, _)| !generic.contains(site))
             .map(|(site, read)| (site, if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) }.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), ..load }).collect::<Vec<_>>()))
-            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
+            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
             .map(|(site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
     }
@@ -4735,49 +3942,6 @@ impl<H: Host> Vm<H> {
         if let Some(frame) = frame.as_mut().filter(|frame| frame.dispatch.vm == std::ptr::from_ref(self).addr()) {
             frame.dispatch.field_entries = self.program_field_entries(frame.dispatch.program_id).unwrap_or(0);
         }
-    }
-
-    /// The native frames the last run left inside, outermost first, which the lane now
-    /// materializes (`ShadowFrame`); none once taken.
-    pub(super) fn take_shadow_frames() -> ShadowFrames {
-        let frame = lane_frame();
-        // SAFETY: no lane body runs while the lane reads the frame; the frames sit past the
-        // activations' end, which the lane's own pushes (materialization) overwrite in
-        // order, each after the frame it replaces was read (`ShadowFrames::get`).
-        unsafe {
-            let base = (*frame).dispatch.shadow_base as *const Activation;
-            let top = (*frame).dispatch.shadow_top as *const Activation;
-            let count = if top.is_null() { 0 } else { top.offset_from(base) as usize };
-            (*frame).dispatch.shadow_top = base.addr();
-            ShadowFrames { base, count }
-        }
-    }
-
-    /// The callee of the innermost native frame of the running body (`ShadowFrame`): the
-    /// body a helper runs for when it runs as a direct callee; `None` in the activation's own.
-    pub(super) fn innermost_direct_callee() -> Option<&'static DirectCallee> {
-        Self::innermost_shadow_frame().map(|frame| unsafe { &*frame.callee })
-    }
-
-    /// The innermost native frame of the running body (`ShadowFrame`), whose window and callee
-    /// are the registers and function a helper called from that body (`dispatch_fast::lane_body_record`)
-    /// reads; `None` in the activation's own.
-    pub(super) fn innermost_shadow_frame() -> Option<ShadowFrame> {
-        let frame = lane_frame();
-        // SAFETY: as `lane_shadow_active`.
-        unsafe {
-            let (base, top) = ((*frame).dispatch.shadow_base as *const Activation, (*frame).dispatch.shadow_top as *const Activation);
-            (!top.is_null() && top != base).then(|| (*top.sub(1)).native)
-        }
-    }
-
-    /// Whether a running body has native frames below the innermost: a helper's activation
-    /// would sit under them, so a call from one takes the body's exit instead
-    /// (`dispatch_fast::lane_body_call`).
-    pub(super) fn lane_shadow_active() -> bool {
-        let frame = lane_frame();
-        // SAFETY: as `take_shadow_frames`; the running body wrote the top before its call.
-        unsafe { (*frame).dispatch.shadow_top != (*frame).dispatch.shadow_base }
     }
 
     /// `run_lane_method` from inside a running body (`dispatch_fast::lane_body_call`): the
@@ -4817,6 +3981,50 @@ impl<H: Host> Vm<H> {
         exit
     }
 
+    /// Copies the registers that follow the first `from` of the activation at `registers`, where a
+    /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
+    /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+        let frame = lane_frame();
+        // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
+        // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
+        unsafe {
+            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+                *slot = registers.add(from + at).read();
+            }
+        }
+    }
+
+    /// Reloads the heap bases a running body's rows read through the payload
+    /// (`JsStepDispatch::refresh_object_bases`): a helper that allocated or ran guest code may
+    /// have moved the record tables or the barrier's mark blocks. Every call, construct and step
+    /// helper ends with it, so a row after one reads current bases and checks none.
+    pub(super) fn refresh_body_bases(&mut self) {
+        let lane = lane_frame();
+        // SAFETY: the frame lives for the thread; the running body's helper is the payload's only user.
+        unsafe { (*lane).dispatch.refresh_object_bases(self) };
+    }
+
+    /// Publishes `receiver`, a `this` the running body's frame has just bound (`InitializeThis`), as the
+    /// payload's receiver the body's rows read: the frame's own and the payload's are written by the one step.
+    pub(super) fn publish_body_receiver(&self, receiver: Value) {
+        let frame = lane_frame();
+        // SAFETY: as `refresh_body_bases`.
+        unsafe { (*frame).dispatch.receiver = receiver.to_bits() }
+    }
+
+    /// Reloads the heap bases of the payload of the native loop region the lane entered, whose address the
+    /// lane context holds (`dispatch_fast::lane_region_payload`; zero where none runs), as
+    /// `refresh_body_bases` does the body frame's, and the lane stack's room the call may have moved
+    /// (`region_lend::bind_stacks`, `direct_calls` as the region was entered with).
+    pub(super) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
+        // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
+        if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
+            payload.refresh_object_bases(self);
+            region_lend::bind_stacks(self, payload, direct_calls);
+        }
+    }
+
     /// Hands `write` each of the `count` registers an inlined callee its lane body left
     /// inside held, as the body wrote them to the scratch window (`LaneFrame::scratch`).
     pub(super) fn lane_scratch(start: usize, count: usize, mut write: impl FnMut(u16, Value)) {
@@ -4834,26 +4042,6 @@ impl<H: Host> Vm<H> {
 /// machine stack each costs a frame; the bound keeps a native recursion within it.
 const SHADOW_FRAMES: usize = 64;
 
-/// The native frames a leave took (`Vm::take_shadow_frames`): the prefixes of `count` activations
-/// at `base`, in the activations' spare room, where materialization makes the activations in place.
-#[derive(Clone, Copy)]
-pub(super) struct ShadowFrames {
-    base: *const Activation,
-    pub(super) count: usize,
-}
-
-impl ShadowFrames {
-    /// Frame `index`, outermost first, read before the activation that replaces it is pushed.
-    pub(super) fn get(&self, index: usize) -> ShadowFrame {
-        // SAFETY: `index < count` frames were pushed in place by the run that left.
-        unsafe { (*self.base.add(index)).native }
-    }
-}
-
-/// `shadow_base` before any lane body ran on the frame: no frame word equals it, so a helper
-/// a loop region calls then sees native frames (`lane_shadow_active`) and its call leaves.
-const NO_LANE_RUN: usize = usize::MAX;
-
 /// The stride of the native frames a run pushes: an activation record, whose first words they are.
 pub(super) const FRAME_BYTES: usize = std::mem::size_of::<Activation>();
 
@@ -4864,7 +4052,14 @@ struct LaneEntry {
     field_entries: usize,
     lane_context: usize,
     native_registers: *mut Value,
+    /// The activation's local slots and their count (`dispatch_fast::body_locals`), which a
+    /// body's local rows read through the payload.
+    native_locals: (*mut Value, usize),
+    /// The storage of its environment-owned locals (`JsStepDispatch::environment_storage`).
+    environment_storage: u64,
     residual: usize,
+    /// The end of the frames the run may nest, which a nested run narrows and its caller regains.
+    frames_end: usize,
 }
 
 impl LaneEntry {
@@ -4874,7 +4069,10 @@ impl LaneEntry {
             field_entries: dispatch.field_entries,
             lane_context: dispatch.lane_context,
             native_registers: dispatch.native_registers,
+            native_locals: (dispatch.native_locals, dispatch.local_count),
+            environment_storage: dispatch.environment_storage,
             residual: dispatch.residual,
+            frames_end: dispatch.lane_frames_end,
         }
     }
 
@@ -4883,7 +4081,10 @@ impl LaneEntry {
         dispatch.field_entries = self.field_entries;
         dispatch.lane_context = self.lane_context;
         dispatch.native_registers = self.native_registers;
+        (dispatch.native_locals, dispatch.local_count) = self.native_locals;
+        dispatch.environment_storage = self.environment_storage;
         dispatch.residual = self.residual;
+        dispatch.lane_frames_end = self.frames_end;
     }
 }
 
@@ -4917,14 +4118,6 @@ struct LaneFrame {
 }
 
 impl LaneFrame {
-    /// The words `bind_run` writes, for the test that an entry of a run rewrites none of them.
-    #[cfg(test)]
-    fn run_words(&self) -> [usize; 8] {
-        let dispatch = &self.dispatch;
-        [dispatch.vm, dispatch.program_id.raw() as usize, dispatch.lane_context, dispatch.residual,
-            dispatch.stores_specialized, dispatch.field_entries, self.context.stack_limit, self.context.adapter_payload.addr()]
-    }
-
     /// Binds the payload and context to `run`'s words, written once per run: a nested entry
     /// of the same run (`Vm::run_nested_lane_method`) and each next entry of the lane's calls
     /// find them standing. `field_entries` derives the program's field cache entries, which
@@ -4935,12 +4128,12 @@ impl LaneFrame {
     /// frames), a deeper run (a native callback's) has its own context and so binds its own,
     /// and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget.
     /// The interrupt and the payload, whose address is the frame's, bind once per interrupt owner.
+    /// Whether the entry bound a different run than the last one's.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
         let owner = std::ptr::from_ref(interrupt);
-        if LaneRun::of(&self.dispatch) != run {
-            #[cfg(test)]
-            LANE_ENTRIES.with(|counts| counts.set((counts.get().0, counts.get().1 + 1)));
+        let rebound = LaneRun::of(&self.dispatch) != run;
+        if rebound {
             self.dispatch.field_entries = field_entries();
             self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
@@ -4953,6 +4146,7 @@ impl LaneFrame {
             self.context.interrupt_owner = owner;
             self.context.adapter_payload = (&raw mut self.dispatch).cast();
         }
+        rebound
     }
 
     fn new() -> Self {
@@ -4960,48 +4154,7 @@ impl LaneFrame {
         context.callout = lane_method_exit as unsafe extern "C" fn(u64, u64, u64, u64) -> i64 as usize;
         Self {
             context,
-            dispatch: JsStepDispatch {
-                program_id: ProgramId::MAIN,
-                frame: usize::MAX,
-                allow_inline_calls: false,
-                start_pc: 0,
-                #[cfg(feature = "native-execution")]
-                stop_pc: JS_NO_STOP_PC,
-                native_registers: std::ptr::null_mut(),
-                register_count: 0,
-                native_locals: std::ptr::null_mut(),
-                local_count: 0,
-                fixed_this_slot: std::ptr::null(),
-                capture_values: std::ptr::null(),
-                capture_len: 0,
-                array_record_base: 0,
-                string_record_base: 0,
-                ascii_unit_strings: 0,
-                object_record_base: 0,
-                function_record_base: 0,
-                object_mark_blocks: 0,
-                object_mark_block_count: 0,
-                property_buffer: 0,
-                field_entries: 0,
-                call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-                loop_entry: 0,
-                method_cache_atoms: 0,
-                method_cache_atom_words: 0,
-                stores_specialized: 0,
-                receiver: Value::DELETED.to_bits(),
-                vm: 0,
-                residual: 0,
-                body: std::ptr::null(),
-                inlined: 0,
-                exit_line: 0,
-                lane_context: 0,
-                returned_pc: 0,
-                native_top: 0,
-                native_end: 0,
-                shadow_top: 0,
-                shadow_end: 0, shadow_base: NO_LANE_RUN,
-                outcome: None,
-            },
+            dispatch: JsStepDispatch::idle(),
             scratch: Vec::new(),
         }
     }
@@ -5093,39 +4246,32 @@ struct JsNativeActivation {
 impl JsNativeActivation {
     /// Construct and consume one owned activation in the entry's scope. The
     /// large dispatch does not cross an optional aggregate-return boundary.
+    #[cfg(feature = "native-execution")]
     #[inline(always)]
     fn with<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, frame: usize, start_pc: usize,
         allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
+        let function = vm.frames[frame].function;
+        Self::with_function(vm, program_id, (frame, function), start_pc, allow_inline_calls, views, run)
+    }
+
+    /// `with` for `function` of `program_id`, which runs above VM frame `frame`: a frameless
+    /// activation's function is not its frame's, and may not be of the frame's program.
+    #[inline(always)]
+    fn with_function<H: Host, R>(vm: &mut Vm<H>, program_id: ProgramId, (frame, function): (usize, u32), start_pc: usize,
+        allow_inline_calls: bool, views: bool, run: impl FnOnce(&mut Self, &mut Vm<H>) -> R) -> Option<R> {
         let program = vm.programs.get(program_id)?;
-        let body = program.function_get(vm.frames[frame].function as usize)? as *const _;
+        let body = program.function_get(function as usize)? as *const _;
         let activation = &mut vm.frames[frame];
         let mut native = Self { dispatch: JsStepDispatch {
             program_id, frame, allow_inline_calls, start_pc,
-            #[cfg(feature = "native-execution")]
-            stop_pc: JS_NO_STOP_PC,
             native_registers: activation.registers.as_mut_ptr(),
             register_count: activation.registers.len(),
             native_locals: activation.locals.as_mut_ptr(),
             local_count: activation.locals.len(),
-            fixed_this_slot: std::ptr::null(),
-            capture_values: std::ptr::null(), capture_len: 0,
-            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0, object_mark_blocks: 0,
-            object_mark_block_count: 0, property_buffer: 0,
-            field_entries: 0, call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0, method_cache_atoms: 0, method_cache_atom_words: 0, loop_entry: 0,
-            stores_specialized: 0,
-            receiver: Value::DELETED.to_bits(),
             vm: vm as *mut Vm<H> as usize,
             residual: Rc::as_ptr(&program) as usize,
             body,
-            inlined: 0,
-            exit_line: 0,
-            lane_context: 0,
-            returned_pc: 0,
-            native_top: 0,
-            native_end: 0,
-            shadow_top: 0,
-            shadow_end: 0, shadow_base: 0,
-            outcome: None,
+            ..JsStepDispatch::idle()
         }, _program: program };
         // The prologue already coerced `this` (`Vm::call_this_value`); a frame that has not
         // initialized it leaves the receiver `DELETED`, at which a body's `LoadThis` leaves.
@@ -5137,6 +4283,30 @@ impl JsNativeActivation {
 }
 
 impl JsStepDispatch {
+    /// The payload of no activation: no frame, registers, locals or VM, every base word unbound.
+    fn idle() -> Self {
+        Self {
+            program_id: ProgramId::MAIN, frame: usize::MAX, allow_inline_calls: false, start_pc: 0,
+            #[cfg(feature = "native-execution")]
+            stop_pc: JS_NO_STOP_PC,
+            native_registers: std::ptr::null_mut(), register_count: 0, native_locals: std::ptr::null_mut(), local_count: 0,
+            fixed_this_slot: std::ptr::null(),
+            capture_values: std::ptr::null(), capture_len: 0, capture_stores: 0,
+            array_record_base: 0, string_record_base: 0, ascii_unit_strings: 0, object_record_base: 0, function_record_base: 0,
+            object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
+            property_buffer: 0, field_entries: 0, typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
+            call_cache: 0, epoch: 0, layout_seen: u64::MAX, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
+            loop_entry: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, slots_tracked: 0,
+            empty_string: Value::DELETED.to_bits(),
+            environment_storage: crate::heap::absent_environment_storage(),
+            receiver: Value::DELETED.to_bits(),
+            vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
+            native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
+            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
+            outcome: None,
+        }
+    }
+
     /// The VM stays in place throughout this entry. Derive the owner address
     /// from the same full-VM pointer as semantic callouts, without creating a
     /// shared borrow that later mutable callouts would invalidate. Rebind on
@@ -5159,9 +4329,16 @@ impl JsStepDispatch {
         self.array_record_base = vm.heap.array_record_base().map_or(0, |base| base as usize);
         self.string_record_base = vm.heap.string_record_base().map_or(0, |base| base as usize);
         self.ascii_unit_strings = vm.heap.ascii_unit_strings_base().map_or(0, |base| base as usize);
+        let (directory, pages) = vm.heap.typed_view_directory();
+        (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
+        self.buffer_relocations = crate::heap::buffer_relocations_address().addr();
         self.epoch = vm.heap.collection_epoch();
         let (blocks, count) = vm.heap.native_object_mark_blocks();
         (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
+        let (blocks, count) = vm.heap.native_function_mark_blocks();
+        (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
+        self.empty_string = vm.empty_string_word().to_bits();
+        self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
@@ -5182,6 +4359,7 @@ impl JsStepDispatch {
     /// while its slot memo is missing or stale, or its storage is not dense, and a read then
     /// leaves at its record.
     fn refresh_capture_view<H: Host>(&mut self, vm: &Vm<H>) {
+        let held = self.capture_values;
         (self.capture_values, self.capture_len) = vm.frames.get(self.frame)
             .and_then(|_| vm.current_capture_slots(self.frame))
             .and_then(|(slots, root)| {
@@ -5191,6 +4369,7 @@ impl JsStepDispatch {
                 unsafe { &*slots }.native_dense_view()
             })
             .unwrap_or((std::ptr::null(), 0));
+        self.capture_stores &= usize::from(self.capture_values == held);
     }
 
     /// Binds the frame's capture slots once per activation. Only a lane entry makes the slot
@@ -5388,15 +4567,13 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
 
 #[cfg(feature = "aot")]
 pub(super) fn native_js_start_pc(builder: &mut FunctionBuilder<'_>, context: ir::Value) -> ir::Value {
-    let pointer = builder.func.signature.params[0].value_type;
-    let payload = builder.ins().load(
-        pointer, MemFlagsData::trusted(), context,
-        std::mem::offset_of!(CallContext, adapter_payload) as i32,
-    );
-    builder.ins().load(
-        types::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, start_pc) as i32,
-    )
+    use crate::staged::machine::Lane;
+    let pointer = emit_machine::lane_of(builder.func.signature.params[0].value_type);
+    let mut stage = object_slots::emit(builder);
+    let payload = stage.raw_load(pointer, MemFlagsData::trusted(), context,
+        std::mem::offset_of!(CallContext, adapter_payload) as i32);
+    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
+        std::mem::offset_of!(JsStepDispatch, start_pc) as i32)
 }
 
 /// Execute one compile-time-selected semantic operation and return its exact
@@ -5420,6 +4597,15 @@ pub unsafe extern "C" fn native_js_operation_entry<H: Host, const OPCODE: usize>
     // SAFETY: forwarded from this entry's native ABI contract. Invalid opcode
     // constants are reported inside the shared exception boundary.
     unsafe { js_semantic_callout::<H, true, OPCODE>(context.cast(), pc, arguments, result) }
+}
+
+/// Whether the callout's step pushed a frame: it runs in the program its push made active, so
+/// the program that was running when the code was entered is not made active again over it.
+#[cfg(feature = "native-execution")]
+fn pushed_a_frame<E>(called: &Result<Result<JsCalloutStep, JsError>, E>) -> bool {
+    matches!(called, Ok(Ok(JsCalloutStep::Stop(JsNativeStep {
+        result: Ok(StepResult::PushFrame { .. } | StepResult::ResumeFrames(_)), ..
+    }))))
 }
 
 #[cfg(feature = "native-execution")]
@@ -5451,11 +4637,18 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
     // SAFETY: the compiled entry's owner keeps this context and adapter payload
     // alive through the callout.
     let context_ref = unsafe { &mut *context };
+    // The program whose code called (a function of another program than the one running makes
+    // its constants the active ones for the step), restored after it.
+    let entered_from = std::cell::Cell::new(None);
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let pc = usize::try_from(function)
             .map_err(|_| JsError::validation("native JS PC does not fit usize".into()))?;
         let dispatch = unsafe { &mut *context_ref.adapter_payload.cast::<JsStepDispatch>() };
         let vm = unsafe { &mut *context_ref.vm.cast::<Vm<H>>() };
+        if vm.active_program != dispatch.program_id {
+            entered_from.set(Some(vm.active_program));
+            vm.set_active_program(dispatch.program_id);
+        }
         // SAFETY: the owning JsNativeActivation admits both pointers once and retains the shared
         // program until native execution (including reentry) finishes; release needs it unique.
         let program = unsafe { &*(dispatch.residual as *const ResidualProgram) };
@@ -5470,10 +4663,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 instruction_pc: pc, next_pc: pc, result: Ok(StepResult::Continue),
             }));
         }
-        let packed = *body
-            .code
-            .get(pc)
-            .ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
+        let packed = *body.code.get(pc).ok_or_else(|| JsError::validation("native JS PC is outside function".into()))?;
         let instruction = if SINGLE_OPERATION {
             let selected = operation.as_ref().ok_or_else(||
                 JsError::validation("invalid native semantic opcode".into()))?;
@@ -5507,9 +4697,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         } else {
             super::dispatch_fast::decoded_instruction(body, packed)
         };
-        let next_pc = pc
-            .checked_add(1)
-            .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
+        let next_pc = pc.checked_add(1).ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
         let frame = &mut vm.frames[dispatch.frame];
         // Entry admits these homes, and every effectful continuation validates
@@ -5814,6 +5002,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
         }
     }));
     ACTIVE_CONTEXT.with(|current| current.set(active));
+    if let Some(previous) = entered_from.get().filter(|_| !pushed_a_frame(&called)) {
+        // SAFETY: the context's VM outlives the callout.
+        unsafe { &mut *context_ref.vm.cast::<Vm<H>>() }.set_active_program(previous);
+    }
 
     match called {
         Ok(Ok(JsCalloutStep::Continue(next))) => {
@@ -5924,11 +5116,6 @@ impl Plan {
     fn operand(&self, pc: usize) -> Slot {
         self.operands[pc].expect("reachable")
     }
-}
-
-/// The register a direct access of `instruction` reads its memory through.
-fn direct_access(op: Op) -> bool {
-    MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some()
 }
 
 fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
@@ -6178,11 +5365,11 @@ impl<H: Host> Analysis<'_, H> {
             let mut state = states[pc]
                 .clone()
                 .expect("queued instructions have a state");
-            if instruction.op().class().eq(Class::CallKnown)
-                && !callable.contains(usize::from(instruction.known_function_index()))
+            if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                .and_then(|step| step.callee(instruction))
+                && !callable.contains(callee)
                 && !self.experimental_root_compilation
             {
-                let callee = instruction.known_function_index();
                 self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
                 return None;
             }
@@ -6192,8 +5379,7 @@ impl<H: Host> Analysis<'_, H> {
                     instruction,
                     &mut state,
                     callable,
-                    memory_register,
-                    memory_slot,
+                    (memory_register, memory_slot),
                     result,
                 )
                 .is_none()
@@ -6224,10 +5410,8 @@ impl<H: Host> Analysis<'_, H> {
             .zip(&instructions)
             .map(|(state, instruction)| {
                 let state = state.as_ref()?;
-                let operand = match instruction.op().class() {
-                    Class::WasmMemoryLoad | Class::WasmMemoryStore => instruction.c(),
-                    _ => instruction.b(),
-                };
+                let operand = Step::of(instruction.op(), instruction.imm())
+                    .map_or(instruction.b(), |step| step.operand(*instruction));
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
@@ -6265,420 +5449,64 @@ impl<H: Host> Analysis<'_, H> {
     }
 
     /// Check `instruction` has a compiled denotation in `state`, and apply its
-    /// register writes.
-    #[allow(clippy::too_many_arguments)]
+    /// register writes. `memory` is the function's memory register and the slot it binds.
     fn transfer(
         &self,
         function: &Function,
         instruction: WideInstruction,
         state: &mut AnalysisState,
         callable: &crate::bitset::BitSet,
-        memory_register: Option<u16>,
-        memory_slot: &mut Option<u32>,
+        memory: (Option<u16>, &mut Option<u32>),
         result: Option<crate::WasmType>,
     ) -> Option<()> {
-        let op = instruction.op();
-        if !op.is_return() && instruction.returns_from_frame() {
-            return None;
-        }
-        if !super::dispatch_fast::lane_fields_fit(instruction, function) {
-            return None;
-        }
-        let value =
-            |state: &AnalysisState, register: u16| match state.get(register, function.registers)? {
-                Slot::Value(kind) => Some(kind),
-                Slot::Memory32Address => Some(Kind::I64),
-                _ => None,
-            };
-        let i32_value = |state: &AnalysisState, register: u16| {
-            (value(state, register)? == Kind::I32).then_some(())
-        };
-        let set = |state: &mut AnalysisState, register: u16, slot: Slot| {
-            state.set(register, function.registers, slot)
-        };
-        // The memory register is read only by direct accesses through it.
-        if memory_register.is_some_and(|memory| {
-            !direct_access(op) && !op.traits().has(Traits::WASM_MEMORY)
-                && !op.is_wasm_instance_binding()
-                && crate::bytecode::InstructionField::ALL.iter().any(|field| {
-                    op.field_layout(*field).reads_register()
-                        && instruction.field_value(*field) == memory
-                        && !unary_simd_spare(instruction, *field)
-                })
-        }) {
-            return None;
-        }
-        if let Some(_operator) = I32BinaryOperator::from_register_op(op) {
-            i32_value(state, instruction.b())?;
-            i32_value(state, instruction.c())?;
-            return set(state, instruction.a(), Slot::Value(Kind::I32));
-        }
-        if I32BinaryOperator::from_immediate_op(op).is_some() {
-            i32_value(state, instruction.b())?;
-            return set(state, instruction.a(), Slot::Value(Kind::I32));
-        }
-        if I32BinaryOperator::from_jump_op(op).is_some() {
-            i32_value(state, instruction.a())?;
-            return i32_value(state, instruction.b());
-        }
-        if I32BinaryOperator::from_immediate_jump_op(op).is_some() {
-            return i32_value(state, instruction.a());
-        }
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            if Some(instruction.b()) != memory_register
-                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
-            {
-                return None;
-            }
-            i32_value(state, instruction.c())?;
-            return set(
-                state,
-                instruction.a(),
-                Slot::Value(Kind::of(load_type(load)?)?),
-            );
-        }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            if Some(instruction.b()) != memory_register
-                || state.get(instruction.b(), function.registers) != Some(Slot::Memory)
-            {
-                return None;
-            }
-            i32_value(state, instruction.c())?;
-            return (value(state, instruction.a())? == Kind::of(store.value_type())?).then_some(());
-        }
-        // Result widths are read off the operators' own semantics:
-        // comparisons produce an i32.
-        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
-            let kind = Kind::of(ty)?;
-            (value(state, instruction.b())? == kind).then_some(())?;
-            (value(state, instruction.c())? == kind).then_some(())?;
-            let comparison = operator.apply(0.0, 0.0).ty() == crate::WasmType::I32;
-            let result = if comparison { Kind::I32 } else { kind };
-            return set(state, instruction.a(), Slot::Value(result));
-        }
-        if let Some((_, ty)) = float_unary_operator(op, instruction.imm()) {
-            let kind = Kind::of(ty)?;
-            (value(state, instruction.b())? == kind).then_some(())?;
-            return set(state, instruction.a(), Slot::Value(kind));
-        }
-        match op.class() {
-            Class::WasmI64Binary => {
-                let operator = I64BinaryOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::I64).then_some(())?;
-                (value(state, instruction.c())? == Kind::I64).then_some(())?;
-                let result = Kind::of(operator.apply(1, 1).ok()?.ty())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::WasmI64Unary => {
-                let operator = I64UnaryOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::I64).then_some(())?;
-                let result = Kind::of(operator.apply(0).ty())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::WasmScalarConvert => {
-                let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
-                (value(state, instruction.b())? == Kind::of(operator.source_type())?)
-                    .then_some(())?;
-                let result = Kind::of(operator.result_type())?;
-                set(state, instruction.a(), Slot::Value(result))
-            }
-            Class::Move => match state.get(instruction.b(), function.registers)? {
-                slot @ (Slot::Vector | Slot::Memory32Address) => {
-                    set(state, instruction.a(), slot)
-                }
-                _ => {
-                    let kind = value(state, instruction.b())?;
-                    set(state, instruction.a(), Slot::Value(kind))
-                }
-            },
-            Class::LoadConst => {
-                let constant = self.constant(instruction.constant_index())?;
-                set(state, instruction.a(), self.constant_slot(constant))
-            }
-            Class::WasmFillRegisters => {
-                let constant = self.constant(instruction.constant_index())?;
-                let slot = self.constant_slot(constant);
-                let window = instruction.register_window();
-                for offset in 0..window.count {
-                    set(state, window.base + offset, slot)?;
-                }
-                Some(())
-            }
-            // A vector access's effective address: a 32-bit address plus the access's offset,
-            // as 64 bits, so the sum cannot wrap.
-            Class::WasmMemoryAddress => {
-                self.vector_memory(function, state, instruction.c(), memory_register, memory_slot)?;
-                self.memory_offset(instruction.constant_index())?;
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Memory32Address)
-            }
-            Class::WasmMemoryLoad | Class::WasmMemoryStore => {
-                self.vector_memory(function, state, instruction.b(), memory_register, memory_slot)?;
-                if value(state, instruction.c())? != Kind::I64 {
-                    return None;
-                }
-                if op.class().eq(Class::WasmMemoryLoad) {
-                    (crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())?
-                        == crate::wasm::memory::MemoryLoad::V128Load)
-                        .then_some(())?;
-                    set(state, instruction.a(), Slot::Vector)
-                } else {
-                    (crate::wasm::memory::MemoryStore::from_tag(instruction.imm())?
-                        == crate::wasm::memory::MemoryStore::V128Store)
-                        .then_some(())?;
-                    (state.get(instruction.a(), function.registers)? == Slot::Vector).then_some(())
-                }
-            }
-            Class::WasmSimd => {
-                let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm())?;
-                let operand = |register: u16, ty: crate::WasmType| match ty {
-                    crate::WasmType::V128 => {
-                        (state.get(register, function.registers)? == Slot::Vector).then_some(())
-                    }
-                    ty => (value(state, register)? == Kind::of(ty)?).then_some(()),
+        let step = Step::of(instruction.op(), instruction.imm())?;
+        admitted(function, instruction, step, memory.0)?;
+        let (memory_register, memory_slot) = memory;
+        match step {
+            Step::Numeric(operation) => {
+                let value = |state: &AnalysisState, register: u16| {
+                    wasm_instance_stage::value_kind(state.get(register, function.registers)?)
                 };
-                operand(instruction.b(), kernel.left)?;
-                if let Some(right) = kernel.right {
-                    operand(instruction.c(), right)?;
-                }
-                let result = match kernel.result_type(lane) {
-                    crate::WasmType::V128 => Slot::Vector,
-                    ty => Slot::Value(Kind::of(ty)?),
-                };
-                set(state, instruction.a(), result)
+                wasm_stage::transfer(state, function.registers, instruction, operation, &value)
             }
-            Class::WasmSimdShuffle => {
-                self.shuffle_lanes(instruction.constant_index())?;
-                for register in [instruction.b(), instruction.c()] {
-                    (state.get(register, function.registers)? == Slot::Vector).then_some(())?;
-                }
-                set(state, instruction.a(), Slot::Vector)
+            Step::Instance(step) => {
+                self.transfer_instance(function, instruction, state, step, (memory_register, memory_slot))
             }
-            Class::WasmI32Unary => {
-                I32UnaryOperator::from_tag(instruction.imm())?;
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
+            Step::Memory(step) => {
+                self.transfer_memory(function, instruction, state, step, (memory_register, *memory_slot))
             }
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
+            Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
+            Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
+            Step::Simd(step) => {
+                self.transfer_simd(function, instruction, state, step, (memory_register, memory_slot))
             }
-            Class::WasmI32AddJump => {
-                i32_value(state, instruction.b())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => i32_value(state, instruction.a()),
-            Class::Jump => Some(()),
-            Class::WasmBranchTable => {
-                i32_value(state, instruction.a())?;
-                
-                // Entries are `Jump`s; validation guarantees it for
-                // reachable tables.
-                (!crate::bytecode::branch_table_entries(0, instruction).next().is_none()).then_some(())
-            }
-            Class::WasmSelect => {
-                let (condition, _) = instruction.register_pair();
-                i32_value(state, condition)?;
-                let kind = value(state, instruction.b())?;
-                (value(state, instruction.c())? == kind).then_some(())?;
-                set(state, instruction.a(), Slot::Value(kind))
-            }
-            Class::WasmMemorySize => {
-                let memory = instruction.b();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmMemoryFill => {
-                let memory = instruction.a();
-                let (destination, _) = instruction.register_pair();
-                if Some(memory) != memory_register
-                    || state.get(memory, function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                i32_value(state, instruction.b())?;
-                i32_value(state, instruction.c())?;
-                i32_value(state, destination)
-            }
-            // A copy within the function's one memory: both memory operands name it.
-            Class::WasmMemoryCopy => {
-                let (destination, source) = instruction.register_pair();
-                if Some(instruction.a()) != memory_register
-                    || Some(instruction.b()) != memory_register
-                    || state.get(instruction.a(), function.registers) != Some(Slot::Memory)
-                    || !memory_slot.is_some_and(|slot| self.supports_compiled_memory(slot))
-                {
-                    return None;
-                }
-                i32_value(state, destination)?;
-                i32_value(state, source)?;
-                i32_value(state, instruction.c())
-            }
-            Class::WasmIndirectTarget if self.callouts => {
-                let Slot::Binding(table) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                if !self.binds_table32(table) {
-                    return None;
-                }
-                i32_value(state, instruction.c())?;
-                self.type_signature(instruction.imm())?;
-                set(
-                    state,
-                    instruction.a(),
-                    Slot::IndirectReference {
-                        signature: instruction.imm(),
-                        table,
-                    },
-                )
-            }
-            Class::CallKnown => {
-                let callee = u32::from(instruction.known_function_index());
-                if !callable.contains(callee as usize)
-                    && (!self.experimental_root_compilation || (self.root_only && !self.callouts))
-                {
-                    return None;
-                }
-                let signature = self.signature(callee)?;
-                if signature.results.len() > 1
-                    && !callable.contains(callee as usize)
-                {
-                    // The VM callout ABI currently carries at most one result.
-                    // Do not admit a residual fallback that would silently
-                    // discard the remaining Wasm results.
-                    return None;
-                }
-                let window = instruction.call_window();
-                if usize::from(window.count) != signature.params.len() {
-                    return None;
-                }
-                for (offset, ty) in signature.params.iter().enumerate() {
-                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
-                }
-                let kind = match signature.results.first() {
-                    Some(ty) => Kind::of(*ty)?,
-                    None => Kind::I32,
-                };
-                set(state, instruction.result_register(), Slot::Value(kind))
-            }
-            Class::WasmRefFunc if self.callouts => {
-                let function = instruction.imm();
-                self.import_signature(function)?;
-                set(state, instruction.a(), Slot::Import(function))
-            }
-            Class::Call => {
-                let slot = state.get(instruction.b(), function.registers)?;
-                let signature = match slot {
-                    Slot::Import(function) => self.import_signature(function)?,
-                    Slot::IndirectReference { signature, .. } if self.callouts => {
-                        self.type_signature(signature)?
-                    }
-                    _ => return None,
-                };
-                let window = instruction.call_window();
-                if usize::from(window.count) != signature.params.len()
-                    || signature.results.len() > 1
-                {
-                    return None;
-                }
-                for (offset, ty) in signature.params.iter().enumerate() {
-                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
-                }
-                let kind = match signature.results.first() {
-                    Some(ty) => Kind::of(*ty)?,
-                    None => Kind::I32,
-                };
-                set(state, instruction.result_register(), Slot::Value(kind))
-            }
-            Class::WasmUnreachable
-                if self.experimental_root_compilation || eager_unreachable_admitted() =>
-            {
-                Some(())
-            }
-            Class::Return => match result {
-                Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
-                None => Some(()),
-            },
-            Class::WasmInstanceBinding => {
-                let slot = instruction.imm();
-                if Some(instruction.a()) == memory_register {
-                    if !self.binds_direct_memory(slot) || memory_slot.is_some_and(|s| s != slot) {
-                        return None;
-                    }
-                    *memory_slot = Some(slot);
-                    return set(state, instruction.a(), Slot::Memory);
-                }
-                set(state, instruction.a(), Slot::Binding(slot))
-            }
-            // Compiled code reads and writes a 32-bit global's encoded value
-            // in place; a 64-bit global's value is a box, so it stays
-            // interpreted.
-            Class::WasmGlobalGet => {
-                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                set(state, instruction.a(), Slot::Value(Kind::I32))
-            }
-            Class::WasmGlobalSet => {
-                let Slot::Binding(slot) = state.get(instruction.b(), function.registers)? else {
-                    return None;
-                };
-                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
-                (value(state, instruction.a())? == Kind::I32).then_some(())
-            }
-            _ => None,
         }
     }
 }
 
-/// The Wasm type a direct load produces.
-fn load_type(load: MemoryLoad) -> Option<crate::WasmType> {
-    Some(match load {
-        MemoryLoad::I32Load
-        | MemoryLoad::I32Load8S
-        | MemoryLoad::I32Load8U
-        | MemoryLoad::I32Load16S
-        | MemoryLoad::I32Load16U => crate::WasmType::I32,
-        MemoryLoad::F32Load => crate::WasmType::F32,
-        MemoryLoad::I64Load
-        | MemoryLoad::I64Load8S
-        | MemoryLoad::I64Load8U
-        | MemoryLoad::I64Load16S
-        | MemoryLoad::I64Load16U
-        | MemoryLoad::I64Load32S
-        | MemoryLoad::I64Load32U => crate::WasmType::I64,
-        MemoryLoad::F64Load => crate::WasmType::F64,
-        _ => return None,
+/// Checks the lane fields of `instruction` fit, only a return leaves the frame, and the memory
+/// register is read only by the steps that name a memory.
+fn admitted(
+    function: &Function,
+    instruction: WideInstruction,
+    step: Step,
+    memory_register: Option<u16>,
+) -> Option<()> {
+    let fits = super::dispatch_fast::lane_fields_fit(instruction, function);
+    let leaves = instruction.returns_from_frame() && !step.returns();
+    let reads = memory_register
+        .is_some_and(|register| !step.reads_memory() && reads_register(instruction, register, step));
+    (fits && !leaves && !reads).then_some(())
+}
+
+/// Whether `instruction` reads `register` through a field `step` does not leave unread.
+fn reads_register(instruction: WideInstruction, register: u16, step: Step) -> bool {
+    let op = instruction.op();
+    crate::bytecode::InstructionField::ALL.iter().any(|field| {
+        op.field_layout(*field).reads_register()
+            && instruction.field_value(*field) == register
+            && !step.leaves_unread(*field)
     })
-}
-
-/// Whether a direct load sign-extends its narrow word.
-fn load_signed(load: MemoryLoad) -> bool {
-    matches!(
-        load,
-        MemoryLoad::I32Load8S
-            | MemoryLoad::I32Load16S
-            | MemoryLoad::I64Load8S
-            | MemoryLoad::I64Load16S
-            | MemoryLoad::I64Load32S
-    )
-}
-
-/// The width in bytes a direct store writes.
-fn store_width(store: MemoryStore) -> usize {
-    match store {
-        MemoryStore::I32Store8 | MemoryStore::I64Store8 => 1,
-        MemoryStore::I32Store16 | MemoryStore::I64Store16 => 2,
-        MemoryStore::I32Store | MemoryStore::F32Store | MemoryStore::I64Store32 => 4,
-        _ => 8,
-    }
 }
 
 /// Disjoint state compiled code accesses: an access to one never aliases an
@@ -6700,6 +5528,13 @@ impl Region {
 /// limit, the callout, global addresses): it may be reused and hoisted.
 fn invariant() -> MemFlagsData {
     MemFlagsData::trusted().with_readonly().with_can_move()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The CLIF of each Wasm body this thread built, by function index, for tests of what the
+    /// tier emits.
+    static BUILT_BODIES: std::cell::RefCell<Vec<(usize, String)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The memory facts a compiled call passes after the context: the base
@@ -6915,17 +5750,26 @@ fn writes_register(instruction: WideInstruction, register: u16) -> bool {
 /// Whether conditional jump `instruction` is taken when `register` holds
 /// `value`, if that alone decides it.
 fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Option<bool> {
-    let op = instruction.op();
     if instruction.a() != register {
         return None;
     }
-    if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
-        let right = i32::from(instruction.b() as i16);
-        return operator.evaluate(value, right).ok().map(|holds| holds != 0);
-    }
-    match op.class() {
-        Class::WasmJumpI32Zero => Some(value == 0),
-        Class::WasmJumpI32NonZero => Some(value != 0),
+    match WasmOperation::of(instruction.op(), instruction.imm())? {
+        WasmOperation::Test { nonzero } => Some((value != 0) == nonzero),
+        WasmOperation::Binary {
+            operator,
+            width: Width::I32,
+            form: Form::BranchImmediate,
+        } => {
+            let Right::Constant(right) = Form::BranchImmediate.right(instruction) else {
+                return None;
+            };
+            let (left, right) = (
+                ConcreteWasm.constant(Width::I32, i64::from(value)),
+                ConcreteWasm.constant(Width::I32, right),
+            );
+            let holds = integer_binary(&mut ConcreteWasm, operator, Width::I32, left, right);
+            holds.ok().map(|holds| holds != 0)
+        }
         _ => None,
     }
 }
@@ -7053,7 +5897,7 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
 fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
     let offset = if fault_poll { std::mem::offset_of!(CallContext, poll_start) as i32 }
         else { CONTEXT_INTERRUPT };
-    builder.ins().load(types::I64, invariant(), context, offset)
+    object_slots::emit(builder).raw_load(crate::staged::machine::Lane::I64, invariant(), context, offset)
 }
 
 /// The common native region core: builder, call context, interrupt check and its
@@ -7086,15 +5930,11 @@ impl<'b> RegionCore<'b> {
     /// Read the call context's interrupt flag. A JS region uses the result to
     /// take its exact-PC callout; scalar regions use it for termination exits.
     fn interrupt_requested(&mut self) -> ir::Value {
+        use crate::staged::machine::{Lane, Relation};
         let context = self.context;
         let pointer = native_interrupt_pointer(&mut self.builder, context, false);
-        let requested = self
-            .builder
-            .ins()
-            .atomic_load(types::I8, MemFlagsData::trusted(), pointer);
-        self.builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, requested, 0)
+        let requested = self.raw_atomic_load(Lane::I8, MemFlagsData::trusted(), pointer);
+        self.raw_compare_imm(Relation::NotEqual, requested, 0)
     }
 
     /// Checks for a termination request: a read of the poll page, which faults once one is
@@ -7104,9 +5944,7 @@ impl<'b> RegionCore<'b> {
         if let Some(poll) = self.poll {
             // The read faults once termination is requested, and the fault resumes as the
             // termination (`guard_fault`). Atomic, so it is neither merged nor dropped.
-            self.builder
-                .ins()
-                .atomic_load(types::I8, MemFlagsData::trusted(), poll);
+            self.raw_atomic_load(crate::staged::machine::Lane::I8, MemFlagsData::trusted(), poll);
             return;
         }
         let stop = self.interrupt_requested();
@@ -7119,7 +5957,7 @@ impl<'b> RegionCore<'b> {
             }
         };
         let next = self.builder.create_block();
-        self.builder.ins().brif(stop, termination, &[], next, &[]);
+        self.branch_if(stop, (termination, &[]), (next, &[]));
         self.builder.switch_to_block(next);
         self.builder.seal_block(next);
     }
@@ -7195,12 +6033,13 @@ impl<'b> Body<'b> {
 
     /// The register's value viewed as `ty`.
     fn read(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
+        use crate::staged::machine::{Lane, Unary};
         let variable = self.views(register)[view(ty)];
         let stored = self.builder.use_var(variable);
         if ty != crate::WasmType::I32 || self.int32_extension == Int32Extension::Sign {
             return stored;
         }
-        let value = self.builder.ins().ireduce(types::I32, stored);
+        let value = self.raw_unary(Unary::Narrow(Lane::I32), stored);
         self.extended[value] = stored.into();
         value
     }
@@ -7208,11 +6047,12 @@ impl<'b> Body<'b> {
     /// `value`, an i32, extended to 64 bits as `extension` does: the i32 view it was read
     /// from, if the view holds it so.
     fn extend(&mut self, value: ir::Value, extension: Int32Extension) -> ir::Value {
+        use crate::staged::machine::{Lane, Unary};
         match self.extended[value].expand() {
             Some(wide) if extension == self.int32_extension => wide,
             _ => match extension {
-                Int32Extension::Zero => self.builder.ins().uextend(types::I64, value),
-                Int32Extension::Sign => self.builder.ins().sextend(types::I64, value),
+                Int32Extension::Zero => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
+                Int32Extension::Sign => self.raw_unary(Unary::SignExtend(Lane::I64), value),
             },
         }
     }
@@ -7232,11 +6072,9 @@ impl<'b> Body<'b> {
 
     /// Define the register as `value` of type `ty`, in both views of its bits.
     fn write(&mut self, register: u16, ty: crate::WasmType, value: ir::Value) {
+        use crate::staged::machine::Unary;
         let other = counterpart(ty);
-        let converted = self
-            .builder
-            .ins()
-            .bitcast(scalar_ir(other), MemFlagsData::new(), value);
+        let converted = self.raw_unary(Unary::Bitcast(emit_machine::lane_of(scalar_ir(other))), value);
         let stored = self.view_value(ty, value);
         let converted = self.view_value(other, converted);
         let variables = self.views(register);
@@ -7267,16 +6105,12 @@ struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
-    globals: &'a [u32],
     analysis: &'a Analysis<'a, H>,
     body: Body<'b>,
     plan: &'a Plan,
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
-    /// The artifact's certificate count less one (`reference_dispatch_entries`), which selects
-    /// a table index's certificate.
-    reference_dispatch_mask: u64,
     /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
     diagnostics_enabled: bool,
     base: ir::Value,
@@ -7317,6 +6151,8 @@ struct Emitter<'a, 'b, H: Host> {
     /// The words a SIMD kernel callout reads its operands from and writes its result to
     /// (`compiled_simd_kernel`), made at the first callout.
     simd_words: Option<ir::StackSlot>,
+    /// The table an indirect target is being emitted for (`WasmTable`).
+    indirect: Option<wasm_table_stage::IndirectSite>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -7353,22 +6189,15 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// Define the register as the constant `bits` of width `kind`.
     fn write_constant(&mut self, register: u16, kind: Kind, bits: i64) {
+        use crate::staged::machine::Lane;
         self.known.retain(|(known, _)| *known != register);
         if kind == Kind::I32 && self.selectors.contains(&register) {
             self.known.push((register, bits as i32));
         }
         let (integer, float) = match kind {
             // The i32 view holds the constant zero-extended (`view_ir`).
-            Kind::I32 => (
-                self.body.core.builder
-                    .ins()
-                    .iconst(types::I64, i64::from(bits as u32)),
-                self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
-            ),
-            Kind::I64 => (
-                self.body.core.builder.ins().iconst(types::I64, bits),
-                self.body.core.builder.ins().f64const(Ieee64::with_bits(bits as u64)),
-            ),
+            Kind::I32 => (self.raw_const(Lane::I64, i64::from(bits as u32)), self.raw_const(Lane::F32, bits)),
+            Kind::I64 => (self.raw_const(Lane::I64, bits), self.raw_const(Lane::F64, bits)),
         };
         let float_type = counterpart(kind.integer());
         let variables = self.body.views(register);
@@ -7405,7 +6234,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     fn trap_if(&mut self, condition: ir::Value, trap: crate::WasmTrap) {
         let trap = self.trap_block(trap);
         let next = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(condition, trap, &[], next, &[]);
+        self.branch_if(condition, (trap, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -7415,316 +6244,37 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn finish_traps(&mut self) {
+        use crate::staged::machine::Lane;
         if let Some(block) = self.body.termination_block {
             self.body.core.builder.switch_to_block(block);
-            let status = self.body.core.builder.ins().iconst(types::I64, TERMINATED_STATUS);
+            let status = self.raw_const(Lane::I64, TERMINATED_STATUS);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.raw_const(kind.lane(), 0));
             }
-            self.body.core.builder.ins().return_(&values);
+            self.leave(&values);
         }
         for (index, block) in self.trap_blocks.into_iter().enumerate() {
             let Some(block) = block else { continue };
             self.body.core.builder.switch_to_block(block);
-            let status = self.body.core.builder.ins().iconst(types::I64, index as i64 + 1);
+            let status = self.raw_const(Lane::I64, index as i64 + 1);
             let mut values = vec![status];
             if let Some(ty) = self.plan.result {
                 let kind = Kind::of(ty).expect("planned");
-                values.push(self.body.core.builder.ins().iconst(kind.ir(), 0));
+                values.push(self.raw_const(kind.lane(), 0));
             }
-            self.body.core.builder.ins().return_(&values);
+            self.leave(&values);
         }
     }
 
-    /// An integer operator at the operands' width.
-    fn integer_binary(
-        &mut self,
-        operator: I64BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use I64BinaryOperator as B;
-        let ty = self.body.core.builder.func.dfg.value_type(left);
-        let compare = |this: &mut Self, cc: IntCC| {
-            let flag = this.body.core.builder.ins().icmp(cc, left, right);
-            this.body.core.builder.ins().uextend(types::I32, flag)
-        };
-        match operator {
-            B::Add => self.body.core.builder.ins().iadd(left, right),
-            B::Subtract => self.body.core.builder.ins().isub(left, right),
-            B::Multiply => self.body.core.builder.ins().imul(left, right),
-            B::And => self.body.core.builder.ins().band(left, right),
-            B::Or => self.body.core.builder.ins().bor(left, right),
-            B::Xor => self.body.core.builder.ins().bxor(left, right),
-            B::ShiftLeft => self.body.core.builder.ins().ishl(left, right),
-            B::ShiftRightSigned => self.body.core.builder.ins().sshr(left, right),
-            B::ShiftRightUnsigned => self.body.core.builder.ins().ushr(left, right),
-            B::RotateLeft => self.body.core.builder.ins().rotl(left, right),
-            B::RotateRight => self.body.core.builder.ins().rotr(left, right),
-            B::MultiplyHighSigned => self.body.core.builder.ins().smulhi(left, right),
-            B::MultiplyHighUnsigned => self.body.core.builder.ins().umulhi(left, right),
-            B::Equal => compare(self, IntCC::Equal),
-            B::NotEqual => compare(self, IntCC::NotEqual),
-            B::LessSigned => compare(self, IntCC::SignedLessThan),
-            B::LessUnsigned => compare(self, IntCC::UnsignedLessThan),
-            B::GreaterSigned => compare(self, IntCC::SignedGreaterThan),
-            B::GreaterUnsigned => compare(self, IntCC::UnsignedGreaterThan),
-            B::LessEqualSigned => compare(self, IntCC::SignedLessThanOrEqual),
-            B::LessEqualUnsigned => compare(self, IntCC::UnsignedLessThanOrEqual),
-            B::GreaterEqualSigned => compare(self, IntCC::SignedGreaterThanOrEqual),
-            B::GreaterEqualUnsigned => compare(self, IntCC::UnsignedGreaterThanOrEqual),
-            B::DivideSigned | B::RemainderSigned | B::DivideUnsigned | B::RemainderUnsigned => {
-                let zero = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, 0);
-                self.trap_if(zero, crate::WasmTrap::IntegerDivideByZero);
-                match operator {
-                    B::DivideUnsigned => self.body.core.builder.ins().udiv(left, right),
-                    B::RemainderUnsigned => self.body.core.builder.ins().urem(left, right),
-                    B::DivideSigned => {
-                        let minimum = if ty == types::I32 {
-                            i64::from(i32::MIN)
-                        } else {
-                            i64::MIN
-                        };
-                        let minimum = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, left, minimum);
-                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let overflow = self.body.core.builder.ins().band(minimum, negative_one);
-                        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-                        self.body.core.builder.ins().sdiv(left, right)
-                    }
-                    _ => {
-                        // `MIN % -1` is 0; the machine division would fault.
-                        let negative_one = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let one = self.body.core.builder.ins().iconst(ty, 1);
-                        let divisor = self.body.core.builder.ins().select(negative_one, one, right);
-                        self.body.core.builder.ins().srem(left, divisor)
-                    }
-                }
-            }
-        }
-    }
-
-    /// An integer unary operator at the operand's width.
-    fn integer_unary(&mut self, operator: I64UnaryOperator, value: ir::Value) -> ir::Value {
-        use I64UnaryOperator as U;
-        let ty = self.body.core.builder.func.dfg.value_type(value);
-        let mut extend = |narrow_type| {
-            let narrow = self.body.core.builder.ins().ireduce(narrow_type, value);
-            self.body.core.builder.ins().sextend(ty, narrow)
-        };
-        match operator {
-            U::EqualZero => {
-                let flag = self.body.core.builder.ins().icmp_imm_s(IntCC::Equal, value, 0);
-                self.body.core.builder.ins().uextend(types::I32, flag)
-            }
-            U::LeadingZeros => self.body.core.builder.ins().clz(value),
-            U::TrailingZeros => self.body.core.builder.ins().ctz(value),
-            U::PopulationCount => self.body.core.builder.ins().popcnt(value),
-            U::ExtendSigned8 => extend(types::I8),
-            U::ExtendSigned16 => extend(types::I16),
-            U::ExtendSigned32 => extend(types::I32),
-        }
-    }
-
-    /// The canonical NaN of float type `ty`, as `crate::wasm::float` produces.
-    fn canonical_nan(&mut self, ty: ir::Type) -> ir::Value {
-        use crate::wasm::numeric::canonical_nan_bits;
-        if ty == types::F32 {
-            let bits = canonical_nan_bits(f32::MANTISSA_DIGITS, u64::from(f32::INFINITY.to_bits()));
-            self.body.core.builder.ins().f32const(Ieee32::with_bits(bits as u32))
-        } else {
-            let bits = canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits());
-            self.body.core.builder.ins().f64const(Ieee64::with_bits(bits))
-        }
-    }
-
-    /// A float operator at the operands' width.
-    fn float_binary(
-        &mut self,
-        operator: F64BinaryOperator,
-        left: ir::Value,
-        right: ir::Value,
-    ) -> ir::Value {
-        use F64BinaryOperator as F;
-        let compare = |this: &mut Self, cc: FloatCC| {
-            let flag = this.body.core.builder.ins().fcmp(cc, left, right);
-            this.body.core.builder.ins().uextend(types::I32, flag)
-        };
-        match operator {
-            F::Add => self.body.core.builder.ins().fadd(left, right),
-            F::Subtract => self.body.core.builder.ins().fsub(left, right),
-            F::Multiply => self.body.core.builder.ins().fmul(left, right),
-            F::Divide => self.body.core.builder.ins().fdiv(left, right),
-            F::Minimum | F::Maximum => {
-                // Signed zeros order as Wasm requires; a NaN operand gives
-                // the canonical NaN.
-                let extremum = if operator == F::Minimum {
-                    self.body.core.builder.ins().fmin(left, right)
-                } else {
-                    self.body.core.builder.ins().fmax(left, right)
-                };
-                let unordered = self.body.core.builder.ins().fcmp(FloatCC::Unordered, left, right);
-                let ty = self.body.core.builder.func.dfg.value_type(left);
-                let nan = self.canonical_nan(ty);
-                self.body.core.builder.ins().select(unordered, nan, extremum)
-            }
-            F::CopySign => self.body.core.builder.ins().fcopysign(left, right),
-            F::Equal => compare(self, FloatCC::Equal),
-            F::NotEqual => compare(self, FloatCC::NotEqual),
-            F::Less => compare(self, FloatCC::LessThan),
-            F::Greater => compare(self, FloatCC::GreaterThan),
-            F::LessEqual => compare(self, FloatCC::LessThanOrEqual),
-            F::GreaterEqual => compare(self, FloatCC::GreaterThanOrEqual),
-        }
-    }
-
-    /// A float unary operator at the operand's width. The machine rounding
-    /// and square root quiet a signaling NaN, as the operators do.
-    fn float_unary(&mut self, operator: F64UnaryOperator, value: ir::Value) -> ir::Value {
-        use F64UnaryOperator as U;
-        match operator {
-            U::Absolute => self.body.core.builder.ins().fabs(value),
-            U::Negate => self.body.core.builder.ins().fneg(value),
-            U::Ceiling => self.body.core.builder.ins().ceil(value),
-            U::Floor => self.body.core.builder.ins().floor(value),
-            U::Truncate => self.body.core.builder.ins().trunc(value),
-            U::Nearest => self.body.core.builder.ins().nearest(value),
-            U::SquareRoot => self.body.core.builder.ins().sqrt(value),
-        }
-    }
-
-    /// A scalar conversion of `value`, already viewed as the source type.
-    fn convert(&mut self, operator: ScalarConversionOperator, value: ir::Value) -> ir::Value {
-        use ScalarConversionOperator as C;
-        let result = scalar_ir(operator.result_type());
-        let source = operator.source_type();
-        match operator {
-            C::WrapI64 => self.body.core.builder.ins().ireduce(result, value),
-            C::ExtendI32Signed => self.body.core.builder.ins().sextend(result, value),
-            C::ExtendI32Unsigned => self.body.core.builder.ins().uextend(result, value),
-            C::TruncateF32SignedI32
-            | C::TruncateF64SignedI32
-            | C::TruncateF32SignedI64
-            | C::TruncateF64SignedI64 => self.truncate(value, source, result, true),
-            C::TruncateF32UnsignedI32
-            | C::TruncateF64UnsignedI32
-            | C::TruncateF32UnsignedI64
-            | C::TruncateF64UnsignedI64 => self.truncate(value, source, result, false),
-            C::SaturateF32SignedI32
-            | C::SaturateF64SignedI32
-            | C::SaturateF32SignedI64
-            | C::SaturateF64SignedI64 => self.body.core.builder.ins().fcvt_to_sint_sat(result, value),
-            C::SaturateF32UnsignedI32
-            | C::SaturateF64UnsignedI32
-            | C::SaturateF32UnsignedI64
-            | C::SaturateF64UnsignedI64 => self.body.core.builder.ins().fcvt_to_uint_sat(result, value),
-            C::ConvertI32SignedF32
-            | C::ConvertI64SignedF32
-            | C::ConvertI32SignedF64
-            | C::ConvertI64SignedF64 => self.body.core.builder.ins().fcvt_from_sint(result, value),
-            C::ConvertI32UnsignedF32
-            | C::ConvertI64UnsignedF32
-            | C::ConvertI32UnsignedF64
-            | C::ConvertI64UnsignedF64 => self.body.core.builder.ins().fcvt_from_uint(result, value),
-            C::PromoteF32 => self.body.core.builder.ins().fpromote(result, value),
-            C::DemoteF64 => self.body.core.builder.ins().fdemote(result, value),
-            C::ReinterpretF32I32
-            | C::ReinterpretF64I64
-            | C::ReinterpretI32F32
-            | C::ReinterpretI64F64 => {
-                self.body.core.builder
-                    .ins()
-                    .bitcast(result, MemFlagsData::new(), value)
-            }
-        }
-    }
-
-    /// A trapping truncation: NaN and out-of-range inputs trap, in the
-    /// order and bounds of `crate::wasm::conversion`; the machine conversion
-    /// then sees only representable values.
-    fn truncate(
-        &mut self,
-        value: ir::Value,
-        source: crate::WasmType,
-        result: ir::Type,
-        signed: bool,
-    ) -> ir::Value {
-        let wide = if source == crate::WasmType::F32 {
-            self.body.core.builder.ins().fpromote(types::F64, value)
-        } else {
-            value
-        };
-        let nan = self.body.core.builder.ins().fcmp(FloatCC::Unordered, wide, wide);
-        self.trap_if(nan, crate::WasmTrap::InvalidConversionToInteger);
-        let truncated = self.body.core.builder.ins().trunc(wide);
-        let (lower, limit) = crate::wasm::conversion::truncation_bounds(result.bits(), signed);
-        let lower = self.body.core.builder.ins().f64const(lower);
-        let limit = self.body.core.builder.ins().f64const(limit);
-        let below = self.body.core.builder.ins().fcmp(FloatCC::LessThan, truncated, lower);
-        let above = self
-            .body.core.builder
-            .ins()
-            .fcmp(FloatCC::GreaterThanOrEqual, truncated, limit);
-        let overflow = self.body.core.builder.ins().bor(below, above);
-        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
-        if signed {
-            self.body.core.builder.ins().fcvt_to_sint_sat(result, truncated)
-        } else {
-            self.body.core.builder.ins().fcvt_to_uint_sat(result, truncated)
-        }
-    }
-
-    /// The host address of a checked `width`-byte access at `address + offset`.
-    fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
-        let address = self.zero_extend(address);
-        if self.guarded {
-            // Index plus offset plus width stays inside the reservation; past
-            // the accessible prefix the access faults, and the fault handler
-            // raises the out-of-bounds trap (see `guard_fault`).
-            let host = self.body.core.builder.ins().iadd(self.base, address);
-            return self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset));
-        }
-        let end = self
-            .body.core.builder
-            .ins()
-            .iadd_imm_s(address, i64::from(offset) + width as i64);
-        // A callout may grow the memory while its reserved base stays fixed.
-        // Read the refreshed length rather than the entry-time argument.
-        let length = if self.analysis.callouts {
-            self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            )
-        } else {
-            self.length.expect("unguarded accesses receive the length")
-        };
-        let out_of_bounds = self.body.core.builder.ins().icmp(
-            IntCC::UnsignedGreaterThan,
-            end,
-            length,
-        );
-        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let host = self.body.core.builder.ins().iadd(self.base, address);
-        self.body.core.builder.ins().iadd_imm_s(host, i64::from(offset))
-    }
-
-    /// The address of the value of the global bound at `slot`.
+    /// The address of the native slot of the global bound at `slot`: the instance's global area
+    /// holds it, indexed by the binding.
     fn global_address(&mut self, slot: u32) -> ir::Value {
-        let position = self
-            .globals
-            .iter()
-            .position(|candidate| *candidate == slot)
-            .expect("planned globals are collected");
-        let table = self
-            .body.core.builder
-            .ins()
-            .load(types::I64, invariant(), self.body.core.context, CONTEXT_GLOBALS);
-        self.body.core.builder
-            .ins()
-            .load(types::I64, invariant(), table, (position * 8) as i32)
+        use crate::staged::machine::Lane;
+        let context = self.body.core.context;
+        let table = self.raw_load(Lane::I64, invariant(), context, CONTEXT_GLOBALS);
+        self.raw_load(Lane::I64, invariant(), table, (slot as usize * size_of::<*mut u64>()) as i32)
     }
 
     /// The binding the `b` register of instruction `pc` holds.
@@ -7741,18 +6291,14 @@ impl<H: Host> Emitter<'_, '_, H> {
         let unwound = self.body.core.builder.create_block();
         self.body.core.builder.set_cold_block(unwound);
         let next = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(status, unwound, &[], next, &[]);
+        self.branch_if(status, (unwound, &[]), (next, &[]));
         self.body.core.builder.switch_to_block(unwound);
         self.body.core.builder.seal_block(unwound);
         let mut values = vec![status];
         if let Some(ty) = self.plan.result {
-            values.push(
-                self.body.core.builder
-                    .ins()
-                    .iconst(Kind::of(ty).expect("planned").ir(), 0),
-            );
+            values.push(self.raw_const(Kind::of(ty).expect("planned").lane(), 0));
         }
-        self.body.core.builder.ins().return_(&values);
+        self.leave(&values);
         self.body.core.builder.switch_to_block(next);
         self.body.core.builder.seal_block(next);
     }
@@ -7803,6 +6349,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         signature: &crate::WasmSignature,
         instruction: WideInstruction,
     ) {
+        use crate::staged::machine::{Lane, Unary};
         let word = types::I64.bytes();
         let signature = signature.clone();
         let words = signature.params.len() + 1;
@@ -7816,23 +6363,15 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(*ty).expect("planned");
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
+                Kind::I32 => self.raw_unary(Unary::ZeroExtend(Lane::I64), value),
                 Kind::I64 => value,
             };
-            let address =
-                self.body.core.builder
-                    .ins()
-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, address, 0);
+            let address = self.slot_address(slot, (offset as u32 * word) as i32);
+            self.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), address, 0);
         }
         let result_offset = (signature.params.len() as u32 * word) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self
-            .body.core.builder
-            .ins()
-            .stack_addr(types::I64, slot, result_offset);
+        let args = self.slot_address(slot, 0);
+        let out = self.slot_address(slot, result_offset);
         let callout_signature = match self.callout_signature {
             Some(signature) => signature,
             None => {
@@ -7846,350 +6385,18 @@ impl<H: Host> Emitter<'_, '_, H> {
                 callout
             }
         };
-        let target =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, invariant(), self.body.core.context, CONTEXT_CALLOUT);
-        let function = self.body.core.builder.ins().iconst(types::I64, i64::from(function));
-        let call = self.body.core.builder.ins().call_indirect(
-            callout_signature,
-            target,
-            &[self.body.core.context, function, args, out],
-        );
-        let status = self.body.core.builder.inst_results(call)[0];
+        let context = self.body.core.context;
+        let target = self.raw_load(Lane::I64, invariant(), context, CONTEXT_CALLOUT);
+        let function = self.raw_const(Lane::I64, i64::from(function));
+        let status = self.call_signature(callout_signature, target, &[context, function, args, out])[0];
         self.propagate(status);
         let destination = instruction.result_register();
         match signature.results.first() {
             Some(ty) => {
                 let kind = Kind::of(*ty).expect("planned");
-                let bits = self
-                    .body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), out, 0);
+                let bits = self.raw_load(Lane::I64, MemFlagsData::trusted(), out, 0);
                 let value = match kind {
-                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
-                    Kind::I64 => bits,
-                };
-                self.write(destination, kind, value);
-            }
-            None => self.write_constant(destination, Kind::I32, 0),
-        }
-    }
-
-    /// Keep the table index in native code until the combined VM callout.
-    fn indirect_target(&mut self, _pc: usize, instruction: WideInstruction) {
-        let index = self.read(instruction.c(), Kind::I32);
-        let index = self.body.core.builder.ins().uextend(types::I64, index);
-        self.write(instruction.a(), Kind::I64, index);
-    }
-
-    /// Resolve and call a table reference through one ordinary VM boundary.
-    fn call_reference(&mut self, pc: usize, instruction: WideInstruction) {
-        let Slot::IndirectReference {
-            signature: signature_index,
-            table,
-        } = self.plan.operand(pc)
-        else {
-            unreachable!("planned indirect calls retain their table binding");
-        };
-        let wasm_signature = self
-            .analysis
-            .type_signature(signature_index)
-            .expect("planned")
-            .clone();
-        let word = types::I64.bytes();
-        let words = wasm_signature.params.len() + 1;
-        let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            word * words as u32,
-            word.trailing_zeros() as u8,
-        ));
-        let window = instruction.call_window();
-        for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let kind = Kind::of(*ty).expect("planned");
-            let value = self.read(window.base + offset as u16, kind);
-            let value = match kind {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, value),
-                Kind::I64 => value,
-            };
-            let address =
-                self.body.core.builder
-                    .ins()
-                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, address, 0);
-        }
-        let result_offset = (wasm_signature.params.len() as u32 * word) as i32;
-        let args = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        let out = self
-            .body.core.builder
-            .ins()
-            .stack_addr(types::I64, slot, result_offset);
-        let index = self.read(instruction.b(), Kind::I64);
-        let table_slot = self.body.core.builder.ins().iconst(types::I64, i64::from(table));
-        let signature_index = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, i64::from(signature_index));
-        let site_id = self
-            .reference_site_ids
-            .binary_search_by_key(&pc, |(site_pc, _)| *site_pc)
-            .ok()
-            .map(|index| self.reference_site_ids[index].1)
-            .expect("compiled indirect call has a cache site id");
-        let fast_cache_base = self.body.core.builder.ins().load(
-            types::I64,
-            invariant(),
-            self.body.core.context,
-            CONTEXT_REFERENCE_FAST_CACHES,
-        );
-        // The certificate of the index's low bits (`reference_dispatch_entries`).
-        let entry = self
-            .body.core.builder
-            .ins()
-            .band_imm_u(index, self.reference_dispatch_mask as i64);
-        let entry_offset = self
-            .body.core.builder
-            .ins()
-            .imul_imm_u(entry, std::mem::size_of::<FastReferenceCache>() as i64);
-        let fast_cache = self.body.core.builder.ins().iadd(fast_cache_base, entry_offset);
-        let cached_epoch = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, epoch) as i32,
-        );
-        let cache_initialized = self
-            .body.core.builder
-            .ins()
-            .icmp_imm_u(IntCC::NotEqual, cached_epoch, 0);
-        let check_cache = self.body.core.builder.create_block();
-        let check_entry = self.body.core.builder.create_block();
-        let fast_call = self.body.core.builder.create_block();
-        let slow_call = self.body.core.builder.create_block();
-        let done = self.body.core.builder.create_block();
-        let status_slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-            ir::StackSlotKind::ExplicitSlot,
-            types::I64.bytes(),
-            types::I64.bytes().trailing_zeros() as u8,
-        ));
-        self.body.core.builder
-            .ins()
-            .brif(cache_initialized, check_cache, &[], slow_call, &[]);
-
-        // Table writes and collection advance the VM-local epoch. This makes
-        // artifact-local certificates stale without invalidation walks through
-        // recursive native frames.
-        self.body.core.builder.switch_to_block(check_cache);
-        let epoch_pointer = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_REFERENCE_EPOCH,
-        );
-        let current_epoch =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), epoch_pointer, 0);
-        let epoch_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, current_epoch, cached_epoch);
-        let current_env =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, invariant(), self.body.core.context, CONTEXT_ENV);
-        let cached_env = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, env) as i32,
-        );
-        let env_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, current_env, cached_env);
-        let cached_index = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, index) as i32,
-        );
-        let index_matches = self.body.core.builder.ins().icmp(IntCC::Equal, index, cached_index);
-        let cached_signature = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, signature) as i32,
-        );
-        let signature_matches = self
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::Equal, signature_index, cached_signature);
-        let cached_table = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, table) as i32,
-        );
-        let table_matches = self.body.core.builder.ins().icmp(IntCC::Equal, table_slot, cached_table);
-        let signature_matches = self.body.core.builder.ins().band(signature_matches, table_matches);
-        let epoch_and_env_match = self.body.core.builder.ins().band(epoch_matches, env_matches);
-        let index_and_signature_match = self.body.core.builder.ins().band(index_matches, signature_matches);
-        let cache_matches = self
-            .body.core.builder
-            .ins()
-            .band(epoch_and_env_match, index_and_signature_match);
-        self.body.core.builder
-            .ins()
-            .brif(cache_matches, check_entry, &[], slow_call, &[]);
-        self.body.core.builder.seal_block(check_cache);
-
-        // A valid cache is populated only from a checked same-artifact target,
-        // but keep the index and non-null tests here as a cheap corruption
-        // guard before indexing the artifact's entry table.
-        self.body.core.builder.switch_to_block(check_entry);
-        let cached_function = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            fast_cache,
-            std::mem::offset_of!(FastReferenceCache, function) as i32,
-        );
-        let function_in_range = self.body.core.builder.ins().icmp_imm_u(
-            IntCC::UnsignedLessThan,
-            cached_function,
-            self.plans.len() as i64,
-        );
-        let body = {
-            let lookup_entry = self.body.core.builder.create_block();
-            self.body.core.builder
-                .ins()
-                .brif(function_in_range, lookup_entry, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(check_entry);
-            self.body.core.builder.switch_to_block(lookup_entry);
-            let artifact_table =
-                self.body.core.builder
-                    .ins()
-                    .load(types::I64, invariant(), self.body.core.context, CONTEXT_TABLE);
-            let entry_offset = self.body.core.builder.ins().ishl_imm_u(cached_function, 3);
-            let entry_address = self.body.core.builder.ins().iadd(artifact_table, entry_offset);
-            let entry =
-                self.body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), entry_address, 0);
-            let entry_present = self.body.core.builder.ins().icmp_imm_u(IntCC::NotEqual, entry, 0);
-            self.body.core.builder
-                .ins()
-                .brif(entry_present, fast_call, &[], slow_call, &[]);
-            self.body.core.builder.seal_block(lookup_entry);
-            entry
-        };
-
-        self.body.core.builder.switch_to_block(fast_call);
-        let mut direct_args = vec![self.body.core.context];
-        if self.memory.base {
-            direct_args.push(self.base);
-        }
-        direct_args.extend(self.length);
-        for (offset, ty) in wasm_signature.params.iter().enumerate() {
-            let raw = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                args,
-                (offset as u32 * word) as i32,
-            );
-            direct_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, raw),
-                Kind::I64 => raw,
-            });
-        }
-        let entry_signature = self.body.core.builder.import_signature(internal_signature(
-            self.memory,
-            &wasm_signature.params,
-            wasm_signature.results.first().copied(),
-            self.call_conv,
-        ));
-        let call = self
-            .body.core.builder
-            .ins()
-            .call_indirect(entry_signature, body, &direct_args);
-        let fast_results = self.body.core.builder.inst_results(call).to_vec();
-        let fast_status = fast_results[0];
-        if let Some(result) = wasm_signature.results.first() {
-            let value = match Kind::of(*result).expect("planned") {
-                Kind::I32 => self.body.core.builder.ins().uextend(types::I64, fast_results[1]),
-                Kind::I64 => fast_results[1],
-            };
-            self.body.core.builder
-                .ins()
-                .store(MemFlagsData::trusted(), value, out, 0);
-        }
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.core.builder
-            .ins()
-            .store(MemFlagsData::trusted(), fast_status, status_address, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.seal_block(fast_call);
-
-        self.body.core.builder.switch_to_block(slow_call);
-        self.body.core.builder.set_cold_block(slow_call);
-        let target_offset = if self.diagnostics_enabled {
-            CONTEXT_CALL_REFERENCE_DIAGNOSTIC
-        } else {
-            CONTEXT_CALL_REFERENCE
-        };
-        let target = self
-            .body.core.builder
-            .ins()
-            .load(types::I64, invariant(), self.body.core.context, target_offset);
-        let mut call_signature = Signature::new(self.call_conv);
-        for _ in 0..8 {
-            call_signature.params.push(AbiParam::new(types::I64));
-        }
-        call_signature.returns.push(AbiParam::new(types::I64));
-        let call_signature = self.body.core.builder.import_signature(call_signature);
-        let site_id = self.body.core.builder.ins().iconst(types::I64, site_id as i64);
-        let call = self.body.core.builder.ins().call_indirect(
-            call_signature,
-            target,
-            &[
-                self.body.core.context,
-                table_slot,
-                index,
-                signature_index,
-                site_id,
-                args,
-                out,
-                fast_cache,
-            ],
-        );
-        let slow_status = self.body.core.builder.inst_results(call)[0];
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        self.body.core.builder
-            .ins()
-            .store(MemFlagsData::trusted(), slow_status, status_address, 0);
-        self.body.core.builder.ins().jump(done, &[]);
-        self.body.core.builder.seal_block(slow_call);
-
-        self.body.core.builder.switch_to_block(done);
-        self.body.core.builder.seal_block(done);
-        let status_address = self.body.core.builder.ins().stack_addr(types::I64, status_slot, 0);
-        let status =
-            self.body.core.builder
-                .ins()
-                .load(types::I64, MemFlagsData::trusted(), status_address, 0);
-        self.propagate(status);
-        let destination = instruction.result_register();
-        match wasm_signature.results.first() {
-            Some(ty) => {
-                let kind = Kind::of(*ty).expect("planned");
-                let bits = self
-                    .body.core.builder
-                    .ins()
-                    .load(types::I64, MemFlagsData::trusted(), out, 0);
-                let value = match kind {
-                    Kind::I32 => self.body.core.builder.ins().ireduce(types::I32, bits),
+                    Kind::I32 => self.raw_unary(Unary::Narrow(Lane::I32), bits),
                     Kind::I64 => bits,
                 };
                 self.write(destination, kind, value);
@@ -8213,7 +6420,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             block = self.body.core.builder.create_block();
             self.pending.push((block, thread));
         }
-        self.body.core.builder.ins().jump(block, &[]);
+        self.goto(block, &[]);
     }
 
     /// A conditional transfer from `pc`. It checks for an interrupt when
@@ -8232,13 +6439,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
         if target >= fallthrough {
-            self.body.core.builder.ins().brif(condition, taken, &[], next, &[]);
+            self.branch_if(condition, (taken, &[]), (next, &[]));
             return;
         }
         let exit = self.body.core.builder.create_block();
-        self.body.core.builder.ins().brif(condition, taken, &[], exit, &[]);
+        self.branch_if(condition, (taken, &[]), (exit, &[]));
         self.body.core.builder.switch_to_block(exit);
-        self.body.core.builder.ins().jump(next, &[]);
+        self.goto(next, &[]);
     }
 
     /// Whether an edge from `pc` to `target` checks for an interrupt: a back edge does, except
@@ -8369,711 +6576,38 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         };
         let target = self.block(target);
-        self.body.core.builder.ins().jump(target, &[]);
+        self.goto(target, &[]);
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
-    /// The SIMD variable of `register`.
-    fn vector(&mut self, register: u16) -> Variable {
-        let index = usize::from(register);
-        if self.vectors.len() <= index {
-            self.vectors.resize(index + 1, None);
-        }
-        if let Some(variable) = self.vectors[index] {
-            return variable;
-        }
-        let variable = self.body.core.builder.declare_var(VECTOR_IR);
-        self.vectors[index] = Some(variable);
-        variable
-    }
-
-    fn read_vector(&mut self, register: u16) -> ir::Value {
-        let variable = self.vector(register);
-        self.body.core.builder.use_var(variable)
-    }
-
-    /// Define `register` as the vector `value`, of any lane shape.
-    fn write_vector(&mut self, register: u16, value: ir::Value) {
-        let value = self.lanes(VECTOR_IR, value);
-        let variable = self.vector(register);
-        self.known.retain(|(known, _)| *known != register);
-        self.body.core.builder.def_var(variable, value);
-    }
-
-    /// `value`, a vector, viewed with the lane shape `ty`: the same bits.
-    fn lanes(&mut self, ty: ir::Type, value: ir::Value) -> ir::Value {
-        if self.body.core.builder.func.dfg.value_type(value) == ty {
-            return value;
-        }
-        let flags = MemFlagsData::new().with_endianness(ir::Endianness::Little);
-        self.body.core.builder.ins().bitcast(ty, flags, value)
-    }
-
-    /// Address and effect flags for a full-width vector access. A proven memory32
-    /// address fits the guard reservation, including the vector's last byte. Keep
-    /// this access trapping: even an unused load must fault before later effects.
-    fn vector_address(&mut self, pc: usize, register: u16) -> (ir::Value, MemFlagsData) {
-        let address = self.read(register, Kind::I64);
-        if self.guarded && self.plan.operand(pc) == Slot::Memory32Address {
-            let flags = MemFlagsData::new()
-                .with_trap_code(Some(ir::TrapCode::HEAP_OUT_OF_BOUNDS))
-                .with_endianness(ir::Endianness::Little)
-                .with_alias_region(Some(self.regions[Region::LinearMemory as usize]));
-            return (self.body.core.builder.ins().iadd(self.base, address), flags);
-        }
-        let end = self
-            .body.core.builder
-            .ins()
-            .iadd_imm_u(address, crate::wasm::V128_BYTES as i64);
-        let memory_length = self.body.core.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.body.core.context,
-            CONTEXT_MEMORY_LENGTH,
-        );
-        let out_of_bounds =
-            self.body.core.builder
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-        self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-        let address = self.body.core.builder.ins().iadd(self.base, address);
-        (address, self.flags(Region::LinearMemory))
-    }
-
-    /// The instructions that define or read vectors (`Slot::Vector`); `None` for any other.
-    fn vector_instruction(&mut self, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        match instruction.op().class() {
-            Class::Move if self.plan.operand(pc) == Slot::Vector => {
-                let value = self.read_vector(b);
-                self.write_vector(a, value);
-            }
-            Class::LoadConst | Class::WasmFillRegisters => {
-                let constant = self.analysis.constant(instruction.constant_index())?;
-                let bits = self.analysis.constant_vector(constant)?;
-                let registers = if instruction.op().class().eq(Class::LoadConst) {
-                    a..a + 1
-                } else {
-                    let window = instruction.register_window();
-                    window.base..window.base + window.count
-                };
-                for register in registers {
-                    let value = self.vector_constant(bits);
-                    self.write_vector(register, value);
-                }
-            }
-            Class::WasmMemoryAddress => {
-                let offset = self
-                    .analysis
-                    .memory_offset(instruction.constant_index())
-                    .expect("planned");
-                let address = self.read(b, Kind::I32);
-                let address = self.body.core.builder.ins().uextend(types::I64, address);
-                // A memory32 offset is below 2^32, so the 64-bit sum cannot wrap.
-                let address = self.body.core.builder.ins().iadd_imm_u(address, offset as i64);
-                self.write(a, Kind::I64, address);
-            }
-            Class::WasmMemoryLoad => {
-                let (address, flags) = self.vector_address(pc, c);
-                let value = self.body.core.builder.ins().load(VECTOR_IR, flags, address, 0);
-                self.write_vector(a, value);
-            }
-            Class::WasmMemoryStore => {
-                let (address, flags) = self.vector_address(pc, c);
-                let value = self.read_vector(a);
-                self.body.core.builder.ins().store(flags, value, address, 0);
-            }
-            Class::WasmSimdShuffle => {
-                let lanes = self
-                    .analysis
-                    .shuffle_lanes(instruction.constant_index())
-                    .expect("planned");
-                let mask = self
-                    .body.core.builder
-                    .func
-                    .dfg
-                    .immediates
-                    .push(ir::ConstantData::from(lanes.to_vec()));
-                let (left, right) = (self.read_vector(b), self.read_vector(c));
-                let value = self.body.core.builder.ins().shuffle(left, right, mask);
-                self.write_vector(a, value);
-            }
-            Class::WasmSimd => self.simd(pc, instruction),
-            _ => return None,
-        }
-        Some(true)
-    }
-
-    fn vector_constant(&mut self, bits: u128) -> ir::Value {
-        let constant = self
-            .body.core.builder
-            .func
-            .dfg
-            .constants
-            .insert(ir::ConstantData::from(bits.to_le_bytes().to_vec()));
-        self.body.core.builder.ins().vconst(VECTOR_IR, constant)
-    }
-
-    /// A SIMD operator: one Cranelift instruction where one has its exact semantics, else
-    /// the operator's own kernel (`SimdKernel::apply_bits`), which the interpreter runs too.
-    fn simd(&mut self, pc: usize, instruction: WideInstruction) {
-        use crate::wasm::simd::SimdOperator as S;
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        let (operator, _) = S::from_selector(instruction.imm()).expect("planned");
-        // Lane-wise integer arithmetic, bitwise logic and shifts: Cranelift reduces a vector
-        // shift's count modulo the lane width, as Wasm does.
-        let lanes = match operator {
-            S::V128And | S::V128Or | S::V128Xor | S::V128AndNot | S::V128Not => Some(VECTOR_IR),
-            S::I8x16Add | S::I8x16Sub => Some(types::I8X16),
-            S::I16x8Add | S::I16x8Sub | S::I16x8Shl | S::I16x8ShrU | S::I16x8ShrS => {
-                Some(types::I16X8)
-            }
-            S::I32x4Add | S::I32x4Sub | S::I32x4Shl | S::I32x4ShrU | S::I32x4ShrS => {
-                Some(types::I32X4)
-            }
-            S::I64x2Add | S::I64x2Sub | S::I64x2Shl | S::I64x2ShrU | S::I64x2ShrS => {
-                Some(types::I64X2)
-            }
-            _ => None,
-        };
-        if let Some(ty) = lanes {
-            let left = self.read_vector(b);
-            let left = self.lanes(ty, left);
-            let builder = &mut self.body.core.builder;
-            let value = match operator {
-                S::V128Not => builder.ins().bnot(left),
-                S::I16x8Shl | S::I32x4Shl | S::I64x2Shl
-                | S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU
-                | S::I16x8ShrS | S::I32x4ShrS | S::I64x2ShrS => {
-                    let count = self.read(c, Kind::I32);
-                    let builder = &mut self.body.core.builder;
-                    match operator {
-                        S::I16x8Shl | S::I32x4Shl | S::I64x2Shl => builder.ins().ishl(left, count),
-                        S::I16x8ShrU | S::I32x4ShrU | S::I64x2ShrU => {
-                            builder.ins().ushr(left, count)
-                        }
-                        _ => builder.ins().sshr(left, count),
-                    }
-                }
-                _ => {
-                    let right = self.read_vector(c);
-                    let right = self.lanes(ty, right);
-                    let builder = &mut self.body.core.builder;
-                    match operator {
-                        S::V128And => builder.ins().band(left, right),
-                        S::V128Or => builder.ins().bor(left, right),
-                        S::V128Xor => builder.ins().bxor(left, right),
-                        S::V128AndNot => builder.ins().band_not(left, right),
-                        S::I8x16Add | S::I16x8Add | S::I32x4Add | S::I64x2Add => {
-                            builder.ins().iadd(left, right)
-                        }
-                        _ => builder.ins().isub(left, right),
-                    }
-                }
-            };
-            self.write_vector(a, value);
-            return;
-        }
-        if matches!(operator, S::I64x2ExtMulLowI32x4U) {
-            let (left, right) = (self.read_vector(b), self.read_vector(c));
-            let (left, right) = (self.lanes(types::I32X4, left), self.lanes(types::I32X4, right));
-            let builder = &mut self.body.core.builder;
-            let left = builder.ins().uwiden_low(left);
-            let right = builder.ins().uwiden_low(right);
-            let value = builder.ins().imul(left, right);
-            self.write_vector(a, value);
-            return;
-        }
-        self.simd_kernel(pc, instruction);
-    }
-
-    /// `simd` through the kernel: operands to words, `compiled_simd_kernel`, the result back.
-    fn simd_kernel(&mut self, _pc: usize, instruction: WideInstruction) {
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        let (kernel, lane) = crate::wasm::simd::SimdKernel::of(instruction.imm()).expect("planned");
-        let word = types::I64.bytes();
-        let slot = match self.simd_words {
-            Some(slot) => slot,
-            None => {
-                let slot = self.body.core.builder.create_sized_stack_slot(ir::StackSlotData::new(
-                    ir::StackSlotKind::ExplicitSlot,
-                    SIMD_KERNEL_WORDS as u32 * word,
-                    crate::wasm::V128_BYTES.trailing_zeros() as u8,
-                ));
-                self.simd_words = Some(slot);
-                slot
-            }
-        };
-        let operand = |emitter: &mut Self, register: u16, ty: crate::WasmType, at: usize| {
-            let offset = (at as u32 * word) as i32;
-            let (low, high) = match ty {
-                crate::WasmType::V128 => {
-                    let value = emitter.read_vector(register);
-                    let value = emitter.lanes(types::I64X2, value);
-                    let builder = &mut emitter.body.core.builder;
-                    (builder.ins().extractlane(value, 0), builder.ins().extractlane(value, 1))
-                }
-                ty => {
-                    let kind = Kind::of(ty).expect("planned");
-                    let value = emitter.read(register, kind);
-                    let builder = &mut emitter.body.core.builder;
-                    let value = if kind == Kind::I32 {
-                        builder.ins().uextend(types::I64, value)
-                    } else {
-                        value
-                    };
-                    (value, builder.ins().iconst(types::I64, 0))
-                }
-            };
-            let builder = &mut emitter.body.core.builder;
-            builder.ins().stack_store(types::I64, low, slot, offset);
-            builder.ins().stack_store(types::I64, high, slot, offset + word as i32);
-        };
-        operand(self, b, kernel.left, SIMD_KERNEL_LEFT);
-        if let Some(right) = kernel.right {
-            operand(self, c, right, SIMD_KERNEL_RIGHT);
-        }
-        let mut signature = Signature::new(self.call_conv);
-        signature.params.push(AbiParam::new(types::I64));
-        signature.params.push(AbiParam::new(types::I64));
-        let signature = self.body.core.builder.import_signature(signature);
-        let target = self.body.core.builder.ins().iconst(
-            types::I64,
-            compiled_simd_kernel as *const () as usize as i64,
-        );
-        let selector = self
-            .body.core.builder
-            .ins()
-            .iconst(types::I64, i64::from(instruction.imm()));
-        let words = self.body.core.builder.ins().stack_addr(types::I64, slot, 0);
-        self.body.core.builder
-            .ins()
-            .call_indirect(signature, target, &[selector, words]);
-        let result = (SIMD_KERNEL_RESULT as u32 * word) as i32;
-        match kernel.result_type(lane) {
-            crate::WasmType::V128 => {
-                let value = self.body.core.builder.ins().stack_load(types::I64, VECTOR_IR, slot, result);
-                self.write_vector(a, value);
-            }
-            ty => {
-                let kind = Kind::of(ty).expect("planned");
-                let value = self.body.core.builder.ins().stack_load(types::I64, types::I64, slot, result);
-                let value = if kind == Kind::I32 {
-                    self.body.core.builder.ins().ireduce(types::I32, value)
-                } else {
-                    value
-                };
-                self.write(a, kind, value);
-            }
-        }
-    }
-
     fn instruction(
         &mut self,
         function: &Function,
         pc: usize,
         instruction: WideInstruction,
     ) -> bool {
-        let op = instruction.op();
-        let (a, b, c) = (instruction.a(), instruction.b(), instruction.c());
-        if let Some(done) = self.vector_instruction(pc, instruction) {
-            return done;
+        let step = Step::of(instruction.op(), instruction.imm())
+            .expect("planned instructions have a denotation");
+        match step {
+            Step::Numeric(operation) => self.operation(pc, instruction, operation),
+            Step::Instance(step) => {
+                self.instance(pc, instruction, step);
+                true
+            }
+            Step::Memory(step) => {
+                self.memory(instruction, step);
+                true
+            }
+            Step::Flow(flow) => self.flow(function, pc, instruction, flow),
+            Step::Call(call) => {
+                self.call(pc, instruction, call);
+                true
+            }
+            Step::Simd(step) => {
+                self.simd(pc, instruction, step);
+                true
+            }
         }
-        if let Some(operator) = I32BinaryOperator::from_register_op(op) {
-            let left = self.read(b, Kind::I32);
-            let right = self.read(c, Kind::I32);
-            let value = self.integer_binary(widen_binary(operator), left, right);
-            self.write(a, Kind::I32, value);
-            return true;
-        }
-        if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
-            let left = self.read(b, Kind::I32);
-            let right = self
-                .body.core.builder
-                .ins()
-                .iconst(types::I32, i64::from(instruction.imm() as i32));
-            let value = self.integer_binary(widen_binary(operator), left, right);
-            self.write(a, Kind::I32, value);
-            return true;
-        }
-        if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
-            let left = self.read(a, Kind::I32);
-            let right = self.read(b, Kind::I32);
-            let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
-            return false;
-        }
-        if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
-            let left = self.read(a, Kind::I32);
-            let right = self.body.core.builder.ins().iconst(types::I32, i64::from(b as i16));
-            let holds = self.integer_binary(widen_binary(operator), left, right);
-            self.branch(pc, holds, instruction.jump_target() as usize, pc + 1);
-            return false;
-        }
-        if let Some(load) = MemoryLoad::from_direct_op(op) {
-            let result = load_type(load).expect("planned");
-            let kind = Kind::of(result).expect("planned");
-            let address = self.read(c, Kind::I32);
-            let host = self.address(address, instruction.imm(), load.width());
-            let flags = self.flags(Region::LinearMemory);
-            let ty = kind.ir();
-            let value = match (load.width(), load_signed(load)) {
-                // A float loads straight into its view.
-                _ if result != kind.integer() => {
-                    self.body.core.builder.ins().load(scalar_ir(result), flags, host, 0)
-                }
-                (1, false) => self.body.core.builder.ins().uload8(ty, flags, host, 0),
-                (1, true) => self.body.core.builder.ins().sload8(ty, flags, host, 0),
-                (2, false) => self.body.core.builder.ins().uload16(ty, flags, host, 0),
-                (2, true) => self.body.core.builder.ins().sload16(ty, flags, host, 0),
-                (4, false) if kind == Kind::I64 => self.body.core.builder.ins().uload32(flags, host, 0),
-                (4, true) if kind == Kind::I64 => self.body.core.builder.ins().sload32(flags, host, 0),
-                _ => self.body.core.builder.ins().load(ty, flags, host, 0),
-            };
-            self.write_typed(a, result, value);
-            return true;
-        }
-        if let Some(store) = MemoryStore::from_direct_op(op) {
-            let kind = Kind::of(store.value_type()).expect("planned");
-            let value = self.read_typed(a, store.value_type());
-            let address = self.read(c, Kind::I32);
-            let width = store_width(store);
-            let host = self.address(address, instruction.imm(), width);
-            let flags = self.flags(Region::LinearMemory);
-            match width {
-                1 => self.body.core.builder.ins().istore8(flags, value, host, 0),
-                2 => self.body.core.builder.ins().istore16(flags, value, host, 0),
-                4 if kind == Kind::I64 => self.body.core.builder.ins().istore32(flags, value, host, 0),
-                _ => self.body.core.builder.ins().store(flags, value, host, 0),
-            };
-            return true;
-        }
-        if op.is_wasm_memory_size() {
-            let bytes = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let pages = self.body.core.builder.ins().ushr_imm_u(bytes, 16);
-            let pages = self.body.core.builder.ins().ireduce(types::I32, pages);
-            self.write(a, Kind::I32, pages);
-            return true;
-        }
-        if op.is_wasm_memory_copy() {
-            let (destination, source) = instruction.register_pair();
-            let destination = self.read(destination, Kind::I32);
-            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
-            let source = self.read(source, Kind::I32);
-            let source = self.body.core.builder.ins().uextend(types::I64, source);
-            let raw_length = self.read(c, Kind::I32);
-            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            // Both ranges are checked before any byte moves; 32-bit operands cannot overflow
-            // their 64-bit sums.
-            for start in [destination, source] {
-                let end = self.body.core.builder.ins().iadd(start, length);
-                let out_of_bounds =
-                    self.body.core.builder
-                        .ins()
-                        .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-                self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            }
-            let destination = self.body.core.builder.ins().iadd(self.base, destination);
-            let source = self.body.core.builder.ins().iadd(self.base, source);
-            let mut signature = Signature::new(self.call_conv);
-            for _ in 0..3 {
-                signature.params.push(AbiParam::new(types::I64));
-            }
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.core.builder.import_signature(signature);
-            let target = self.body.core.builder.ins().iconst(
-                types::I64,
-                compiled_memory_copy as *const () as usize as i64,
-            );
-            self.body.core.builder
-                .ins()
-                .call_indirect(signature, target, &[destination, source, length]);
-            return true;
-        }
-        if op.is_wasm_memory_fill() {
-            let (destination, _) = instruction.register_pair();
-            let destination = self.read(destination, Kind::I32);
-            let destination = self.body.core.builder.ins().uextend(types::I64, destination);
-            let raw_length = self.read(c, Kind::I32);
-            let length = self.body.core.builder.ins().uextend(types::I64, raw_length);
-            let end = self.body.core.builder.ins().iadd(destination, length);
-            let memory_length = self.body.core.builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                self.body.core.context,
-                CONTEXT_MEMORY_LENGTH,
-            );
-            let out_of_bounds =
-                self.body.core.builder
-                    .ins()
-                    .icmp(IntCC::UnsignedGreaterThan, end, memory_length);
-            self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
-            let address = self.body.core.builder.ins().iadd(self.base, destination);
-            let raw_byte = self.read(b, Kind::I32);
-            let byte = self.body.core.builder.ins().uextend(types::I64, raw_byte);
-            let mut signature = Signature::new(self.call_conv);
-            for _ in 0..3 {
-                signature.params.push(AbiParam::new(types::I64));
-            }
-            signature.returns.push(AbiParam::new(types::I64));
-            let signature = self.body.core.builder.import_signature(signature);
-            let target = self.body.core.builder.ins().iconst(
-                types::I64,
-                compiled_memory_fill as *const () as usize as i64,
-            );
-            self.body.core.builder
-                .ins()
-                .call_indirect(signature, target, &[address, byte, length]);
-            return true;
-        }
-        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
-            let left = self.read_typed(b, ty);
-            let right = self.read_typed(c, ty);
-            let value = self.float_binary(operator, left, right);
-            let result = if self.body.core.builder.func.dfg.value_type(value) == types::I32 {
-                crate::WasmType::I32
-            } else {
-                ty
-            };
-            self.write_typed(a, result, value);
-            return true;
-        }
-        if let Some((operator, ty)) = float_unary_operator(op, instruction.imm()) {
-            let input = self.read_typed(b, ty);
-            let value = self.float_unary(operator, input);
-            self.write_typed(a, ty, value);
-            return true;
-        }
-        match op.class() {
-            Class::WasmI64Binary => {
-                let operator = I64BinaryOperator::from_tag(instruction.imm()).expect("planned");
-                let left = self.read(b, Kind::I64);
-                let right = self.read(c, Kind::I64);
-                let value = self.integer_binary(operator, left, right);
-                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
-                self.write(a, kind, value);
-            }
-            Class::WasmI64Unary => {
-                let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read(b, Kind::I64);
-                let value = self.integer_unary(operator, input);
-                let kind = Kind::of_ir(self.body.core.builder.func.dfg.value_type(value));
-                self.write(a, kind, value);
-            }
-            Class::WasmScalarConvert => {
-                let operator =
-                    ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read_typed(b, operator.source_type());
-                let value = self.convert(operator, input);
-                self.write_typed(a, operator.result_type(), value);
-            }
-            Class::Move => {
-                let kind = self.operand_kind(pc);
-                let value = self.read(b, kind);
-                self.write(a, kind, value);
-            }
-            Class::LoadConst | Class::WasmFillRegisters => {
-                let constant = self
-                    .analysis
-                    .constant(instruction.constant_index())
-                    .expect("planned");
-                let kind = self.analysis.constant_kind(constant);
-                let bits = self.analysis.constant_bits(constant);
-                if op.is_load_const() {
-                    self.write_constant(a, kind, bits);
-                } else {
-                    let window = instruction.register_window();
-                    for offset in 0..window.count {
-                        self.write_constant(window.base + offset, kind, bits);
-                    }
-                }
-            }
-            Class::WasmI32Unary => {
-                let operator = I32UnaryOperator::from_tag(instruction.imm()).expect("planned");
-                let input = self.read(b, Kind::I32);
-                let value = self.integer_unary(widen_unary(operator), input);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                let input = self.read(b, Kind::I32);
-                let shift = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let shifted =
-                    self.integer_binary(I64BinaryOperator::ShiftRightUnsigned, input, shift);
-                let mask = self
-                    .body.core.builder
-                    .ins()
-                    .iconst(types::I32, i64::from(instruction.imm() as i32));
-                let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmI32AddJump => {
-                let input = self.read(b, Kind::I32);
-                let addend = self.body.core.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let sum = self.body.core.builder.ins().iadd(input, addend);
-                self.write(a, Kind::I32, sum);
-                self.branch(pc, sum, instruction.jump_target() as usize, pc + 1);
-                return false;
-            }
-            Class::WasmJumpI32Zero | Class::WasmJumpI32NonZero => {
-                let value = self.read(a, Kind::I32);
-                let (taken, other) = (instruction.jump_target() as usize, pc + 1);
-                if op.is_wasm_jump_i32_non_zero() {
-                    self.branch(pc, value, taken, other);
-                } else {
-                    self.branch(pc, value, other, taken);
-                }
-                return false;
-            }
-            Class::Jump => {
-                let target = instruction.jump_target() as usize;
-                self.jump(target, self.polls(pc, target));
-                return false;
-            }
-            Class::WasmBranchTable => {
-                let selector = self.read(a, Kind::I32);
-                let entries: Vec<usize> = crate::bytecode::branch_table_entries(pc, instruction)
-                    .map(|entry| {
-                        super::dispatch_fast::decoded_instruction(function, function.code[entry])
-                            .jump_target() as usize
-                    })
-                    .collect();
-                // A table entry at or before `pc` is a backedge; a loop may
-                // repeat through the table alone, so it polls like a jump.
-                if entries.iter().any(|&target| target <= pc) {
-                    self.interrupt_safepoint();
-                }
-                let (default, cases) = entries.split_last().expect("a default entry");
-                let default = self.block(*default);
-                let default = self.body.core.builder.func.dfg.block_call(default, &[]);
-                let cases: Vec<_> = cases
-                    .iter()
-                    .map(|target| {
-                        let block = self.block(*target);
-                        self.body.core.builder.func.dfg.block_call(block, &[])
-                    })
-                    .collect();
-                let table = ir::JumpTableData::new(default, &cases);
-                let table = self.body.core.builder.create_jump_table(table);
-                self.body.core.builder.ins().br_table(selector, table);
-                return false;
-            }
-            Class::WasmSelect => {
-                let (condition, _) = instruction.register_pair();
-                let kind = self.operand_kind(pc);
-                let condition = self.read(condition, Kind::I32);
-                let taken = self.read(b, kind);
-                let other = self.read(c, kind);
-                let value = self.body.core.builder.ins().select(condition, taken, other);
-                self.write(a, kind, value);
-            }
-            Class::CallKnown => {
-                let callee = usize::from(instruction.known_function_index());
-                let Some(callee_plan) = self.plans[callee].as_ref() else {
-                    self.callout_known_fallback(callee as u32, instruction);
-                    return true;
-                };
-                let window = instruction.call_window();
-                let mut args = vec![self.body.core.context];
-                if self.memory.base {
-                    args.push(self.base);
-                }
-                args.extend(self.length);
-                for (offset, ty) in callee_plan.params.iter().enumerate() {
-                    let kind = Kind::of(*ty).expect("planned");
-                    args.push(self.read(window.base + offset as u16, kind));
-                }
-                // Compiled functions share one code buffer: a direct call,
-                // linked at placement (`link`).
-                let target = match self.callees[callee] {
-                    Some(target) => target,
-                    None => {
-                        let signature = internal_signature(
-                            self.memory,
-                            &callee_plan.params,
-                            callee_plan.result,
-                            self.call_conv,
-                        );
-                        let signature = self.body.core.builder.import_signature(signature);
-                        let name = self
-                            .body.core.builder
-                            .func
-                            .declare_imported_user_function(function_name(callee));
-                        let target = self.body.core.builder.import_function(ir::ExtFuncData {
-                            name: ir::ExternalName::User(name),
-                            signature,
-                            colocated: true,
-                            patchable: false,
-                        });
-                        self.callees[callee] = Some(target);
-                        target
-                    }
-                };
-                let call = self.body.core.builder.ins().call(target, &args);
-                let results = self.body.core.builder.inst_results(call).to_vec();
-                self.propagate(results[0]);
-                let destination = instruction.result_register();
-                match callee_plan.result {
-                    Some(ty) => self.write(destination, Kind::of(ty).expect("planned"), results[1]),
-                    None => {
-                        let zero = self.body.core.builder.ins().iconst(types::I32, 0);
-                        self.write(destination, Kind::I32, zero);
-                    }
-                }
-            }
-            Class::WasmRefFunc => {}
-            Class::WasmIndirectTarget => self.indirect_target(pc, instruction),
-            Class::Call => match self.plan.operand(pc) {
-                Slot::Import(_) => self.callout(pc, instruction),
-                Slot::IndirectReference { .. } => self.call_reference(pc, instruction),
-                _ => unreachable!("planned calls hold a supported callable"),
-            },
-            Class::WasmUnreachable => {
-                let trap = self.trap_block(crate::WasmTrap::Unreachable);
-                self.body.core.builder.ins().jump(trap, &[]);
-                return false;
-            }
-            Class::Return => {
-                let status = self.body.core.builder.ins().iconst(types::I64, 0);
-                let mut values = vec![status];
-                if let Some(ty) = self.plan.result {
-                    values.push(self.read(a, Kind::of(ty).expect("planned")));
-                }
-                self.body.core.builder.ins().return_(&values);
-                return false;
-            }
-            // A binding is known statically per instruction; the globals it
-            // names are reached through the context.
-            Class::WasmInstanceBinding => {}
-            Class::WasmGlobalGet => {
-                let slot = self.binding_slot(pc);
-                let address = self.global_address(slot);
-                let flags = self.flags(Region::Globals);
-                let value = self.body.core.builder.ins().load(types::I32, flags, address, 0);
-                self.write(a, Kind::I32, value);
-            }
-            Class::WasmGlobalSet => {
-                let slot = self.binding_slot(pc);
-                let address = self.global_address(slot);
-                let value = self.read(a, Kind::I32);
-                let wide = self.body.core.builder.ins().uextend(types::I64, value);
-                let encoded = self.body.core.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
-                let flags = self.flags(Region::Globals);
-                self.body.core.builder.ins().store(flags, encoded, address, 0);
-            }
-            _ => unreachable!("planned instructions have a denotation"),
-        }
-        true
     }
 }
 
@@ -9240,9 +6774,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         plans: &[Option<Plan>],
         guarded: bool,
         fixed_base: Option<i32>,
-        globals: &[u32],
         reference_site_ids: &'a [(usize, usize)],
-        reference_dispatch_mask: u64,
         diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
@@ -9252,6 +6784,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             UserFuncName::User(function_name(index)),
             internal_signature(memory, &plan.params, plan.result, call_conv),
         );
+        use crate::staged::machine::{Lane, Relation};
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let entry = builder.create_block();
@@ -9264,7 +6797,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         // A constant base folds into each access's addressing mode and
         // frees the register a parameter would occupy.
         let base = match fixed_base {
-            Some(fixed) => builder.ins().iconst(types::I64, i64::from(fixed)),
+            Some(fixed) => object_slots::emit(&mut builder).raw_const(crate::staged::machine::Lane::I64, i64::from(fixed)),
             None => passed.next().expect("a passed base"),
         };
         let length = memory
@@ -9286,7 +6819,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             .iter()
             .enumerate()
             .filter(|(pc, instruction)| {
-                plan.reachable(*pc) && instruction.op().is_wasm_branch_table()
+                plan.reachable(*pc) && matches!(
+                    Step::of(instruction.op(), instruction.imm()),
+                    Some(Step::Flow(Flow::Table))
+                )
             })
             .map(|(_, instruction)| instruction.a())
             .collect();
@@ -9295,13 +6831,11 @@ impl<'a, H: Host> Analysis<'a, H> {
         let mut emitter = Emitter {
             guarded,
             regions,
-            globals,
             analysis: self,
             body: Body::new(builder, context, poll_address(&self.vm.execution_interrupt), Int32Extension::Zero),
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
-            reference_dispatch_mask,
             diagnostics_enabled,
             base,
             length,
@@ -9327,6 +6861,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             pending_copies: Vec::new(),
             vectors: Vec::new(),
             simd_words: None,
+            indirect: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -9343,16 +6878,9 @@ impl<'a, H: Host> Analysis<'a, H> {
             );
         }
         // Each activation checks the stack it may still use.
-        let stack_pointer = emitter.body.core.builder.ins().get_stack_pointer(types::I64);
-        let limit =
-            emitter
-                .body.core.builder
-                .ins()
-                .load(types::I64, invariant(), context, CONTEXT_STACK_LIMIT);
-        let exhausted = emitter
-            .body.core.builder
-            .ins()
-            .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
+        let stack_pointer = emitter.stack_pointer();
+        let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
+        let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
         emitter.known.clear();
         emitter.jump(0, true);
@@ -9390,7 +6918,7 @@ impl<'a, H: Host> Analysis<'a, H> {
                 emitter.known.clear();
                 let block = emitter.block(pc);
                 if open {
-                    emitter.body.core.builder.ins().jump(block, &[]);
+                    emitter.goto(block, &[]);
                 }
                 emitter.body.core.builder.switch_to_block(block);
             }
@@ -9404,7 +6932,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             // now so falling into it stays explicit.
             if open && emitter.blocks.get(pc + 1).is_some_and(Option::is_some) {
                 let next = emitter.block(pc + 1);
-                emitter.body.core.builder.ins().jump(next, &[]);
+                emitter.goto(next, &[]);
                 open = false;
             }
         }
@@ -9418,6 +6946,8 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
+        #[cfg(test)]
+        BUILT_BODIES.with(|built| built.borrow_mut().push((index, func.display().to_string())));
         Some(func)
     }
 
@@ -9433,6 +6963,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         plan: &Plan,
         memory: MemoryArguments,
     ) -> ir::Function {
+        use crate::staged::machine::{Lane, Unary};
         let call_conv = isa.default_call_conv();
         let signature = native_entry_signature(isa.pointer_type(), call_conv);
         let mut func = ir::Function::with_name_signature(
@@ -9453,53 +6984,40 @@ impl<'a, H: Host> Analysis<'a, H> {
             parameters[3],
             parameters[4],
         );
-        let context = if builder.func.dfg.value_type(context) == types::I64 {
-            context
-        } else {
-            builder.ins().uextend(types::I64, context)
-        };
-        let mut call_args = vec![context];
-        call_args.extend(memory.select(base, length));
-        for (offset, ty) in plan.params.iter().enumerate() {
-            let raw = builder.ins().load(
-                types::I64,
-                MemFlagsData::trusted(),
-                args,
-                (offset * 8) as i32,
-            );
-            call_args.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => builder.ins().ireduce(types::I32, raw),
-                Kind::I64 => raw,
-            });
-        }
         let target_signature = builder.import_signature(internal_signature(
             memory,
             &plan.params,
             plan.result,
             call_conv,
         ));
-        let table = builder
-            .ins()
-            .load(types::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
-        let target = builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            table,
-            (index * 8) as i32,
-        );
-        let call = builder
-            .ins()
-            .call_indirect(target_signature, target, &call_args);
-        let results = builder.inst_results(call).to_vec();
+        let wide_context = builder.func.dfg.value_type(context) == types::I64;
+        let mut stage = object_slots::emit(&mut builder);
+        let context = if wide_context {
+            context
+        } else {
+            stage.raw_unary(Unary::ZeroExtend(Lane::I64), context)
+        };
+        let mut call_args = vec![context];
+        call_args.extend(memory.select(base, length));
+        for (offset, ty) in plan.params.iter().enumerate() {
+            let raw = stage.raw_load(Lane::I64, MemFlagsData::trusted(), args, (offset * 8) as i32);
+            call_args.push(match Kind::of(*ty).expect("planned") {
+                Kind::I32 => stage.raw_unary(Unary::Narrow(Lane::I32), raw),
+                Kind::I64 => raw,
+            });
+        }
+        let table = stage.raw_load(Lane::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
+        let target = stage.raw_load(Lane::I64, MemFlagsData::trusted(), table, (index * 8) as i32);
+        let results = stage.call_signature(target_signature, target, &call_args);
         if let Some(ty) = plan.result {
             let value = match Kind::of(ty).expect("planned") {
-                Kind::I32 => builder.ins().uextend(types::I64, results[1]),
+                Kind::I32 => stage.raw_unary(Unary::ZeroExtend(Lane::I64), results[1]),
                 Kind::I64 => results[1],
             };
-            builder.ins().store(MemFlagsData::trusted(), value, out, 0);
+            stage.raw_store(Lane::I64, MemFlagsData::trusted(), (value, false), out, 0);
         }
-        let status = builder.ins().ireduce(types::I32, results[0]);
-        builder.ins().return_(&[status]);
+        let status = stage.raw_unary(Unary::Narrow(Lane::I32), results[0]);
+        stage.leave(&[status]);
         builder.finalize(isa.frontend_config());
         func
     }
@@ -9765,7 +7283,12 @@ unsafe fn enter_wasm(
     out: *mut u64,
     entry: WasmEntry,
 ) -> u32 {
-    match guard_trampoline() {
+    // A fault resumes here with native frames unreturned, which held roots (`NativeRoots`): the
+    // entry gives back what it found.
+    let roots = context.native_roots;
+    // SAFETY: a context with roots is a Wasm entry's, whose VM outlives the call.
+    let depth = (!roots.is_null()).then(|| unsafe { (*roots).depth() });
+    let status = match guard_trampoline() {
         Some(trampoline) => {
             let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
             // SAFETY: as the caller promises; the trampoline saves the caller's registers
@@ -9776,7 +7299,12 @@ unsafe fn enter_wasm(
         }
         // SAFETY: as the caller promises.
         None => unsafe { entry(context, base, length, arguments, out) },
+    };
+    if let Some(depth) = depth {
+        // SAFETY: as above.
+        unsafe { (*roots).set_depth(depth) };
     }
+    status
 }
 
 /// Runs public JS function `entry` through the host trampoline: its ABI is the Wasm entry's,
@@ -9926,20 +7454,17 @@ fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()>
 const FUNCTION_ALIGNMENT: usize = 64;
 
 impl<H: Host> Vm<H> {
-    /// Invalidate artifact-local indirect-call certificates when VM state that
-    /// native code cannot inspect directly changes: table contents or heap IDs.
-    pub(super) fn invalidate_wasm_reference_caches(&self) {
-        let next = self.wasm_reference_epoch.get().wrapping_add(1);
-        self.wasm_reference_epoch
-            .set(if next == 0 { 1 } else { next });
-    }
-
     pub(crate) fn set_execution_mode(&mut self, mode: ExecutionMode) {
-        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted);
+        self.execution_mode = mode; super::regexp_native::enable(mode != ExecutionMode::Interpreted, self.programs.tiers().regexp_native_runs);
+        self.heap.set_narrow_runs(mode == ExecutionMode::Interpreted);
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
     pub(crate) fn enable_lane_methods(&mut self) { self.programs.enable_js_lane_methods(); }
+
+    /// Whether the process enrolled the lane-body tier (a mode selection, not realm state).
+    #[cfg(test)]
+    pub(crate) fn lane_methods_enrolled(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
 
     /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`).
     pub(crate) fn compile_wasm_eagerly(&mut self) {
@@ -9981,7 +7506,10 @@ impl<H: Host> Vm<H> {
         id: ProgramId,
         function: u32,
     ) -> bool {
-        if !self.tier_may_run(crate::jit_mode::Tier::CRANELIFT) || program.kind == crate::bytecode::ProgramKind::Wasm {
+        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils.
+        let claims = self.tier_may_run(crate::jit_mode::Tier::CRANELIFT)
+            || (self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::jit_mode::Tier::Base]));
+        if !claims || program.kind == crate::bytecode::ProgramKind::Wasm {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
@@ -9992,9 +7520,9 @@ impl<H: Host> Vm<H> {
         // costs a short call-free one its leaf calls. A function the numeric tier cannot take
         // is still theirs to claim.
         let lane_claims = self.programs.js_jit_lane_methods_enabled()
-            && program.function_get(function as usize).is_some_and(lane_body_may_amortize);
+            && program.function_get(function as usize).is_some_and(|body| lane_body_may_amortize(self.programs.tiers(), body));
         if super::tier_machine::js_tier_state(state.as_ref()) == super::tier_machine::TierState::Declined {
-            return lane_claims || self.programs.js_jit_diagnostics_enabled();
+            return lane_claims;
         }
         let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
         // Inlining may erase a short body's calls; a call-free candidate still has
@@ -10138,11 +7666,12 @@ impl<H: Host> Vm<H> {
         let function = self.frames[frame].function;
         let program_id = self.frames[frame].program;
         // Most entries are of functions no tier path can take.
-        let facts = self
-            .programs
-            .js_entry_facts(program_id, function)
-            .filter(|facts| facts.candidate || self.programs.js_jit_diagnostics_enabled())?;
-        let entry = self.frames.get(frame).filter(|record| record.pc == 0).and_then(|record| {
+        let facts = self.programs.js_entry_facts(program_id, function)?;
+        let at_entry = self.frames[frame].pc == 0;
+        if !facts.candidate && at_entry {
+            self.programs.observe_unclaimed_entry(program, program_id, function, &self.frames[frame].registers);
+        }
+        let entry = self.frames.get(frame).filter(|_| facts.candidate && at_entry).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
                 program: record.program,
@@ -10184,47 +7713,23 @@ impl<H: Host> Vm<H> {
         let facts = &*entry.facts;
         #[cfg(test)]
         if !self.programs.js_entry_specializations_enabled() { return None; }
-        // Most entries are of functions no entry path can claim; diagnostics still count them.
-        if !facts.candidate && !self.programs.js_jit_diagnostics_enabled() {
+        // Most entries are of functions no entry path can claim.
+        if !facts.candidate {
+            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let tier = self.programs.js_tier(program_id, function_id);
-        let rejected_entry = if self.programs.js_jit_diagnostics_enabled()
-            && matches!(tier.as_ref(), Some(super::program_store::JsTierState::Rejected { .. }))
-        {
-            self.programs.note_js_rejected_entry(program_id, function_id)
-        } else {
-            None
-        };
         if matches!(
             tier.as_ref(),
             Some(super::program_store::JsTierState::Unsupported | super::program_store::JsTierState::Rejected { .. })
-        ) && (!self.programs.js_jit_diagnostics_enabled() || rejected_entry.is_none())
-        {
+        ) {
+            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let params = usize::from(function.params);
         let arguments = entry.parameters.get(..params)?;
         let numeric = arguments.iter().all(|value| value.as_number().is_some());
-        if let Some((entries, reason)) = rejected_entry {
-            self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-            self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
-            return None;
-        }
-        if tier.is_none() && !facts.candidate {
-            let reason = super::js_compiled::candidate_rejection_reason(program, function_id);
-            let report_entries = self.programs.reject_js_function(program_id, function_id, reason);
-            if let Some(entries) = report_entries
-                && self.programs.js_jit_diagnostics_enabled()
-            {
-                self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-                self.programs.record_js_jit_rejection(program_id, function_id, reason, entries);
-            }
-            return None;
-        }
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
-        }
+        self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
         let compiled = match tier {
             Some(super::program_store::JsTierState::Compiled(compiled)) => {
                 if !numeric {
@@ -10248,9 +7753,7 @@ impl<H: Host> Vm<H> {
         if compiled.params() != params {
             return None;
         }
-        if self.programs.js_jit_diagnostics_enabled() {
-            self.programs.record_js_jit_native_entry(program_id, function_id);
-        }
+        self.programs.record_js_jit_native_entry(program_id, function_id);
         let poll_page = self.compiled_poll_page();
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
@@ -10365,16 +7868,13 @@ impl<H: Host> Vm<H> {
     /// The direct run of `function`'s compiled body a frameless activation keeps
     /// (`LaneView::tier_direct`): where its body reads only its parameters
     /// (`CompiledJsFunction::direct_callable`) and ends in a `Return`, which its result
-    /// completes. Diagnostics count every entry through `js_jit_compiled_call` instead.
+    /// completes.
     pub(super) fn direct_tier_entry(
         &self,
         program: &ResidualProgram,
         id: ProgramId,
         function: u32,
     ) -> Option<DirectTierEntry> {
-        if self.programs.js_jit_diagnostics_enabled() {
-            return None;
-        }
         let super::program_store::JsTierState::Compiled(compiled) = self.programs.js_tier_ref(id, function)? else {
             return None;
         };
@@ -10388,6 +7888,8 @@ impl<H: Host> Vm<H> {
             compiled: Rc::downgrade(compiled),
             return_pc,
             return_register: terminal.register_a(),
+            function: (id, function),
+            params: body.params,
         })
     }
 
@@ -10401,6 +7903,9 @@ impl<H: Host> Vm<H> {
     ) -> Option<(usize, crate::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
         let value = direct_call(&compiled, parameters, &self.execution_interrupt)?;
+        let (program, function) = entry.function;
+        self.programs.record_js_jit_entry(program, function, true, entry.params);
+        self.programs.record_js_jit_native_entry(program, function);
         Some((entry.return_pc, entry.return_register, value))
     }
 
@@ -10506,8 +8011,10 @@ impl<H: Host> Vm<H> {
                 *selected_function = true;
                 for packed in &function.code {
                     let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                    if instruction.op().class().eq(Class::CallKnown) {
-                        pending.push(usize::from(instruction.known_function_index()));
+                    if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                        .and_then(|step| step.callee(instruction))
+                    {
+                        pending.push(callee);
                     }
                 }
             }
@@ -10557,8 +8064,10 @@ impl<H: Host> Vm<H> {
                     for packed in &function.code {
                         let instruction =
                             super::dispatch_fast::decoded_instruction(function, *packed);
-                        if instruction.op().class().eq(Class::CallKnown) {
-                            pending.push(usize::from(instruction.known_function_index()));
+                        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                            .and_then(|step| step.callee(instruction))
+                        {
+                            pending.push(callee);
                         }
                     }
                 }
@@ -10635,10 +8144,8 @@ impl<H: Host> Vm<H> {
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
-        // The globals compiled code accesses, each once.
-        let mut globals: Vec<u32> = Vec::new();
-        // One pass over each callable function's full plan finds both what every body's
-        // compilation reads first: its indirect reference sites and the globals it accesses.
+        // One pass over each callable function's full plan finds what every body's compilation
+        // reads first: its indirect reference sites.
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
@@ -10647,31 +8154,23 @@ impl<H: Host> Vm<H> {
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
-                match instruction.op().class() {
-                    Class::Call => {
-                        if let Slot::IndirectReference { table, .. } = full_plan.operand(pc) {
-                            let site_id = reference_cache_count;
-                            reference_cache_count += 1;
-                            reference_site_ids[index].push((pc, site_id));
-                            reference_cache_sites.push((index, pc, table));
-                            if diagnostics_enabled {
-                                reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                                    function: index,
-                                    pc,
-                                    counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                                    targets: std::cell::RefCell::new(Vec::new()),
-                                });
-                            }
-                        }
-                    }
-                    Class::WasmGlobalGet | Class::WasmGlobalSet => {
-                        if let Some(Slot::Binding(slot)) = full_plan.operands[pc]
-                            && !globals.contains(&slot)
-                        {
-                            globals.push(slot);
-                        }
-                    }
-                    _ => {}
+                if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
+                    continue;
+                }
+                let Slot::IndirectReference { table, .. } = full_plan.operand(pc) else {
+                    continue;
+                };
+                let site_id = reference_cache_count;
+                reference_cache_count += 1;
+                reference_site_ids[index].push((pc, site_id));
+                reference_cache_sites.push((index, pc, table));
+                if diagnostics_enabled {
+                    reference_call_sites.push(ReferenceCallSiteDiagnostics {
+                        function: index,
+                        pc,
+                        counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
+                        targets: std::cell::RefCell::new(Vec::new()),
+                    });
                 }
             }
         }
@@ -10708,9 +8207,7 @@ impl<H: Host> Vm<H> {
                 &plans,
                 guarded,
                 fixed_base,
-                &globals,
                 &reference_site_ids[index],
-                reference_dispatch_entries(reference_cache_count).saturating_sub(1) as u64,
                 diagnostics_enabled,
             );
             if let Some(started) = body_build_started {
@@ -10850,20 +8347,9 @@ impl<H: Host> Vm<H> {
             memory_slot,
             guarded,
             fixed_base,
-            globals,
             diagnostics,
-            reference_call_caches: std::cell::RefCell::new(
-                std::iter::repeat_with(|| None)
-                    .take(reference_cache_count)
-                    .collect(),
-            ),
-            reference_fast_caches: (0..reference_dispatch_entries(reference_cache_count))
-                .map(|_| UnsafeCell::new(FastReferenceCache::default()))
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
+            indirect_hits: indirect_profile::SiteHits::new(reference_cache_count),
             reference_cache_sites,
-            #[cfg(test)]
-            reference_cache_hits: std::cell::Cell::new(0),
         })
     }
 
@@ -11176,37 +8662,10 @@ impl<H: Host> Vm<H> {
         };
         let result = (|| {
             let function = compiled.function(id as usize)?;
-            let (base, length, guard, memory_binding) = match compiled.memory_slot {
-                Some(slot) => {
-                    let binding = self.heap.environment_slot(env, slot as usize)?;
-                    let (view, guard) = super::dispatch_fast::direct_memory_and_guard(self, binding)?;
-                    // Code compiled without bounds checks needs this memory's guard.
-                    if compiled.guarded && guard.is_none() {
-                        return None;
-                    }
-                    if compiled.fixed_base.is_some_and(|fixed| {
-                        guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
-                    }) {
-                        return None;
-                    }
-                    (view.0 as u64, view.1 as u64, guard, binding)
-                }
-                None => (0, 0, None, Value::UNDEFINED),
-            };
+            let (record, (base, length)) = self.publish_wasm_instance(&compiled, env, program)?;
             let raw = self.compiled_raw_args(args, &function.params)?;
             let marker = 0u8;
             let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-            let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
-            for slot in &compiled.globals {
-                let binding = self.heap.environment_slot(env, *slot as usize)?;
-                match self.heap.get_mut(binding)? {
-                    Cell::WasmGlobal { value, .. } => globals.push(value),
-                    _ => return None,
-                }
-            }
-            let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
-                (start as usize, start as usize + size)
-            });
             let mut import_callouts = 0u64;
             let mut known_callouts = 0u64;
             let mut reference_callouts = 0u64;
@@ -11235,54 +8694,39 @@ impl<H: Host> Vm<H> {
             let mut context = CallContext {
                 stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
                 interrupt: self.execution_interrupt.attention_flag(),
-                table: compiled.table.as_ptr(),
+                table: std::ptr::null(),
                 vm: (self as *mut Self).cast(),
                 env,
                 entry_stack: 0,
-                guard_start,
-                guard_end,
-                globals: globals.as_ptr(),
+                guard_start: 0,
+                guard_end: 0,
+                globals: std::ptr::null(),
+                table_words: std::ptr::null(),
                 callout: import_callout::<H> as Callout as usize,
                 call_reference: reference_callout::<H> as ReferenceCallout as usize,
-                compiled: Rc::as_ptr(&compiled),
+                compiled: std::ptr::null(),
                 program,
                 import_callouts: import_callouts_ptr,
                 known_callouts: known_callouts_ptr,
                 reference_callouts: reference_callouts_ptr,
-                memory: memory_binding,
-                memory_length: length,
+                memory: Value::UNDEFINED,
+                memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: compiled.diagnostics.as_ref().map_or(0, |_| {
-                    diagnostic_reference_callout::<H> as DiagnosticReferenceCallout as usize
-                }),
-                reference_call_sites: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(std::ptr::null(), |stats| {
-                        stats.reference_call_sites.as_ptr()
-                    }),
-                reference_call_site_count: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(0, |stats| stats.reference_call_sites.len()),
+                call_reference_diagnostic: 0,
+                reference_call_sites: std::ptr::null(),
+                reference_call_site_count: 0,
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                reference_epoch: self.wasm_reference_epoch.as_ptr(),
-                reference_fast_caches: compiled.reference_fast_caches_ptr(),
                 emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                import_callout_counts: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(std::ptr::null(), |stats| {
-                        stats.import_callout_counts.as_ptr()
-                    }),
-                import_callout_count: compiled
-                    .diagnostics
-                    .as_ref()
-                    .map_or(0, |stats| stats.import_callout_counts.len()),
+                import_callout_counts: std::ptr::null(),
+                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
                 interrupt_owner: std::ptr::null(),
+                instance: std::ptr::null(),
+                native_roots: &mut *self.native_roots,
             };
+            // SAFETY: the record belongs to the environment the call runs in.
+            context.enter(unsafe { &*record });
             let mut out = 0u64;
             let native_entry_should_sample = compiled.note_native_entry(id as usize);
             let native_entry_sample_started =
@@ -11504,9 +8948,6 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The tag bits of an encoded i32, which a global's value carries.
-const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
-
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
@@ -11522,8 +8963,8 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(super) fn lane_body_may_amortize(body: &crate::bytecode::Function) -> bool {
-    body.loops() || body.code.len() >= TIERS.lane_body.min_instructions
+pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
+    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
         || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
 }
 
@@ -11540,6 +8981,9 @@ pub(super) struct DirectTierEntry {
     compiled: std::rc::Weak<CompiledJsFunction>,
     return_pc: usize,
     return_register: crate::bytecode::Register,
+    /// The function the entry runs, whose entries the diagnostics report counts.
+    function: (ProgramId, u32),
+    params: u16,
 }
 
 impl DirectTierEntry {
@@ -11618,7 +9062,6 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::Op;
 
     #[test]
     fn native_narrow_store_encoding_matches_shared_values() {
@@ -11634,13 +9077,9 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let fallback = builder.create_block();
-        let encoded = emit_narrow_store_value(&mut builder, value, typed_ir::Type::ANY, fallback);
-        let encoded = builder.ins().uextend(types::I64, encoded);
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None };
+        let encoded = crate::staged::store::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
-        builder.switch_to_block(fallback);
-        let rejected = builder.ins().iconst(types::I64, -1);
-        builder.ins().return_(&[rejected]);
         builder.seal_all_blocks();
         builder.finalize(isa.frontend_config());
         let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
@@ -11652,9 +9091,7 @@ mod tests {
         values.extend([i32::MIN, -limit - 1, -limit, -1, 0, 1, limit - 1, limit, i32::MAX].map(Value::integer));
         values.extend([0, 1, (1 << N::INDEX_BITS) - 1, 1 << N::INDEX_BITS, u32::MAX].map(Value::direct_object));
         for value in values {
-            let admitted = value.as_int().is_some()
-                || value.to_bits() >> u32::BITS == N::DIRECT_OBJECT_UPPER >> u32::BITS;
-            let expected = admitted.then(|| value.to_narrow_reference()).flatten().map(u64::from).unwrap_or(u64::MAX);
+            let expected = value.to_narrow().map_or(u64::MAX, u64::from);
             assert_eq!(unsafe { encode(value.to_bits()) }, expected, "{value:?}");
         }
     }
@@ -12202,7 +9639,7 @@ mod tests {
                 let memory = CodeMemory::new(code.buffer.data()).unwrap();
                 for (label, location) in [(PREVIOUS_LABEL, PREVIOUS_USE), (NEXT_LABEL, NEXT_USE)] {
                     let uses: Vec<_> = code.buffer.get_srclocs_sorted().iter().filter(|source|
-                        source.loc == ir::SourceLoc::new(location) && source.start < source.end).collect();
+                        source.loc == ir::MaybeRelSourceLoc::abs(ir::SourceLoc::new(location)) && source.start < source.end).collect();
                     if uses.is_empty() { continue; }
                     let ranges = code.value_labels_ranges.get(&ir::ValueLabel::from_u32(label)).unwrap_or_else(||
                         panic!("{ty} start{start} missing label{label}: {:?}\n{}", compiler.func.dfg.values_labels, compiler.func));
@@ -12322,7 +9759,7 @@ mod tests {
             assert!(!locations.is_empty());
             assert!(locations.windows(2).all(|pair| pair[0].end <= pair[1].start));
             let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
-                .filter(|source| source.loc == probe_location && source.start < source.end).collect();
+                .filter(|source| source.loc == ir::MaybeRelSourceLoc::abs(probe_location) && source.start < source.end).collect();
             assert!(!probes.is_empty(), "the relocated backedge must retain its probe");
             for probe in probes {
                 assert!(locations.iter().any(|range| range.start <= probe.start && probe.end <= range.end),
@@ -12447,7 +9884,7 @@ mod tests {
             let compiled = compiler.compile(&*isa, &mut cranelift_codegen::control::ControlPlane::default()).unwrap();
             let locations = compiled.value_labels_ranges.get(&update_label).expect("live update label");
             let probes: Vec<_> = compiled.buffer.get_srclocs_sorted().iter()
-                .filter(|source| source.loc == store_location && source.start < source.end).collect();
+                .filter(|source| source.loc == ir::MaybeRelSourceLoc::abs(store_location) && source.start < source.end).collect();
             assert!(!probes.is_empty());
             assert!(probes.iter().all(|probe| locations.iter().any(|range|
                 range.start <= probe.start && probe.end <= range.end)), "update label covers both storage arms");
@@ -13312,7 +10749,7 @@ mod tests {
         let (_memory, entry, _operands) = live_native_graph(&vm);
         let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
             // SAFETY: the shared context, native code and operand data outlive this entry.
-            unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+            unsafe { i64::from(entry(context.cast(), 0, 0, std::ptr::null(), result)) }
         });
         assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
         let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
@@ -13924,7 +11361,7 @@ mod tests {
         for entry in [entry, partitioned] {
             let (status, word, outcome) = with_semantic_context(&mut vm, invalid, |context, result| {
                 // SAFETY: as above; the out-of-range PC is data, not a pointer.
-                unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+                unsafe { i64::from(entry(context.cast(), 0, 0, std::ptr::null(), result)) }
             });
             assert_eq!(status, i64::from(NATIVE_JS_INVALID_PC));
             assert_eq!(word, invalid as u64);
@@ -13947,7 +11384,7 @@ mod tests {
         for entry in [entry, partitioned] {
             let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
                 // SAFETY: the rooted frame, entries and operands live through the call.
-                unsafe { i64::from(entry(context, 0, 0, std::ptr::null(), result)) }
+                unsafe { i64::from(entry(context.cast(), 0, 0, std::ptr::null(), result)) }
             });
             assert_eq!(status, i64::from(NATIVE_JS_STOPPED));
             let Err(error) = outcome.expect("graph stops at throw").result else { panic!("expected throw") };
@@ -14410,39 +11847,5 @@ mod tests {
             .set(0, 1, Slot::DEFAULT)
             .expect("register in range");
         assert_eq!(loop_state.get(0, 1), Some(Slot::DEFAULT));
-    }
-
-    /// Each i32 integer operator widens to its namesake, and each f32 float
-    /// operator to its f64 namesake.
-    #[test]
-    fn narrow_selectors_name_their_wide_namesakes() {
-        let mut tag = 0;
-        while let Some(operator) = I32BinaryOperator::from_tag(tag) {
-            assert_eq!(
-                format!("{operator:?}"),
-                format!("{:?}", widen_binary(operator))
-            );
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = I32UnaryOperator::from_tag(tag) {
-            assert_eq!(
-                format!("{operator:?}"),
-                format!("{:?}", widen_unary(operator))
-            );
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = F32BinaryOperator::from_tag(tag) {
-            let (wide, _) = float_binary_operator(Op::WasmF32Binary, tag).expect("f32 selector");
-            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
-            tag += 1;
-        }
-        let mut tag = 0;
-        while let Some(operator) = F32UnaryOperator::from_tag(tag) {
-            let (wide, _) = float_unary_operator(Op::WasmF32Unary, tag).expect("f32 selector");
-            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
-            tag += 1;
-        }
     }
 }

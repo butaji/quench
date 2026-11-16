@@ -566,6 +566,10 @@ impl<H: Host> Vm<H> {
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                // The protocol path reads the input's units throughout; a rope the program keeps
+                // is read through a copy that leaves it a rope (`unkept_flat`), as the fast
+                // path's is.
+                let input = input.unkept_flat();
                 let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let callable = vm.is_function(replacement);
                 let template = if callable {
@@ -2425,7 +2429,7 @@ impl<H: Host> Vm<H> {
         meta: Rc<crate::heap::RegExpMeta>,
     ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Self::empty_object(prototype),
             meta,
         });
         // Every new RegExp object starts in the same shape, so the `lastIndex` definition the
@@ -2632,7 +2636,7 @@ impl<H: Host> Vm<H> {
         if stateful {
             let last_index = Value::number(matched.as_ref().map_or(0, |matched| matched.range.end) as f64);
             match steady {
-                Some(steady) => self.heap.property_set(this, steady.slot, last_index),
+                Some(steady) => self.heap.primitive_cell_property_set(this, steady.slot, last_index),
                 None => self.store_regexp_last_index(p, this, last_index)?,
             }
         }
@@ -2647,6 +2651,27 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, start: usize, (stateful, sticky): (bool, bool),
         steady: Option<steady::SteadyMatch>) -> Option<quench_regexp::Match> {
+        let prefiltered = steady.is_some_and(|steady| steady.prefiltered);
+        // An ASCII rope not yet flat is searched through a reused buffer and stays a rope:
+        // the match is ranges, which the caller reads out by the same units.
+        if let Some(Some(found)) = input.with_ascii_rope_bytes(|bytes| {
+            let length = bytes.len();
+            if !prefiltered
+                && ((stateful && start > length)
+                    || regex.excludes_search(length, start, sticky, || bytes.get(start).map(|byte| u16::from(*byte))))
+            {
+                return Some(None);
+            }
+            if steady.is_some_and(|steady| !steady.captures) {
+                return regex.find_range_ascii(bytes, start, sticky).map(|found| found.map(quench_regexp::Match::native));
+            }
+            regex.find_ascii(bytes, start, sticky, true)
+        }) {
+            return found;
+        }
+        // Any other rope is searched through a copy that leaves it a rope (`unkept_flat`).
+        let unkept = input.unkept_flat();
+        let input = &unkept;
         let units = input.units();
         if !steady.is_some_and(|steady| steady.prefiltered)
             && ((stateful && start > units.len())
@@ -2702,23 +2727,24 @@ impl<H: Host> Vm<H> {
                 Some(Cell::RegExp { meta, .. }) => meta.flags.contains(RegExpFlags::HAS_INDICES),
                 _ => false,
             };
-            // Each matched substring is copied out (`JsString::from_unit_run`): captures are
-            // short, and a copy measured cheaper than `JsString::substring`'s sharing
-            // (V8-v7 RegExp Score run, callgrind: 50 against 75 instructions a capture).
-            let units = input.units();
-            let values = crate::heap::ArrayElements::from_fn(1 + matched.captures.len(), |index| {
-                let range = match index.checked_sub(1) {
-                    None => Some(matched.range.clone()),
-                    Some(capture) => matched.captures[capture].clone(),
-                };
-                range.map_or(Value::UNDEFINED, |range| vm.heap.alloc_string(JsString::from_unit_run(units.slice(range))))
-            });
             let named = regexp_named_capture_ranges(&matched);
-            // The groups object is made before the result array: no guest code runs and no
-            // collection is taken between them, so the order is unobservable.
-            let groups = vm.regexp_groups_object(&named, units)?;
-            let index = Value::number(matched.range.start as f64);
+            // A match or capture of the whole input is the input itself, as a pattern that
+            // parses a whole line or URL returns: no copy of its text.
             let input_value = vm.string_value_from(argument, &input);
+            // The captures are copied out, so an input rope not yet flat is read through a
+            // reused buffer and stays a rope: flattening it gave every input a kept copy of
+            // its text (V8-v7 RegExp's check run, whose results are used: 16,661 input variants
+            // of 2-4 KB each, 2.3 MB at its peak).
+            let (values, groups) = match input.with_ascii_rope_bytes(|bytes| {
+                vm.regexp_result_captures(&matched, &named, super::wtf16::Units::Ascii(bytes), input_value)
+            }) {
+                Some(captures) => captures?,
+                None => {
+                    let units = input.units();
+                    vm.regexp_result_captures(&matched, &named, units, input_value)?
+                }
+            };
+            let index = Value::number(matched.range.start as f64);
             let array = crate::heap::ArrayObject::new(Self::empty_object(vm.array_proto), values);
             let result = match vm.regexp_result_layout() {
                 // The recorded layout: the array is allocated with its properties, by the
@@ -2742,6 +2768,50 @@ impl<H: Host> Vm<H> {
             vm.record_regexp_legacy_match(this, input, matched)?;
             Ok(result)
         }
+    }
+
+    /// An exec result's elements and groups object from the input's `units`. Each matched
+    /// substring is copied out (`JsString::from_unit_run`): captures are short, and a copy
+    /// measured cheaper than `JsString::substring`'s sharing (V8-v7 RegExp Score run,
+    /// callgrind: 50 against 75 instructions a capture). The groups object is made before the
+    /// result array: no guest code runs and no collection is taken between them, so the order
+    /// is unobservable.
+    fn regexp_result_captures(
+        &mut self,
+        matched: &quench_regexp::Match,
+        named: &[(String, Option<std::ops::Range<usize>>)],
+        units: super::wtf16::Units<'_>,
+        whole: Value,
+    ) -> Result<(crate::heap::ArrayElements, Value), JsError> {
+        let length = units.len();
+        let len = 1 + matched.captures.len();
+        let run = self.heap.young_elements(len);
+        let element = |index: usize| {
+            let range = match index.checked_sub(1) {
+                None => Some(matched.range.clone()),
+                Some(capture) => matched.captures[capture].clone(),
+            };
+            range.map_or(Value::UNDEFINED, |range| {
+                if range.start == 0 && range.end == length {
+                    whole
+                } else {
+                    match units {
+                        super::wtf16::Units::Ascii(bytes) => self.heap.alloc_ascii_run(&bytes[range]),
+                        super::wtf16::Units::Wide(_) => self.heap.alloc_string(JsString::from_unit_run(units.slice(range))),
+                    }
+                }
+            })
+        };
+        // A young run where the nursery has one, as an array literal's: most results die
+        // young. The result array record is made before any collection (`regexp_exec_result`).
+        let values = match run {
+            // SAFETY: the run is the nursery's alone, and string records and the groups
+            // object take no collection before the caller makes the array record.
+            Some(run) => unsafe { crate::heap::ArrayElements::young(run, len, element) },
+            None => crate::heap::ArrayElements::from_fn(len, element),
+        };
+        let groups = self.regexp_groups_object(named, units)?;
+        Ok((values, groups))
     }
 
     /// The realm's recorded exec result layout (`RegExpResultTemplate`): the shape its
@@ -2898,7 +2968,10 @@ impl<H: Host> Vm<H> {
         if owner.constructor() == state.constructor {
             match owner {
                 crate::heap::RegExpLegacyOwner::Enabled(_) => {
-                    state.legacy = LegacyStatics { last: matched(input), input_override: None };
+                    let previous = std::mem::replace(&mut state.legacy, LegacyStatics { last: matched(input), input_override: None });
+                    if let LegacyRegExpMatch::Matched { matched, .. } = previous.last {
+                        matched.recycle();
+                    }
                 }
                 crate::heap::RegExpLegacyOwner::Disabled(_) => {
                     state.legacy = LegacyStatics { last: LegacyRegExpMatch::Invalid, input_override: None };
@@ -2987,7 +3060,14 @@ impl<H: Host> Vm<H> {
         if let Some(matcher) = meta.matcher.0.get() {
             return Ok(Rc::clone(matcher));
         }
-        let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+        let matcher = match LAZY_MATCHERS.with_borrow(|matchers| matchers.find(&meta.source, meta.flags)) {
+            Some(matcher) => matcher,
+            None => {
+                let matcher = Rc::new(Self::compile_regexp(&meta.source, &meta.flags.text(), PatternValidity::EarlyChecked)?);
+                LAZY_MATCHERS.with_borrow_mut(|matchers| matchers.insert(&meta.source, meta.flags, &matcher));
+                matcher
+            }
+        };
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 
@@ -3280,14 +3360,17 @@ impl RegExpFlags {
         Self::of(text).expect("compiled RegExp flags are valid")
     }
 
+    #[inline(always)]
     pub(crate) const fn with(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
 
+    #[inline(always)]
     pub(crate) const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
+    #[inline(always)]
     pub(crate) const fn intersects(self, other: Self) -> bool {
         self.0 & other.0 != 0
     }
@@ -3322,24 +3405,69 @@ pub(super) const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
 /// allocation, so the cache is capped; reaching the cap drops every entry and recompiles on demand.
 const REGEXP_MATCHER_CACHE_LIMIT: usize = 64;
 
+thread_local! {
+    /// The matchers of RegExps that compile on first match (literals, snapshot patterns), by
+    /// pattern and flags, held weakly: a program evaluated again (a module loaded per test, a
+    /// bundle re-run) creates new literal sites whose patterns would each compile again while
+    /// the previous evaluation's RegExps still hold theirs. JetStream 3 prismjs-startup-es6
+    /// (2026-11-15) compiled its ~115 patterns once per iteration, 574 compiles holding ~1 MB of
+    /// programs at peak. A weak entry keeps nothing alive; a matcher no RegExp holds compiles again.
+    static LAZY_MATCHERS: std::cell::RefCell<LazyMatchers> = std::cell::RefCell::default();
+}
+
+#[derive(Default)]
+struct LazyMatchers {
+    by_pattern: rustc_hash::FxHashMap<(JsString, u8), std::rc::Weak<quench_regexp::Regex>>,
+    /// Entries at the last sweep of dead ones; the next sweep waits for twice as many.
+    swept: usize,
+}
+
+impl LazyMatchers {
+    fn find(&self, source: &JsString, flags: RegExpFlags) -> Option<Rc<quench_regexp::Regex>> {
+        self.by_pattern.get(&(source.clone(), flags.0))?.upgrade()
+    }
+
+    fn insert(&mut self, source: &JsString, flags: RegExpFlags, matcher: &Rc<quench_regexp::Regex>) {
+        if self.by_pattern.len() >= 2 * self.swept.max(64) {
+            self.by_pattern.retain(|_, matcher| matcher.strong_count() > 0);
+            self.swept = self.by_pattern.len();
+        }
+        self.by_pattern.insert((source.clone(), flags.0), Rc::downgrade(matcher));
+    }
+}
+
+/// The matchers compiled for patterns and flags: the last `REGEXP_MATCHER_CACHE_LIMIT` held,
+/// and every one a live RegExp still holds found weakly (`live`). With only the held ones, a
+/// program that made more patterns than the limit emptied the cache and compiled each pattern
+/// again for its next RegExp, while the RegExps of the earlier pass kept their copies alive:
+/// jsdom-d3-startup held 4.1 MB of matchers at its peak, one set per retained iteration.
 #[derive(Default)]
 pub(super) struct RegExpMatcherCache {
     by_source: rustc_hash::FxHashMap<JsString, Vec<(String, Rc<quench_regexp::Regex>)>>,
     entries: usize,
+    live: rustc_hash::FxHashMap<(JsString, String), std::rc::Weak<quench_regexp::Regex>>,
+    /// The size at which `live` drops its dead entries next.
+    prune_live_at: usize,
 }
 
 impl RegExpMatcherCache {
     fn find(&self, source: &JsString, flags: &str) -> Option<Rc<quench_regexp::Regex>> {
         self.by_source
-            .get(source)?
-            .iter()
-            .find_map(|(cached, matcher)| (cached == flags).then(|| Rc::clone(matcher)))
+            .get(source)
+            .and_then(|matchers| matchers.iter().find_map(|(cached, matcher)| (cached == flags).then(|| Rc::clone(matcher))))
+            .or_else(|| self.live.get(&(source.clone(), flags.to_owned()))?.upgrade())
     }
 
     fn insert(&mut self, source: &JsString, flags: &str, matcher: Rc<quench_regexp::Regex>) {
         if self.entries >= REGEXP_MATCHER_CACHE_LIMIT {
-            self.clear();
+            self.by_source.clear();
+            self.entries = 0;
         }
+        if self.live.len() >= self.prune_live_at {
+            self.live.retain(|_, matcher| matcher.strong_count() > 0);
+            self.prune_live_at = (self.live.len() * 2).max(REGEXP_MATCHER_CACHE_LIMIT);
+        }
+        self.live.insert((source.clone(), flags.to_owned()), Rc::downgrade(&matcher));
         self.by_source
             .entry(source.clone())
             .or_default()
@@ -3350,6 +3478,8 @@ impl RegExpMatcherCache {
     pub(super) fn clear(&mut self) {
         self.by_source.clear();
         self.entries = 0;
+        self.live.clear();
+        self.prune_live_at = 0;
     }
 }
 

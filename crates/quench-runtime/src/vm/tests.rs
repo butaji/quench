@@ -6,11 +6,14 @@ use super::{
 };
 use crate::{Engine, Value};
 use crate::test_host::TestHost;
+use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::vm::tier_events::Event;
 use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
 #[path = "forced_deopt_tests.rs"] mod forced_deopt_tests;
 #[path = "forced_deopt_corpus_tests.rs"] mod forced_deopt_corpus_tests;
+#[cfg(target_os = "linux")]
 #[path = "no_rwx_tests.rs"] mod no_rwx_tests;
 #[test]
 fn deferred_math_joins_startup_intrinsics_before_guest_mutation() {
@@ -239,7 +242,7 @@ fn default_osr_keeps_self_contained_loop_regions() {
                 .and_then(super::program_store::derived_lane_view).unwrap();
             let osr = view.osr_diagnostics();
             assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            assert!(view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -305,7 +308,7 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(2)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
+            let report = view.tier().body_stats.report(0, view.lane_body_state(), &|_, _| None).expect("the return must run in the lane body");
             assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
         }
     }
@@ -2272,7 +2275,7 @@ fn minor_collections_trace_changed_program_roots_until_promoted() {
         vm.collect_slow(&program, true);
         let constant = vm.heap.alloc_string("young constant".into());
         let weak = vm.heap.weak_handle(constant).unwrap();
-        vm.programs.set_constants(id, vec![constant]);
+        vm.programs.set_constants(id, vec![constant], 0);
         for _ in 0..=PromotionAge::OLDEST.minors() {
             vm.collect_slow(&program, false);
             assert_eq!(vm.heap.weak_value(weak), Some(constant), "{age:?}");
@@ -2827,7 +2830,6 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
         .array_elements(values)
         .unwrap()
         .iter()
-        .copied()
         .filter(|value| vm.is_promise(*value))
         .collect();
     assert_eq!(promises.len(), 6);
@@ -3245,6 +3247,29 @@ fn private_names_resolve_per_class_across_collections() {
 }
 
 #[test]
+fn private_elements_live_in_shape_slots_hidden_from_every_key_walk() {
+    // Private fields and method brands are shape slots under private keys: no key list,
+    // copy or integrity level sees them; a frozen or non-extensible object keeps and gains
+    // them; foreign brands still throw; values survive collections.
+    let source = "class A { #x = 1; #y; #m() { return this.#x + 10; } get #g() { return this.#x * 2; } set #g(v) { this.#x = v; }\n\
+           constructor(v) { this.#y = v; this.pub = 3; } sum() { return this.#x + this.#y + this.#m() + this.#g; }\n\
+           bump() { this.#g = this.#x + 1; return this.#x; } static has(o) { return #x in o; } static hasm(o) { return #m in o; } }\n\
+         class Base { constructor(o) { return o; } } class Stamp extends Base { #t = 9; static t(o) { return o.#t; } }\n\
+         var a = new A(2), out = [a.sum(), a.bump(), A.has(a), A.has({}), A.hasm(a)];\n\
+         out.push(JSON.stringify(a), Object.keys(a).join(), Reflect.ownKeys(a).length, Object.getOwnPropertySymbols(a).length);\n\
+         Object.freeze(a); out.push(a.bump(), Object.isFrozen(a), A.has({ ...a }));\n\
+         var plain = { q: 1 }; new Stamp(plain);\n\
+         for (let i = 0; i < 50000; i++) ({ i });\n\
+         out.push(Stamp.t(plain), Object.keys(plain).join(), a.sum());\n\
+         try { new Stamp(plain); } catch (error) { out.push(error.constructor.name); }\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "16,2,true,false,true,{\"pub\":3},pub,1,0,3,true,false,9,q,24,TypeError"
+    );
+}
+
+#[test]
 fn json_and_object_keys_read_enumerable_keys_in_own_property_order() {
     // Shape-backed objects skip descriptor objects; order, enumerability, wrapper unboxing
     // and the keys handed to toJSON and replacers stay those of the generic path.
@@ -3416,7 +3441,7 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     assert!(vm.heap.is_live(result));
     assert_eq!(
         vm.promise_record(promise)
-            .map(|record| record.result),
+            .map(|record| record.result()),
         Some(result)
     );
     let (resolve, _) = vm.promise_resolving_functions(promise);
@@ -3902,7 +3927,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let original = vm
         .heap
         .alloc(crate::heap::Cell::Error("original argument".into()));
-    let mut registers = vec![Value::UNDEFINED; 65];
+    let mut registers = super::register_file::RegisterFile::from_registers(&[Value::UNDEFINED; 65]);
     registers[64] = live;
     vm.frames.push(Box::new(super::Frame {
         context: super::activation::CallContext::Internal,
@@ -3975,6 +4000,32 @@ fn untaken_closure_branch_does_not_allocate_environments() {
 }
 
 #[test]
+fn method_site_serves_colliding_receiver_shapes_and_reads_a_redefined_method_live() {
+    // One call site sees four receiver shapes, more than the inline ways hold, so ways collide
+    // and the site goes megamorphic; a method redefined after the caches filled is read live.
+    // The expectations are Node's.
+    let source = r#"
+      function A() {} A.prototype.m = function () { return 1; };
+      function B() { this.x = 1; } B.prototype.m = function () { return 2; };
+      function C() { this.x = 1; this.y = 2; } C.prototype.m = function () { return 3; };
+      function D() { this.x = 1; this.y = 2; this.z = 3; } D.prototype.m = function () { return 4; };
+      var receivers = [new A(), new B(), new C(), new D()];
+      function call(o) { return o.m(); }
+      function round() { var s = 0; for (var i = 0; i < 1000; i++) for (var j = 0; j < 4; j++) s += call(receivers[j]); return s; }
+      var before = round();
+      A.prototype.m = function () { return 10; };
+      var redefined = round();
+      B.prototype.m = function () { return 20; };
+      print([before, redefined, round()].join(" "));
+    "#;
+    let program = Engine::specialize(source, "method-site-ways.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["10000 19000 37000"]);
+}
+
+#[test]
 fn third_method_receiver_promotes_site_to_megamorphic() {
     let mut vm = Vm::new(TestHost::default());
     vm.method_caches.push([super::EMPTY_METHOD_CACHE; 2]);
@@ -4013,7 +4064,7 @@ fn method_entry_for_test(shape: u32, atom: crate::bytecode::Atom) -> MethodCache
 #[test]
 fn atom_invalidation_drops_only_the_entries_naming_the_atom() {
     let mut vm = Vm::new(TestHost::default());
-    vm.method_caches.resize(6, [super::EMPTY_METHOD_CACHE; 2]);
+    vm.method_caches = super::method_cache::MethodCacheTable::with_empty(6);
     // Sites 0 and 1 name atom 7; site 2 names atoms 7 and 8; site 3 names only 8; site 4
     // grows a megamorphic set naming both.
     vm.record_method_cache(0, method_entry_for_test(1, 7));
@@ -4096,7 +4147,8 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             )),
         },
     ]);
-    vm.method_cache_atoms.reach(0); vm.heap.collect([live]);
+    vm.method_cache_sites.entry(0).or_default().push(0);
+    vm.heap.collect([live]);
     vm.retain_live_method_caches();
     assert!(matches!(
         vm.method_caches[0][0].target,
@@ -4743,7 +4795,7 @@ fn class_field_record_roots_release_after_each_completion() {
             let atom = vm.intern_atom("entry");
             let key = match phase {
                 "symbol" => PropertyKey::symbol(values[2]),
-                "private" => PropertyKey::private(atom),
+                "private" => PropertyKey::private(values[1], atom),
                 _ => PropertyKey::string(atom),
             };
             let value = vm
@@ -6868,7 +6920,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() 
         for (promise, weak) in &promises {
             assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
             assert_eq!(
-                vm.promise_record(*promise).expect("promise record").state,
+                vm.promise_record(*promise).expect("promise record").state(),
                 PromiseState::Fulfilled
             );
         }
@@ -6992,7 +7044,7 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
 }
 
 /// A suspended async activation is traced by the registers live at its await alone
-/// (`Continuation::live_registers`): what it made between awaits survives minor collections
+/// (`FrameRecord::live_registers`): what it made between awaits survives minor collections
 /// under either promotion age and full ones, and reads back whole when it resumes.
 #[test]
 fn suspended_async_activations_keep_their_live_values_across_collections() {
@@ -7050,7 +7102,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         locals: vec![],
         dynamic_bindings: vec![],
         captured: false,
-        registers: vec![Value::heap(11), Value::heap(12)],
+        registers: super::register_file::RegisterFile::from_registers(&[Value::heap(11), Value::heap(12)]),
         initialized_registers: 0,
         capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
@@ -9336,7 +9388,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 locals: vec![local],
                 dynamic_bindings: vec![(atom, binding)],
                 captured: true,
-                registers: vec![register, iterator, Value::FALSE],
+                registers: super::register_file::RegisterFile::from_registers(&[register, iterator, Value::FALSE]),
                 initialized_registers: 0,
                 capture_cache: super::CaptureCache::default(),
                 active_iterators: vec![super::ActiveIterator {
@@ -9411,7 +9463,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             };
             assert_eq!(resumed.completion, completion(completion_value));
             assert_eq!(resumed.promise, promise);
-            let resumed = resumed.resume(0);
+            let resumed = resumed.frame.into_frame(0);
             assert_eq!(resumed.locals, [local]);
             assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
             assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);
@@ -12274,11 +12326,10 @@ fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
             let prototype = match vm.heap.get(view) {
                 Some(super::Cell::TypedArray {
                     object,
-                    kind,
                     buffer,
                     ..
                 }) => {
-                    assert_eq!(*kind, TypedArrayKind::Uint8);
+                    assert_eq!(object.native.kind(), TypedArrayKind::Uint8);
                     assert!(matches!(
                         vm.heap.get(*buffer),
                         Some(super::Cell::ArrayBuffer {
@@ -13145,6 +13196,7 @@ fn js_jit_compiles_pure_numeric_loops_with_backedge_polls() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function expandWords(seed, count) {
         const words = seed.slice();
@@ -13400,6 +13452,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function fill(item, limit) {
         for (let index = 0; index < limit; index++) {
@@ -13561,6 +13614,7 @@ fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
+    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"
       function maskedScan(values, mask) {
         let sum = 0;
@@ -14509,7 +14563,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         );
         assert!(
             site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TIERS.loops.warmup_taken)
+                && site.lane_backedge_count >= u64::from(crate::vm::compiled::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
         );
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
@@ -14541,6 +14595,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once() {
+    crate::vm::compiled::tier_policy::force_admission();
     for scoped in [false, true] {
         for captured in [false, true] {
             let call = if captured { "f()" } else { "g()" };
@@ -14607,7 +14662,7 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
             assert!(
                 diagnostics.compile_successes > 0
                     && diagnostics.native_region_runs > 0
-                    && diagnostics.exits > 0,
+                    && diagnostics.sites.iter().any(|site| !site.call_boundary_pcs.is_empty()),
                 "scoped={scoped} captured={captured}: exact-PC call boundary must run natively: {diagnostics:?}"
             );
             assert_eq!(
@@ -14753,6 +14808,7 @@ fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_call_result_is_not_an_incoming_number() {
+    crate::vm::compiled::tier_policy::force_admission();
     for bypass in [false, true] {
         let call = if bypass {
             "let value = 1; if (i < 5) value = g();"
@@ -15682,6 +15738,7 @@ print(out.slice(290).join(" "));
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function countNegative() {
@@ -15891,6 +15948,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function count(value) {
@@ -15949,6 +16007,7 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           let calls = 0;
@@ -16077,6 +16136,7 @@ fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbe
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {
@@ -16208,6 +16268,7 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_shape_invalidation_retires_only_dependent_code() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::specialize(r#"
         function sum(node) {
             let result = 0;
@@ -16465,6 +16526,7 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function sumList(node) {
@@ -17576,7 +17638,7 @@ fn js_jit_profile_gate_uses_prespecified_exact_binomial_looks() {
 
     // Each fixed look spends alpha/4 under p=0.8. Testing at these points
     // bounds false promotion across looks for this function at 5%.
-    for (observations, minimum) in crate::vm::compiled::tier_policy::TIERS.js_function.promotion_looks {
+    for (observations, minimum) in crate::vm::compiled::tier_policy::TierRows::PROCESS.table().js_function.promotion_looks {
         assert!(upper_tail(observations, minimum, 0.8) <= 0.05 / 4.0);
         assert!(upper_tail(observations, minimum - 1, 0.8) > 0.05 / 4.0);
     }
@@ -20220,10 +20282,105 @@ if (mapped[1999].o.i !== 1999 || mapped.length !== 2000) throw Error('values sto
     }
 }
 
+#[test]
+fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
+    // By-name loads of the global `undefined`, of globals a call reads (whose receiver is
+    // `undefined`: a strict function's `this`, globalThis for a sloppy one), of intrinsic
+    // names (`{ __proto__: v }`, `super`) and of intrinsic natives, run from their first
+    // resolution to their bound reads (`lane_load_name_resolve`, `lane_load_name_bound`). The
+    // expected values are Node's.
+    let source = r#"
+      function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
+      function strictThis() { "use strict"; return this === undefined ? 1 : 0; }
+      function sloppyThis() { return this === globalThis ? 1 : 0; }
+      var out = [];
+      out.push(hot(function () { return undefined === void 0 ? 1 : 0; }));
+      out.push(hot(function () { return strictThis(); }));
+      out.push(hot(function () { return sloppyThis(); }));
+      out.push(hot(function (i) { return Math.max(i, 5) & 7; }));
+      out.push(hot(function (i) { return { __proto__: Array.prototype, v: i } instanceof Array ? 1 : 0; }));
+      class A { m() { return 1; } }
+      class B extends A { m() { return super.m() + 1; } }
+      var b = new B();
+      out.push(hot(function () { return b.m(); }));
+      out.push(hot(function () { return typeof parseInt === "function" ? 1 : 0; }));
+      out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
+      print(out.join(" "));
+    "#;
+    let program = Engine::specialize(source, "lane-name-loads.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["3000 3000 3000 10515 3000 6000 3000 6000"], "{mode:?}");
+    }
+}
+
+#[test]
+fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_activation() {
+    // Elements of a sloppy generator's mapped `arguments` write through to its parameters while
+    // it runs as a lane activation (`LaneStack::window_parameter`), nested beside another
+    // generator's activation; the expectations are Node's.
+    let source = r#"
+      function* inner(b) { arguments[0] = b + 1; yield b; }
+      function* outer(a) {
+        arguments[0] = a * 2;
+        for (var v of inner(a)) yield v;
+        yield a;
+        a = 5;
+        yield arguments[0];
+      }
+      var total = 0;
+      for (var i = 0; i < 2000; i++) {
+        var got = [];
+        for (var v of outer(i)) got.push(v);
+        if (got.join() !== [i * 2 + 1, i * 2, 5].join()) throw Error(got.join());
+        total++;
+      }
+      print(String(total));
+    "#;
+    let program = Engine::specialize(source, "lane-window-arguments.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["2000"], "{mode:?}");
+    }
+}
+
+#[test]
+fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
+    // Hot reads of several intrinsic names (`{ __proto__: v }`, `super.x = v`) interleave: each
+    // atom reads the native its own first run recorded (`Vm::intrinsic_natives`, by atom).
+    let source = r#"
+      function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
+      class A { set x(v) { this.y = v; } }
+      class B extends A { m(v) { super.x = v; return this.y; } }
+      var b = new B();
+      var p = { tag: 1 };
+      print([hot(function (i) { return { __proto__: p, v: i }.tag; }),
+             hot(function (i) { return b.m(i & 3); }),
+             hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
+    "#;
+    let program = Engine::specialize(source, "lane-intrinsic-natives.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["3000 4500 1500"], "{mode:?}");
+    }
+}
+
 #[cfg(not(quench_profiled))]
 #[test]
 fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
-    // Hot reads of global bindings (`lane_load_global_name`) across every change of what the
+    // Hot reads of global bindings (`lane_load_name_bound`) across every change of what the
     // name resolves to; the expectations are Node's, each script run as its own global Script.
     let first = r#"
 function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }
@@ -20327,6 +20484,7 @@ fn global_declarations_survive_abrupt_script_evaluation() {
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_guards_replaced_nested_array_receivers() {
+    crate::vm::compiled::tier_policy::force_admission();
     let program = Engine::compile(crate::ExecutionRequest::script(
         r#"
           function fill(rows, column) {
@@ -20579,7 +20737,6 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
     let program = Engine::specialize(source, "lane-inline.js").unwrap();
     let mut answers = Vec::new();
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let before = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
         let mut vm = Vm::new(TestHost::default());
         vm.programs.enable_js_lane_methods();
         vm.set_execution_mode(mode);
@@ -20630,8 +20787,7 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
         if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            let after = super::compiled::LANE_CALLS_INLINED.load(std::sync::atomic::Ordering::Relaxed);
-            assert!(after > before, "the storing callee runs inlined in its caller's lane body");
+            assert!(vm.tier_events().count(Event::Inlined) > 0, "the storing callee runs inlined in its caller's lane body");
         }
     }
     assert!(answers[0].0.is_some() && answers[0].1.is_some());
@@ -20684,25 +20840,9 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
       }
       globalThis.answer = total;
     })();"#;
-    let program = Engine::specialize(source, "lane-bodies.js").unwrap();
-    let mut answers = Vec::new();
-    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-        let before = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
-        let mut vm = Vm::new(TestHost::default());
-        vm.programs.enable_js_lane_methods();
-        vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
-        let global = vm.realm.globals;
-        let atom = vm.intern_atom("answer");
-        let answer = vm.own_property(global, atom).and_then(Value::as_number);
-        answers.push(answer);
-        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            let after = super::compiled::LANE_METHODS_COMPILED.load(std::sync::atomic::Ordering::Relaxed);
-            assert!(after > before, "a declined method runs as a lane body");
-        }
-    }
-    assert!(answers[0].is_some());
-    assert_eq!(answers[0], answers[1]);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some());
+    assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
 /// Lane bodies call the callees they do not inline natively (`dispatch_fast::lane_body_call`):
@@ -20769,6 +20909,73 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
+const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
+  const MASK = 65535;
+  function Cell(id) { this.id = id; this.sum = 0; this.peer = null; }
+  Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
+  Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
+  Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
+  Cell.prototype.drive = function (n, other) {
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
+      total = (total + this.pair(x, y) + this.add(z, x) + this.add(y, z)) & MASK;
+      total = (total + other.add(x, y) + other.far(z, y, x) + this.far(x, x, z)) & MASK;
+    }
+    return total;
+  };
+  let sum = 0;
+  const cell = new Cell(1), other = new Cell(2);
+  for (let round = 0; round < 400; round++) {
+    sum = (sum + cell.drive(48, other) + cell.add(round, sum & 7)) & MASK;
+  }
+  globalThis.answer = sum + cell.sum + other.sum;
+})();"#;
+
+/// Asserts that the lane body of `drive`, run in `vm`, never left at a method call.
+#[cfg(not(quench_profiled))]
+fn assert_drive_leaves_no_method_call(vm: &Vm<TestHost>, program: &crate::ResidualProgram, drive: usize) {
+    let view = vm.programs.lane_views(super::program_store::ProgramId::MAIN).unwrap().get(drive)
+        .and_then(super::program_store::derived_lane_view).unwrap();
+    let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
+        .map(|instruction| format!("{:?}", instruction.op()));
+    if let Some(report) = view.tier().body_stats.report(0, view.lane_body_state(), &op_at) {
+        assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
+    }
+}
+
+/// Lane bodies call through every form of a call record (`dispatch_fast::BodyCall`): a method site
+/// (`this.add(z, x)`, whose receiver is `this`, and `cell.add(...)`'s register) whose argument
+/// registers are the site's own list, not a window, in an order no window has, and a call whose
+/// arguments are consecutive. Every result must equal the interpreter's, and no run may leave its
+/// body at a method call.
+#[test]
+fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
+    let program = Engine::specialize(LANE_METHOD_SITES_SOURCE, "lane-body-method-sites.js").unwrap();
+    #[cfg(not(quench_profiled))]
+    let drive = program.functions.iter().position(|body|
+        body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "drive")).unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        #[cfg(not(quench_profiled))]
+        vm.programs.enable_js_jit_diagnostics();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        if mode == crate::ExecutionMode::Compiled && super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
+            assert!(vm.tier_events().count(Event::Published) > 0, "a method making method calls runs as a lane body");
+            #[cfg(not(quench_profiled))]
+            assert_drive_leaves_no_method_call(&vm, &program, drive);
+        }
     }
     assert!(answers[0].is_some());
     assert_eq!(answers[0], answers[1]);
@@ -21351,6 +21558,80 @@ fn lane_bodies_allocate_literals() {
     assert_eq!(answers, [Some(-1474336480.0); 2]);
 }
 
+/// The osr diagnostics of function `name` after `source` runs compiled under every memory
+/// policy that compiles loops, with the printed output each policy must give.
+fn compiled_loop_diagnostics(source: &str, file: &str, name: &str, expected: &[&str])
+    -> Vec<(crate::MemoryPolicy, super::dispatch_fast::OsrDiagnostics)> {
+    let program = Engine::specialize(source, file).unwrap();
+    let function_id = program.functions.iter()
+        .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
+    let mut diagnostics = Vec::new();
+    for policy in crate::MemoryPolicy::ALL.into_iter().filter(|policy| super::compiled::loop_tier_compiles(*policy)) {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
+        compiled.set_memory_policy(policy);
+        compiled.set_execution_mode(crate::ExecutionMode::Compiled);
+        compiled.programs.enable_js_jit_diagnostics();
+        compiled.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
+        let views = compiled.programs.lane_views(super::program_store::ProgramId::MAIN).expect("main program lane views");
+        diagnostics.push((policy, views.get(function_id).and_then(super::program_store::derived_lane_view)
+            .expect("the function's lane view").osr_diagnostics()));
+    }
+    diagnostics
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_loops_make_array_literals_of_integers_and_objects_natively() {
+    // An array literal of integers, a number computed in the loop and one object twice
+    // (`Allocation::ArrayOf`) is made by the loop's native code, which reads the elements back
+    // as the interpreter does; the loop leaves only where a collection is due. Expected value
+    // is Node's.
+    let source = r#"
+      function run(n) {
+        var t = 0;
+        for (var i = 0; i < n; i++) {
+          var o = { v: i };
+          var a = [i, o, i + 1, o, 7];
+          t = (t + a[0] + a[1].v + a[2] + a[3].v + a[4] + a.length) | 0;
+        }
+        return t;
+      }
+      var s = 0;
+      for (var k = 0; k < 200; k++) s = (s + run(300)) | 0;
+      print(s);
+    "#;
+    for (policy, osr) in compiled_loop_diagnostics(source, "lane-array-literal-loop.js", "run", &["36660000"]) {
+        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+    }
+}
+
+#[test]
+#[cfg(not(quench_profiled))]
+fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
+    // A regexp literal in a loop (`Allocation::RegExp`, `lane_new_regexp`) is a fresh object of
+    // its site's template each iteration: matching one leaves the others' `lastIndex` alone,
+    // and the loop leaves only where a collection is due. Expected value is Node's.
+    let source = r#"
+      function run(n) {
+        var t = 0, re;
+        for (var i = 0; i < n; i++) {
+          re = /a(b+)c/g;
+          t = (t + i) | 0;
+        }
+        return [re, t];
+      }
+      var first = run(300)[0], last, total = 0;
+      for (var k = 0; k < 200; k++) { var made = run(300); last = made[0]; total = (total + made[1]) | 0; }
+      first.test("xabbc");
+      print([first.lastIndex, last.lastIndex, first !== last, last.source, last.flags, last.exec("xabbbc")[1], total].join(" "));
+    "#;
+    for (policy, osr) in compiled_loop_diagnostics(source, "lane-regexp-literal-loop.js", "run", &["5 0 true a(b+)c g bbb 8970000"]) {
+        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+    }
+}
+
 #[test]
 fn lane_bodies_construct_empty_arrays() {
     // `new Array()` of the realm's `Array` in a lane body is an empty array
@@ -21414,6 +21695,73 @@ fn lane_bodies_add_properties_at_feedback_stores() {
     }
     // Node's answer for the same program.
     assert_eq!(answers, [Some(36219000.0); 2]);
+}
+
+#[test]
+fn lane_bodies_run_the_staged_add_row_until_a_prototype_gains_a_setter() {
+    // An adding store of a constructor runs `staged::add`'s row in the lane body, holding the
+    // prototype chain's proof as a Stable fact; a setter installed late retires it, and the
+    // stores then reach the setter as the interpreter's do.
+    let source = r#"
+     (function () {
+      var hits = 0;
+      function W(n) { this.n = n; this.m = n + 1; this.k = n * 2; }
+      let t = 0;
+      for (let r = 0; r < 6000; r++) {
+        if (r === 4000) Object.defineProperty(W.prototype, 'm', { set(v) { hits += v; }, get() { return 5; }, configurable: true });
+        const w = new W(r & 15);
+        t = (t + w.n + w.m + w.k + hits) | 0;
+      }
+      globalThis.answer = t;
+     })();
+    "#;
+    let program = Engine::specialize(source, "lane-add-row.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    assert!(answers[0].is_some());
+    assert_eq!(answers[0], answers[1]);
+}
+
+#[test]
+fn set_function_name_runs_the_staged_naming_row_from_the_site_it_recorded() {
+    // The first closure a site names records the edge (its shape before and after, the name
+    // slot); the later ones run `staged::naming`'s row, and a function that no longer holds the
+    // empty name (a class with a static `name`) takes the general path and keeps its own.
+    let source = r#"
+     (function () {
+      let out = [];
+      for (let i = 0; i < 40; i++) {
+        let f = function () {};
+        let c = i % 8 === 0 ? class { static name() { return 1; } } : class {};
+        out.push(f.name, typeof c.name);
+      }
+      let g = (() => 1);
+      globalThis.answer = out.join() + '|' + g.name + '|' + Object.getOwnPropertyDescriptor(g, 'name').writable;
+     })();
+    "#;
+    let program = Engine::specialize(source, "function-name-row.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        let answer = vm.own_property(global, atom).and_then(|value| vm.heap.string(value).map(|text| text.to_string()));
+        answers.push(answer);
+    }
+    assert!(answers[0].as_deref().is_some_and(|text| text.starts_with("f,function,f,string,f,string")));
+    assert!(answers[0].as_deref().is_some_and(|text| text.ends_with("|g|false")));
+    assert_eq!(answers[0], answers[1]);
 }
 
 #[test]
@@ -21692,6 +22040,136 @@ fn lane_strict_equality_decides_like_the_interpreter() {
     }
     // Node's answer for the same program.
     assert_eq!(answers, [Some(4307110.0); 2]);
+}
+
+#[test]
+fn lane_raw_sums_of_element_reads_store_canonical_numbers() {
+    // Chained sums of element reads keep raw double intermediates (`raw_results`), a NaN
+    // as the machine leaves it; what is stored, compared or used as a key is canonical: an
+    // integral sum is an int (=== and Map keys), a NaN is the one NaN (Map and Object.is).
+    let source = r#"
+      function run(x, out, n) {
+        for (var i = 1; i < n - 3; i++) {
+          var k = i - 1;
+          out[i] = x[++k] + x[++k] + x[++k] + x[++k];
+        }
+      }
+      var n = 64, x = [], out = [];
+      for (var i = 0; i < n; i++) { x.push(i % 7 == 3 ? Infinity : i % 7 == 4 ? -Infinity : (i % 2 ? 0.5 : 1.5)); out.push(0); }
+      for (var r = 0; r < 3000; r++) run(x, out, n);
+      var keys = new Map(), ints = 0, nans = 0, same = 0;
+      for (var i = 1; i < n - 3; i++) {
+        var v = out[i];
+        keys.set(v, 1);
+        if (v === (v | 0)) ints++;
+        if (v !== v) nans++;
+        if (Object.is(v, NaN)) same++;
+      }
+      globalThis.answer = keys.size * 1000000 + ints * 10000 + nans * 100 + same;
+    "#;
+    let program = Engine::specialize(source, "lane-raw-sums.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(4162727.0); 2]);
+}
+
+#[test]
+fn lane_typed_view_cache_follows_detach_resize_sharing_and_slot_reuse() {
+    // Typed element records read through a view's cached element address
+    // (`TypedViewCache`); a transfer, a resize, another view of the buffer, a copy and new
+    // views in reused slots each end the entry, so every read is the general read's.
+    let source = r#"
+function rd(a,k){return a[k];} function wr(a,k,v){a[k]=v;}
+var h=0; function mix(v){ h = (h*31 + (v|0)) >>> 0; }
+for (var r=0;r<200;r++){
+  var a=new Float64Array(4); for(var i=0;i<4;i++) wr(a,i,i+0.5); var t=a.buffer.transfer(); mix(rd(a,0)===undefined); wr(a,0,9); mix(new Float64Array(t)[0]*2);
+  var g=new ArrayBuffer(16,{maxByteLength:64}); var f=new Int32Array(g,0,4); for(var i=0;i<4;i++) wr(f,i,i*7); g.resize(8); mix(rd(f,1)===undefined); wr(f,1,5); g.resize(32); mix(rd(f,1)); mix(rd(f,3));
+  var b=new ArrayBuffer(16); var u8=new Uint8Array(b), u32=new Uint32Array(b); for(var i=0;i<4;i++) wr(u32,i,0x01020304*(i+1)); mix(rd(u8,5)); wr(u8,0,255); mix(rd(u32,0));
+  var s=u8.slice(0,4); wr(s,0,1); mix(rd(u8,0));
+  var x=(r&1)? new Uint8Array(8): new Float32Array(8); wr(x,r&7,r+0.25); mix(rd(x,r&7)*4);
+  var p=new Int16Array([1,2,3,4,5,6]); rd(p,0); p.copyWithin(0,3); mix(rd(p,0));
+}
+globalThis.answer = h;
+    "#;
+    let program = Engine::specialize(source, "lane-typed-view-cache.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(1069654188.0); 2]);
+}
+
+#[test]
+fn lane_typed_address_reads_match_the_records_they_fuse() {
+    // `heap[(p + K) >> S]` and `heap[p + K]` run as one record (`lane_typed_address_get`);
+    // plain arrays, sums past int32, non-int bases, a reassigned global and a detached
+    // buffer take the records' own path, so the results are the unfused program's.
+    let source = r#"
+var b=new ArrayBuffer(1<<16), h16=new Uint16Array(b), h32=new Int32Array(b), hf=new Float32Array(b), plain=[];
+for (var i=0;i<1000;i++){ h32[i]=i*2654435761|0; plain.push(i*3); }
+function f(p, q){ var s=0; for (var k=0;k<500;k++){ s += h16[(p+k)>>1]; s += h32[(p+4)>>2]; s += hf[(q+8)>>2]; s += h32[p+k]; s+= plain[(k+3)>>1]; } return s; }
+var o=[]; for (var r=0;r<20;r++){ o.push(f(r*4, r*8)); }
+o.push(f(-8, 0), f(2147483640, 4), f(0.5, 1), f(0x7ffffff0, 0x7ffffff0));
+var t=h32; h32=plain; o.push(f(4,4)); h32=t; var b2=h32.buffer.transfer(); o.push(f(4,4));
+var str=o.join(","), hh=0; for (var c=0;c<str.length;c++) hh=(hh*31+str.charCodeAt(c))>>>0; globalThis.answer = hh;
+    "#;
+    let program = Engine::specialize(source, "lane-typed-address.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(3967282668.0); 2]);
+}
+
+#[test]
+fn lane_typed_address_stores_match_the_records_they_fuse() {
+    // `heap[(p + K) >> S] = v` and `heap[p + K] = v` as one record
+    // (`lane_typed_address_set`); every case it leaves runs the records' own path.
+    let source = r#"
+var b=new ArrayBuffer(1<<16), h16=new Int16Array(b), h32=new Int32Array(b), hf=new Float32Array(b), plain=[];
+for (var i=0;i<1000;i++) plain.push(0);
+function g(p, q, v){ for (var k=0;k<300;k++){ h16[(p+k)>>1] = v+k; h32[(p+4)>>2] = v*3; hf[(q+8)>>2] = v/7; h32[p+k] = k-v; plain[(k+3)>>1] = v; } }
+var o=[]; for (var r=0;r<20;r++){ g(r*4, r*8, r*1000+0.5); o.push(h16[r], h32[r+3], hf[r+5], plain[r]); }
+g(-8, 0, 1); g(2147483640, 4, 2); g(0.5, 1, 3); g(0x7ffffff0, 0x7ffffff0, 4); o.push(h32[0], h32[2], hf[3]);
+var t=h32; h32=plain; g(4,4,5); o.push(plain[1], plain[4]); h32=t; var b2=h32.buffer.transfer(); g(4,4,6); o.push(new Int32Array(b2)[1]);
+var str=o.join(","), hh=0; for (var c=0;c<str.length;c++) hh=(hh*31+str.charCodeAt(c))>>>0; globalThis.answer = hh;
+    "#;
+    let program = Engine::specialize(source, "lane-typed-address-store.js").unwrap();
+    let mut answers = Vec::new();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.programs.enable_js_lane_methods();
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap();
+        let global = vm.realm.globals;
+        let atom = vm.intern_atom("answer");
+        answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+    }
+    // Node's answer for the same program.
+    assert_eq!(answers, [Some(3838761092.0); 2]);
 }
 
 #[test]
@@ -23679,59 +24157,22 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
-/// What `lane_entry_counts` measured of a run.
-struct LaneEntryCounts {
-    /// The number the source left in `globalThis.answer`.
-    answer: Option<f64>,
-    /// The lane body entries the run made.
-    entries: usize,
-    /// The runs those entries bound (`LaneFrame::bind_run`).
-    binds: usize,
-    /// The calls that entered a body through its entry cell before any activation.
-    crossings: usize,
-    /// Whether the memory policy compiles lane bodies at all.
-    compiles: bool,
-}
-
-/// Runs `source` and measures it: its answer, and the lane body entries it made.
-fn lane_entry_counts(source: &str, mode: crate::ExecutionMode) -> LaneEntryCounts {
-    let program = Engine::specialize(source, "lane-crossing.js").unwrap();
-    super::compiled::LANE_ENTRIES.with(|counts| counts.set((0, 0)));
-    super::compiled::LANE_CELL_CROSSINGS.with(|count| count.set(0));
-    let mut vm = Vm::new(TestHost::default());
-    vm.programs.enable_js_lane_methods();
-    vm.set_execution_mode(mode);
-    vm.execute(&program).unwrap();
-    let atom = vm.intern_atom("answer");
-    let answer = vm.own_property(vm.realm.globals, atom).and_then(Value::as_number);
-    let (entries, binds) = super::compiled::LANE_ENTRIES.with(std::cell::Cell::get);
-    LaneEntryCounts {
-        answer, entries, binds,
-        crossings: super::compiled::LANE_CELL_CROSSINGS.with(std::cell::Cell::get),
-        compiles: super::compiled::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY),
-    }
-}
-
 /// The interpreter enters a hot callee's body through its function's one entry word, and a run
 /// binds the dispatch payload once: entries of one lane run find its program, residual, lane
 /// context and interrupt standing, so the runs bound are a small fraction of the entries.
 #[test]
 fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
-    crate::vm::compiled::tier_policy::force_admission();
     let source = r#"(function () {
       function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
       let total = 0;
       for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
       globalThis.answer = total;
     })();"#;
-    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
-    let LaneEntryCounts { answer, entries, binds, crossings, compiles } = lane_entry_counts(source, crate::ExecutionMode::Compiled);
-    assert_eq!(answer, expected, "entering through the cell matches the interpreter");
-    if compiles {
-        assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-        assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-        assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
-    }
+    let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
+    let (entries, binds, crossings) = (events.count(Event::Entered), events.count(Event::RunBound), events.count(Event::CellCrossed));
+    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
+    assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
+    assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
 }
 
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the
@@ -23753,19 +24194,14 @@ fn interpreter_calls_of_stub_callees_match_the_interpreter() {
       }
       globalThis.answer = total * 8 + caught;
     })();"#;
-    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
-    let answer = lane_entry_counts(source, crate::ExecutionMode::Compiled).answer;
-    assert!(expected.is_some());
-    assert_eq!(answer, expected);
+    assert_cell_crossings_match(source);
 }
 
 /// Runs `source` interpreted and compiled and requires the same answer, which the interpreter
 /// leaves in `globalThis.answer`.
 fn assert_cell_crossings_match(source: &str) {
-    let expected = lane_entry_counts(source, crate::ExecutionMode::Interpreted).answer;
-    let compiled = lane_entry_counts(source, crate::ExecutionMode::Compiled);
-    assert!(expected.is_some(), "the source leaves its answer");
-    assert_eq!(compiled.answer, expected);
+    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    assert!(run.outcome.answer.is_some(), "the source leaves its answer");
 }
 
 /// A body entered through its cell that leaves at its first instruction (its receiver's shape
@@ -23838,4 +24274,52 @@ fn forwarded_calls_cross_into_cell_bodies() {
       for (let round = 0; round < 8000; round++) { total = (total + step.call(null, round & 7, round & 3)) & 1048575; }
       globalThis.answer = total;
     })();"#);
+}
+
+/// A function body of straight-line statements past the streaming size compiles a run of
+/// statements at a time (`compile::statement_stream`) and runs as the whole body would: calls,
+/// member writes, positions in errors.
+#[test]
+fn streamed_root_function_runs_a_run_at_a_time_then_whole_when_called_again() {
+    // `big`'s first call compiles and runs its body a run of statements at a time; its second
+    // compiles it whole. Both read the script's lexical `k` and the caller's `this`-free scope.
+    let mut source = String::from("let k = 3; var acc = 0; function add(x) { acc += x; }\nfunction big(p) {\n");
+    for _ in 0..24_000 {
+        source.push_str("add(p + k);\n");
+    }
+    source.push_str("}\nbig(1); var first = acc; big(2); print(first + ' ' + acc + ' ' + big.length + ' ' + big.name);\n");
+    let program = Engine::specialize(&source, "streamed-runs.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["96000 216000 1 big".to_string()]);
+}
+
+#[test]
+fn straight_line_body_past_the_stream_size_runs_as_written() {
+    let mut source = String::from("var acc = []; var o = { a: 0, b: { c: 0 } }; function emit(x, y) { acc.push(x + (y === undefined ? 0 : y)); }\nfunction big(p) {\n");
+    let mut expected_sum = 0i64;
+    let mut count = 0;
+    for i in 0..24_000i64 {
+        match i % 4 {
+            0 => {
+                source.push_str(&format!("emit({i}, p);\n"));
+                expected_sum += i + 7;
+                count += 1;
+            }
+            1 => source.push_str(&format!("o.a = o.a + {i} % 13;\n")),
+            2 => source.push_str("o.b.c++;\n"),
+            _ => {
+                source.push_str(&format!("emit(Math.max({i}, 1), void 0);\n"));
+                expected_sum += i;
+                count += 1;
+            }
+        }
+    }
+    source.push_str("p.missing.deep;\n}\ntry { big(7); } catch (error) { print(error.name); }\nvar sum = 0; for (var v of acc) sum += v; print(acc.length + ' ' + sum + ' ' + o.b.c);\n");
+    let program = Engine::specialize(&source, "straight-line.js").unwrap();
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["TypeError".to_string(), format!("{count} {expected_sum} 6000")]);
 }

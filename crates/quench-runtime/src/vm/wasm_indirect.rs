@@ -1,9 +1,48 @@
-//! `call_indirect`'s target: the table element, checked against the type the call expects.
+//! The target of an indirect Wasm call, resolved by the staged rule
+//! (`staged::wasm_call::indirect_target`) on the VM's tables, and the signature a table element
+//! carries beside its reference for that rule.
+
 use super::*;
+use crate::staged::wasm_call::indirect_target;
+use crate::staged::wasm_machine::ConcreteTable;
+use crate::heap::{TableTarget, WasmTableElements};
 
 impl<H: Host> Vm<H> {
-    /// The function at `index` of `table` that a `call_indirect` expecting type
-    /// `expected_index` of `caller`'s module calls, or the trap it raises.
+    /// What a table element holding `value` presents to an indirect call (`TableTarget`): the
+    /// null row for the null reference; for a function of a module its canonical signature, its
+    /// index and its instance's record (`InstanceContext::address`); the foreign row for anything the VM compares against
+    /// the expected type (a host function).
+    pub(super) fn wasm_element_target(&self, value: Value) -> TableTarget {
+        if value.is_null() {
+            return TableTarget::NULL;
+        }
+        let Some(FunctionRecord {
+            kind: FunctionKind::User(program, function),
+            env,
+            ..
+        }) = self.heap.function(value)
+        else {
+            return TableTarget::FOREIGN;
+        };
+        let Some(signature) = self
+            .programs
+            .wasm_signatures(*program)
+            .and_then(|pool| pool.defined_canonical(*function))
+        else {
+            return TableTarget::FOREIGN;
+        };
+        let Some(instance) = self.wasm_instance_address(*env, *program) else {
+            return TableTarget::FOREIGN;
+        };
+        TableTarget {
+            signature,
+            entry: *function,
+            instance: instance as u64,
+        }
+    }
+
+    /// The function reference at `index` of `table` an indirect call of signature type
+    /// `expected_index` of `caller`'s module calls (`wasm_indirect_element`).
     pub(super) fn wasm_indirect_target(
         &self,
         caller: ProgramId,
@@ -11,7 +50,9 @@ impl<H: Host> Vm<H> {
         index: u64,
         expected_index: u32,
     ) -> Result<Value, JsError> {
-        let elements = self.wasm_table_elements(table)?;
+        let Some(Cell::WasmTable { elements, .. }) = self.heap.get(table) else {
+            return Err(JsError::validation("invalid Wasm table binding".into()));
+        };
         self.wasm_indirect_element(caller, elements, index, expected_index)
     }
 
@@ -31,45 +72,40 @@ impl<H: Host> Vm<H> {
         self.wasm_indirect_element(caller, elements, index, expected_index)
     }
 
-    #[inline(always)]
+    /// The element at `index` of `elements` an indirect call of signature type `expected_index`
+    /// calls (`staged::wasm_call::indirect_target`): a validation error where the program has
+    /// no such type, or where a reference whose id is not the expected one cannot be compared,
+    /// which the rule meets only after the element checks.
     fn wasm_indirect_element(
         &self,
         caller: ProgramId,
-        elements: &[Value],
+        elements: &WasmTableElements,
         index: u64,
         expected_index: u32,
     ) -> Result<Value, JsError> {
-        let reference = usize::try_from(index)
-            .ok()
-            .and_then(|index| elements.get(index))
-            .copied()
-            .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::UndefinedElement))?;
-        if reference.is_null() {
-            return Err(JsError::wasm_trap_error(crate::WasmTrap::UninitializedElement));
-        }
-        // A function of the caller's own module declared with the expected type, the common
-        // indirect call, is the interned type itself (`WasmSignatures::accepts`'s first case).
-        if let Some(FunctionRecord { kind: FunctionKind::User(program, defined), .. }) = self.heap.function(reference)
-            && *program == caller
-            && self.programs.wasm_signatures(caller).and_then(|pool| pool.defined_type_index(*defined)) == Some(expected_index)
-        {
-            return Ok(reference);
-        }
-        self.wasm_callable_accepted(caller, reference, expected_index).map(|()| reference)
-    }
-
-    /// Whether the callable `reference` has a type that type `expected_index` of `caller`'s
-    /// module accepts, as the trap a mismatch raises.
-    #[inline(never)]
-    fn wasm_callable_accepted(&self, caller: ProgramId, reference: Value, expected_index: u32) -> Result<(), JsError> {
-        let expected = self
+        let (pool, expected) = self
             .programs
             .wasm_signatures(caller)
-            .filter(|pool| pool.type_signature(expected_index).is_some())
+            .and_then(|pool| Some((pool, pool.type_canonical(expected_index)?)))
             .ok_or_else(|| JsError::validation("invalid Wasm signature index".into()))?;
-        let matches = self
-            .wasm_callable_matches(reference, expected, expected_index, false)
-            .ok_or_else(|| JsError::validation("invalid Wasm function signature".into()))?;
-        if matches { Ok(()) } else { Err(JsError::wasm_trap_error(crate::WasmTrap::IndirectCallTypeMismatch)) }
+        let mut failure = None;
+        let mut related = |reference: Value| {
+            self.wasm_callable_matches(reference, pool, expected_index, false)
+                .unwrap_or_else(|| {
+                    failure = Some(JsError::validation("invalid Wasm function signature".into()));
+                    true
+                })
+        };
+        let mut stage = ConcreteTable {
+            elements: &elements.values,
+            targets: elements.targets(),
+            related: &mut related,
+        };
+        let reference =
+            indirect_target(&mut stage, index, expected).map_err(JsError::wasm_trap_error)?;
+        failure.map_or(Ok(Value::from_bits(reference)), Err)
     }
 }
+
+#[cfg(test)]
+mod tests;

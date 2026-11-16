@@ -19,7 +19,7 @@ pub(crate) use constant::{WasmArrayInitializer, WasmInitializerEffect};
 pub(crate) mod tag;
 pub use tag::WasmTag;
 mod element;
-pub use element::{WasmElement, WasmElementMode};
+pub use element::{WasmElement, WasmElementItems, WasmElementMode};
 pub use table::{WasmTable, WasmTableInitializer};
 pub(crate) mod atomic;
 pub(crate) mod memory;
@@ -35,7 +35,7 @@ mod types;
 pub use types::WasmTypes;
 pub(crate) mod simd;
 pub(crate) mod table;
-pub(crate) use scalar::{ScalarBits, V128_BYTES, WasmSignatures};
+pub(crate) use scalar::{CanonicalSignature, ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
     WasmHostSignature,
     WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,
@@ -669,6 +669,67 @@ impl Engine {
     where
         I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>> + Clone,
     {
+        let (function_types, sources): (Vec<_>, Vec<_>) = bodies
+            .into_iter()
+            .map(|body| (body.ty, inline::Source { locals: body.locals, operators: body.operators }))
+            .unzip();
+        Self::lower_wasm_sources(
+            mode, name, function_types, &sources, None, types, globals, memories, data, tables,
+            elements, imports, tags,
+        )
+    }
+
+    /// A module whose functions lower on their first calls, for the interpreter: `code`
+    /// keeps the bytes of its code section. Lowering runs once over every function at
+    /// compile, which settles the module's constants and signatures and reports what does
+    /// not lower; only a function that is called keeps its record.
+    #[allow(clippy::too_many_arguments)]
+    pub fn lower_wasm_module_lazily(
+        name: &str,
+        code: WasmLazyCode,
+        types: &WasmTypes,
+        globals: &[WasmGlobal],
+        memories: &[WasmMemory],
+        data: &[WasmData],
+        tables: &[WasmTable],
+        elements: &[WasmElement],
+        imports: &[WasmFunctionImport],
+        tags: &[WasmTag],
+    ) -> Result<WasmModule, Diagnostic> {
+        let code = Rc::new(code);
+        let function_types = code
+            .bodies
+            .iter()
+            .map(|body| WasmCallableType::Declared(body.ty))
+            .collect();
+        let sources: &WasmLazyCode = &code;
+        Self::lower_wasm_sources(
+            crate::ExecutionMode::Interpreted, name, function_types, &sources, Some(code.clone()),
+            types, globals, memories, data, tables, elements, imports, tags,
+        )
+    }
+
+    /// `lower_wasm_module_for` over a table of sources; `lazy`, when given, holds the
+    /// bytes `sources` reads and the module lowers each function on its first call.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_wasm_sources<'a, I>(
+        mode: crate::ExecutionMode,
+        name: &str,
+        function_types: Vec<WasmCallableType>,
+        sources: &dyn inline::SourceTable<'a, I>,
+        lazy: Option<Rc<WasmLazyCode>>,
+        types: &WasmTypes,
+        globals: &[WasmGlobal],
+        memories: &[WasmMemory],
+        data: &[WasmData],
+        tables: &[WasmTable],
+        elements: &[WasmElement],
+        imports: &[WasmFunctionImport],
+        tags: &[WasmTag],
+    ) -> Result<WasmModule, Diagnostic>
+    where
+        I: inline::Operators<'a>,
+    {
         if tables
             .iter()
             .any(|table| !table::supported_table(&table.ty, types))
@@ -702,10 +763,6 @@ impl Engine {
         for tag in tags {
             tag.validate(name, types)?;
         }
-        let (function_types, bodies): (Vec<_>, Vec<_>) = bodies
-            .into_iter()
-            .map(|body| (body.ty, (body.locals, body.operators)))
-            .unzip();
         let mut signature_pool =
             WasmSignatures::with_imports(name, imports, function_types, types)?;
         for element in elements {
@@ -791,175 +848,83 @@ impl Engine {
             ));
         }
         let mut constants = ConstantPool::with([Constant::Number(0.0), Constant::Undefined]);
-        let sources: Vec<_> = bodies
-            .into_iter()
-            .map(|(locals, operators)| inline::Source { locals, operators })
-            .collect();
-        let mut functions = Vec::with_capacity(sources.len());
+        let lazy_lowering = lazy.is_some();
+        let mut functions = Vec::with_capacity(if lazy_lowering { 0 } else { sources.count() });
+        let mut slots = Vec::with_capacity(if lazy_lowering { sources.count() } else { 0 });
         let plan = inline::LeafPlan::new(
             name,
-            &sources,
+            sources,
             inline::Bindings {
                 memories,
                 globals: globals.len(),
             },
             &signature_pool,
             inline::leaf_budget(mode, || {
-                sources.iter().map(|source| source.operators.clone().into_iter().count()).sum()
+                (0..sources.count())
+                    .map(|index| sources.operators(index).map_or(0, |operators| operators.into_iter().count()))
+                    .sum()
             }),
         )?;
-        for position in 0..sources.len() {
-            // The body is streamed, inlined, from its source.
-            let form = plan.lowered(position)?;
-            let index = u32::try_from(position)
-                .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
-            let signature = signature_pool.defined_signature(index).unwrap().clone();
-            let params = u16::try_from(signature.params.len())
-                .map_err(|_| Diagnostic::unsupported(name, "too many Wasm parameters"))?;
-            let results = u16::try_from(signature.results.len())
-                .map_err(|_| Diagnostic::unsupported(name, "too many Wasm function results"))?;
-            let error = |message: &str| Diagnostic::unsupported(name, message);
-            let local_count = usize::from(params)
-                .checked_add(form.locals.len())
-                .and_then(|count| u16::try_from(count).ok())
-                .ok_or_else(|| error("too many Wasm locals"))?;
-            // Instance bindings the body uses get registers loaded once per call.
-            let mut reserved: Register = 0;
-            let mut reserve = |used: bool| {
-                let register = used.then_some(reserved);
-                reserved += Register::from(used);
-                register
-            };
-            let memory_registers: Vec<_> =
-                form.memories.iter().copied().map(&mut reserve).collect();
-            let global_registers: Vec<_> = form.globals.iter().map(|&global| (global, reserve(true).expect("a reserved register"))).collect();
-            let local_base = (usize::from(reserved) + usize::from(local_count)
-                <= MAX_REGISTER_LOCALS)
-                .then_some(reserved);
-            if local_base.is_some() {
-                reserved += local_count;
-            }
-            let mut lowering = Lowering {
-                fusion_floor: 0,
-                name,
-                locals: local_count,
-                temporary_base: if local_base.is_some() { 0 } else { local_count },
-                temporary_locals: 0,
-                memory_registers,
-                global_registers,
-                local_base,
-                aliases: Vec::new(),
-                producer: None,
-                previous: None,
-                code: Vec::new(),
-                wide: Vec::new(),
-                constants,
-                signatures: &mut signature_pool,
-                globals,
-                memories,
-                data,
-                tables,
-                elements,
-                tags,
-                handlers: vec![],
-                depth: reserved,
-                // The function base register always exists: it carries a void result.
-                registers: reserved + 1,
-                controls: vec![Control::function(reserved, results)],
-                path: Reachability::Live,
-            };
-            // Defaultable locals get residual defaults; others remain uninitialized.
-            // The frontend proves assignment before non-defaultable local reads.
-            if let Some(base) = local_base {
-                lowering.fill_register_locals(base, params, &form.locals, &form.assigned_first)?;
+        let bindings = ModuleBindings { name, globals, memories, data, tables, elements, tags };
+        for position in 0..sources.count() {
+            let function = bindings.lower_defined(
+                position,
+                &plan,
+                SignaturePool::Building(&mut signature_pool),
+                &mut constants,
+                &[],
+            )?;
+            if !lazy_lowering {
+                functions.push(function);
+            } else if position == 0 {
+                // A lazily lowered module keeps its first record: an environment's root
+                // function is read without a call.
+                let mut function = function;
+                let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+                function.register_roots =
+                    crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
+                slots.push(crate::bytecode::FunctionSlot::compiled(function));
             } else {
-                for (index, ty) in form.locals.iter().copied().enumerate() {
-                    if ty.is_defaultable() {
-                        let slot = usize::from(params) + index;
-                        lowering.load_default(0, ty)?;
-                        lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
-                    }
-                }
+                // Kept by its first call; this lowering settled what it interns.
+                slots.push(crate::bytecode::FunctionSlot::released(
+                    crate::bytecode::FunctionHeader::of(&function),
+                ));
             }
-            let global_slots = lowering.global_registers.iter().map(|&(global, register)| (global as usize, register));
-            let memory_slots = lowering.memory_registers.iter().enumerate()
-                .filter_map(|(memory, register)| Some((lowering.globals.len() + memory, (*register)?)));
-            let bindings: Vec<_> = global_slots.chain(memory_slots).collect();
-            for (slot, register) in bindings {
-                lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
-            }
-            plan.lower(position, &form, &mut |operator| {
-                if lowering.controls.is_empty() {
-                    return Err(error("operators after Wasm function end"));
-                }
-                lowering.operator(operator)
-            })?;
-            if !lowering.controls.is_empty() {
-                return Err(error("missing Wasm function end"));
-            }
-            let function = Function {
-                parent: None,
-                name: None,
-                inferred_name: None,
-                is_arrow: false,
-                self_binding_slot: None,
-                source_span: None,
-                params,
-                length: params,
-                parameter_end_pc: 0,
-                parameter_atoms: vec![].into(),
-                rest: false,
-                is_async: false,
-                is_generator: false,
-                is_class_constructor: false,
-                derived_constructor: false,
-                instance_initializer: None,
-                super_home_atom: None,
-                constructible: false,
-                class_initializer: false,
-                parameter_eval_arguments_error: false,
-                unaliased_arguments: false,
-            prototype_unobservable: false,
-                arguments_slot: None,
-                simple_parameters: true,
-                strict: true,
-                locals: lowering.temporary_base + lowering.temporary_locals,
-                local_atoms: vec![].into(),
-                environment_atoms: vec![].into(),
-                selective_capture_slots: None,
-                local_registers: Vec::new().into(),
-                inherited_with_scope: false,
-                lexical_atoms: vec![].into(),
-                global_declarations: None,
-                name_bindings: Default::default(),
-                binding_sites: vec![].into(),
-                source_positions: Default::default(),
-                environment_clones: vec![].into(),
-                code: lowering.code,
-                wide: lowering.wide,
-                registers: lowering.registers,
-                dispatch: DispatchClass::General,
-                decoded: Default::default(),
-                plain_locals: Default::default(),
-                declared_atom_sets: Default::default(),
-                activation_bindings: Default::default(),
-                live_parameter_reflection: Default::default(),
-                static_name_scope: Default::default(),
-                dynamic_scope_access: Default::default(),
-                js_tier_candidate: Default::default(),
-                call_plan: Default::default(),
-                initializer: Default::default(),
-                handlers: lowering.handlers.into(),
-                register_roots: Default::default(),
-                undefined_register: None,
-                parameter_registers: lowering.local_base,
-                initial_register: crate::bytecode::InitialRegister::I32Zero,
-            };
-            functions.push(function);
-            constants = lowering.constants;
         }
+        let facts = plan.facts();
         let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
         crate::compile::liveness::mark_register_roots(&mut functions, no_method_sites, &[], &[]);
+        let signatures = Rc::new(signature_pool);
+        let globals: Rc<[WasmGlobal]> = globals.into();
+        let memories: Rc<[WasmMemory]> = memories.into();
+        let data: Rc<[WasmData]> = data.into();
+        let tables: Rc<[WasmTable]> = tables.into();
+        let elements: Rc<[WasmElement]> = elements.into();
+        let tags: Rc<[WasmTag]> = tags.into();
+        let (program_constants, kept_constants) = if lazy_lowering {
+            let (settled, pool) = constants.settle();
+            (settled, Some(pool))
+        } else {
+            (constants.into_constants(), None)
+        };
+        if !lazy_lowering {
+            slots = functions.into_iter().map(crate::bytecode::FunctionSlot::compiled).collect();
+        }
+        let wasm_lazy = lazy.zip(kept_constants).map(|(code, constants)| {
+            Rc::new(WasmLazy {
+                name: name.into(),
+                code,
+                facts,
+                constants: std::cell::RefCell::new(constants),
+                signatures: signatures.clone(),
+                globals: globals.clone(),
+                memories: memories.clone(),
+                data: data.clone(),
+                tables: tables.clone(),
+                elements: elements.clone(),
+                tags: tags.clone(),
+            })
+        });
         let program = ResidualProgram {
             specialized: false,
             kind: ProgramKind::Wasm,
@@ -969,11 +934,8 @@ impl Engine {
             source_name: name.into(),
             source: None,
             atoms: AtomTable::default(),
-            constants: constants.into_constants().into(),
-            functions: functions
-                .into_iter()
-                .map(crate::bytecode::FunctionSlot::compiled)
-                .collect::<Vec<_>>().into(),
+            constants: program_constants.into(),
+            functions: slots.into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),
             method_arguments: vec![].into(),
@@ -988,18 +950,19 @@ impl Engine {
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            wasm_lazy,
         };
         program.validate().map_err(|e| Diagnostic::unsupported(name, e))?;
         program.validated.establish();
         Ok(WasmModule {
             program: Rc::new(program),
-            signatures: Rc::new(signature_pool),
-            globals: globals.into(),
-            memories: memories.into(),
-            data: data.into(),
-            tables: tables.into(),
-            elements: elements.into(),
-            tags: tags.into(),
+            signatures,
+            globals,
+            memories,
+            data,
+            tables,
+            elements,
+            tags,
             start: None,
             exports: Rc::default(),
             custom_sections: Rc::default(),
@@ -1415,11 +1378,340 @@ mod tests {
     }
 }
 
+
+/// The code section of a module whose functions lower on their first calls, kept so each
+/// body can be read again: one copy of its bytes and each body's range in them.
+pub struct WasmLazyCode {
+    bytes: Box<[u8]>,
+    /// The module offset of `bytes[0]`.
+    base: usize,
+    bodies: Box<[WasmLazyBody]>,
+}
+
+/// A defined function's declared type and its body's module range.
+#[derive(Clone, Copy)]
+pub struct WasmLazyBody {
+    pub ty: u32,
+    pub start: u32,
+    pub end: u32,
+}
+
+impl WasmLazyCode {
+    /// `bytes` are the module's from offset `base` on and hold every body in `bodies`.
+    pub fn new(bytes: Box<[u8]>, base: usize, bodies: Vec<WasmLazyBody>) -> Self {
+        Self { bytes, base, bodies: bodies.into() }
+    }
+
+    fn body(&self, index: usize) -> Result<wasmparser::FunctionBody<'_>, Diagnostic> {
+        let body = self.bodies.get(index).ok_or_else(|| Diagnostic::unsupported("wasm", "unknown Wasm function body"))?;
+        let start = (body.start as usize).checked_sub(self.base);
+        let bytes = start.and_then(|start| self.bytes.get(start..body.end as usize - self.base));
+        let bytes = bytes.ok_or_else(|| Diagnostic::unsupported("wasm", "Wasm function body outside its code"))?;
+        Ok(wasmparser::FunctionBody::new(wasmparser::BinaryReader::new(bytes, body.start as usize)))
+    }
+}
+
+impl<'b> inline::SourceTable<'b, wasmparser::OperatorsReader<'b>> for &'b WasmLazyCode {
+    fn count(&self) -> usize {
+        self.bodies.len()
+    }
+
+    fn locals(&self, index: usize) -> Result<Vec<wasmparser::ValType>, Diagnostic> {
+        let error = |message: &str| Diagnostic::unsupported("wasm", message);
+        let mut locals = Vec::new();
+        let reader = self.body(index)?.get_locals_reader().map_err(|error| Diagnostic::unsupported("wasm", &error.to_string()))?;
+        for local in reader {
+            let (count, ty) = local.map_err(|error| Diagnostic::unsupported("wasm", &error.to_string()))?;
+            let length = usize::try_from(count)
+                .ok()
+                .and_then(|count| locals.len().checked_add(count))
+                .filter(|length| *length <= usize::from(u16::MAX))
+                .ok_or_else(|| error("too many locals"))?;
+            locals.resize(length, ty);
+        }
+        Ok(locals)
+    }
+
+    fn operators(&self, index: usize) -> Result<wasmparser::OperatorsReader<'b>, Diagnostic> {
+        let this: &'b WasmLazyCode = self;
+        this.body(index)?.get_operators_reader().map_err(|error| Diagnostic::unsupported("wasm", &error.to_string()))
+    }
+}
+
+/// What a module whose functions lower on their first calls keeps to lower them: its code,
+/// its inlining plan's decisions, and the constants and signatures its compile settled.
+pub(crate) struct WasmLazy {
+    name: Rc<str>,
+    code: Rc<WasmLazyCode>,
+    facts: inline::PlanFacts,
+    constants: std::cell::RefCell<ConstantPool>,
+    signatures: Rc<WasmSignatures>,
+    globals: Rc<[WasmGlobal]>,
+    memories: Rc<[WasmMemory]>,
+    data: Rc<[WasmData]>,
+    tables: Rc<[WasmTable]>,
+    elements: Rc<[WasmElement]>,
+    tags: Rc<[WasmTag]>,
+}
+
+impl std::fmt::Debug for WasmLazy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmLazy").field("name", &self.name).field("functions", &self.code.bodies.len()).finish()
+    }
+}
+
+impl WasmLazy {
+    /// The record of function `index`, lowered as the module's compile lowered it, against
+    /// a program that holds `program_constants`.
+    pub(crate) fn lower(&self, index: usize, program_constants: &[Constant]) -> Function {
+        let sources: &WasmLazyCode = &self.code;
+        let plan = inline::LeafPlan::resume(
+            &self.name,
+            &sources,
+            inline::Bindings { memories: &self.memories, globals: self.globals.len() },
+            &self.facts,
+        );
+        let bindings = ModuleBindings {
+            name: &self.name,
+            globals: &self.globals,
+            memories: &self.memories,
+            data: &self.data,
+            tables: &self.tables,
+            elements: &self.elements,
+            tags: &self.tags,
+        };
+        let mut constants = self.constants.borrow_mut();
+        let mut function = bindings
+            .lower_defined(index, &plan, SignaturePool::Finished(&self.signatures), &mut constants, program_constants)
+            .unwrap_or_else(|error| panic!("Wasm function {index} of {} lowered at compile but not again: {error:?}", self.name));
+        assert_eq!(
+            constants.len(),
+            program_constants.len(),
+            "Wasm function {index} of {} interned a constant its compile did not",
+            self.name
+        );
+        let no_method_sites: &[crate::compile::liveness::MethodSite] = &[];
+        function.register_roots =
+            crate::compile::liveness::register_roots(&function, no_method_sites, &[], &[]);
+        function
+    }
+}
+
+/// The module state every defined function's lowering reads.
+#[derive(Clone, Copy)]
+struct ModuleBindings<'a> {
+    name: &'a str,
+    globals: &'a [WasmGlobal],
+    memories: &'a [WasmMemory],
+    data: &'a [WasmData],
+    tables: &'a [WasmTable],
+    elements: &'a [WasmElement],
+    tags: &'a [WasmTag],
+}
+
+impl ModuleBindings<'_> {
+    /// The record of defined function `position`, streamed, inlined, from its source as
+    /// `plan` inlines it, its constants interned into `constants`.
+    fn lower_defined<'s, I: inline::Operators<'s>>(
+        &self,
+        position: usize,
+        plan: &inline::LeafPlan<'_, 's, I>,
+        signatures: SignaturePool<'_>,
+        constants: &mut ConstantPool,
+        settled: &[Constant],
+    ) -> Result<Function, Diagnostic> {
+        let Self { name, globals, memories, data, tables, elements, tags } = *self;
+        // The body is streamed, inlined, from its source.
+        let form = plan.lowered(position)?;
+        let index = u32::try_from(position)
+            .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
+        let signature = signatures.defined_signature(index).unwrap().clone();
+        let params = u16::try_from(signature.params.len())
+            .map_err(|_| Diagnostic::unsupported(name, "too many Wasm parameters"))?;
+        let results = u16::try_from(signature.results.len())
+            .map_err(|_| Diagnostic::unsupported(name, "too many Wasm function results"))?;
+        let error = |message: &str| Diagnostic::unsupported(name, message);
+        let local_count = usize::from(params)
+            .checked_add(form.locals.len())
+            .and_then(|count| u16::try_from(count).ok())
+            .ok_or_else(|| error("too many Wasm locals"))?;
+        // Instance bindings the body uses get registers loaded once per call.
+        let mut reserved: Register = 0;
+        let mut reserve = |used: bool| {
+            let register = used.then_some(reserved);
+            reserved += Register::from(used);
+            register
+        };
+        let memory_registers: Vec<_> =
+            form.memories.iter().copied().map(&mut reserve).collect();
+        // The accessed globals, ascending, with their registers, rather than a slot per global
+        // of the module: a module of many globals and functions paid globals x functions.
+        let global_registers: Vec<_> = form.globals.iter().map(|&global| (global, reserve(true).expect("a reserved register"))).collect();
+        let local_base = (usize::from(reserved) + usize::from(local_count)
+            <= MAX_REGISTER_LOCALS)
+            .then_some(reserved);
+        if local_base.is_some() {
+            reserved += local_count;
+        }
+        let mut lowering = Lowering {
+            fusion_floor: 0,
+            name,
+            locals: local_count,
+            temporary_base: if local_base.is_some() { 0 } else { local_count },
+            temporary_locals: 0,
+            memory_registers,
+            global_registers,
+            local_base,
+            aliases: Vec::new(),
+            producer: None,
+            previous: None,
+            code: Vec::new(),
+            wide: Vec::new(),
+            constants: std::mem::replace(constants, ConstantPool::with(std::iter::empty())),
+            settled_constants: settled,
+            signatures,
+            globals,
+            memories,
+            data,
+            tables,
+            elements,
+            tags,
+            handlers: vec![],
+            depth: reserved,
+            // The function base register always exists: it carries a void result.
+            registers: reserved + 1,
+            controls: vec![Control::function(reserved, results)],
+            path: Reachability::Live,
+        };
+        // Defaultable locals get residual defaults; others remain uninitialized.
+        // The frontend proves assignment before non-defaultable local reads.
+        if let Some(base) = local_base {
+            lowering.fill_register_locals(base, params, &form.locals, &form.assigned_first)?;
+        } else {
+            for (index, ty) in form.locals.iter().copied().enumerate() {
+                if ty.is_defaultable() {
+                    let slot = usize::from(params) + index;
+                    lowering.load_default(0, ty)?;
+                    lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
+                }
+            }
+        }
+        let global_slots = lowering.global_registers.iter().map(|&(global, register)| (global as usize, register));
+        let memory_slots = lowering.memory_registers.iter().enumerate()
+            .filter_map(|(memory, register)| Some((lowering.globals.len() + memory, (*register)?)));
+        let bindings: Vec<_> = global_slots.chain(memory_slots).collect();
+        for (slot, register) in bindings {
+            lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
+        }
+        plan.lower(position, &form, &mut |operator| {
+            if lowering.controls.is_empty() {
+                return Err(error("operators after Wasm function end"));
+            }
+            lowering.operator(operator)
+        })?;
+        if !lowering.controls.is_empty() {
+            return Err(error("missing Wasm function end"));
+        }
+        let lowering_constants = lowering.constants;
+        let function = Function {
+            parent: None,
+            name: None,
+            inferred_name: None,
+            is_arrow: false,
+            self_binding_slot: None,
+            source_span: None,
+            params,
+            length: params,
+            parameter_end_pc: 0,
+            parameter_atoms: vec![].into(),
+            rest: false,
+            is_async: false,
+            is_generator: false,
+            is_class_constructor: false,
+            derived_constructor: false,
+            instance_initializer: None,
+            super_home_atom: None,
+            constructible: false,
+            class_initializer: false,
+            parameter_eval_arguments_error: false,
+            unaliased_arguments: false,
+        prototype_unobservable: false,
+            arguments_slot: None,
+            simple_parameters: true,
+            strict: true,
+            locals: lowering.temporary_base + lowering.temporary_locals,
+            local_atoms: vec![].into(),
+            environment_atoms: vec![].into(),
+            selective_capture_slots: None,
+            local_registers: Vec::new().into(),
+            inherited_with_scope: false,
+            lexical_atoms: vec![].into(),
+            global_declarations: None,
+            name_bindings: Default::default(),
+            binding_sites: vec![].into(),
+            source_positions: Default::default(),
+            environment_clones: vec![].into(),
+            code: lowering.code,
+            wide: lowering.wide,
+            registers: lowering.registers,
+            dispatch: DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
+            declared_atom_sets: Default::default(),
+            activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            dynamic_scope_access: Default::default(),
+            js_tier_candidate: Default::default(),
+            call_plan: Default::default(),
+            initializer: Default::default(),
+            handlers: lowering.handlers.into(),
+            register_roots: Default::default(),
+            undefined_register: None,
+            parameter_registers: lowering.local_base,
+            initial_register: crate::bytecode::InitialRegister::I32Zero,
+        };
+        // The lowering grew the code by doubling; the module keeps it for its life.
+        let mut function = function;
+        function.shrink_to_fit();
+        *constants = lowering_constants;
+        Ok(function)
+    }
+}
+
+/// The signature pool a lowering interns into: the module's while it is being lowered,
+/// or the finished pool of a module whose functions lower on their first calls, which
+/// already holds every type they intern.
+enum SignaturePool<'a> {
+    Building(&'a mut WasmSignatures),
+    Finished(&'a WasmSignatures),
+}
+
+impl SignaturePool<'_> {
+    fn intern(&mut self, name: &str, ty: WasmCallableType) -> Result<u32, Diagnostic> {
+        match self {
+            Self::Building(pool) => pool.intern(name, ty),
+            Self::Finished(pool) => pool.interned_index(name, ty),
+        }
+    }
+}
+
+impl std::ops::Deref for SignaturePool<'_> {
+    type Target = WasmSignatures;
+
+    fn deref(&self) -> &WasmSignatures {
+        match self {
+            Self::Building(pool) => pool,
+            Self::Finished(pool) => pool,
+        }
+    }
+}
+
 struct Lowering<'a> {
     /// Instructions from here on follow the last label, so a later
     /// instruction may fuse into them without a jump landing between.
     fusion_floor: usize,
-    signatures: &'a mut WasmSignatures,
+    signatures: SignaturePool<'a>,
     globals: &'a [WasmGlobal],
     memories: &'a [WasmMemory],
     data: &'a [WasmData],
@@ -1449,6 +1741,8 @@ struct Lowering<'a> {
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
     constants: ConstantPool,
+    // The program's constants a settled `constants` indexes (empty while compiling).
+    settled_constants: &'a [Constant],
     depth: Register,
     registers: u16,
     controls: Vec<Control>,
@@ -1843,7 +2137,7 @@ impl Lowering<'_> {
     }
 
     fn append_constant(&mut self, value: Constant) -> Result<u32, Diagnostic> {
-        self.constants.intern(value).ok_or_else(|| Diagnostic::unsupported(self.name, "too many Wasm constants"))
+        self.constants.intern(self.settled_constants, value).ok_or_else(|| Diagnostic::unsupported(self.name, "too many Wasm constants"))
     }
 
     fn scalar_constant(&mut self, value: WasmValue) -> Result<u32, Diagnostic> {

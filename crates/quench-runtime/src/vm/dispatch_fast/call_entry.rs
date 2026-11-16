@@ -54,6 +54,9 @@ pub(super) enum CallEntry {
     /// A leaf whose records read its receiver (`CONTEXT_LEAF`), so its call makes the
     /// context's receiver and environment its own, which its return restores.
     ContextLeaf,
+    /// A leaf whose records read its receiver and not its captures (`THIS_LEAF`), so its
+    /// call binds the receiver, which its return restores, and keeps the caller's environment.
+    ThisLeaf,
     /// A proven conditional append to a captured binding, completed without activation
     /// (`capture_append::run`).
     AppendsCapture,
@@ -64,7 +67,7 @@ impl CallEntry {
     /// alone (`lane_activate`): a leaf's every call but the plain one does.
     #[inline(always)]
     pub(super) fn activates(self) -> bool {
-        matches!(self, Self::Activates | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf)
+        matches!(self, Self::Activates | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf | Self::ThisLeaf)
     }
 
     /// The leaf entry of a body whose records read the context as `form` says.
@@ -72,6 +75,7 @@ impl CallEntry {
         match form {
             CONTEXT_LEAF => Self::ContextLeaf,
             CAPTURE_LEAF => Self::CaptureLeaf,
+            THIS_LEAF => Self::ThisLeaf,
             _ => Self::Leaf,
         }
     }
@@ -83,6 +87,7 @@ impl CallEntry {
             Self::Leaf => PLAIN_LEAF,
             Self::CaptureLeaf => CAPTURE_LEAF,
             Self::ContextLeaf => CONTEXT_LEAF,
+            Self::ThisLeaf => THIS_LEAF,
             _ => NOT_LEAF,
         }
     }
@@ -103,7 +108,7 @@ impl CallEntry {
     /// or keeping activation, which `lane_activate_keeping` enters across programs.
     #[inline(always)]
     pub(super) fn activates_across(self) -> bool {
-        matches!(self, Self::Activates | Self::Keeps | Self::Gathers)
+        matches!(self, Self::Activates | Self::Keeps | Self::Gathers | Self::Leaf | Self::CaptureLeaf | Self::ContextLeaf | Self::ThisLeaf)
     }
 
     /// A body a call answers by reading alone (`lane_call_leaf_read`).

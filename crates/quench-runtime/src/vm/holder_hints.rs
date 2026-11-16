@@ -4,16 +4,17 @@ use super::*;
 use crate::staged::holder::concrete_holder_read;
 
 /// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
-/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver of exact shape `receiver`, which
-/// lacks the name (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that
-/// reads `String.prototype` does not read), whose prototype is `holder`, read `value` under
+/// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver whose whole auxiliary word, exact
+/// shape and storage form, is `receiver` (`Object::hint_shape`), which lacks the name
+/// (`NO_FIELD_RECEIVER` for a string primitive, whose own names a site that reads
+/// `String.prototype` does not read), whose prototype is `holder`, read `value` under
 /// `watch`, which a change to the holder's slot values or any prototype's layout retires.
-/// `prototype` is `holder` as an object's header links it, which an object receiver's test compares.
 #[derive(Clone)]
 pub(super) struct HolderHint {
-    pub(super) receiver: u32,
+    /// The receiver's header words (`Object::guard_word`): its shape and storage form with
+    /// its prototype link, `holder`'s.
+    pub(super) guard: u64,
     pub(super) atom: Atom,
-    pub(super) prototype: crate::heap::ProtoLink,
     pub(super) holder: Value,
     pub(super) value: Value,
     pub(super) watch: crate::heap::PrototypeValueWatch,
@@ -24,14 +25,13 @@ pub(super) struct HolderHint {
 const GETTER_HINT_REMAKES: u8 = 2;
 
 /// A `GetField` record's read of `atom` whose getter, on the immediate prototype `holder`,
-/// returns the own field at `slot` of a receiver of exact shape `receiver` (`return
+/// returns the own field at `slot` of a receiver whose header words are `guard` (`return
 /// this.field`), under `watch` as for a `HolderHint`. `remakes` counts the times the record
 /// made its hint again.
 #[derive(Clone)]
 pub(super) struct GetterHint {
-    receiver: u32,
+    guard: u64,
     atom: Atom,
-    prototype: crate::heap::ProtoLink,
     pub(super) holder: Value,
     slot: u16,
     remakes: u8,
@@ -70,7 +70,7 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         // SAFETY: the hint's watch is live as long as the hint.
         (hint.atom == atom).then(|| unsafe {
-            concrete_holder_read(receiver, hint.receiver, hint.prototype.bits(), std::rc::Rc::as_ptr(&hint.watch), Value::UNDEFINED)
+            concrete_holder_read(receiver, hint.guard, std::rc::Rc::as_ptr(&hint.watch), Value::UNDEFINED)
         })??;
         // SAFETY: the exact shape the guard matched holds the slot the hint recorded.
         Some(unsafe { self.heap.property_get_flat(receiver, usize::from(hint.slot)) })
@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
     /// change to its values retires the hint's watch.
     pub(super) fn hold_getter_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, slot: u16, limit: u16) -> Option<u16> {
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        let (shape, prototype) = (receiver.exact_shape(), receiver.proto());
+        let (guard, prototype) = (receiver.guard_word(), receiver.proto());
         let owned = owned.filter(|&index| usize::from(index) < self.holder_hints.getter.len());
         let remakes = owned.map_or(0, |index| self.holder_hints.getter[usize::from(index)].remakes + 1);
         if remakes > GETTER_HINT_REMAKES {
@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
         }
         self.heap.mark_prototype(prototype);
         let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
-        let hint = GetterHint { receiver: shape, atom, prototype: crate::heap::ProtoLink::of(prototype), holder: prototype, slot, remakes, watch };
+        let hint = GetterHint { guard, atom, holder: prototype, slot, remakes, watch };
         if let Some(index) = owned {
             self.holder_hints.getter[usize::from(index)] = hint;
             return Some(index);

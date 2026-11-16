@@ -153,10 +153,17 @@ impl WasmTypes {
 
     /// Defined-type subtyping follows declared ancestry, never an accidental
     /// structural match between unrelated declarations.
-    pub fn is_subtype(&self, mut index: usize, other: &Self, other_index: usize) -> bool {
+    #[inline(always)]
+    pub fn is_subtype(&self, index: usize, other: &Self, other_index: usize) -> bool {
         if Rc::ptr_eq(&self.0, &other.0) && let Some(subtype) = self.ancestry_subtype(index, other_index) {
             return subtype;
         }
+        self.is_subtype_across(index, other, other_index)
+    }
+
+    /// `is_subtype` between declarations of two tables, or of types without a display.
+    #[inline(never)]
+    fn is_subtype_across(&self, mut index: usize, other: &Self, other_index: usize) -> bool {
         let declarations = self.0.members.len();
         // Validated ancestry is acyclic. The declaration count also bounds
         // malformed embedding input without inventing a runtime type-depth cap.
@@ -485,14 +492,5 @@ impl Equivalence<'_> {
                 }
                 _ => false,
             }
-    }
-}
-
-impl crate::WasmSignature {
-    /// Whether every parameter and the one result are `i32`, which JavaScript's integers are as
-    /// they are (`Vm::encode_wasm_value`).
-    pub(crate) fn is_i32_call(&self) -> bool {
-        let i32 = |ty: &crate::WasmType| matches!(ty, crate::WasmType::I32);
-        self.params.iter().all(i32) && matches!(self.results.as_slice(), [result] if i32(result))
     }
 }

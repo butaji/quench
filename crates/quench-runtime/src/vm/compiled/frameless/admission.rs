@@ -27,9 +27,9 @@ fn admit<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch: &JsStepDi
     };
     let entry = CallEntry { callee: callee.to_bits(), ..entry };
     let slot = (callee.to_bits() as usize) & (CACHE_ENTRIES - 1);
-    vm.frameless.cache[slot] = entry;
-    vm.frameless.admitted = true;
-    Some(&vm.frameless.cache[slot])
+    let cache = vm.frameless.cache_mut();
+    cache[slot] = entry;
+    Some(&cache[slot])
 }
 
 /// The admission of a fresh closure of a function admitted in this epoch: the function's,

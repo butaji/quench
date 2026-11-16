@@ -75,8 +75,13 @@ setting! {
         Allocator = "allocator",
         Gc = "gc",
         GcTime = "gc-time",
+        /// At each full collection, the live values per container and how many have a narrow
+        /// form: what 4-byte storage could save (`Heap::trace_storage_census`).
+        StorageCensus = "storage-census",
         Shapes = "shapes",
         Rewrite = "rewrite",
+        /// Every loaded program's finished bytecode, printed at exit.
+        Bytecode = "bytecode",
         JsJit = "js-jit",
         /// BaseJIT region exits by instruction, most frequent first (printed at exit).
         BjitLeave = "bjit-leave",
@@ -102,6 +107,8 @@ setting! {
         JitCoverage = "jit-coverage",
         /// Whether a startup snapshot was restored, and why not.
         StartupSnapshot = "startup-snapshot",
+        /// No-JIT loop kernels: each loop's kernel or the reason it has none.
+        LoopKernel = "loop-kernel",
     }
 }
 
@@ -110,6 +117,9 @@ setting! {
     "QUENCH_DEV", Dev {
         /// The memory-first heap policy in place of the default.
         MemoryFirst = "memory-first",
+        /// Array backings take the double element kind (`heap::array_elements::DOUBLE_LEN`):
+        /// for the readers that consume it while compiled tiers do not guard its flag yet.
+        DoubleElements = "double-elements",
         /// The lane prologue specializes declined functions into frameless lane bodies.
         JsLaneMethods = "js-lane-methods",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
@@ -131,7 +141,34 @@ setting! {
         WasmRootOnly = "wasm-root-only",
         /// Tiering starts at the selected root and promotes hot fallback callees.
         WasmRootFirst = "wasm-root-first",
+        /// Full collections that pass the concurrent-cycle gates (`Heap::concurrent_cycle_refusal`)
+        /// may mark concurrently with the mutator: always (`=on`, or no value), where measured to
+        /// pay (`=adaptive`), or never (`=off`).
+        ConcurrentGc = "concurrent-gc",
         /// Functions of a direct eval's source compile on first call.
         DirectEvalStubs = "direct-eval-stubs",
+        /// Old records keep reference counts, and minor collections free the records whose
+        /// count drops to zero (`heap::rc`).
+        RcGc = "rc-gc",
+        /// Under `rc-gc`, checks before each minor sweep that nothing live names a record it
+        /// frees, and reports what does (`Heap::rc_verify_frees`).
+        RcVerify = "rc-verify",
+        /// JavaScript-visible clocks and `Math.random` are deterministic (`crate::clock`):
+        /// instruction counts stop depending on host speed. Printed scores are then meaningless.
+        VirtualClock = "virtual-clock",
+        /// Engine policies (GC old-generation sizing) read work, not wall time (`crate::clock::is_work`).
+        WorkClock = "work-clock",
+        /// Each lazily parsed body is checked both by the parse's verdict and by the semantic
+        /// analysis, and differences are printed (`lazy_bodies::verify_early`); `=stat` also
+        /// prints each body's verdict.
+        EarlyVerify = "early-verify",
+        /// Every loop-free function that never suspends runs its unlowered record for good
+        /// (`bytecode::tier0`), the differential that checks tier 0's semantics.
+        Tier0Always = "tier0-always",
+        /// No function runs unlowered: each lowers at its first read.
+        Tier0Off = "tier0-off",
+        /// Lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`):
+        /// `=off` builds them, `=verify` builds them as well and prints where the verdicts differ.
+        Recognize = "recognize",
     }
 }

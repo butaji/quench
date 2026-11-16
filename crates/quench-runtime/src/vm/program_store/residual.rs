@@ -33,6 +33,13 @@ impl Residual {
     }
 }
 
+impl Residual {
+    /// The decoded program, without decoding a restored one.
+    pub(super) fn if_decoded(&self) -> Option<&Rc<ResidualProgram>> {
+        self.decoded.get()
+    }
+}
+
 impl std::ops::Deref for Residual {
     type Target = Rc<ResidualProgram>;
 
@@ -55,7 +62,10 @@ impl Residual {
                 *self.encoded.take().expect("a residual is decoded or holds its encoding");
             let program = ResidualProgram::decode_snapshot(bytes, text, &atoms)
                 .expect("a snapshot program whose checksum held decodes");
-            debug_assert_eq!(program.cache_site_counts(), self.sites);
+            // The caches were laid out for the counts the snapshot recorded, which include the
+            // room its program kept for chunks; an encoding keeps the sites alone, so the decoded
+            // program fits within them (`ChunkAppend::has_room_for` declines chunks past it).
+            debug_assert!(program.cache_site_counts().fits_within(self.sites), "{:?} within {:?}", program.cache_site_counts(), self.sites);
             program.prime_loop_decoding();
             Rc::new(program)
         })

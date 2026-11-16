@@ -144,6 +144,26 @@ fn names_identifier(text: &str, name: &str) -> bool {
     })
 }
 
+/// Whether `name` occurs in `text` as a whole identifier outside the comments a line opens:
+/// a line whose code starts with `//`, or with `/*` before the comment's `*/` on that line.
+/// V8-v7's EarleyBoyer names `export` only in its `/*** META ((export ...)) */` lines, and
+/// parsing its 190 KB for no specifier cost each run 24M instructions. Any other occurrence,
+/// one a string or a longer comment holds included, still sends the file to the parser.
+fn names_code_identifier(text: &str, name: &str) -> bool {
+    let continues = |character: Option<char>| {
+        character.is_some_and(|character| character.is_alphanumeric() || character == '_' || character == '$')
+    };
+    text.match_indices(name).any(|(start, _)| {
+        if continues(text[..start].chars().next_back()) || continues(text[start + name.len()..].chars().next()) {
+            return false;
+        }
+        let line_start = text[..start].rfind('\n').map_or(0, |newline| newline + 1);
+        let before = text[line_start..start].trim_start();
+        let commented = before.starts_with("//") || (before.starts_with("/*") && !before.contains("*/"));
+        !commented
+    })
+}
+
 /// The modules a WebAssembly module imports.
 fn wasm_specifiers(bytes: &[u8]) -> Option<Vec<String>> {
     let interface = quench_wasm::interface(bytes)?;
@@ -156,7 +176,7 @@ fn source_specifiers(text: &str) -> Option<Vec<String>> {
     if MODULE_LOADING_NAMES.iter().any(|name| names_identifier(text, name)) {
         return None;
     }
-    if !MODULE_SYNTAX.iter().any(|keyword| text.contains(keyword)) {
+    if !MODULE_SYNTAX.iter().any(|keyword| names_code_identifier(text, keyword)) {
         return Some(Vec::new());
     }
     let allocator = oxc_allocator::Allocator::default();
@@ -284,6 +304,17 @@ mod tests {
         }
         assert!(!names_identifier("myrequire requirement createRequire", "require"));
         assert!(names_identifier("x = require;", "require"));
+    }
+
+    #[test]
+    fn module_syntax_in_line_comments_is_not_parsed_for() {
+        assert!(!names_code_identifier("/*** META ((export #t)) */\nfunction f() {}", "export"));
+        assert!(!names_code_identifier("  // export it later\nvar exportKeys = 1;", "export"));
+        assert!(names_code_identifier("/* a */ export const x = 1;", "export"));
+        assert!(names_code_identifier("var s = '/*';\nimport('node:fs');", "import"));
+        assert!(names_code_identifier("/*\n * import x from 'y';\n */ import 'z';", "import"));
+        assert_eq!(inline_entry_loading("/* export */ import('node:fs')"), EntryLoading::Modules);
+        assert_eq!(inline_entry_loading("/*** META ((export #t)) */\n1 + 1"), EntryLoading::SelfContained);
     }
 
     #[test]

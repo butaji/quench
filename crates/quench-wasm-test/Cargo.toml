@@ -9,6 +9,9 @@ license = "MIT"
 # No doctests: rustdoc would otherwise compile the crate once more for each `cargo test`.
 doctest = false
 
+[features]
+aot = ["quench-runtime/aot"]
+
 [dependencies]
 quench-wasm = { path = "../quench-wasm" }
 quench-runtime = { path = "../quench-runtime" }

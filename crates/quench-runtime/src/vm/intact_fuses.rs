@@ -37,6 +37,14 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn fuse_intact(&mut self, fuse: IntactFuse) -> bool {
         let holder = self.fuse_holder(fuse);
+        self.fuse_intact_at(fuse, holder)
+    }
+
+    /// `fuse_intact` of `holder`, an object that may keep `fuse`'s method as the realm's own
+    /// holder does: another realm's prototype, such as the `Set.prototype` of a realm whose
+    /// prototypes the VM's fields do not follow (`REALM_FOLLOWING_PROTOTYPES`). It holds only
+    /// while `holder` keeps the intrinsic as an own data property (`fuse_slot`).
+    pub(super) fn fuse_intact_at(&mut self, fuse: IntactFuse, holder: Value) -> bool {
         match self.heap.dependencies().fuses().intact(fuse, holder) {
             Some(intact) => intact,
             None => self.prove_fuse(fuse, holder),
@@ -117,6 +125,31 @@ impl<H: Host> Vm<H> {
         (self.array_iteration_shape == Some(shape) || self.array_shape_lacks_iterator(shape))
             && self.fuse_intact(IntactFuse::ArrayIterator)
             && self.fuse_intact(IntactFuse::ArrayIteratorNext)
+    }
+
+    /// The length of `list` when spreading it yields its stored elements without running
+    /// guest code: an array whose iteration is intact (`array_iteration_intact`) holding only
+    /// present own data elements, no indexed descriptor, sparse storage or hole. One array
+    /// read answers what `array_iteration_intact` and `present_dense_elements` answer apart.
+    pub(super) fn intact_spread_length(&mut self, list: Value) -> Option<usize> {
+        let array = self.heap.array(list)?;
+        if array.is_arguments_object() || array.has_side_descriptors() || array.has_indexed_descriptors() || array.proto() != self.array_proto {
+            return None;
+        }
+        let shape = array.shape();
+        let elements = array.elements();
+        let length = elements.len();
+        // A narrow backing holds no hole; a wide one is scanned in place (`as_slice` would copy
+        // a narrow one out).
+        if elements.wide_values().is_some_and(|values| values.iter().any(|value| value.is_deleted()))
+            || self.heap.sparse_length(list).is_some()
+        {
+            return None;
+        }
+        let intact = (self.array_iteration_shape == Some(shape) || self.array_shape_lacks_iterator(shape))
+            && self.fuse_intact(IntactFuse::ArrayIterator)
+            && self.fuse_intact(IntactFuse::ArrayIteratorNext);
+        intact.then_some(length)
     }
 
     /// Whether array shape `shape` has no own `@@iterator`, remembered for a shape that keeps

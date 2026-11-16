@@ -155,8 +155,8 @@ impl<H: Host> Vm<H> {
         Ok(FieldOperands { reference: read(self, reference), location, field, access, value })
     }
 
-    /// One field access of a GC object, as a struct or array op makes it: its value if it
-    /// reads, `None` if the reference is null, not an object, or past the element bound.
+    /// The field access `i` of a GC object, as a struct or array op makes it
+    /// (`wasm_field_access`).
     #[inline(always)]
     pub(in crate::vm) fn wasm_gc_field_hit(
         &mut self,
@@ -164,19 +164,33 @@ impl<H: Host> Vm<H> {
         read: impl Fn(&Self, u16) -> Value,
     ) -> Result<Option<Option<Value>>, JsError> {
         let FieldOperands { reference, location, field, access, value } = self.wasm_field_operands(i, read)?;
+        Ok(self.wasm_field_access(reference, location, field, access, value))
+    }
+
+    /// One field access of a GC object: its value if it reads, `None` if the reference is
+    /// null, not an object, or past the element bound.
+    #[inline(always)]
+    pub(in crate::vm) fn wasm_field_access(
+        &mut self,
+        reference: Value,
+        location: GcFieldIndex,
+        field: GcField,
+        access: GcFieldAccess,
+        value: Option<Value>,
+    ) -> Option<Option<Value>> {
         let (GcFieldIndex::Struct(index) | GcFieldIndex::Array(index)) = location;
         let index = index as usize;
         // A read takes the cell without the write barrier, which would remember every old
         // object a read touches for the next young collection to scan.
         let Some(value) = value else {
-            let Some(Cell::WasmGc { fields, .. }) = self.heap.get(reference) else { return Ok(None) };
-            return Ok(fields.get(index).map(|slot| Some(field.load(access, *slot))));
+            let Some(Cell::WasmGc { fields, .. }) = self.heap.get(reference) else { return None };
+            return fields.get(index).map(|slot| Some(field.load(access, *slot)));
         };
-        let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else { return Ok(None) };
-        Ok(fields.get_mut(index).map(|slot| {
+        let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else { return None };
+        fields.get_mut(index).map(|slot| {
             *slot = field.store(value);
             None
-        }))
+        })
     }
 
     /// `wasm_gc_field_hit`, raising the trap a miss makes. Validation proved the field's

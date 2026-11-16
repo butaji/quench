@@ -15,53 +15,72 @@ const TYPED_ARRAY_GEOMETRY_ENTRIES: usize = 8;
 /// prototype change or collection advances.
 #[derive(Clone, Copy)]
 struct TypedArrayGeometryProof {
+    /// The receiver's own shape, which proved itself neither a dictionary nor holding the name.
+    shape: u32,
     prototype: Value,
     atom: Atom,
     epoch: u64,
-    getter: Value,
+    /// The intrinsic accessor's native (`Vm::pure_native_getter`), fixed with the getter.
+    native: Native,
+}
+
+/// The proof slot of `atom` read through `prototype`: a lookup and the proof it finds share it.
+fn geometry_slot(atom: Atom, prototype: Value) -> usize {
+    (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES
 }
 
 #[derive(Default)]
 pub(super) struct TypedArrayGeometryProofs([std::cell::Cell<Option<TypedArrayGeometryProof>>; TYPED_ARRAY_GEOMETRY_ENTRIES]);
 
 impl<H: Host> Vm<H> {
-    /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array `object`
-    /// that runs no guest code: the intrinsic accessor its chain resolves the name to, as
-    /// a pure native read (`pure_native_getter_value`). `None` leaves the read to the
+    /// A read of a geometry name (`AtomClass::VIRTUAL_FIELD`) from typed array, DataView,
+    /// Map or Set `object` that runs no guest code: the intrinsic accessor its chain resolves
+    /// the name to, as a pure native read (`pure_native_getter_value`). `None` leaves the read to the
     /// general path: an own property of the name, an exotic or dictionary link, a data
     /// property or a script getter on the way.
     pub(super) fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
-        let (Some(Cell::TypedArray { object: view, .. }) | Some(Cell::DataView { object: view, .. })) = self.heap.get(object) else {
-            return None;
-        };
-        let data = &view.object;
-        if data.has_side_descriptors()
-            || self.shape_is_dictionary(data.shape())
-            || self.shape_slot(data.shape(), atom).is_some()
-        {
+        let data = self.virtual_field_view(object)?;
+        if data.has_side_descriptors() {
             return None;
         }
-        let prototype = data.proto();
+        let (shape, prototype) = (data.shape(), data.proto());
         let epoch = crate::heap::prototype_layout_epoch();
-        let index = (atom as usize).wrapping_add(prototype.to_bits() as usize) % TYPED_ARRAY_GEOMETRY_ENTRIES;
-        let getter = match self.typed_array_geometry.0[index].get() {
-            Some(proof) if proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => proof.getter,
-            _ => {
-                let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
-                // Every link up to the holder becomes a prototype first, so a later change to
-                // one advances the epoch and retires the proof.
-                let mut link = prototype;
-                for _ in 0..depth {
-                    self.heap.mark_prototype(link);
-                    link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
-                }
-                if crate::heap::prototype_layout_epoch() == epoch {
-                    self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { prototype, atom, epoch, getter }));
-                }
-                getter
+        let index = geometry_slot(atom, prototype);
+        let native = match self.typed_array_geometry.0[index].get() {
+            Some(proof) if proof.shape == shape && proof.prototype == prototype && proof.atom == atom && proof.epoch == epoch => {
+                proof.native
             }
+            _ => self.prove_geometry_getter(shape, prototype, atom, epoch)?,
         };
-        self.pure_native_getter_value(getter, object)
+        if native == Native::TypedArrayLengthGetter
+            && let Some(length) = self.typed_cached_length(object)
+        {
+            return Some(length);
+        }
+        self.pure_native_value(native, object)
+    }
+
+    /// The native getter `typed_array_geometry_read` reads `atom` through from a receiver of
+    /// own shape `shape` and prototype `prototype`, proved and recorded under `epoch`; `None`
+    /// where the shape is a dictionary or holds the name, or no intrinsic native accessor answers.
+    fn prove_geometry_getter(&mut self, shape: u32, prototype: Value, atom: Atom, epoch: u64) -> Option<Native> {
+        if self.shape_is_dictionary(shape) || self.shape_slot(shape, atom).is_some() {
+            return None;
+        }
+        let (getter, depth) = self.typed_array_geometry_getter(prototype, atom)?;
+        let native = self.pure_native_getter(getter)?;
+        // Every link up to the holder becomes a prototype first, so a later change to one
+        // advances the epoch and retires the proof.
+        let mut link = prototype;
+        for _ in 0..depth {
+            self.heap.mark_prototype(link);
+            link = self.heap.ordinary_object(link).map_or(Value::NULL, Object::proto);
+        }
+        if crate::heap::prototype_layout_epoch() == epoch {
+            let index = geometry_slot(atom, prototype);
+            self.typed_array_geometry.0[index].set(Some(TypedArrayGeometryProof { shape, prototype, atom, epoch, native }));
+        }
+        Some(native)
     }
 
     /// The getter of the accessor `atom` names first along the ordinary prototypes from
@@ -367,12 +386,7 @@ impl<H: Host> Vm<H> {
                         .min(current_length.saturating_sub(target))
                         .min(current_length.saturating_sub(start));
                     let (buffer, offset, width) = match self.heap.get(this) {
-                        Some(Cell::TypedArray {
-                            buffer,
-                            object,
-                            kind,
-                            ..
-                        }) => (*buffer, object.offset, kind.width()),
+                        Some(Cell::TypedArray { buffer, object, .. }) => (*buffer, object.offset, object.native.kind().width()),
                         _ => unreachable!("typed array receiver was validated"),
                     };
                     let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
@@ -688,14 +702,13 @@ impl<H: Host> Vm<H> {
             buffer,
             object,
             length: view_length,
-            kind,
             ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
         let (buffer, offset, length_tracking, kind) =
-            (*buffer, object.offset, view_length.is_tracking(), *kind);
+            (*buffer, object.offset, view_length.is_tracking(), object.native.kind());
         let length = self.typed_array_length(this).unwrap_or_default();
         let begin = self.typed_array_relative_index(p, args.first(), length)?;
         let end_arg = args.get(1).filter(|value| !value.is_undefined());
@@ -801,10 +814,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::TypedArray { buffer, kind, .. }) = self.heap.get(this) else {
+        let Some(Cell::TypedArray { buffer, object, .. }) = self.heap.get(this) else {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
-        let (buffer, kind) = (*buffer, *kind);
+        let (buffer, kind) = (*buffer, object.native.kind());
         if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         }
@@ -1053,13 +1066,12 @@ impl<H: Host> Vm<H> {
             buffer,
             object,
             length,
-            kind,
             ..
         }) = self.heap.get(this)
         else {
             return None;
         };
-        let (buffer, offset, length, kind) = (*buffer, object.offset, *length, *kind);
+        let (buffer, offset, length, kind) = (*buffer, object.offset, *length, object.native.kind());
         let view_length = match self.heap.get(buffer) {
             Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => length.within(offset, kind.width(), bytes.len()),
             _ => None,

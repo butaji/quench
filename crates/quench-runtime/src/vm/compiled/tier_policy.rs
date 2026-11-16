@@ -5,21 +5,69 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
+use crate::bytecode::Class;
+use crate::jit_mode::Tier;
+
 /// The thresholds every tier controller reads.
 pub(in crate::vm) struct Tiers {
     pub(in crate::vm) loops: Loops,
     pub(in crate::vm) lane_body: LaneBody,
     pub(in crate::vm) js_function: JsFunction,
     pub(in crate::vm) wasm: Wasm,
+    pub(in crate::vm) stitch: Stitch,
     pub(in crate::vm) priors: Priors,
+    /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
+    /// run checks each tier against the interpreter (`Tiers::admits_all`).
+    pub(in crate::vm) stress: bool,
+    /// Whether the tier models admit every eligible compile, whatever it would repay.
+    pub(in crate::vm) admits_all: bool,
+    /// The searches a regexp program runs interpreted before it is compiled to native code
+    /// (`regexp_native`): compiling costs about what this many searches of a small program do.
+    pub(in crate::vm) regexp_native_runs: u32,
 }
 
 /// The priors the model tests pin their arithmetic to.
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
+
+/// The runs a loop-free function makes unlowered before a later call lowers it
+/// (`bytecode::tier0`): the runs a lane view waits for (`LANE_VIEW_DEFERRED_RUNS`), so the
+/// lowering lands before its view derives. Octane-code-load instructions against lowering
+/// at the first read: -9.8% at four, -8.2% at two; mobx-startup -0.5% at both.
+pub(in crate::vm) const TIER0_RUNS: u8 = 4;
+
+/// Whether a hot loop plans a lane body of its own (`dispatch_fast::loop_body`). Off until a
+/// loop body is measured against the region or interpreter it replaces, as function bodies are
+/// (P7: a tier runs only where it is cheaper): weighed by plan and compile cost alone, loop
+/// bodies lost on every row measured. JS3 default, 5 iterations, with -> without: regexp-octane
+/// 57.8 -> 132, crypto 119 -> 201, delta-blue 37.8 -> 61.1, Box2D 12.4 -> 22.0, navier-stokes
+/// 249 -> 365, hash-map 30.8 -> 39.4, richards 47.9 -> 44.3; V8-v7 default/no-JIT CPU: earley
+/// 1.76 -> 1.21, regexp 1.56 -> 1.08, raytrace 1.43 -> 1.19, crypto 1.10 -> 0.85, deltablue
+/// 1.12 -> 0.96, richards 1.09 -> 1.04.
+pub(in crate::vm) const LOOP_BODIES: bool = false;
+
+/// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
+/// (`base_region::inline_plan`).
+pub(in crate::vm) struct Stitch {
+    /// The longest callee body, in bytecodes: the accessors and arithmetic helpers whose call
+    /// costs more than their work.
+    pub(in crate::vm) max_instructions: usize,
+    /// The callee bytecodes one stitch inlines in all, so a hot loop's code stays a few call
+    /// bodies' worth.
+    pub(in crate::vm) max_total_instructions: usize,
+    /// The frame slots above the caller's registers the inlined callees' windows may take: the room
+    /// a body's recovery reserves past its activation (`LaneRecoverySpace`).
+    pub(in crate::vm) window_registers: u32,
+    /// The inline depth: activations a leave inside inlined code materializes, the caller's
+    /// included.
+    pub(in crate::vm) max_depth: usize,
+    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, its jumps
+    /// (the site's own rows), and the `Return` that becomes a move and a jump to the continuation.
+    pub(in crate::vm) classes: &'static [Class],
+}
 
 /// Parts per thousand, the unit of a prior's share.
 pub(in crate::vm) const PER_MILLE: u64 = 1000;
@@ -32,8 +80,8 @@ pub(in crate::vm) struct Priors {
     /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
     /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
     pub(in crate::vm) body_share: u64,
-    /// Nanoseconds the code generator takes to compile one IR instruction, until the process's
-    /// own compiles replace it (`tier_model::CompileCost`).
+    /// Nanoseconds the code generator takes to compile one IR instruction: a fixed price on the
+    /// compile's work (the running ratio it replaced settled at 1.3-2.2 us on JS3 rows).
     pub(in crate::vm) compile_ns_per_ir: u64,
     /// The part per thousand of a compile's time that waits on the running program: compiles run
     /// on the code generator's thread, so most of their time overlaps it (two cores).
@@ -42,13 +90,18 @@ pub(in crate::vm) struct Priors {
     /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
     pub(in crate::vm) region_entry_ns: u64,
     pub(in crate::vm) body_entry_ns: u64,
-    /// The divisor of the entries so far that gives the credible lower bound of the entries to
-    /// come, where the decision (a compile) is irreversible.
+    /// The same two for a b-jit body: stencil code runs about half the interpreter's time per
+    /// bytecode (values stay in the frame), and its entry is a lane record and a call into the
+    /// stitched code (a few dozen machine instructions), where a u-jit body's native entry crosses ABIs.
+    pub(in crate::vm) base_body_share: u64,
+    pub(in crate::vm) base_entry_ns: u64,
+    /// The divisor of the entries and the interpreter time so far that gives the credible lower
+    /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
-    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
-    /// weight of its prior in IR instructions (eight compiles of a hundred).
-    pub(in crate::vm) compile_forgetting_permille: u64,
-    pub(in crate::vm) compile_prior_ir: u64,
+    /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
+    /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
+    /// work, none of which overlaps the program as a compile on the code generator's thread does.
+    pub(in crate::vm) plan_ns_per_ir: u64,
 }
 
 /// The loop tier (OSR regions at backward jumps).
@@ -80,6 +133,11 @@ pub(in crate::vm) struct LaneBody {
     /// sites have linked their targets, which the body inlines (`lane_unit::unit`), and that
     /// only a function called repeatedly pays for compiling one.
     pub(in crate::vm) warmup_entries: u16,
+    /// The same under `--b-jit`, whose whole-function body (`Vm::base_body_work`) is stitched
+    /// from stencils in microseconds, with no register allocator or code generator thread to
+    /// pay for: a few entries show a function's parameters their types (the int32s its entry
+    /// rows assume), where a Cranelift body waits for hundreds to have its call sites linked.
+    pub(in crate::vm) base_entries: u16,
     /// The share of a body's runs, in percent, its leaves may reach, from `reoptimize_exits`
     /// leaves on, before it specializes again.
     pub(in crate::vm) reoptimize_share: u8,
@@ -94,15 +152,15 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
-    /// The most compiles of one function's body, or of one of its loop entries: a request of
-    /// another plan past them is declined, so what each came to is the last that holds.
+    /// The most compiles of one function's body from its entry: a request of another plan past
+    /// them is declined, so what each came to is the last that holds.
     pub(in crate::vm) max_compiles: u8,
+    /// The same for each loop entry (OSR) of a function: its own budget, which the entry
+    /// compiles of the function do not draw on and which they do not exhaust.
+    pub(in crate::vm) max_osr_compiles: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
-    /// The warm-ups a function's first compile waits for callees still warming toward the
-    /// bodies it would call directly; a callee that never gets one stops holding it back.
-    pub(in crate::vm) max_callee_waits: u8,
     /// The times a function specializes again because a callee published its body
     /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
     /// ends the exchange between functions that call each other.
@@ -111,19 +169,22 @@ pub(in crate::vm) struct LaneBody {
     /// The length below which a lane body without loops or inlined calls declines
     /// (`Vm::compile_lane_method`).
     pub(in crate::vm) min_instructions: usize,
+    /// The longest callee body a unit or a call plan inlines (`staged::plan_entry`): each copy of it
+    /// costs code and compile time at every call site, and short bodies (accessors, field updates)
+    /// are where a call costs most relative to its work.
+    pub(in crate::vm) max_inlined_instructions: usize,
     /// The most entries between looks for a compiling body's code, which start one entry apart
     /// and double (`LaneBody::Compiling`). A look costs a channel poll
     /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
     /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
     /// most this many entries once ready.
     pub(in crate::vm) compile_poll_interval: u16,
-    /// The entries between timed runs of a published body's function, which alternate the body
-    /// and the interpreter (`LaneView::audit_entry`): one in this many entries pays a clock
-    /// read pair, and half of those run interpreted.
+    /// The entries of one epoch of a published body's audit, whose epochs alternate the body and
+    /// the interpreter (`LaneView::audit_entry`): one clock read per epoch.
     pub(in crate::vm) audit_period: u32,
-    /// The timed runs each side needs before the verdict (`LaneView::audit_verdict`).
+    /// The epochs each side needs before the verdict (`LaneView::audit_verdict`).
     pub(in crate::vm) audit_samples: u16,
-    /// How much faster, per thousand, the body's mean timed run must be than the interpreter's
+    /// How much shorter, per thousand, the body's median epoch must be than the interpreter's
     /// for the body to stay: a body only as fast pays its compile and its entry for nothing.
     pub(in crate::vm) audit_margin_permille: u64,
 }
@@ -157,14 +218,15 @@ pub(in crate::vm) struct Wasm {
     pub(in crate::vm) eager_module_bytecodes: usize,
 }
 
+/// The prototype links a specializer unrolls a staged walk over (`Stage::walk_prototypes`): an
+/// instance, its class chain and `Object.prototype` end within it, and each link is a block of
+/// code, so a longer chain is the VM's residual rather than more code.
+pub(in crate::vm) const PROTOTYPE_UNROLL_LINKS: u32 = 4;
+
 /// The distinct cases (shapes, callees, targets) a site's feedback keeps before it widens to
 /// the generic case: the width of every polymorphic cache and of each guarded switch a tier
 /// specializes a site into. One bound for every lattice of site feedback.
 pub(in crate::vm) const POLYMORPHISM: usize = 4;
-/// The entries a proved region (`dispatch_fast::region_state`) may fail to prove its facts at
-/// before its header runs the generic test for good: each failure demotes its records, so a
-/// loop whose entries alternate in kind pays at most this many demotions.
-pub(in crate::vm) const REGION_DECLINES: u8 = 4;
 /// What a speculated fact costs and saves, in nanoseconds, from which a site's break-even rate
 /// derives (`site_posterior::break_even`) with the posterior's quantile (`tier-decision-rule-v1`
 /// section 4). Per execution a speculating read pays `guard_read_ns` when the fact holds and
@@ -191,70 +253,147 @@ pub(in crate::vm) const SPECULATION: Speculation =
 /// outweighs one outside it, and that nesting orders deeper sites first.
 pub(in crate::vm) const ASSUMED_LOOP_TRIP: u64 = 8;
 
-/// A `tier-stress` build: the floor row, and every JavaScript compilation arm on, so its
-/// Test262 run and `tests/tier_differential.rs` check each tier against the interpreter.
-pub(in crate::vm) const STRESS: bool = cfg!(feature = "tier-stress");
-
-/// The searches a regexp program runs interpreted before it is compiled to native code
-/// (`regexp_native`): compiling costs about what this many searches of a small program do.
-pub(in crate::vm) const REGEXP_NATIVE_RUNS: u32 = if STRESS { 1 } else { 2000 };
-
 #[cfg(test)]
 thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
-/// Makes this thread's tier models admit every eligible compile, as `tier-stress` does for the
-/// process: for tests of what compiled code does, on fixtures too small to repay a compile.
+/// Makes the VMs this thread makes next admit every eligible compile (`ADMITTING`), as the floor
+/// row does: for tests of what compiled code does, on fixtures too small to repay a compile.
 #[cfg(test)]
 pub(in crate::vm) fn force_admission() { FORCED_ADMISSION.set(true); }
 
-/// Whether the tier models admit every eligible compile (`tier-stress`, or a test that forced it).
-pub(in crate::vm) fn admits_every_compile() -> bool {
-    #[cfg(test)]
-    if FORCED_ADMISSION.get() { return true; }
-    STRESS
+/// The rows a VM's tier controllers read, held by the VM from its construction: the measured
+/// thresholds a process runs by, or the floor row, which makes every eligible site compile on
+/// its first chance, so a Test262 run and the tier differential check each tier against the
+/// interpreter. Code compiled under a row takes it as a Static fact (`VmFacts::tiers`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TierRows { Measured, Floor }
+
+impl TierRows {
+    /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
+    pub(in crate::vm) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
+
+    /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
+    pub(in crate::vm) fn made() -> &'static Tiers {
+        #[cfg(test)]
+        if FORCED_ADMISSION.get() { return &ADMITTING; }
+        Self::PROCESS.table()
+    }
+
+    pub(in crate::vm) fn table(self) -> &'static Tiers {
+        match self { Self::Measured => &MEASURED, Self::Floor => &FLOOR }
+    }
 }
 
-/// The thresholds every tier controller compares against: the measured row, or under
-/// `STRESS` the floor row, which makes every eligible site compile on its first chance.
-pub(in crate::vm) const TIERS: Tiers = if STRESS { FLOOR } else { MEASURED };
+#[cfg(test)]
+impl<H: crate::host::Host> super::super::Vm<H> {
+    /// A VM whose tier controllers read `rows`: a stress run needs no build of its own.
+    pub(in crate::vm) fn with_tier_rows(host: H, rows: TierRows) -> Self {
+        let mut vm = Self::new(host);
+        vm.programs.hold_tiers(rows.table());
+        vm
+    }
+}
 
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
-    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, min_instructions: 0, compile_poll_interval: 0, max_callee_waits: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
+    lane_body: LaneBody { warmup_entries: 2, reoptimize_exits: 2, compile_poll_interval: 0, audit_period: u32::MAX, ..MEASURED.lane_body },
     js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    stitch: MEASURED.stitch,
     priors: MEASURED.priors,
+    stress: true,
+    admits_all: true,
+    regexp_native_runs: 1,
 };
+
+impl LaneBody {
+    /// The compiles allowed a function's whole body, or of one of its loop entries (OSR).
+    pub(in crate::vm) fn compile_bound(&self, osr: bool) -> u8 {
+        if osr { self.max_osr_compiles } else { self.max_compiles }
+    }
+
+    /// The entries before a function's body specializes in this process's mode.
+    pub(in crate::vm) fn warmup(&self) -> u16 {
+        if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
+    }
+}
+
+impl Tiers {
+    /// The length a body without loops or calls needs for one entry to pay in the lane body
+    /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
+    /// a fixture too short to repay one still gets its body. A Cranelift body asks
+    /// `min_instructions`; a stencil body asks the entries' crossing over the interpretation it saves per
+    /// bytecode (`interpreter_ns` less its `base_body_share`), a few bytecodes, as it compiles in microseconds.
+    pub(in crate::vm) fn amortizing_instructions(&self, tier: Tier) -> usize {
+        if self.admits_all { return 0; }
+        match tier {
+            Tier::Base => {
+                let saved = self.priors.interpreter_ns * (PER_MILLE - self.priors.base_body_share);
+                (self.priors.base_entry_ns * PER_MILLE).div_ceil(saved) as usize
+            }
+            Tier::Quick | Tier::Ultra => self.lane_body.min_instructions,
+        }
+    }
+}
+
+/// The tier that compiles lane bodies in this process's mode.
+pub(in crate::vm) fn lane_body_tier() -> Tier {
+    if crate::jit_mode::base_only() { Tier::Base } else { Tier::Ultra }
+}
 
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
+
 
 const MEASURED: Tiers = Tiers {
     loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
         warmup_entries: 400,
+        base_entries: 8,
         reoptimize_share: 1,
         retire_after_runs: 1000,
         retire_share: 10,
         reoptimize_exits: 64,
         max_recompiles: 1,
         max_compiles: 3,
+        max_osr_compiles: 3,
         max_lifetimes: 8,
-        max_callee_waits: 2,
         max_callee_recompiles: 3,
         late_call_calls: 4096,
         min_instructions: 40,
+        max_inlined_instructions: 96,
         compile_poll_interval: 64,
-        audit_period: 16,
+        audit_period: 64,
         audit_samples: 16,
-        audit_margin_permille: 50,
+        audit_margin_permille: 20,
     },
     js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800 },
+    stitch: Stitch {
+        max_instructions: 24,
+        max_total_instructions: 96,
+        window_registers: 32,
+        max_depth: 3,
+        classes: &[
+            Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
+            Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
+        ],
+    },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    stress: false,
+    admits_all: false,
+    regexp_native_runs: 2000,
 };
+
+/// The rows code compiled for no particular VM is compiled under (`VmFacts::STATIC`).
+pub(in crate::vm) const STATIC_ROWS: &Tiers = &MEASURED;
+
+/// The measured rows admitting every eligible compile: for tests of what compiled code does, on
+/// fixtures too small to repay one (`force_admission`).
+#[cfg(test)]
+const ADMITTING: Tiers = Tiers { admits_all: true, ..MEASURED };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
 /// observes every PC up to its stop, and a tier would run past it.
@@ -310,15 +449,24 @@ pub(in crate::vm) const fn by_policy(policy: crate::MemoryPolicy) -> &'static Po
 mod tests {
     use super::*;
 
+    /// A stencil body pays for its entry in a few bytecodes (it compiles in microseconds and runs near the interpreter's
+    /// speed), a Cranelift body in `min_instructions`.
+    #[test]
+    fn each_lane_body_tier_has_its_own_amortizing_length() {
+        let tiers = TierRows::PROCESS.table();
+        if tiers.admits_all { return; }
+        let (base, ultra) = (tiers.amortizing_instructions(Tier::Base), tiers.amortizing_instructions(Tier::Ultra));
+        assert!(base > 0 && base < ultra, "{base} and {ultra}");
+        assert_eq!([ultra, tiers.amortizing_instructions(Tier::Quick)], [tiers.lane_body.min_instructions; 2]);
+    }
+
     #[test]
     fn the_tier_table_is_consistent() {
-        let lane = &TIERS.lane_body;
-        assert!(lane.warmup_entries > 0);
-        // The warm-up doubles per dropped body, at most seven times, and must not overflow.
-        assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
+        let lane = &TierRows::PROCESS.table().lane_body;
+        assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
-        let looks = TIERS.js_function.promotion_looks;
+        let looks = TierRows::PROCESS.table().js_function.promotion_looks;
         assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
         assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));
         for policy in crate::MemoryPolicy::ALL {

@@ -55,6 +55,7 @@ fn main() {
     println!("cargo::rustc-env=QUENCH_BUILD_ID={:016x}", build_id());
     println!("cargo::rustc-check-cfg=cfg(quench_lane_tail_calls)");
     println!("cargo::rustc-check-cfg=cfg(quench_profiled)");
+    println!("cargo::rustc-check-cfg=cfg(stencil_build)");
     println!("cargo::rerun-if-changed=build.rs");
     if PROFILING_FEATURES
         .iter()

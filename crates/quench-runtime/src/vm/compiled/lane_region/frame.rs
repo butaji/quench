@@ -5,8 +5,11 @@ use crate::vm::compiled::regions;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{operand_int, operand_number, register_int_value, register_number_value};
+pub(in crate::vm) use operands::{held_long, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
+
+/// The lane's register file.
+pub(super) const FRAME: crate::staged::Access = crate::staged::Region::Frame.mutable();
 
 /// The control edges a `step` transfers to, and the exit a value's cell truthiness leaves at.
 #[derive(Clone, Copy)]
@@ -20,6 +23,16 @@ pub(super) enum Edges {
     Branch { target: ir::Block, following: ir::Block, miss: ir::Block },
     /// The jump target, which the lowering continues at itself.
     Jump,
+}
+
+/// What a step's slow cases need of the lowering, where it made them: a call-out's record, a
+/// capture access's reach.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Sites<'a> {
+    pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    pub(super) capture: Option<&'a super::captures::CaptureSite>,
+    /// The Stable `prototype` link of an `instanceof`'s constructor (`Lowering::hold_instanceof`).
+    pub(super) prototype: Option<u32>,
 }
 
 /// The lane specializer's register frame (`crate::staged::Frame`): the SSA homes and the facts
@@ -43,20 +56,39 @@ pub(super) struct EmitFrame<'a> {
     pub(super) polls: &'a mut smallvec::SmallVec<[ir::Inst; INLINE_EFFECT_EDGES]>,
     /// The heap identities the emitted code names (`FoldedRoots::embed_heap_identity`).
     pub(super) roots: &'a mut crate::folded_roots::FoldedRoots,
-    /// The dense capture run (values address, length) a capture read resolved.
-    pub(super) captures: Option<(ir::Value, ir::Value)>,
     /// The Number return edges, joined at the end of the body.
     pub(super) number_returns: &'a mut smallvec::SmallVec<[NumberReturn; 1]>,
+    /// What a named field access is proved under (`PropertyFrame`); none for any other step.
+    pub(super) fields: Option<super::frame_fields::FieldFacts<'a>>,
     /// The record a call-out calls for, where the lowering made one (`call_outs`).
     pub(super) call_out: Option<&'a call_out::CallOutSite>,
+    /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
+    /// entering edge (`ElementFrame::kept_view`).
+    pub(super) held: Option<super::frame_elements::Held>,
+    /// Whether no operation of the unit may move an array's backing or the record table
+    /// (`fixed_arrays`), so the table's base word is read-only.
+    pub(super) arrays_fixed: bool,
+    /// The call or return a step of the call family runs for (`call_frames`).
+    pub(super) site: Option<super::call_frames::Site<'a>>,
+    /// What a capture access reaches, where the lowering made it (`captures`).
+    pub(super) capture: Option<&'a super::captures::CaptureSite>,
+    /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
+    pub(super) html_dda: bool,
+    /// The compiling VM's thresholds (`VmFacts::tiers`).
+    pub(super) tiers: &'static super::super::tier_policy::Tiers,
+    /// The Stable `prototype` link of the step's `instanceof` constructor.
+    pub(super) prototype: Option<u32>,
+    /// The region's entry proofs, whose object record table a prototype walk addresses where the
+    /// step carries no field facts.
+    pub(super) table_entry: Option<&'a Entry>,
 }
 
-impl EmitFrame<'_> {
-    /// The activation's local slots, read where an instruction uses them.
-    fn native_locals(&self, stage: &mut Emit<'_, '_>) -> Option<ir::Value> {
-        self.locals.then(|| super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, native_locals)))
-    }
+/// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
+/// instruction or a handler's entry reads or writes.
+pub(super) fn local_slot_address(builder: &mut FunctionBuilder<'_>, payload: ir::Value, slot: u16) -> ir::Value {
+    let locals = super::super::emit_js_payload_word(builder, payload,
+        std::mem::offset_of!(super::super::JsStepDispatch, native_locals));
+    emit(builder).raw_binary_imm(Binary::Add, locals, i64::from(slot) * std::mem::size_of::<Value>() as i64)
 }
 
 impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
@@ -66,6 +98,17 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn fact(&self, register: Register) -> RegisterFact {
         self.state.values[usize::from(register)]
+    }
+
+    #[inline(always)]
+    fn register_type(&self, register: Register) -> Option<Type> {
+        Some(self.state.values[usize::from(register)].value.ty)
+    }
+
+    /// Kept beside the state and applied to the successor the jump's edge reaches (`State::narrow`).
+    #[inline(always)]
+    fn refine(&mut self, register: Register, ty: Type, edge: crate::staged::Edge) {
+        self.state.refinements.push((edge, register, ty));
     }
 
     #[inline(always)]
@@ -109,11 +152,11 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn constant(&mut self, stage: &mut Emit<'_, '_>, constant: crate::staged::Constant)
         -> (ir::Value, RegisterFact) {
         let (representation, value) = if let Some(int) = constant.value.as_int() {
-            (Representation::Int32, stage.builder.ins().iconst(types::I32, i64::from(int)))
+            (Representation::Int32, stage.raw_const(Lane::I32, i64::from(int)))
         } else if let Some(number) = constant.value.as_number() {
-            (Representation::Float64, stage.builder.ins().f64const(number))
+            (Representation::Float64, stage.raw_const(Lane::F64, number.to_bits() as i64))
         } else {
-            (Representation::Tagged, stage.builder.ins().iconst(types::I64, self.roots.embed_heap_identity(constant.value) as i64))
+            (Representation::Tagged, stage.raw_const(Lane::I64, self.roots.embed_heap_identity(constant.value) as i64))
         };
         let fact = RegisterFact::admit(Fact { ty: constant.ty, representation,
             binding: BindingTime::Static, proof: Proof::Static, projection: Projection::Exact })
@@ -123,39 +166,29 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     /// A row's slow case: the lane's own helper makes the VM's operation in place (`call_out::vm_step`).
     #[inline(always)]
-    fn vm_step(&mut self, stage: &mut Emit<'_, '_>, _operation: crate::staged::CallOut, result: Option<Register>)
+    fn vm_step(&mut self, stage: &mut Emit<'_, '_>, operation: crate::staged::CallOut, result: Option<Register>)
         -> Option<(ir::Value, RegisterFact)> {
-        call_out::vm_step(self, stage, result)
+        call_out::vm_step(self, stage, operation, result)
     }
 
-    /// A proven-slot read: the `CheckedObject` projection carries the layout and the slot
-    /// read, so the frame adds no second decode.
+    /// A capture read: the site's fast and slow cases (`captures::read_capture`), whose slow case
+    /// finds a root's projected binding itself; a miss leaves at the step's miss edge.
     #[inline(always)]
-    fn field_read(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, ty: Type,
-        proof: EmitProof) -> Option<(ir::Value, RegisterFact)> {
-        let EmitProof::Field(proof) = proof else { return None };
-        Some((proof.read(stage.builder, slot),
-            RegisterFact::definition(ty, Representation::Tagged)))
+    fn capture_slot(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, _root: bool) -> Option<(ir::Value, RegisterFact)> {
+        let site = self.capture?;
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        let value = super::captures::read_capture(stage.builder, (self.payload, self.helpers), site, (depth, slot), miss);
+        Some((value, RegisterFact::definition(Type::ANY, Representation::Tagged)))
     }
 
-    /// A proven-slot write: the projection's arena address, with the miss edge its layout
-    /// guard uses.
+    /// A capture store by the lane's own store, whose refusal leaves at the miss edge
+    /// (`captures::store_capture`).
     #[inline(always)]
-    fn field_write(&mut self, stage: &mut Emit<'_, '_>, _base: Register, slot: u16, _ty: Type,
-        value: ir::Value, proof: EmitProof) -> Option<()> {
-        let EmitProof::Field(proof) = proof else { return None };
-        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let address = proof.arena_address(stage.builder, slot, miss)?;
-        stage.builder.ins().store(regions::object_slots(), value, address, 0);
+    fn store_capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, value: ir::Value) -> Option<()> {
+        self.capture?;
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        super::captures::store_capture(stage.builder, (self.payload, self.helpers), (depth, slot), value, miss);
         Some(())
-    }
-
-    /// A dense element under the view proof; a hole or an index past the view continues at
-    /// the proof's cold block, exactly as the lowering's cold path did.
-    #[inline(always)]
-    fn index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::Index { view, absent, in_bounds } = proof else { return None };
-        Some(super::super::emit_dense_element(stage.builder, view, index, absent, in_bounds).1)
     }
 
     #[inline(always)]
@@ -177,7 +210,6 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::index_set_helper(self, stage, base, key, value, proof)
     }
 
-
     /// The interrupt/collection safepoint: a fault-polling body records its poll instruction,
     /// any other leaves at the miss edge when the flag is set.
     #[inline(always)]
@@ -185,53 +217,10 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         calls::safepoint(self, stage, proof)
     }
 
-    /// An object literal: the lane's own allocator, whose DELETED answer (a due collection)
-    /// leaves at the proof's miss edge.
+    /// An empty object, object or array literal, constant array, closure, template or concatenation: the lane's own allocator.
     #[inline(always)]
-    fn allocate_object(&mut self, stage: &mut Emit<'_, '_>, destination: Register, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewObject, destination, &[], proof)
-    }
-
-    /// An array literal: the lane's own allocator, with its holes or its written elements.
-    #[inline(always)]
-    fn allocate_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, length: ir::Value,
-        elements: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewArray, destination, &[length, elements], proof)
-    }
-
-    /// An array literal of program constants (`lane_new_const_array`).
-    #[inline(always)]
-    fn allocate_const_array(&mut self, stage: &mut Emit<'_, '_>, destination: Register, constant: ir::Value,
-        count: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        self.allocate(stage, LaneHelper::NewConstArray, destination, &[constant, count], proof)
-    }
-
-    /// A two-property object literal (`lane_new_object_pair`).
-    #[inline(always)]
-    fn allocate_object_pair(&mut self, stage: &mut Emit<'_, '_>, destination: Register, site: u32, first: ir::Value,
-        second: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let site = stage.builder.ins().iconst(types::I64, i64::from(site));
-        self.allocate(stage, LaneHelper::NewObjectPair, destination, &[site, first, second], proof)
-    }
-
-    /// A typed array element: the kind's load, as a Number word.
-    #[inline(always)]
-    fn typed_index_read(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, proof: EmitProof) -> Option<ir::Value> {
-        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
-        Some(super::typed_element(stage.builder, values, length, kind, index, absent, super::typed_read))
-    }
-
-    /// A typed array element store: the kind's conversion, then its width.
-    #[inline(always)]
-    fn typed_index_write(&mut self, stage: &mut Emit<'_, '_>, index: ir::Value, value: ir::Value,
-        proof: EmitProof) -> Option<()> {
-        let EmitProof::TypedIndex { values, length, kind, absent } = proof else { return None };
-        super::typed_element(stage.builder, values, length, kind, index, absent, |builder, load, address| {
-            super::typed_write(builder, load, address, value, absent);
-            value
-        });
-        Some(())
-    }
+    fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: crate::staged::Allocation,
+        proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
@@ -244,7 +233,7 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
         let Edges::Branch { target, following, .. } = self.edges else {
             unreachable!("a branch needs both edges")
         };
-        stage.builder.ins().brif(condition, target, &[], following, &[]);
+        stage.branch_if(condition, (target, &[]), (following, &[]));
     }
 
     #[inline(always)]
@@ -255,50 +244,56 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     #[inline(always)]
     fn boolean(&mut self, stage: &mut Emit<'_, '_>, holds: ir::Value)
         -> (ir::Value, RegisterFact) {
-        let (yes, no) = (stage.builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64),
-            stage.builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64));
-        let value = stage.builder.ins().select(holds, yes, no);
+        let (yes, no) = (stage.raw_const(Lane::I64, Value::TRUE.to_bits() as i64),
+            stage.raw_const(Lane::I64, Value::FALSE.to_bits() as i64));
+        let value = stage.raw_select(holds, yes, no);
         (value, RegisterFact::definition(Type::language(crate::ValueType::Boolean),
             Representation::Tagged))
     }
 
-    #[inline(always)]
-    fn capture(&mut self, stage: &mut Emit<'_, '_>, depth: u16, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-        calls::capture(self, stage, depth, slot, miss)
-    }
-
+    /// The activation completes with `register`: by status at the record the lowering made a
+    /// site for (`call_frames::complete_activation`), else a Number return of a restartable scalar
+    /// entry, which proves the register a Number first.
     #[inline(always)]
     fn ret(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<()> {
+        if matches!(self.site, Some(super::call_frames::Site::Return(_))) {
+            let value = <Self as crate::staged::Frame<Emit<'_, '_>>>::tagged(self, stage, register);
+            return super::call_frames::complete_activation(self, stage, value);
+        }
+        let Edges::ValueGuarded { miss } = self.edges else { return None };
+        crate::staged::NumericFrame::prove_number(self, stage, register, miss)?;
         calls::number_return(self, stage, register)
     }
 
     #[inline(always)]
     fn load_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, _miss: Option<ir::Block>)
         -> Option<(ir::Value, RegisterFact)> {
-        let locals = self.native_locals(stage)?;
-        let address = stage.builder.ins().iadd_imm_s(locals,
-            i64::from(slot) * std::mem::size_of::<Value>() as i64);
-        let value = stage.builder.ins().load(types::I64, regions::frame(), address, 0);
+        let address = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot))?;
+        let value = stage.raw_load(Lane::I64, regions::frame(), address, 0);
         Some((value, RegisterFact::canonical()))
     }
 
     #[inline(always)]
     fn store_local(&mut self, stage: &mut Emit<'_, '_>, slot: u16, value: ir::Value,
         _miss: Option<ir::Block>) -> bool {
-        let Some(locals) = self.native_locals(stage) else { return false };
-        let address = stage.builder.ins().iadd_imm_s(locals,
-            i64::from(slot) * std::mem::size_of::<Value>() as i64);
-        stage.builder.ins().store(regions::frame(), value, address, 0);
+        let Some(address) = self.locals.then(|| local_slot_address(stage.builder, self.payload, slot)) else { return false };
+        stage.store_word(regions::frame(), value, address, 0);
         true
     }
 }
-
 
 /// `register`'s int32 view (`Registers::int`).
 #[inline(always)]
 pub(super) fn register_int(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     register: usize) -> Variable {
     *registers.int[register].get_or_insert_with(|| builder.declare_var(types::I32))
+}
+
+/// `register`'s 64-bit integer view (`Registers::long`).
+#[inline(always)]
+pub(super) fn register_long(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    register: usize) -> Variable {
+    *registers.long[register].get_or_insert_with(|| builder.declare_var(types::I64))
 }
 
 /// `register`'s float64 view (`Registers::float`).
@@ -337,6 +332,10 @@ pub(super) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut R
             let variable = register_int(builder, registers, index);
             builder.use_var(variable)
         }
+        Representation::Int64 => {
+            let variable = register_long(builder, registers, index);
+            builder.use_var(variable)
+        }
         Representation::Float64 => {
             let variable = register_float(builder, registers, index);
             builder.use_var(variable)
@@ -354,6 +353,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     let variable = match fact.value.representation {
         Representation::Tagged => registers.tagged[index],
         Representation::Int32 => register_int(builder, registers, index),
+        Representation::Int64 => register_long(builder, registers, index),
         Representation::Float64 => register_float(builder, registers, index),
     };
     builder.def_var(variable, value);
@@ -363,6 +363,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     state.proofs.headers[index] = None;
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
+    state.proofs.kept_shapes.remove(&register);
     state.proofs.fields.retain(|field| field.owner != Some(register));
 }
 
@@ -377,6 +378,7 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         .then(|| register_tagged(builder, registers, state, source));
     let header = state.proofs.headers[source_index];
     let receiver = state.proofs.receivers.contains(&source);
+    let kept = state.proofs.kept_shapes.get(&source).copied();
     let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
         (*owner == Some(source)).then_some((*shape, *projection))).collect();
     let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
@@ -391,21 +393,40 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(source_index));
     for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }
+    if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
     state.proofs.fields.extend(fields);
     value
 }
 
 impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
+    /// A register's tagged bits, or an immediate constant's.
+    fn operand_word(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand) -> Option<ir::Value> {
+        use crate::bytecode::OperandKind;
+        match operand.kind()? {
+            OperandKind::Register => Some(register_tagged(stage.builder, self.registers, self.state, operand.register_index()?)),
+            OperandKind::Constant => {
+                let value = self.constants.get(usize::from(operand.payload())).and_then(super::super::facts::immediate)?;
+                Some(stage.raw_const(Lane::I64, value.to_bits() as i64))
+            }
+            OperandKind::Field | OperandKind::Local => None,
+        }
+    }
+
     fn int_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
-        miss: ir::Block) -> ir::Value {
-        operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate")
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(operand_int(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate"))
     }
 
     fn number_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
-        miss: ir::Block) -> ir::Value {
-        operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
-            .expect("a numeric operand is a register or an immediate")
+        miss: ir::Block) -> Option<ir::Value> {
+        Some(operand_number(stage.builder, self.registers, self.state, self.constants, operand, miss)
+            .expect("a numeric operand is a register or an immediate"))
+    }
+
+    fn int32_operand(&mut self, stage: &mut Emit<'_, '_>, operand: crate::bytecode::Operand,
+        miss: ir::Block) -> Option<ir::Value> {
+        operand_to_int32(stage.builder, self.registers, self.state, self.constants, operand, miss)
     }
 
     fn prove_number(&mut self, stage: &mut Emit<'_, '_>, register: Register, miss: ir::Block) -> Option<()> {
@@ -418,13 +439,21 @@ impl crate::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn miss(&self) -> ir::Block {
         match self.edges {
-            Edges::ValueGuarded { miss } => miss,
+            Edges::ValueGuarded { miss } | Edges::Branch { miss, .. } => miss,
             _ => unreachable!("a numeric operation has a miss edge"),
         }
     }
 
     fn local_miss(&self) -> Option<ir::Block> {
         matches!(self.edges, Edges::ValueGuarded { .. }).then(|| self.miss())
+    }
+
+    fn html_dda_possible(&self) -> bool {
+        self.html_dda
+    }
+
+    fn stable_prototype(&mut self, stage: &mut Emit<'_, '_>, _constructor: Register) -> Option<ir::Value> {
+        self.prototype.map(|link| stage.raw_const(Lane::I64, i64::from(link)))
     }
 
     fn int_fact(&self) -> RegisterFact {

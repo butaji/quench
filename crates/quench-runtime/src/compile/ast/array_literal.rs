@@ -1,8 +1,6 @@
 use super::*;
+use crate::bytecode::ARRAY_LITERAL_WINDOW;
 use smallvec::SmallVec;
-
-/// Elements a literal evaluates into registers before making its array.
-const LITERAL_ELEMENT_WINDOW: usize = 8;
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn array_expression(&mut self, value: &ArrayExpression<'_>) -> Register {
@@ -67,11 +65,11 @@ impl FunctionCompiler<'_, '_> {
     /// A value read from a register that a later element could assign is copied first; the
     /// last element's is read as it stands.
     /// `None` for a literal with holes or past the window, which define as they go.
-    fn literal_element_values(&mut self, value: &ArrayExpression<'_>) -> Option<SmallVec<[Register; LITERAL_ELEMENT_WINDOW]>> {
-        if value.elements.len() > LITERAL_ELEMENT_WINDOW {
+    fn literal_element_values(&mut self, value: &ArrayExpression<'_>) -> Option<SmallVec<[Register; ARRAY_LITERAL_WINDOW]>> {
+        if value.elements.len() > ARRAY_LITERAL_WINDOW {
             return None;
         }
-        let expressions = value.elements.iter().map(ArrayExpressionElement::as_expression).collect::<Option<SmallVec<[_; LITERAL_ELEMENT_WINDOW]>>>()?;
+        let expressions = value.elements.iter().map(ArrayExpressionElement::as_expression).collect::<Option<SmallVec<[_; ARRAY_LITERAL_WINDOW]>>>()?;
         let mut values = SmallVec::new();
         let last = expressions.len().saturating_sub(1);
         for (index, expression) in expressions.into_iter().enumerate() {

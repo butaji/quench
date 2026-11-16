@@ -15,18 +15,19 @@ impl LaneStack {
     pub(super) fn full(&self, room: usize) -> LaneStackFull {
         LaneStackFull(
             self.values.room() < room,
-            self.activations.len() == self.activations.capacity(),
+            self.activations.is_full(),
         )
     }
 
     /// Makes room for `additional` more values, re-pointing every activation's window where
-    /// the values move: a window is an address, which only this moves.
+    /// the values move: a window is an address, which only this moves, and only for the windows
+    /// the values hold (a window in another register file stays).
     pub(super) fn reserve_values(&mut self, additional: usize) {
-        let before = self.values.as_ptr().addr();
+        let before = self.values.span();
         if !self.values.reserve(additional) { return; }
         let after = self.values.as_ptr().addr();
-        for activation in &mut self.activations {
-            activation.native.window = activation.native.window.wrapping_sub(before).wrapping_add(after);
+        for activation in self.activations.iter_mut().filter(|activation| before.contains(&activation.native.window)) {
+            activation.native.window = activation.native.window.wrapping_sub(before.start).wrapping_add(after);
         }
     }
 

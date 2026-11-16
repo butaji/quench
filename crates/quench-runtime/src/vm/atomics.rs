@@ -636,7 +636,6 @@ impl<H: Host> Vm<H> {
         let Some(Cell::TypedArray {
             buffer,
             object,
-            kind,
             ..
         }) = self.heap.get(view)
         else {
@@ -650,7 +649,7 @@ impl<H: Host> Vm<H> {
         else {
             return None;
         };
-        Some((bytes.shared_backing()?, object.offset, *kind))
+        Some((bytes.shared_backing()?, object.offset, object.native.kind()))
     }
     fn atomic_shared_native(
         &mut self,

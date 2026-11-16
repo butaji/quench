@@ -1,11 +1,11 @@
 //! What an operation reads, writes and may do, as data (Stage v2): the alias regions a native
-//! load or store belongs to, the effect row of an `Operation`, and the targets of a call. A
+//! load or store belongs to, the effect row of an `Operation`. A
 //! specializer reads them to keep facts across operations (a fact about a region survives
 //! until an operation that writes the region), and the interpreter ignores them.
 
 #![allow(dead_code)] // Stage v2 vocabulary; first consumers are the rows moving under `Concrete` next.
 
-use super::{CallOperation, Operation};
+use super::{Allocation, CallOperation, Operation};
 pub(crate) use super::region::Region;
 
 /// A set of regions, one bit each, so a fact's invalidation is a mask intersection.
@@ -48,22 +48,13 @@ impl Effects {
     pub(crate) const NONE: Self = Self { reads: RegionSet::NONE, writes: RegionSet::NONE,
         may_alloc: false, may_collect: false, may_call_js: false, may_throw: false };
 
-    const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
+    pub(super) const fn reads(region: Region) -> Self { Self { reads: RegionSet::of(region), ..Self::NONE } }
 
-    const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
+    pub(super) const fn writes(region: Region) -> Self { Self { writes: RegionSet::of(region), ..Self::NONE } }
 
     /// An operation that may run guest code or collect: it reads and writes every region.
-    const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
+    pub(super) const ANY: Self = Self { reads: RegionSet(!0), writes: RegionSet(!0), may_alloc: true,
         may_collect: true, may_call_js: true, may_throw: true };
-}
-
-/// What a call enters: a function whose entry is known (`Direct`), an entry word read at
-/// run time (`Indirect`), or a builtin row (`Builtin`).
-#[derive(Clone, Copy)]
-pub(crate) enum CallTarget<W> {
-    Direct(u64),
-    Indirect(W),
-    Builtin(u32),
 }
 
 impl<W> CallOperation<W> {
@@ -79,6 +70,23 @@ impl<W> CallOperation<W> {
 }
 
 impl<W, P> Operation<W, P> {
+    /// Whether the operation may move an array's backing or the record table: it adds or removes
+    /// elements (writes `Region::Elements`), allocates (a new record block) or may run guest code,
+    /// which can do either. Native code leaves before a collection. An element read's host arm
+    /// answers by a pure lookup or leaves where the VM would run a getter, so a read does not.
+    pub(crate) fn moves_arrays(&self) -> bool {
+        let effects = self.effects();
+        !matches!(self, Self::ElementRead { .. }) && (effects.writes.contains(Region::Elements) || effects.may_alloc || effects.may_call_js)
+    }
+
+    /// Whether the operation may create or replace the running activation's environment, which its environment storage word
+    /// names: a closure's allocation promotes the activation's captured locals into one (it allocates and writes
+    /// `Region::Frame`), and anything that may run any code is conservative. A guard, a read or a store does not.
+    pub(crate) fn makes_environment(&self) -> bool {
+        let effects = self.effects();
+        effects.may_alloc && effects.writes.contains(Region::Frame)
+    }
+
     /// The effect row of the operation, from its variant alone.
     pub(crate) const fn effects(&self) -> Effects {
         match self.memory_effects() {
@@ -90,14 +98,31 @@ impl<W, P> Operation<W, P> {
     /// Effects of the field, element and allocation operations.
     const fn memory_effects(&self) -> Option<Effects> {
         Some(match self {
-            Self::ReadField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
-                .with(Region::Records).with(Region::Payload), ..Effects::NONE },
-            Self::WriteField { .. } => Effects { writes: RegionSet::of(Region::ObjectSlots).with(Region::Payload), ..Effects::NONE },
-            Self::IndexRead { .. } | Self::TypedIndexRead { .. } => Effects::reads(Region::Elements),
-            Self::IndexWrite { .. } | Self::TypedIndexWrite { .. } => Effects::writes(Region::Elements),
-            Self::MakeObject { .. } | Self::MakeArray { .. } | Self::MakeConstArray { .. } | Self::MakeObjectPair { .. } => Effects {
-                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Records)
-                .with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::IndexWrite { .. } => Effects::writes(Region::Elements),
+            Self::ElementRead { .. } => Effects { reads: RegionSet::of(Region::Elements), may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::ElementWrite { .. } => Effects::ANY,
+            // A closure promotes the activation's captured locals into its environment.
+            Self::Allocate { allocation: Allocation::Closure { .. }, .. } => Effects {
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots).with(Region::Frame)
+                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::Empty | Allocation::Array { .. } | Allocation::RegExp { .. } | Allocation::ConstArray { .. }, .. } => Effects {
+                writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            Self::Allocate { allocation: Allocation::ObjectLiteral { .. } | Allocation::ObjectPair { .. } | Allocation::ArrayOf { .. } | Allocation::Template { .. }, .. } => Effects {
+                reads: RegionSet::of(Region::Frame), writes: RegionSet::of(Region::HeapMeta).with(Region::ObjectSlots)
+                .with(Region::Records).with(Region::Payload), may_alloc: true, ..Effects::NONE },
+            _ => return self.property_effects(),
+        })
+    }
+
+    /// Effects of the property operations: a plan's reads and stores touch object slots and
+    /// shapes; a host callout may run guest code (a getter, a proxy trap) or reshape objects.
+    const fn property_effects(&self) -> Option<Effects> {
+        Some(match self {
+            Self::GetField { .. } => Effects { reads: RegionSet::of(Region::ObjectSlots).with(Region::ShapeWord)
+                .with(Region::Records).with(Region::Payload), may_call_js: true, may_throw: true, ..Effects::NONE },
+            Self::SetField { .. } | Self::StoreField { .. } | Self::FieldAdd { .. } | Self::Delete { .. } => Effects::ANY,
+            Self::FieldGetHost { .. } | Self::IndexGetHost { .. } => Effects::ANY,
             _ => return None,
         })
     }
@@ -107,12 +132,30 @@ impl<W, P> Operation<W, P> {
             Self::Move { .. } | Self::LoadConst { .. } | Self::LoadThis { .. } => Effects::NONE,
             Self::LoadLocalPlain { .. } => Effects::reads(Region::Frame),
             Self::StoreLocalPlain { .. } => Effects::writes(Region::Frame),
-            Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) => Effects::NONE,
-            Self::RequireObjectCoercible { .. } => Effects { may_throw: true, ..Effects::NONE },
+            Self::Jump | Self::JumpIf { .. } | Self::LogicalNot { .. } | Self::Number(_) | Self::Return { .. } => Effects::NONE,
+            Self::CompareJump { comparison, .. } if !comparison.runs_guest_code() => Effects::NONE,
+            Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => Effects { may_throw: true, ..Effects::NONE },
             Self::Safepoint { .. } => Effects { may_collect: true, ..Effects::NONE },
             Self::Call(operation) => operation.effects(),
             // The memory operations answered in `memory_effects`; anything else is conservative.
             _ => Effects::ANY,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::Operand;
+
+    #[test]
+    fn only_operations_that_store_allocate_or_run_guest_code_move_arrays() {
+        type Row = Operation<u64, ()>;
+        let stay: [Row; 5] = [Operation::ElementRead { base: 0, key: Operand(1) }, Operation::Move { destination: 0, source: 1 },
+            Operation::Jump, Operation::Safepoint { proof: () }, Operation::LoadThis { destination: 0 }];
+        assert!(stay.iter().all(|row| !row.moves_arrays()));
+        let move_arrays: [Row; 4] = [Operation::ElementWrite { value: 0, base: 1, key: 2 }, Operation::IndexWrite { index: 0, value: 0, proof: () },
+            Operation::Allocate { destination: 0, allocation: Allocation::Empty, proof: () }, Operation::Binary { destination: 0, left: 1, right: 2, operator: 0 }];
+        assert!(move_arrays.iter().all(Row::moves_arrays));
     }
 }

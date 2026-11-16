@@ -390,6 +390,8 @@ impl AtomPrefix for NativeJsCompiler {
 }
 
 mod constructors;
+mod demands;
+pub use demands::SourceDemands;
 mod global_scripts;
 
 impl Engine {
@@ -409,11 +411,5 @@ impl Engine {
     /// OXC scopes, shared with its other source analyses.
     pub fn function_constructor_sources(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool) -> Vec<NativeSourceKey> {
         constructors::analyze(program, scoping, specialized).0
-    }
-
-    /// Return literal source obligations and constructor calls whose arguments
-    /// cannot be frozen, using the same conservative constructor-flow facts.
-    pub fn function_constructor_source_demands(program: &oxc_ast::ast::Program<'_>, scoping: &oxc_semantic::Scoping, specialized: bool) -> (Vec<NativeSourceKey>, Vec<u32>) {
-        constructors::analyze(program, scoping, specialized)
     }
 }

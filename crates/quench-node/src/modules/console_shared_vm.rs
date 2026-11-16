@@ -152,7 +152,7 @@ pub(crate) fn load(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[Ro
 /// A writing method of the global console: `args` are the writer's index (`WRITERS`), bound
 /// ahead of the call's arguments.
 pub(crate) fn write(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
-    crate::host::resident_pages::around_output(|| write_line(context, args))
+    write_line(context, args)
 }
 
 fn write_line(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<RootId, RootedError> {

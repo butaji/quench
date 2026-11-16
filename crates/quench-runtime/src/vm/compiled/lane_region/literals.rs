@@ -1,33 +1,9 @@
-//! Heap values a lane body makes or names: array literals in one allocation, as the lane
-//! makes them, string and BigInt constants, and the operators that take them.
+//! Heap values a lane body names: string and BigInt constants, and the operators that take them.
 
 use super::*;
 use crate::vm::compiled::regions;
 
 impl Lowering<'_, '_> {
-    /// The values of an array literal whose definitions follow its `MakeArray`, one per index
-    /// in order with no edge between them, as the lane fuses them
-    /// (`dispatch_fast::specialize_array_literals`): written to a stack slot, and the
-    /// definitions consumed. Zero, for an array of holes, otherwise.
-    pub(super) fn literal_elements(&mut self, state: &mut State, pc: usize, make: WideInstruction) -> ir::Value {
-        let (array, length) = (make.result_register(), make.array_length());
-        let defines = (1..=length).all(|offset| self.unit.instructions.get(pc + offset).is_some_and(|define|
-            define.op().is_define_array_element() && define.register_b() == array && define.register_a() != array
-                && define.imm() as usize == offset - 1 && self.blocks[pc + offset].is_none()));
-        if length == 0 || !defines { return self.ins().iconst(types::I64, 0); }
-        let word = types::I64.bytes();
-        let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(ir::StackSlotKind::ExplicitSlot,
-            word * length as u32, word.trailing_zeros() as u8));
-        for offset in 1..=length {
-            let element = self.unit.instructions[pc + offset].register_a();
-            let value = self.tagged(state, element);
-            self.builder.ins().stack_store(types::I64, value, slot, (word as usize * (offset - 1)) as i32);
-            self.consumed.insert(pc + offset);
-        }
-        self.native += length;
-        self.ins().stack_addr(types::I64, slot, 0)
-    }
-
     /// A constant's value and type: an immediate, or in online code the string or BigInt the
     /// VM made of it (`OnlineFacts::constants`).
     pub(super) fn constant_value(&self, index: usize) -> Option<(Value, Type)> {
@@ -50,7 +26,7 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, pc as u32);
             self.read_invalidation(state, exit);
             let address = self.reloc(RelocKind::ConstantPool, index as u32, (base + index * std::mem::size_of::<Value>()) as u64);
-            let value = self.ins().load(types::I64, regions::constant(), address, 0);
+            let value = self.raw_load(Lane::I64, regions::constant(), address, 0);
             self.define(state, instruction.result_register(), value,
                 RegisterFact::definition(super::super::facts::constant_type(constant), Representation::Tagged));
             return Some(true);
@@ -77,9 +53,9 @@ impl Lowering<'_, '_> {
         let left = self.operand_tagged(state, instruction.operand_b())?;
         let right = self.operand_tagged(state, instruction.operand_c())?;
         let exit = self.guard_exit(state, pc as u32);
-        let (payload, operator) = (self.payload, self.ins().iconst(types::I64, i64::from(instruction.binary_operator())));
+        let (payload, operator) = (self.payload, self.raw_const(Lane::I64, i64::from(instruction.binary_operator())));
         let value = self.helper_call(LaneHelper::Binary, &[payload, operator, left, right]);
-        let made = self.ins().icmp_imm_u(IntCC::NotEqual, value, Value::DELETED.to_bits() as i64);
+        let made = self.raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, made, exit);
         self.allocated(state);
         self.define(state, instruction.result_register(), value, RegisterFact::definition(ty, Representation::Tagged));
@@ -98,18 +74,9 @@ impl Lowering<'_, '_> {
     /// Whether `register` holds `ty` at an edge to `target`: proved, or guarded there as a
     /// string or BigInt (`guard_heap_primitive`).
     pub(super) fn proves(&mut self, state: &mut State, register: Register, ty: Type, target: usize) -> bool {
-        if state.values[usize::from(register)].value.ty.is_subtype(ty) { return true; }
+        if state.values[usize::from(register)].value.ty.is_subtype(ty.machine()) { return true; }
         let exit = self.guard_exit(state, target as u32);
         self.guard_heap_primitive(state, register, ty, exit)
-    }
-
-    /// An element store (`Lowering::set_index`); one keyed by a string names a property, which
-    /// the element store (`compiled::lane_index_set`) never makes: it leaves for the interpreter.
-    pub(super) fn element_store(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> bool {
-        let key = state.values[usize::from(instruction.register_c())].value.ty;
-        if key == Type::NEVER || !key.is_subtype(Type::language(crate::ValueType::String)) { return self.set_index(state, pc, instruction); }
-        self.exit(state, pc);
-        false
     }
 
     /// Guards a string or BigInt fact an edge does not prove (`Lowering::conform`) by the VM's
@@ -118,9 +85,9 @@ impl Lowering<'_, '_> {
         let Some(name) = [(crate::ValueType::String, "string"), (crate::ValueType::BigInt, "bigint")].into_iter()
             .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))).map(|(_, name)| name) else { return false };
         let bits = self.tagged(state, register);
-        let index = self.ins().iconst(types::I64, crate::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
+        let index = self.raw_const(Lane::I64, crate::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
         let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
-        let holds = self.ins().icmp_imm_u(IntCC::NotEqual, named, 0);
+        let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
         emit_js_guard(&mut self.builder, holds, exit);
         self.define(state, register, bits, RegisterFact::definition(ty, Representation::Tagged));
         true
@@ -131,7 +98,7 @@ impl Lowering<'_, '_> {
 /// from `entry`, which ask no Number of the function's parameters.
 pub(super) fn heap_primitive_pcs(entry: usize, initial: &[Type], instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[crate::bytecode::Constant], native_calls: bool) -> CompoundBitSet {
-    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, &[], super::super::facts::Observed::NONE);
+    let facts = super::super::facts::analyze(entry, initial, instructions, leaders, constants, &writes, &|_| None, native_calls, super::super::facts::Seeds::observing(super::super::facts::Observed::NONE));
     let mut pcs = CompoundBitSet::with_capacity(instructions.len());
     for (pc, instruction) in instructions.iter().enumerate().filter(|(pc, instruction)| super::super::facts::generic_operator(**instruction) && facts.reached(*pc)) {
         let operand = |operand| super::super::facts::operand_type(constants, operand, |register|

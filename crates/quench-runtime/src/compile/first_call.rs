@@ -17,7 +17,7 @@ mod append;
 mod room;
 pub(crate) mod nested;
 pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
-pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, free_names, skimmed_free_names};
+pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, alone_body_end, alone_start, free_names, skimmed_free_names};
 pub(in crate::compile) use room::ChunkRoom;
 
 impl ReplayViews {
@@ -52,9 +52,20 @@ pub(super) struct ChunkWindow<'a> {
     outer: Option<(u32, &'a std::rc::Rc<FirstCallScopes>)>,
     line_starts: &'a [usize],
     utf16_excess: &'a [(usize, usize)],
+    /// The run of a streamed body the chunk compiles.
+    run: Option<&'a super::statement_stream::StreamRun>,
 }
 
 impl<'a> ChunkWindow<'a> {
+    /// Whether the chunk compiles the first run of a streamed body.
+    pub(super) fn first_run(&self) -> bool {
+        self.run.is_some_and(|run| run.from.is_none())
+    }
+
+    pub(super) fn start(&self) -> u32 {
+        self.start
+    }
+
     /// Moves the positions of `program`, the function's text parsed alone, and of the facts
     /// its analysis found, to the function's place in the program's text.
     fn place(
@@ -100,6 +111,7 @@ impl<'a> ChunkWindow<'a> {
         );
         compiler.first_call.kept_source = Some(self.source);
         compiler.first_call.outer = self.outer.map(|(start, scopes)| (start, scopes.clone()));
+        compiler.stream_run = self.run;
         compiler
     }
 }
@@ -133,17 +145,26 @@ impl Engine {
         function: u32,
         span: crate::bytecode::SourceSpan,
         atom_prefix: &dyn AtomPrefix,
+        run: Option<&super::statement_stream::StreamRun>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let name = program.source_name.as_str();
         let source = program.source.as_ref().filter(|source| source.base == 0);
-        let Some((source, chunk)) = source.and_then(|source| Some((source, ChunkText::of(source, span)?))) else {
+        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&super::statement_stream::StreamRun>) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
+            // A later run's chunk holds the function's header alone, its body from the run on.
+            Some((_, body)) => source
+                .text
+                .get(span.start as usize..body.open as usize)
+                .map(|header| ChunkText { text: std::borrow::Cow::Owned(format!("{header}{{}}")), start: span.start }),
+            None => ChunkText::of(source, span),
+        } }
+        let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
         let views = ReplayViews::default();
         let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
+        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess, run };
         Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
 }
@@ -169,6 +190,36 @@ impl ParsedProgramShape<'_> {
             return FxHashSet::default();
         }
         TopLevelFunctions::of(program)
+    }
+}
+
+impl ParsedProgramShape<'_> {
+    /// The starts of the named function declarations of `program`, of this shape, that may
+    /// compile as stubs where their bodies stream (`Stubs::streamed_roots`): a sloppy
+    /// script's, whose lexical bindings are global too, or an eval's that declares none.
+    fn streamed_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
+        let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
+        let lexical = program.body.iter().any(|statement| match statement {
+            Statement::VariableDeclaration(declaration) => !declaration.kind.is_var(),
+            Statement::ClassDeclaration(_) => true,
+            _ => false,
+        });
+        let shaped = match self {
+            Self::Any => !program.source_type.is_module(),
+            Self::Eval(..) => !lexical,
+            _ => false,
+        };
+        if !replayable || strict || !shaped {
+            return FxHashSet::default();
+        }
+        program
+            .body
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::FunctionDeclaration(function) if function.id.is_some() => Some(function.span.start),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -223,6 +274,10 @@ pub(super) struct Stubs<'a> {
     pub(super) direct: bool,
     /// The functions whose deferred call-only facts are found, by source range.
     pub(super) call_only_found: Vec<(u32, u32)>,
+    /// The starts of the root's named function declarations that compile as stubs where
+    /// their bodies stream, their first call then running the body a run at a time
+    /// (`Vm::call_streamed_runs`).
+    pub(super) streamed_roots: Starts,
     /// The free names of the lazily parsed functions (`BodyFacts::check`).
     pub(super) free_names: FreeNames,
     /// The nested stubs by id, in order, with the scopes their chunks compile against.
@@ -239,6 +294,7 @@ impl Stubs<'_> {
     pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, (free_names, call_only_found): (FreeNames, Vec<(u32, u32)>)) {
         self.roots = shape.first_call_roots(replayable, program, inherited_strict);
         let stubbing = shape.stubbing(replayable, program.source_text.len());
+        self.streamed_roots = shape.streamed_roots(replayable, program, inherited_strict);
         self.nested_allowed = stubbing.functions;
         self.direct = stubbing.arrows;
         self.free_names = free_names;
@@ -264,9 +320,22 @@ impl Compiler<'_> {
             self.note_nested_stub(id, captures);
             return id;
         }
+        if self.streams_at_first_call(function, &context) {
+            return self.compile_first_call_stub(function, context);
+        }
         self.lazy_compiled.push(body);
         self.find_deferred_call_only_facts(function, &context);
         self.compile_lazy_function(function, context)
+    }
+
+    /// Whether `function`, whose body was parsed lazily, compiles as a first-call stub whose
+    /// call runs its body a run at a time: a root's whose body streams.
+    fn streams_at_first_call(&self, function: &oxc_ast::ast::Function<'_>, context: &replay::PlainFunctionContext) -> bool {
+        self.first_call.streamed_roots.contains(&function.span.start)
+            && self.replay_target.is_none()
+            && self.stream_run.is_none()
+            && (self.streamed.contains(&function.span.start)
+                || self.stream_candidates.contains(&function.span.start) && self.body_streams(function, context))
     }
 
     /// Whether `function`, whose body was parsed lazily, compiles as a first-call stub.

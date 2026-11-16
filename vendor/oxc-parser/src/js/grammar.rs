@@ -30,6 +30,7 @@ impl<'a, C: Config> CoverGrammar<'a, Expression<'a>, C> for SimpleAssignmentTarg
     fn cover(expr: Expression<'a>, p: &mut ParserImpl<'a, C>) -> Self {
         match expr {
             Expression::Identifier(ident) => {
+                p.early.assignment_target(ident.name.as_str());
                 SimpleAssignmentTarget::AssignmentTargetIdentifier(ident)
             }
             match_member_expression!(Expression) => {
@@ -236,6 +237,7 @@ impl<'a, C: Config> CoverGrammar<'a, ObjectProperty<'a>, C> for AssignmentTarget
             let binding = match property.key {
                 PropertyKey::StaticIdentifier(ident) => {
                     let ident = ident.unbox();
+                    p.early.assignment_target(ident.name.as_str());
                     IdentifierReference::new(ident.span, ident.name, p)
                 }
                 _ => return p.unexpected(),

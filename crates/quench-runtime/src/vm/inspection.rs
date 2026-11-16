@@ -8,6 +8,18 @@ fn constructor_name_is_specific(name: &JsString) -> bool {
 }
 
 impl<H: Host> Vm<H> {
+    /// Prints every loaded program's finished bytecode when `QUENCH_TRACE=bytecode` is set.
+    pub(super) fn report_bytecode(&self) {
+        if !crate::trace::Channel::Bytecode.on() {
+            return;
+        }
+        for index in 0..self.programs.len() {
+            if let Some(residual) = self.programs.get(ProgramId::from_raw(index as u32)) {
+                eprintln!("program {index} {:?}\n{}", residual.source_name, residual.disassemble());
+            }
+        }
+    }
+
     pub(super) fn constructor_name(&self, value: Value) -> Option<JsString> {
         let object = self.object_data(value)?;
         if self.proxy_parts(value).is_some() {
@@ -101,7 +113,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::ArrayBuffer { shared: true, .. }) => "SharedArrayBuffer",
             Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
-            Some(Cell::TypedArray { kind, .. }) => kind.name(),
+            Some(Cell::TypedArray { object, .. }) => object.native.kind().name(),
             Some(Cell::DataView { .. }) => {
                 if uncaptured_factory {
                     "DataView"

@@ -138,3 +138,44 @@ fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
     assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
     assert_eq!(arena.try_insert(14).unwrap(), 6);
 }
+
+#[test]
+fn record_block_metadata_never_moves_once_reserved() {
+    let mut arena: RecordSpace<u64> = RecordSpace::default();
+    arena.try_insert(0).unwrap();
+    let (blocks, count) = arena.native_mark_blocks();
+    assert_eq!(count, 1);
+    for value in 1..(8 * RECORDS_PER_BLOCK) as u64 {
+        arena.try_insert(value).unwrap();
+    }
+    let (moved, count) = arena.native_mark_blocks();
+    assert_eq!((moved, count), (blocks, 8));
+    assert_eq!(arena.blocks.capacity(), RECORD_SPACE_CAPACITY / RECORDS_PER_BLOCK);
+    // Reserved block capacity is no allocation the memory ledger counts.
+    assert_eq!(arena.allocated_bytes(), 8 * (RECORDS_PER_BLOCK * size_of::<u64>() + size_of::<super::RecordBlock>()));
+}
+
+#[test]
+fn a_hole_keeps_its_ids_out_of_fresh_reused_and_restored_records() {
+    const HOLE: usize = 2 * RECORDS_PER_BLOCK;
+    type Holed = RecordSpace<u32, { 4 * HOLE }, HOLE>;
+    let mut arena: Holed = RecordSpace::default();
+    let ids: Vec<_> = (0..2 * HOLE as u32).map(|value| arena.try_insert(value).unwrap()).collect();
+    assert_eq!(ids[HOLE - 1], HOLE as u32 - 1);
+    assert_eq!(ids[HOLE], 2 * HOLE as u32, "the first id past the hole follows its last one");
+    assert!(ids.iter().all(|&id| !Holed::in_hole(id)));
+    // Every record dies; reuse scans down through the hole's blocks and takes none of them.
+    arena.sweep(true, PromotionAge::First, false, |_| {});
+    for value in 0..2 * HOLE as u32 {
+        let id = arena.try_insert(value).unwrap();
+        assert!(!Holed::in_hole(id), "id {id} is in the hole");
+    }
+    let mut restored: Holed = RecordSpace::default();
+    assert!(!restored.insert_snapshot(HOLE as u32, 0), "a snapshot never places a record in the hole");
+    assert!(restored.insert_snapshot(2 * HOLE as u32 + 1, 1));
+    restored.finish_snapshot_inserts();
+    for value in 0..2 * HOLE as u32 {
+        let Ok(id) = restored.try_insert(value) else { break };
+        assert!(!Holed::in_hole(id), "restored id {id} is in the hole");
+    }
+}

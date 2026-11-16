@@ -473,7 +473,7 @@ fn names_arguments(expression: &Expression<'_>) -> bool {
 
 const LENGTH_NAME: &str = "length";
 
-pub(super) struct FixedRegisterLocalFacts {
+pub(super) struct FixedRegisterLocalFacts<'a> {
     /// Promotion is sound but for the body's `arguments` use, which `arguments` states.
     pub(super) safe: bool,
     /// `safe` but for the functions and classes the body makes (`closures`).
@@ -484,17 +484,17 @@ pub(super) struct FixedRegisterLocalFacts {
     /// that source order is evaluation order around it.
     first_pass: Option<u32>,
     /// Each name's last reference in source order.
-    last_references: rustc_hash::FxHashMap<String, u32>,
+    last_references: rustc_hash::FxHashMap<&'a str, u32>,
     /// Every name the body declares or assigns, at any depth: a parameter among them may be
     /// rebound.
-    pub(super) bound_names: FxHashSet<String>,
+    pub(super) bound_names: FxHashSet<&'a str>,
     /// Names written somewhere other than at statement level (see `statement_level_write`).
     /// A register-resident local loads as its register itself, so it stays sound only while
     /// no write can land between a read and that read's consumer within one statement.
-    pub(super) nested_written_names: FxHashSet<String>,
+    pub(super) nested_written_names: FxHashSet<&'a str>,
     /// What the functions and classes the body makes may do to its bindings
     /// (`ClosureReach`); `None` when it makes none.
-    closures: Option<ClosureReach>,
+    closures: Option<ClosureReach<'a>>,
     /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
     /// counting the functions it makes.
     pub(super) suspends: bool,
@@ -505,22 +505,22 @@ pub(super) struct FixedRegisterLocalFacts {
 /// the body's `arguments` binding itself (an arrow naming `arguments`, which is the
 /// body's own) or bind dynamically (a direct eval).
 #[derive(Default)]
-struct ClosureReach {
-    assigned: FxHashSet<String>,
+struct ClosureReach<'a> {
+    assigned: FxHashSet<&'a str>,
     observes_arguments: bool,
     /// How many ordinary (non-arrow) functions enclose the visit: inside one, `arguments`
     /// is that function's own.
     ordinary_depth: u32,
 }
 
-impl<'a> Visit<'a> for ClosureReach {
+impl<'a> Visit<'a> for ClosureReach<'a> {
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
         self.observes_arguments |= self.ordinary_depth == 0 && identifier.name == ARGUMENTS;
     }
 
     fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
         if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
-            self.assigned.insert(identifier.name.to_string());
+            self.assigned.insert(identifier.name.as_str());
         }
         walk::walk_simple_assignment_target(self, target);
     }
@@ -529,7 +529,7 @@ impl<'a> Visit<'a> for ClosureReach {
         &mut self,
         property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
     ) {
-        self.assigned.insert(property.binding.name.to_string());
+        self.assigned.insert(property.binding.name.as_str());
         walk::walk_assignment_target_property_identifier(self, property);
     }
 
@@ -545,21 +545,21 @@ impl<'a> Visit<'a> for ClosureReach {
     }
 }
 
-pub(super) fn fixed_register_local_facts(
-    body: &[Statement<'_>],
-    expression: Option<&Expression<'_>>,
-) -> FixedRegisterLocalFacts {
-    struct Facts {
+pub(super) fn fixed_register_local_facts<'a>(
+    body: &[Statement<'a>],
+    expression: Option<&Expression<'a>>,
+) -> FixedRegisterLocalFacts<'a> {
+    struct Facts<'a> {
         safe: bool,
         arguments: ArgumentsUse,
-        bound_names: FxHashSet<String>,
-        nested_written_names: FxHashSet<String>,
+        bound_names: FxHashSet<&'a str>,
+        nested_written_names: FxHashSet<&'a str>,
         first_pass: Option<u32>,
         /// A pass inside a loop, or a destructuring pattern, leaves `first_pass` unordered.
         unordered: bool,
         loops: u32,
-        last_references: rustc_hash::FxHashMap<String, u32>,
-        closures: Option<ClosureReach>,
+        last_references: rustc_hash::FxHashMap<&'a str, u32>,
+        closures: Option<ClosureReach<'a>>,
         /// Whether `closures` gathers what the functions and classes reach, or only that the
         /// body makes one.
         reaches: bool,
@@ -567,7 +567,7 @@ pub(super) fn fixed_register_local_facts(
         suspends: bool,
     }
 
-    impl Facts {
+    impl<'a> Facts<'a> {
         fn new(reaches: bool) -> Self {
             Self {
                 safe: true,
@@ -584,7 +584,7 @@ pub(super) fn fixed_register_local_facts(
             }
         }
 
-        fn walk(mut self, body: &[Statement<'_>], expression: Option<&Expression<'_>>) -> Self {
+        fn walk(mut self, body: &[Statement<'a>], expression: Option<&Expression<'a>>) -> Self {
             for statement in body {
                 self.visit_statement(statement);
             }
@@ -596,9 +596,9 @@ pub(super) fn fixed_register_local_facts(
 
         /// A function or class the body makes: its name, when it declares one, binds in the
         /// body, and what it reaches of the body's bindings joins `closures`.
-        fn make_closure(&mut self, name: Option<&oxc_ast::ast::BindingIdentifier<'_>>, visit: impl FnOnce(&mut ClosureReach)) {
+        fn make_closure(&mut self, name: Option<&oxc_ast::ast::BindingIdentifier<'a>>, visit: impl FnOnce(&mut ClosureReach<'a>)) {
             if let Some(name) = name {
-                self.bound_names.insert(name.name.to_string());
+                self.bound_names.insert(name.name.as_str());
             }
             let reach = self.closures.get_or_insert_with(ClosureReach::default);
             if self.reaches {
@@ -612,7 +612,7 @@ pub(super) fn fixed_register_local_facts(
         /// So is each part of a statement-level comma sequence, conditional or logical
         /// expression whose value nothing reads: every earlier part's reads are consumed
         /// before the next part runs (minifiers fold statements into these forms).
-        fn statement_level_write<'a>(&mut self, expression: &Expression<'a>) -> bool {
+        fn statement_level_write(&mut self, expression: &Expression<'a>) -> bool {
             let statement_level = |facts: &mut Self, part: &Expression<'a>| {
                 if !facts.statement_level_write(part) {
                     facts.visit_expression(part);
@@ -668,7 +668,7 @@ pub(super) fn fixed_register_local_facts(
                 _ => return false,
             };
             self.safe &= target.name != ARGUMENTS;
-            self.bound_names.insert(target.name.to_string());
+            self.bound_names.insert(target.name.as_str());
             true
         }
 
@@ -677,7 +677,7 @@ pub(super) fn fixed_register_local_facts(
         }
     }
 
-    impl<'a> Visit<'a> for Facts {
+    impl<'a> Visit<'a> for Facts<'a> {
         fn visit_identifier_reference(
             &mut self,
             identifier: &oxc_ast::ast::IdentifierReference<'a>,
@@ -687,12 +687,12 @@ pub(super) fn fixed_register_local_facts(
                 self.unordered |= self.loops != 0;
                 self.first_pass.get_or_insert(identifier.span.start);
             } else {
-                self.last_references.insert(identifier.name.to_string(), identifier.span.start);
+                self.last_references.insert(identifier.name.as_str(), identifier.span.start);
             }
         }
 
         fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
-            self.bound_names.insert(identifier.name.to_string());
+            self.bound_names.insert(identifier.name.as_str());
         }
 
         fn visit_static_member_expression(&mut self, member: &oxc_ast::ast::StaticMemberExpression<'a>) {
@@ -730,8 +730,8 @@ pub(super) fn fixed_register_local_facts(
         fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
             if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
                 self.nested_written_names
-                    .insert(identifier.name.to_string());
-                self.bound_names.insert(identifier.name.to_string());
+                    .insert(identifier.name.as_str());
+                self.bound_names.insert(identifier.name.as_str());
             }
             if target.as_member_expression().is_some_and(|member| names_arguments(member.object())) {
                 self.use_arguments(ArgumentsUse::Escapes);
@@ -744,8 +744,8 @@ pub(super) fn fixed_register_local_facts(
             property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
         ) {
             self.nested_written_names
-                .insert(property.binding.name.to_string());
-            self.bound_names.insert(property.binding.name.to_string());
+                .insert(property.binding.name.as_str());
+            self.bound_names.insert(property.binding.name.as_str());
             walk::walk_assignment_target_property_identifier(self, property);
         }
 
@@ -889,7 +889,7 @@ pub(super) fn fixed_register_local_facts(
     }
 }
 
-impl FixedRegisterLocalFacts {
+impl FixedRegisterLocalFacts<'_> {
     /// Whether a sloppy body that rebinds no parameter cannot observe its `arguments`
     /// mapping: it only reads the object while no function it makes assigns a parameter,
     /// or, making none, it passes the object on after its last reference to any parameter,

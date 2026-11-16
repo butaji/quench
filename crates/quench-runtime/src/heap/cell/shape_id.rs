@@ -7,8 +7,26 @@ impl super::Object {
     /// (`Heap::remap_live_object_shapes`), not one prototype at a time.
     #[inline(always)]
     pub(crate) fn renumber_shape(&mut self, shape: u32) {
-        let mut properties = ValueVec::from_parts(0, self.auxiliary);
+        let mut properties = ValueVec::from_parts(0, self.aux());
         properties.set_auxiliary(shape);
-        self.auxiliary = properties.into_parts().1;
+        self.set_aux(properties.into_parts().1);
+    }
+
+    /// The layout a record of layout `layout` takes when its shape is renumbered to `shape` and
+    /// nothing else changes (`renumber_shape`): an add that writes into storage it already has.
+    /// The staged add rows store it (`staged::add`), whose sites record it with the layout they
+    /// guard (`staged::add_plan::Transition`).
+    pub(crate) fn layout_with_shape(layout: u32, shape: u32) -> u32 {
+        let word = super::super::layouts::word(layout);
+        let mut properties = ValueVec::from_parts(0, word as u32);
+        properties.set_auxiliary(shape);
+        super::super::layouts::intern(super::header_word((word >> u32::BITS) as u32, properties.into_parts().1))
+    }
+
+    /// The layouts an add site records from a receiver of layout `layout` moving to shape
+    /// `shape` (`staged::add_plan::Transition::layouts`): the layout the staged rows guard and
+    /// the one they store.
+    pub(crate) fn add_layouts(layout: u32, shape: u32) -> [u32; 2] {
+        [layout, Self::layout_with_shape(layout, shape)]
     }
 }

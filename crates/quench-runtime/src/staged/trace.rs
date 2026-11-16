@@ -58,6 +58,8 @@ impl Stage for Trace {
     fn load_table(&mut self, _at: Access, address: u32) -> u32 { self.word(format!("load_table w{address}")) }
     fn add(&mut self, a: u32, b: u32) -> u32 { self.word(format!("add w{a} w{b}")) }
     fn or(&mut self, a: u32, b: u32) -> u32 { self.word(format!("or w{a} w{b}")) }
+    fn and(&mut self, a: u32, b: u32) -> u32 { self.word(format!("and w{a} w{b}")) }
+    fn shl(&mut self, a: u32, b: u32) -> u32 { self.word(format!("shl w{a} w{b}")) }
     fn add_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("add_imm w{a} {}", Self::operand(imm.into()))) }
     fn mul_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("mul_imm w{a} {}", Self::operand(imm.into()))) }
     fn and_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("and_imm w{a} {}", Self::operand(imm.into()))) }
@@ -67,7 +69,7 @@ impl Stage for Trace {
     fn eq_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("eq_imm w{a} {}", Self::operand(imm.into()))) }
     fn ne_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ne_imm w{a} {}", Self::operand(imm.into()))) }
     fn ugt_imm(&mut self, a: u32, imm: impl Into<Imm>) -> u32 { self.word(format!("ugt_imm w{a} {}", Self::operand(imm.into()))) }
-    fn store_gate(&mut self, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate w{record_id} w{value}")) }
+    fn store_gate(&mut self, space: super::RecordSpace, record_id: u32, value: u32) -> u32 { self.word(format!("store_gate {space:?} w{record_id} w{value}")) }
     fn number_operator(&mut self, operator: Imm, passed: u32, constant: u32) -> (u32, u32) {
         let value = self.word(format!("number_operator {} w{passed} w{constant}", Self::operand(operator)));
         (value, value)
@@ -79,6 +81,18 @@ impl Stage for Trace {
     fn select(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("select w{cond} w{then} w{otherwise}")) }
     fn store_u32(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u32 w{base}+{offset} w{value}")); }
     fn store_u64(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u64 w{base}+{offset} w{value}")); }
+    fn load_i8(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_i8 w{base}+{offset}")) }
+    fn load_i16(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_i16 w{base}+{offset}")) }
+    fn load_i32(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_i32 w{base}+{offset}")) }
+    fn load_f32(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_f32 w{base}+{offset}")) }
+    fn load_f64(&mut self, _at: Access, base: u32, offset: i32) -> u32 { self.word(format!("load_f64 w{base}+{offset}")) }
+    fn store_u8(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u8 w{base}+{offset} w{value}")); }
+    fn store_u16(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_u16 w{base}+{offset} w{value}")); }
+    fn store_f32(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_f32 w{base}+{offset} w{value}")); }
+    fn store_f64(&mut self, _at: Access, base: u32, offset: i32, value: u32) { self.ops.push(format!("store_f64 w{base}+{offset} w{value}")); }
+    fn f32_to_f64(&mut self, a: u32) -> u32 { self.word(format!("f32_to_f64 w{a}")) }
+    fn f64_to_f32(&mut self, a: u32) -> u32 { self.word(format!("f64_to_f32 w{a}")) }
+    fn clamp_u8(&mut self, a: u32) -> u32 { self.word(format!("clamp_u8 w{a}")) }
     fn not(&mut self, cond: u32) -> u32 { self.word(format!("not w{cond}")) }
     fn any(&mut self, a: u32, b: u32) -> u32 { self.word(format!("any w{a} w{b}")) }
     fn pick(&mut self, cond: u32, then: u32, otherwise: u32) -> u32 { self.word(format!("pick w{cond} w{then} w{otherwise}")) }

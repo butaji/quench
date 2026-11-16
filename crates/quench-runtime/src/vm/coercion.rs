@@ -23,25 +23,13 @@ const VOID: u32 = UnaryOperator::Void as u32;
 }
 
 impl<H: Host> Vm<H> {
-    /// The ECMAScript language type of `value`, with callable objects distinguished.
-    pub(crate) fn value_type(&self, value: Value) -> crate::ValueType {
-        use crate::ValueType as T;
-        if let Some(kind) = immediate_value_type(value) {
-            kind
-        } else {
-            match self.heap.get(value) {
-                _ if self.heap.is_string(value)  => T::String,
-                Some(Cell::BigInt(_)) => T::BigInt,
-                Some(Cell::Symbol(_)) => T::Symbol,
-                _ if self.is_function(value) => T::Function,
-                _ => T::Object,
-            }
-        }
-    }
-
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
-        let kind = self.typeof_kind(value);
-        self.typeof_name(kind)
+        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        let names = self.typeof_names.as_ptr() as u64;
+        match crate::staged::value::immediate_typeof_string(&mut stage, value.to_bits(), names, ()) {
+            Some(name) => Value::from_bits(name),
+            None => self.typeof_name(self.typeof_kind(value)),
+        }
     }
 
     /// The kind whose name `typeof value` yields: an `[[IsHTMLDDA]]` object reads as
@@ -55,40 +43,33 @@ impl<H: Host> Vm<H> {
     /// `bytecode::TYPEOF_NAMES` of the name `typeof value` is.
     #[inline]
     pub(super) fn typeof_index_value(&self, value: Value) -> Value {
-        if let Some(kind) = immediate_value_type(value) {
-            return Value::integer(typeof_name_index(kind) as i32);
-        }
-        Value::integer(typeof_name_index(self.typeof_kind(value)) as i32)
+        let index = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
+        Value::integer(index as i32)
     }
 
     /// The boolean a `UNARY_TYPEOF_IS` operator testing the name at `index` in
     /// `bytecode::TYPEOF_NAMES` yields for `value`.
     #[inline]
     pub(super) fn typeof_test_value(&self, value: Value, index: usize, negated: bool) -> Value {
-        if (typeof_name_index(self.typeof_kind(value)) == index) != negated { Value::TRUE } else { Value::FALSE }
+        let named = immediate_typeof_index(value).unwrap_or_else(|| typeof_name_index(self.typeof_kind(value)));
+        if (named == index) != negated { Value::TRUE } else { Value::FALSE }
     }
 
     /// The one string `typeof` yields for values of `kind`: every result and every string
     /// constant spelling one (`Vm::materialize_constant`) is this value, so `===` between two
-    /// of them is identity.
-    fn typeof_name(&mut self, kind: crate::ValueType) -> Value {
-        // `null` and objects share one name, kept in the object kind's slot.
-        let kind = if kind == crate::ValueType::Null { crate::ValueType::Object } else { kind };
-        let cached = self.typeof_names[kind as usize];
-        if !cached.is_undefined() {
-            return cached;
-        }
-        let name = self.intern_dynamic_ascii(typeof_text(kind));
-        self.typeof_names[kind as usize] = name;
-        name
+    /// of them is identity. `null` and objects share the object's.
+    fn typeof_name(&self, kind: crate::ValueType) -> Value {
+        self.typeof_names[typeof_name_index(kind)]
+    }
+
+    /// Interns the eight `typeof` result strings of a fresh heap, in the order of `bytecode::TYPEOF_NAMES`.
+    pub(super) fn intern_typeof_names(&mut self) {
+        self.typeof_names = crate::bytecode::TYPEOF_NAMES.map(|text| self.intern_dynamic_ascii(text));
     }
 
     /// The `typeof` name spelled by `text`, if it spells one (`Vm::typeof_name`).
-    pub(super) fn typeof_constant(&mut self, text: &str) -> Option<Value> {
-        TYPEOF_KINDS
-            .into_iter()
-            .find(|kind| typeof_text(*kind) == text)
-            .map(|kind| self.typeof_name(kind))
+    pub(super) fn typeof_constant(&self, text: &str) -> Option<Value> {
+        crate::bytecode::typeof_name_index(text).map(|index| self.typeof_names[index])
     }
 
     #[expect(clippy::wrong_self_convention, reason = "named for the spec abstract operation, which may run guest code")]
@@ -161,6 +142,13 @@ impl<H: Host> Vm<H> {
         };
         if self.heap.is_string(primitive) || matches!(self.heap.get(primitive), Some(Cell::Symbol(_))) {
             return Ok(primitive);
+        }
+        // An array index's key, as a native's loop over a proxy or an array-like makes one per
+        // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
+        // that atom (`string_key_atom`) instead of parsing it.
+        if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
+            let atom = self.lookup_array_index_atom(index).unwrap_or_else(|| self.intern_atom(&index.to_string()));
+            return Ok(self.atom_string(atom));
         }
         let text = self.coerce_js_string(program, primitive)?;
         Ok(self.heap.alloc_string(text))
@@ -433,15 +421,8 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The kinds whose `typeof` names differ: `null` reads as an object.
-const TYPEOF_KINDS: [crate::ValueType; 8] = {
-    use crate::ValueType as T;
-    [T::Undefined, T::Object, T::Boolean, T::Number, T::String, T::BigInt, T::Symbol, T::Function]
-};
-
-/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`;
-/// `TYPEOF_KINDS` lists the kinds in that order.
-#[inline] fn typeof_name_index(kind: crate::ValueType) -> usize {
+/// The index in `bytecode::TYPEOF_NAMES` of the name `typeof` yields for a value of `kind`.
+#[inline] pub(crate) fn typeof_name_index(kind: crate::ValueType) -> usize {
     use crate::ValueType as T;
     match kind {
         T::Undefined => 0,
@@ -472,27 +453,10 @@ pub(super) fn immediate_to_string(value: Value) -> Option<JsString> {
     }
 }
 
-/// The kind of a value its bits alone decide (undefined, null, a boolean, a Number); `None`
-/// for a heap value, whose kind its cell decides (`Vm::value_type`). None of these kinds is
-/// the `[[IsHTMLDDA]]` object's.
-#[inline(always)]
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof value` for a value outside the heap,
-/// which its tag alone decides; `None` for a heap value.
+/// which its tag alone decides (`staged::value::immediate_typeof_index`, which the tiers run as
+/// well); `None` for a heap value. None of these kinds is the `[[IsHTMLDDA]]` object's.
+#[inline(always)]
 pub(super) fn immediate_typeof_index(value: Value) -> Option<usize> {
-    immediate_value_type(value).map(typeof_name_index)
-}
-
-fn immediate_value_type(value: Value) -> Option<crate::ValueType> {
-    use crate::ValueType as T;
-    Some(if value.is_undefined() || value.is_deleted() {
-        T::Undefined
-    } else if value.is_null() {
-        T::Null
-    } else if value.as_bool().is_some() {
-        T::Boolean
-    } else if value.as_number().is_some() {
-        T::Number
-    } else {
-        return None;
-    })
+    crate::staged::value::concrete_immediate_typeof_index(value)
 }

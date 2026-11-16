@@ -16,7 +16,18 @@ pub(super) fn parse_program<'a>(
     source: &'a str,
     source_type: SourceType,
 ) -> ParserReturn<'a> {
-    parse_program_with(allocator, source, source_type, None, None, None, false)
+    parse_program_with(allocator, source, source_type, None, None, None, false, false, Recognize::No, None)
+}
+
+/// Which lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Recognize {
+    No,
+    /// Every body.
+    All,
+    /// Bodies with no function inside (`ParseOptions::lazy_recognize_flat`), the only ones a
+    /// check whose call-only facts are not deferred takes without the tree.
+    Flat,
 }
 
 /// `parse_program`, with the function bodies starting at or after `lazy_from` parsed lazily
@@ -29,14 +40,24 @@ pub(super) fn parse_program_with<'a>(
     lazy_body_check: Option<oxc_parser::LazyBodyCheck>,
     lazy_body_skim: Option<oxc_parser::LazyBodySkim>,
     inherited_strict: bool,
+    nested: bool,
+    recognize: Recognize,
+    lazy_body_skip: Option<oxc_parser::LazyBodySkip>,
 ) -> ParserReturn<'a> {
+    let flat = recognize == Recognize::Flat;
+    let recognize = recognize != Recognize::No && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
     Parser::new(allocator, source, source_type)
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
             lazy_function_bodies: lazy_from,
+            lazy_nested_bodies: nested && lazy_body_check.is_some(),
             lazy_body_check,
             lazy_body_skim,
             inherited_strict,
+            lazy_recognize: recognize,
+            lazy_recognize_verify: recognize && crate::trace::Dev::Recognize.value() == Some("verify"),
+            lazy_recognize_flat: flat,
+            lazy_body_skip,
             ..ParseOptions::default()
         })
         .parse()

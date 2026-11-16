@@ -126,10 +126,42 @@ pub fn release_read_only_pages_after_load() {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_read_only_pages() {
     if run_code_stays() { return }
+    release_read_only_pages_now();
+}
+
+/// Releases the read-only pages whatever the run's code budget says (`run_code_stays`): at a
+/// paced collection boundary (`release_at_collection`) and before teardown, so the resident
+/// code is what the run touched since the last release, its working set, not every page it
+/// ever touched.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_now() {
+    release_read_only_pages_weighed(true);
+}
+
+/// Releases the read-only pages at a run's one-off boundary (around output after a
+/// collection, before teardown) whatever share of the resident set they are
+/// (`file_pages_weigh`): such a boundary comes at most once per collection, so its refaults
+/// stay bounded, and it falls at the heap's high, where JetStream 3's end-of-run summary
+/// otherwise faulted its code in beside the run's (no-JIT, x86_64, 5 runs, 2026-11-15, max RSS
+/// MB: OfflineAssembler 18.3 -> 17.4, sync-fs 18.7 -> 17.9, gbemu 19.4 -> 18.5, Air 17.9 ->
+/// 17.4, pdfjs 24.0 -> 23.5; scores within noise). Weighed, the release was skipped once the
+/// heap passed three times the code.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_read_only_pages_at_boundary() {
+    release_read_only_pages_weighed(false);
+}
+
+/// Releases the read-only pages; `weighed` skips the release when the file pages are a small
+/// share of the resident set (`file_pages_weigh`), which a paced release does not need: at
+/// its pace the refaults stay bounded however large the heap.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn release_read_only_pages_weighed(weighed: bool) {
     if let Ok(mut last) = LAST_RELEASE.lock() {
         *last = Some(std::time::Instant::now());
     }
-    if !file_pages_weigh() {
+    LAST_RELEASE_WORK.store(quench_runtime::clock::now_work(), std::sync::atomic::Ordering::Relaxed);
+    NEW_HIGH.collections_since_release.store(0, std::sync::atomic::Ordering::Relaxed);
+    if weighed && !file_pages_weigh() {
         return;
     }
     let segments = loaded_segments(ReleasedSegment::Clean);
@@ -165,12 +197,136 @@ pub fn release_read_only_pages() {
 /// earley-boyer's CPU time fell 8% with no peak-RSS change on earley-boyer, raytrace or splay
 /// (V8-v7, JIT, x86_64, 2026-11-12; ~5,700 of its ~7,500 `madvise` calls).
 pub fn release_at_collection(returns_pages: bool) {
+    release_before_first_collection();
     if returns_pages {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         release_read_only_pages();
         release_free_heap_pages();
+        return;
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    if NEW_HIGH.release_due() | !released_within_pace() {
+        release_read_only_pages_weighed(false);
     }
 }
+
+/// A collection boundary's release at a new high of the resident set. Resident code pages
+/// count toward a run's peak only while the resident set is at its high: below it they cost
+/// nothing, and at it the code touched since the last release (start-up's, the first calls',
+/// the harness's) adds to the heap's high. So a collection that finds the resident set at a
+/// new high releases the code when its file pages exceed what the run refaulted after the
+/// last release (read at the second collection after it) by `NEW_HIGH_FILE_MARGIN_BYTES`: a
+/// run whose heap stays below its high, or whose code is all working set, releases nothing
+/// more. Collections are the run's own work clock, so the release follows allocation, not the
+/// work-clock pace (`RUN_CODE_RELEASE_WORK`), which a run that peaks within its first 250 ms
+/// of collections never reaches: JetStream 3's small tests peaked with their start-up code
+/// resident (no-JIT, x86_64, 5 runs each, 2026-11-15, max RSS MB: Air 20.3 -> 18.3,
+/// validatorjs 21.1 -> 18.8, Sunspider 29.0 -> 26.3, bigint-noble 19.3 -> 17.1, proxy-mobx
+/// 17.2 -> 15.8, Babylon 16.1 -> 15.1, prismjs 20.4 -> 19.3, tsf 18.0 -> 16.9; V8-v7 regexp
+/// 11.9 -> 11.2, navier-stokes 6.2 -> 5.9, other rows within 0.1; scores within noise).
+/// Releasing at every second collection instead cost bigint-noble 15% of its score, and at
+/// collections 1, 2, 4, 8 ... left prismjs's late peak with its working set resident.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+struct NewHigh {
+    /// The largest resident set a collection boundary has seen.
+    resident: std::sync::atomic::AtomicUsize,
+    /// The file pages the run refaulted after the last release.
+    refaulted: std::sync::atomic::AtomicUsize,
+    collections_since_release: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+static NEW_HIGH: NewHigh = NewHigh {
+    resident: std::sync::atomic::AtomicUsize::new(0),
+    refaulted: std::sync::atomic::AtomicUsize::new(0),
+    collections_since_release: std::sync::atomic::AtomicUsize::new(0),
+};
+
+/// File pages above those refaulted since the last release that make a release at a new high
+/// worth its refaults (`NewHigh`). At 1 MiB V8-v7's runs, whose code is 1-2 MB, kept code
+/// the paced release had dropped (earley-boyer 9.3 -> 10.2 MB without the pace).
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const NEW_HIGH_FILE_MARGIN_BYTES: usize = 256 << 10;
+
+/// Function records built on first use (`at_record_built`) between two new-high checks.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const RECORDS_PER_NEW_HIGH_CHECK: u32 = 16;
+
+/// A function's record was built on its first use: every `RECORDS_PER_NEW_HIGH_CHECK`th
+/// applies the new-high release (`NewHigh`), for runs that grow without collections. Code
+/// joining the run is the work this follows, so the check falls at the same points of every
+/// run: a Wasm program's lowered code and linear memory grow outside the collected heap, and
+/// JetStream 3's sqlite3 ran 3 s without a collection with its start-up code resident
+/// (no-JIT, x86_64, 2026-11-15, max RSS MB). The test is the collections' own, so a run whose
+/// resident set stays below its high, or whose code is all working set, releases nothing; a
+/// clock thread that released on every tick had peaked higher, refaulting its working set
+/// within each interval.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn at_record_built() {
+    static BUILT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let built = BUILT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if built % RECORDS_PER_NEW_HIGH_CHECK == 0
+        && CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed)
+        && NEW_HIGH.release_due()
+    {
+        release_read_only_pages_weighed(false);
+    }
+}
+
+/// A function's record was built on its first use; nothing to release here.
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn at_record_built() {}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl NewHigh {
+    fn release_due(&self) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (Some(resident), Some(file)) = (resident_statm_bytes(STATM_RESIDENT_FIELD), resident_file_bytes()) else {
+            return false;
+        };
+        // A collection boundary or a check at built records (`at_record_built`).
+        if self.collections_since_release.fetch_add(1, Relaxed) + 1 == 2 {
+            self.refaulted.store(file, Relaxed);
+        }
+        if resident < self.resident.load(Relaxed) {
+            return false;
+        }
+        self.resident.store(resident, Relaxed);
+        file >= self.refaulted.load(Relaxed) + NEW_HIGH_FILE_MARGIN_BYTES
+    }
+}
+
+/// The run's first collection, young or full: the code its warm-up ran once (first calls'
+/// set-up, lane derivations, the harness's set-up) leaves before the collector's code joins
+/// the run's at the heap's first peak, whatever the pace says.
+pub fn release_before_first_collection() {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        if CODE_STAYS_RESIDENT.load(std::sync::atomic::Ordering::Relaxed) {
+            FIRST.call_once(|| release_read_only_pages_weighed(false));
+        }
+    }
+}
+
+/// The default policy's pace for releasing the run's code at collection boundaries. Code a run
+/// touched once (start-up, compilation, warm-up paths, the first collection's) otherwise stays
+/// resident for the whole run beside the code it executes; a release keeps only the working
+/// set the next interval refaults, a few hundred pages, so at this pace the refaults cost well
+/// under 1% of a run's time (V8-v7 no-JIT max RSS, x86_64, median of 3, 2026-11-14: richards
+/// 6.1 -> 5.2 MB, deltablue 6.8 -> 6.1, crypto 7.6 -> 6.4, raytrace 6.8 -> 6.0, earley-boyer
+/// 11.8 -> 10.7, regexp 16.3 -> 14.7, navier-stokes 7.3 -> 6.7, splay unchanged; scores within
+/// noise). A 250 ms clock thread releasing between collections peaked higher: the refaulted
+/// working set came back within the interval.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+///
+/// The pace is engine work (`quench_runtime::clock::now_work`, typical-host nanoseconds),
+/// not wall time, since the clock charges native calls and lane runs between collections:
+/// 100 ms of work against the former 250 ms wall pace, JS3 no-JIT max RSS equal or lower
+/// (median of 3: regexp-octane 13.0 -> 12.8, bigint-noble 16.7 -> 16.5, validatorjs 19.9 ->
+/// 19.8, gbemu/proxy-mobx/Air equal), V8-v7 equal or lower (crypto 5.8 -> 5.5, splay 44.9 ->
+/// 44.6, richards 4.5 -> 4.4), scores within this host's noise.
+const RUN_CODE_RELEASE_WORK: u64 = 100_000_000;
 
 /// Read-only file mappings the host made after start-up (compile-cache entries), released with
 /// the segments above. They are mapped side by side in one reserved span (`Arena`), which a
@@ -319,8 +475,21 @@ pub fn map_read_only_file(fd: libc::c_int, length: usize) -> Option<usize> {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn release_tracked_bytes(bytes: &[u8]) {
     let page = page_size();
-    let start = (bytes.as_ptr() as usize).next_multiple_of(page);
-    let end = (bytes.as_ptr() as usize + bytes.len()) / page * page;
+    release_tracked_range((bytes.as_ptr() as usize).next_multiple_of(page), (bytes.as_ptr() as usize + bytes.len()) / page * page);
+}
+
+/// A decoded deferred record's pages (`quench_runtime::set_record_read`), including the pages
+/// it shares with its neighbours: records are mostly smaller than a page and decode in
+/// call order, so whole pages would rarely clear; a neighbour still to decode refaults its
+/// page from the file.
+pub fn release_read_record(bytes: &[u8]) {
+    let page = page_size();
+    let start = bytes.as_ptr() as usize / page * page;
+    release_tracked_range(start, (bytes.as_ptr() as usize + bytes.len()).next_multiple_of(page));
+}
+
+/// Defers releasing the tracked file pages `start..end` (page-aligned) with the others.
+fn release_tracked_range(start: usize, end: usize) {
     if start >= end {
         return;
     }
@@ -631,6 +800,18 @@ impl EntryCompile {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 static ENTRY_COMPILE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(EntryCompile::Done as u8);
 
+/// The work clock (`quench_runtime::clock::now_work`) at the last release of the read-only pages.
+static LAST_RELEASE_WORK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether the read-only pages left, by any release, less than `RUN_CODE_RELEASE_WORK` of
+/// engine work ago: the collection pace follows work done, not wall time, so a run releases
+/// at the same collections on every host and under callgrind.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn released_within_pace() -> bool {
+    let last = LAST_RELEASE_WORK.load(std::sync::atomic::Ordering::Relaxed);
+    quench_runtime::clock::now_work().saturating_sub(last) < RUN_CODE_RELEASE_WORK
+}
+
 /// Whether the read-only pages left, by any release, less than `interval` ago.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn released_within(interval: std::time::Duration) -> bool {
@@ -820,36 +1001,16 @@ fn page_size() -> usize {
     unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
 }
 
-/// Collections the host has seen, and the count at the last release before output.
-static COLLECTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static COLLECTIONS_AT_OUTPUT_RELEASE: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(u64::MAX);
-
-/// Records a collection boundary, after which the next output releases the read-only pages.
+/// Notes a collection boundary: the run's first marks the start-up phase's peak.
+///
+/// Console output no longer releases the read-only pages around itself: the release before
+/// and after each output refaulted the run's own code at its next iteration, where output
+/// falls once per iteration (JetStream 3 no-JIT, x86_64, 3 alternating runs, 2026-11-15:
+/// octane-code-load 1,682 minor faults per extra iteration, prismjs-startup +31.6% and
+/// octane-code-load +21.6% score without it, max RSS within 1 MB, inspector code-load 2 MB lower).
 pub fn note_collection() {
     static FIRST: std::sync::Once = std::sync::Once::new();
     FIRST.call_once(|| phase_peak("run to collection"));
-    COLLECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Runs console `output` between two releases of the read-only pages when a collection has
-/// run since the last such release. Before: a run that prints its result once at the end
-/// touches the output code while its own code is resident, at the peak of its heap (V8-v7
-/// RegExp max RSS, bolted static x86_64, 2026-10-19: 6316-6524 -> 6244-6300 KiB). After: the
-/// output code would otherwise stay resident while the run's code refaults until the next
-/// collection releases both. Output in a loop that allocates little releases nothing more.
-pub fn around_output<R>(output: impl FnOnce() -> R) -> R {
-    use std::sync::atomic::Ordering::Relaxed;
-    let collections = COLLECTIONS.load(Relaxed);
-    let releases = COLLECTIONS_AT_OUTPUT_RELEASE.swap(collections, Relaxed) != collections;
-    if releases {
-        release_read_only_pages();
-    }
-    let result = output();
-    if releases {
-        release_read_only_pages();
-    }
-    result
 }
 
 /// Returns the allocator's free pages to the system: a compilation frees its syntax tree
@@ -1018,7 +1179,17 @@ pub fn unmap_tracked_mapping(start: usize, length: usize) {
 pub fn release_read_only_pages() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_now() {}
+
+/// Releases the read-only pages at a run's one-off boundary; nothing to release here.
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_only_pages_at_boundary() {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_tracked_bytes(_bytes: &[u8]) {}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_read_record(_bytes: &[u8]) {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages_after_load() {}
@@ -1129,3 +1300,4 @@ pub fn at_native_compilation(boundary: NativeCompilation) {
         release_free_heap_pages();
     }
 }
+

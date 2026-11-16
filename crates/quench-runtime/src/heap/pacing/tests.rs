@@ -111,6 +111,9 @@ fn minor(live: usize, previous_live: usize, allocated: usize) -> CollectionOutco
         live_weight_after_full: previous_live,
         allocated,
         since_full: allocated,
+        resident_at_start: 0,
+        resident_live: 0,
+        since_previous_full: 0,
         aged: AgedFates::default(),
     }
 }
@@ -263,4 +266,50 @@ fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing
     pacing.plan(&mut state, minor(live, live, live / 2));
     pacing.plan(&mut state, minor(live, live, live / 2));
     assert_eq!(state.regime(&pacing), Regime::Generational);
+}
+
+#[test]
+fn aging_turning_off_resets_the_full_collection_back_off() {
+    let pacing = MemoryPolicy::Throughput.table();
+    let live = 1 << 14;
+    let mut state = PacingState::default();
+    pacing.plan(&mut state, minor(live, live, 1 << 14));
+    let freed = AgedFates { died: 9, promoted: 1 };
+    pacing.plan(&mut state, CollectionOutcome { aged: freed, ..minor(live, live, 1 << 14) });
+    assert_eq!(state.promotion_age(&pacing), PromotionAge::OLDEST);
+    // Fulls finding nothing the minors had not freed back the cap off.
+    for _ in 0..pacing.maximum_cap_backoff {
+        pacing.plan(&mut state, full_after_promoting(live, 0, 0));
+    }
+    assert_eq!(state.cap_backoff, pacing.maximum_cap_backoff);
+    // Aged survivors outliving their second minor turn aging off and drop the back-off, and
+    // the full right after, which finds those promotions living, does not raise it again.
+    let outliving = AgedFates { died: 1, promoted: 9 };
+    for _ in 0..2 {
+        pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, 1 << 14) });
+    }
+    assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
+    assert_eq!(state.cap_backoff, 0);
+    pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
+    assert_eq!(state.cap_backoff, 0);
+    pacing.plan(&mut state, full_after_promoting(live, 1 << 14, 1 << 14));
+    assert_eq!(state.cap_backoff, 1);
+}
+
+#[test]
+fn promotions_dying_old_widen_a_surviving_young_generation() {
+    let pacing = aging_on_evidence();
+    let mut state = PacingState::default();
+    let live = 1 << 16;
+    let promoted = 1 << 15;
+    // Minors keeping half of what they allocate, on a live set that grows past steady.
+    pacing.plan(&mut state, minor(live + promoted, live, promoted * 2));
+    pacing.plan(&mut state, minor(live + promoted * 2, live + promoted, promoted * 2));
+    let narrow = pacing.plan(&mut state, minor(live * 2, live + promoted * 2, promoted * 2)).threshold;
+    // The full collection finds those promotions dead: the next young generation widens.
+    pacing.plan(&mut state, full_after_promoting(live, live, 0));
+    let wide = pacing.plan(&mut state, minor(live + promoted, live, promoted * 2)).threshold;
+    assert!(state.survival >= pacing.surviving_young_from);
+    assert_eq!(wide, pacing.young_budget(live + promoted) * pacing.surviving_young_factor);
+    assert!(wide > narrow / 2);
 }

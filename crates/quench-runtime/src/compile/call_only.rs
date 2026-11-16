@@ -47,6 +47,7 @@ enum Initial {
 pub(super) fn prototype_unobservable_functions<'a>(
     semantic: &Semantic<'a>,
     program: &oxc_ast::ast::Program<'a>,
+    reached: &FxHashSet<Box<str>>,
 ) -> FxHashSet<u32> {
     let scoping = semantic.scoping();
     // A direct `eval` reads any binding of the scopes around it.
@@ -61,7 +62,9 @@ pub(super) fn prototype_unobservable_functions<'a>(
     let mut found = FxHashSet::default();
     for (symbol, initial) in &uses.declarators {
         let scope = scoping.symbol_scope_id(*symbol);
-        if scope == root || evaluated.contains(&scope) || !scoping.symbol_redeclarations(*symbol).is_empty() {
+        if scope == root || evaluated.contains(&scope) || !scoping.symbol_redeclarations(*symbol).is_empty()
+            || reached.contains(scoping.symbol_name(*symbol))
+        {
             continue;
         }
         let mut stored = match initial {

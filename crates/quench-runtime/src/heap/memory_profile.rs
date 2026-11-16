@@ -463,7 +463,7 @@ impl Heap {
         counts[CellKind::Object as usize] += self.promise_records.live_count();
         counts[CellKind::AwaitState as usize] = self.await_records.live_count();
         counts[CellKind::Iterator as usize] = self.iterator_records.live_count();
-        counts[CellKind::String as usize] = self.string_records.live_count();
+        counts[CellKind::String as usize] = self.string_records.live_count() + self.small_strings.live_count();
         counts[CellKind::WasmV128 as usize] = self.v128_records.live_count();
         self.for_each_live_value(|identity| {
             // Every record family is counted above; only legacy slots hold a `Cell`.
@@ -514,6 +514,7 @@ impl Heap {
             + self.await_records.allocated_bytes()
             + self.iterator_records.allocated_bytes()
             + self.string_records.allocated_bytes()
+            + self.small_string_bytes()
             + self.v128_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
@@ -634,7 +635,7 @@ impl Heap {
     pub(crate) fn dense_array_element_narrow_stats(&self) -> (usize, usize) {
         let mut stats = (0, 0);
         self.array_records.for_each_live(|_, array| {
-            for value in array.elements().as_slice() {
+            for value in array.elements().as_slice().iter() {
                 stats.0 += 1;
                 stats.1 += usize::from(value.to_narrow().is_some());
             }
@@ -643,7 +644,7 @@ impl Heap {
             Cell::Array { object } => Some(object),
             _ => None,
         }) {
-            for value in object.elements().as_slice() {
+            for value in object.elements().as_slice().iter() {
                 stats.0 += 1;
                 stats.1 += usize::from(value.to_narrow().is_some());
             }
@@ -674,6 +675,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::ArrayFromAsyncState(_)
             | Cell::AwaitState(_)
             | Cell::WasmBits64(_)
+            | Cell::WasmInstance(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
             | Cell::AccessorPair { .. }
@@ -691,7 +693,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-            Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. } => elements.external_bytes(),
             Cell::WasmGc { fields, .. } => fields.allocated_bytes(),
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
@@ -707,10 +709,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             }
             Cell::BigInt(value) => value.spilled_bytes(),
             Cell::Error(value) => value.capacity(),
-            Cell::Promise(promise) => {
-                size_of::<super::PromiseCell>()
-                    + promise.record.reaction_heap_bytes()
-            }
+            Cell::Promise(promise) => size_of::<super::PromiseCell>() + promise.record.reaction_heap_bytes(),
             Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             Cell::Date { .. } => 0,
             Cell::RegExp { meta, .. } => meta.source.capacity(),

@@ -169,21 +169,27 @@ fn keeps_frame_state(body: &Function) -> bool {
 /// load, a forward jump and the return, of a register, a constant or an operator's value. A
 /// body that keeps frame state (locals, handlers, `arguments`, dynamic scope) is none.
 /// `private` says whether an atom is a private name, whose access the running function
-/// decides (`lane_cached_field_miss`, `lane_private_brand`).
+/// decides (`lane_cached_field_miss`, `lane_private_atom`).
 pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     if keeps_frame_state(body) {
         return None;
     }
-    let mut form = PLAIN_LEAF;
+    // A record reads the receiver (`CONTEXT_LEAF`), the captures (`CAPTURE_LEAF`), or neither.
+    let (mut this, mut captures) = (false, false);
     for (pc, instruction) in body.instructions().enumerate() {
         let reads = leaf_reads(instruction, body, code, &private)?;
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= pc {
             return None;
         }
-        // Each form makes its own what the forms before it do, and more.
-        form = form.max(reads);
+        this |= reads == CONTEXT_LEAF;
+        captures |= reads == CAPTURE_LEAF;
     }
-    Some(form)
+    Some(match (this, captures) {
+        (true, true) => CONTEXT_LEAF,
+        (true, false) => THIS_LEAF,
+        (false, true) => CAPTURE_LEAF,
+        (false, false) => PLAIN_LEAF,
+    })
 }
 
 /// What `instruction`'s lane record reads of the context in a leaf (`leaf_body`), or `None`
@@ -199,7 +205,7 @@ fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProg
         // place (`lane_set_field_in_place`) or on the general path, either of which makes
         // the leaf an activation first.
         op if op.is_field_store() => return store_leaf(instruction, private),
-        // A global name's first load finds the running function (`lane_load_name_first`),
+        // A global name's first load finds the running function (`lane_name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
         // A returning read requickens by its site's tier in its leaf form

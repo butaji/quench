@@ -3,6 +3,8 @@
 use crate::test_host::TestHost;
 use crate::{Engine, Runtime};
 
+mod private_names;
+
 #[test]
 fn function_bodies_compiled_more_than_once_compile_from_their_source() {
     // `return a ?? b` compiles `b` once for a null `a` and once for an undefined one: each
@@ -377,43 +379,6 @@ fn case_mapping_preserves_lone_surrogates() {
 }
 
 #[test]
-fn nested_class_in_computed_key_keeps_outer_private_names() {
-    assert_eq!(
-        output(
-            "let read; class A { static #x = 42; static [(class {}, read = () => A.#x, 'k')] = 1; } print(read()); for (let i = 0; i < 2; i++) { let f; class B { static #y = i; static [(class {}, f = () => B.#y, 'k')]; } print(f()); }"
-        ),
-        ["42", "0", "1"]
-    );
-}
-
-#[test]
-fn generator_return_inside_loop_head_pattern_closes_pattern_iterator() {
-    assert_eq!(
-        output("var log = []; function source(name) { return { [Symbol.iterator]() { return { next() { log.push(name + ':next'); return { done: false }; }, return() { log.push(name + ':return'); return {}; } }; } }; } function* plain() { for ([ {} = yield ] of [source('a')]) {} } var g = plain(); g.next(); print(JSON.stringify(g.return(7)) + ' ' + log.join()); log = []; function* guarded() { try { for (var [ x = yield ] of [source('b')]) {} } finally { log.push('finally'); } } g = guarded(); g.next(); print(JSON.stringify(g.return(8)) + ' ' + log.join()); "),
-        [
-            "{\"value\":7,\"done\":true} a:next,a:return",
-            "{\"value\":8,\"done\":true} b:next,b:return,finally"
-        ]
-    );
-}
-
-#[test]
-fn nested_direct_eval_vars_belong_to_the_calling_function() {
-    assert_eq!(
-        output("function u(code) { return eval(code); } u(\"eval('var z = 2;')\"); function v() { eval(\"eval('var y = 3;')\"); return typeof y; } function w() { 'use strict'; eval(\"eval('var x = 1;')\"); return typeof x; } print([typeof z, 'z' in globalThis, v(), typeof y, w()].join()); "),
-        ["undefined,false,number,undefined,undefined"]
-    );
-}
-
-#[test]
-fn private_members_resolve_on_branded_proxy_receivers() {
-    assert_eq!(
-        output("class Base { constructor() { return new Proxy(this, {}); } } class F extends Base { #x = 1; t() { return this.#x; } } class M extends Base { #m() { return 2; } t() { return this.#m(); } } class G extends Base { get #g() { return 3; } t() { return this.#g; } } print([F, M, G].map(C => new C().t()).join(' '));"),
-        ["1 2 3"]
-    );
-}
-
-#[test]
 fn shared_atomics_round_trip_negative_bigints() {
     assert_eq!(
         output("const view = new BigInt64Array(new SharedArrayBuffer(16)); view[0] = -5n; const old = Atomics.add(view, 0, 2n); print([old, view[0], Atomics.exchange(view, 1, -1n), view[1]].join());"),
@@ -696,7 +661,7 @@ print(JSON.stringify(out));
 fn integer_stores_into_typed_arrays_wrap_and_clamp() {
     // An integer stored into an integer typed array writes its low bytes, a Uint8Clamped
     // clamps it, a float view converts it, and a store past the end writes nothing
-    // (`store_number_in_place`), through views sharing one buffer too.
+    // (`typed_array_set_integer`), through views sharing one buffer too.
     let source = r#"
 const out = [];
 const kinds = [Uint8Array, Int8Array, Uint8ClampedArray, Uint16Array, Int16Array, Uint32Array, Int32Array, Float32Array];
@@ -1052,8 +1017,8 @@ function chain(n) { let p = Promise.resolve(0); for (let i = 0; i < n; i++) p = 
 
 #[test]
 fn generators_resumed_in_place_keep_iteration_semantics() {
-    // A generator's `next()` from a frame or a lane iteration step resumes its frame in place
-    // (`Vm::try_in_loop_generator_step`), its `yield` and return completing the call: for-of,
+    // A generator's `next()` from a frame or a lane iteration step resumes over its record or
+    // as the native `next` (`Vm::resume_generator_step`), its `yield` and return completing the call: for-of,
     // explicit steps, nesting, delegation, throws, `finally` on an early exit, a re-entrant
     // step, closures over its locals, `arguments`, `with` and a resumed value.
     let source = r#"

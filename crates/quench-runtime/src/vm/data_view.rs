@@ -137,9 +137,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "DataView buffer is invalid".into()));
         }
         let offset = self.data_view_index(p, args.get(1).copied())?;
-        if self.array_buffer_detached(buffer) {
-            return Err(self.type_error(p, "Cannot use a detached ArrayBuffer".into()));
-        }
+        self.require_attached_buffer(p, buffer)?;
         let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
             unreachable!("validated DataView buffer")
         };
@@ -152,9 +150,7 @@ impl<H: Host> Vm<H> {
             Some(value) => self.data_view_index(p, Some(value))?,
             None => buffer_length - offset,
         };
-        if self.array_buffer_detached(buffer) {
-            return Err(self.type_error(p, "Cannot use a detached ArrayBuffer".into()));
-        }
+        self.require_attached_buffer(p, buffer)?;
         if offset.saturating_add(length) > buffer_length {
             return Err(self.range_error(p, "DataView length is out of range".into()));
         }
@@ -167,12 +163,21 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.data_view_proto);
         Ok(self.heap.alloc(Cell::DataView {
             object: Box::new(crate::heap::BufferViewObject {
+                native: Default::default(),
                 object: Self::empty_object(prototype),
                 offset,
             }),
             buffer,
             length: crate::heap::ViewLength::new(length, self.array_buffer_resizable(buffer) && requested_length.is_none()),
         }))
+    }
+
+    /// A `TypeError` for a detached `buffer`.
+    fn require_attached_buffer(&mut self, p: &ResidualProgram, buffer: Value) -> Result<(), JsError> {
+        if self.array_buffer_detached(buffer) {
+            return Err(self.type_error(p, "Cannot use a detached ArrayBuffer".into()));
+        }
+        Ok(())
     }
 
     fn data_view_index(
@@ -577,7 +582,7 @@ fn data_view_bits_of_number(native: Native, value: f64) -> u64 {
 }
 
 /// Whether `native` is a DataView element `get` or `set` method.
-pub(super) fn data_view_element(native: Native) -> bool {
+pub(super) const fn data_view_element(native: Native) -> bool {
     data_view_setter(native)
         || matches!(
             native,
@@ -596,7 +601,7 @@ pub(super) fn data_view_element(native: Native) -> bool {
 }
 
 /// Whether `native` is a DataView `set` method.
-fn data_view_setter(native: Native) -> bool {
+const fn data_view_setter(native: Native) -> bool {
     matches!(
         native,
         Native::DataViewSetUint8

@@ -62,28 +62,28 @@ fn main() -> Result<(), String> {
         .map_err(|_| "native test compilation panicked".to_owned())?
 }
 
-fn run() -> Result<(), String> {
-    let args = std::env::args().collect::<Vec<_>>();
-    const USAGE: &str =
-        "usage: emit-native CASE OUTPUT_DIRECTORY VARIANT HARNESS_DIRECTORY [--dynamic-source] [--sdk-report CARGO_REPORT]";
-    let [_, case_path, output_directory, variant_name, harness_directory, trailing @ ..] = args.as_slice()
-        else { return Err(USAGE.into()); };
-    let mut support = quench_runtime::NativeImageSupport::Static;
-    let mut sdk_report = None;
+/// The explicit support choice and the Cargo artifact report of the SDK to link.
+fn options(trailing: &[String]) -> Option<(Option<quench_runtime::NativeImageSupport>, Option<PathBuf>)> {
+    let (mut explicit, mut sdk_report) = (None, None);
     let mut options = trailing.iter();
     while let Some(option) = options.next() {
         match option.as_str() {
-            "--dynamic-source" => support = quench_runtime::NativeImageSupport::DynamicSource,
-            "--sdk-report" if sdk_report.is_none() => {
-                sdk_report = Some(PathBuf::from(options.next().ok_or("--sdk-report needs a Cargo artifact report")?));
-            }
-            _ => return Err(USAGE.into()),
+            "--dynamic-source" => explicit = Some(quench_runtime::NativeImageSupport::DynamicSource),
+            "--static" => explicit = Some(quench_runtime::NativeImageSupport::Static),
+            "--sdk-report" if sdk_report.is_none() => sdk_report = Some(PathBuf::from(options.next()?)),
+            _ => return None,
         }
     }
-    let sdk = sdk_report.map(|path| {
-        let report = fs::read_to_string(path).map_err(|error|error.to_string())?;
-        quench_runtime::native_link::NativeSupport::from_cargo_report(&report,"quench_test262",support)
-    }).transpose()?;
+    Some((explicit, sdk_report))
+}
+
+fn run() -> Result<(), String> {
+    let args = std::env::args().collect::<Vec<_>>();
+    const USAGE: &str =
+        "usage: emit-native CASE OUTPUT_DIRECTORY VARIANT HARNESS_DIRECTORY [--dynamic-source|--static] [--sdk-report CARGO_REPORT]";
+    let [_, case_path, output_directory, variant_name, harness_directory, trailing @ ..] = args.as_slice()
+        else { return Err(USAGE.into()); };
+    let (explicit, sdk_report) = options(trailing).ok_or(USAGE)?;
     let path = PathBuf::from(case_path);
     let root = PathBuf::from(output_directory);
     fs::create_dir(&root).map_err(|e| e.to_string())?;
@@ -126,12 +126,18 @@ fn run() -> Result<(), String> {
         Ok(_) if matches!(metadata.negative_phase.as_deref(),Some("parse"|"early"))=>return Err("expected frontend rejection was not produced".into()),
         Ok(prepared)=>prepared,
     };
+    let support = quench_runtime::NativeImageSupport::select(explicit, prepared.requires_dynamic_source);
+    let sdk = sdk_report.map(|path| {
+        let report = fs::read_to_string(path).map_err(|error|error.to_string())?;
+        quench_runtime::native_link::NativeSupport::from_cargo_report(&report,"quench_test262",support)
+    }).transpose()?;
     let quench_test262::NativeCasePrograms {
         harness: scripts,
         modules,
         source_requests,
         entry,
         entry_module,
+        ..
     } = prepared;
     let namespace = NativeProgramNamespace::from_entry(&entry)?;
     let mut exports = BTreeSet::new();
@@ -241,7 +247,7 @@ fn run()->Result<(),String>{{
  let harness=vec![{binders}];
  let graph=quench_test262::LinkedCasePrograms{{harness,modules:vec![{module_binders}],entry,module_sources:vec![{source_binders}]}};
  let metadata=quench_test262::TestMetadata{{is_module:{is_module},is_async:{is_async},can_block:{can_block},only_strict:{strict},negative_phase:{phase},negative_type:{negative},..Default::default()}};
- let mut host=quench_test262::Test262RuntimeHost::new(quench_runtime::ExecutionMode::NativeOnly).with_native_dynamic_source(SUPPORT.allows_dynamic_source())?;host.configure(&metadata);
+ let mut host=quench_test262::Test262RuntimeHost::new(quench_runtime::ExecutionMode::NativeOnly).with_native_support(Some(SUPPORT))?;host.configure(&metadata);
  let completion=host.execute_linked_programs(graph,move|name,parts|unsafe{{resolve(&namespace,name,parts)}});
  match quench_test262::classify_test_outcome(quench_test262::execution_outcome(completion),&metadata){{quench_test262::TestOutcome::Pass=>Ok(()),quench_test262::TestOutcome::Fail{{reason}}=>Err(reason)}}
 }}

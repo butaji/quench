@@ -24,7 +24,7 @@ use super::{
     ArrayObject, AwaitState, Cell, CellKind, EnvironmentTrace, FunctionRecord, GcTraceKind, Heap,
     IteratorRecord, MarkBits, Object, ParallelObjectRootTrace, PromiseCell, SlotArena, SparseElements,
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
-    mark_word_if_new, settled::{Settled, marked_prototype}, weak,
+    mark_word_if_new, weak, PushedProtos,
 };
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
@@ -65,6 +65,7 @@ struct ParallelMarkView<'heap> {
     awaits: ParallelRecordMarks<'heap, AwaitState>,
     iterators: ParallelRecordMarks<'heap, IteratorRecord>,
     strings: ParallelRecordMarks<'heap, JsString>,
+    small_strings: ParallelRecordMarks<'heap, super::SmallParts>,
     v128s: ParallelRecordMarks<'heap, [u8; crate::wasm::V128_BYTES]>,
     /// The keys weak map values wait for, which change only between rounds.
     ephemerons: &'heap weak::EphemeronWork,
@@ -72,21 +73,6 @@ struct ParallelMarkView<'heap> {
     reads_closures: bool,
     /// `EnvironmentTrace::projection_function` for this collection.
     projection_function: Option<u32>,
-}
-
-/// What a worker's visits settle (`Settled`).
-struct ParallelSettled<'view, 'heap>(&'view ParallelMarkView<'heap>);
-
-impl Settled for ParallelSettled<'_, '_> {
-    #[inline(always)]
-    fn mark_flat_string(&mut self, record_id: RecordId) -> bool {
-        super::string_parts::mark_flat_if_new(&self.0.strings, record_id)
-    }
-
-    #[inline(always)]
-    fn is_marked_prototype(&self, value: Value) -> bool {
-        marked_prototype(value, &self.0.objects, &self.0.arrays, &self.0.functions)
-    }
 }
 
 // SAFETY: the view is built from the collector's exclusive borrow of the heap and lives only
@@ -185,6 +171,7 @@ impl<'heap> ParallelMarkView<'heap> {
             awaits: heap.await_records.parallel_marks(),
             iterators: heap.iterator_records.parallel_marks(),
             strings: heap.string_records.parallel_marks(),
+            small_strings: heap.small_strings.parallel_marks(),
             v128s: heap.v128_records.parallel_marks(),
             ephemerons,
             reads_closures,
@@ -224,6 +211,44 @@ impl<'heap> ParallelMarkView<'heap> {
         }
     }
 
+    /// Visits the array `id` (`value`) where an object's property finds it, when its visit
+    /// pushes nothing but its prototype: no named properties or extras, int32 elements only,
+    /// a shape whose roots are already traced, no sparse part and no weak map waiting on it.
+    /// Answers whether that was its whole visit; any other array goes to the work list.
+    #[inline(always)]
+    fn mark_leaf_array_if_new(
+        &self,
+        value: Value,
+        id: RecordId,
+        roots: Option<&ParallelObjectRootTrace<'_>>,
+        trace_kind: GcTraceKind,
+        last_proto: &mut PushedProtos,
+        work: &mut Vec<Value>,
+    ) -> bool {
+        if cfg!(feature = "profile-aggregate") || self.sparse_arrays.is_some() {
+            return false;
+        }
+        let Some(roots) = roots else { return false };
+        // SAFETY: an object holds live arrays, and no record is written while marking.
+        let array = unsafe { self.arrays.get(id) };
+        if array.has_extras()
+            || !array.properties().holds_no_values()
+            || !array.elements().holds_only_int32()
+            || array.was_used_as_prototype()
+            || !roots.adds_nothing(trace_kind, array.shape())
+            || self.ephemerons.awaits_key(value)
+        {
+            return false;
+        }
+        if self.arrays.mark_if_new(id) {
+            let proto = array.proto();
+            if proto.is_heap() && last_proto.first_push(proto) {
+                work.push(proto);
+            }
+        }
+        true
+    }
+
     /// `Heap::mark_value` on a worker: marks `value` if new and pushes what it keeps alive,
     /// leaving to `batch` what the collector must apply (see the module documentation).
     #[inline(always)]
@@ -234,12 +259,12 @@ impl<'heap> ParallelMarkView<'heap> {
         batch: &mut ParallelMarkBatch,
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         trace_kind: GcTraceKind,
-        last_proto: &mut Value,
+        last_proto: &mut PushedProtos,
     ) {
         let deferred_roots = &mut batch.object_roots;
         let mut object_roots = |kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
             match parallel_object_roots {
-                Some(trace) => trace(kind, owner, shape, prototype, roots),
+                Some(trace) => trace.append(kind, owner, shape, prototype, roots),
                 None => deferred_roots.push((owner, shape, prototype)),
             }
         };
@@ -254,7 +279,23 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let object = unsafe { self.objects.get(id) };
-                Heap::object_children(value, object, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                let (strings, small_strings) = (self.strings, self.small_strings);
+                Heap::object_children_marking(
+                    value,
+                    object,
+                    properties,
+                    |child, work, last_proto| match child.heap_reference() {
+                        Some(HeapReference::StringRecord(string)) => super::string_parts::mark_leaf_string_if_new(&strings, &small_strings, string, work),
+                        Some(HeapReference::ArrayRecord(array)) => {
+                            self.mark_leaf_array_if_new(child, array, parallel_object_roots, trace_kind, last_proto, work)
+                        }
+                        _ => false,
+                    },
+                    work,
+                    &mut object_roots,
+                    trace_kind,
+                    last_proto,
+                );
                 self.note_marked_key(value, batch);
                 CellKind::Object
             }
@@ -264,11 +305,12 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let array = unsafe { self.arrays.get(id) };
+                let strings = self.strings;
                 Heap::array_children(
                     value,
                     array,
                     properties,
-                    &mut ParallelSettled(self),
+                    |string| super::string_parts::mark_flat_if_new(&strings, string),
                     work,
                     &mut object_roots,
                     trace_kind,
@@ -284,7 +326,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let function = unsafe { self.functions.get(id) };
-                Heap::function_children(value, function, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::function_children(value, function, properties, work, &mut object_roots, trace_kind, last_proto);
                 if self.reads_closures {
                     batch.closures.push(id);
                 } else {
@@ -299,7 +341,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let iterator = unsafe { self.iterators.get(id) };
-                Heap::object_children(value, &iterator.object, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::object_children(value, &iterator.object, properties, work, &mut object_roots, trace_kind, last_proto);
                 Heap::iterator_edges(iterator, work);
                 self.note_marked_key(value, batch);
                 CellKind::Iterator
@@ -310,7 +352,7 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 // SAFETY: this view just marked the occupied record.
                 let promise = unsafe { self.promises.get(id) };
-                Heap::object_children(value, &promise.object, properties, &mut ParallelSettled(self), work, &mut object_roots, trace_kind, last_proto);
+                Heap::object_children(value, &promise.object, properties, work, &mut object_roots, trace_kind, last_proto);
                 promise.record.append_roots(work);
                 self.note_marked_key(value, batch);
                 CellKind::Object
@@ -325,10 +367,17 @@ impl<'heap> ParallelMarkView<'heap> {
             }
             // A vector holds no heap edges: marking one is the whole visit; a string's are its parts.
             HeapReference::StringRecord(id) => {
-                if !self.strings.mark_if_new(id) {
-                    return;
+                if let Some(local) = super::small_strings::small_string_local(id) {
+                    if !self.small_strings.mark_if_new(local) {
+                        return;
+                    }
+                    super::small_strings::trace_small_if_new(&self.small_strings, &self.strings, local, work);
+                } else {
+                    if !self.strings.mark_if_new(id) {
+                        return;
+                    }
+                    super::string_parts::trace_parts_if_new(&self.strings, id, work);
                 }
-                super::string_parts::trace_parts_if_new(&self.strings, id, work);
                 CellKind::String
             }
             HeapReference::V128Record(id) => {
@@ -394,7 +443,7 @@ impl<'scope> ParallelRound<'scope> {
         {
             batch.max_worklist = work.len();
         }
-        let mut last_proto = Value::UNDEFINED;
+        let mut last_proto = PushedProtos::default();
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
             {

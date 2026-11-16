@@ -42,14 +42,16 @@ impl Heap {
         if let Some(hash) = self.string_atoms.hashes.known(record_id) {
             return Some(hash);
         }
-        let hash = text.units().text_hash();
+        let hash = text.read_units(|units| units.text_hash());
         self.remember_string_hash(value, hash);
         Some(hash)
     }
 
     /// Records `hash`, already made from its text, as the string `value`'s.
     pub(crate) fn remember_string_hash(&self, value: Value, hash: TextHash) {
-        if let Some(record_id) = value.direct_string_index() {
+        if let Some(record_id) = value.direct_string_index()
+            && !super::super::is_small_string(record_id)
+        {
             super::set(&mut self.string_atoms.hashes.0.borrow_mut(), record_id, hash, UNSET);
         }
     }

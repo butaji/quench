@@ -13,7 +13,7 @@ pub(super) struct LoopTier {
     views: ElementViews,
     pub(super) code: Option<Rc<crate::code_dependencies::PublishedCode<super::super::compiled::CompiledOsrRegion>>>,
     /// The compile under way, and the entries left before the next look for its code
-    /// (`TIERS.lane_body.compile_poll_interval`, as a lane body's).
+    /// (`Tiers::lane_body`'s `compile_poll_interval`, as a lane body's).
     pending: Option<Box<super::super::compiled::PendingOsrRegion>>,
     wait: u16,
     pub(super) compilations: u32,
@@ -24,19 +24,32 @@ pub(super) struct LoopTier {
     declined: u32,
     /// Each operation the code left at, with its leaves so far; and those whose int32
     /// speculation the next compilation drops (`lane_region`'s `generic`), sorted.
-    leaves: Vec<(u32, u16)>,
+    leaves: Vec<(usize, u16)>,
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
-    /// The cache site the latest run left at, which the interpreter then ran and whose entry
-    /// the next entry re-patches (`lane_loop_repatch`).
-    miss: Option<u32>,
+    /// Entries the published code's guards declined in a row, and whether the next compilation
+    /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
+    /// bound misses every versioned entry.
+    entry_misses: u16,
+    pub(super) unbounded: bool,
 }
 
 impl LoopTier {
     pub(super) fn weigh_run(&mut self, backedges: u64) {
         self.runs = self.runs.saturating_add(1);
+        self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
+    /// the code goes and the next compilation versions no loop bound on entry, once.
+    pub(super) fn missed_entry(&mut self, tiers: &Tiers) {
+        if self.unbounded || self.compilations >= tiers.loops.max_compilations { return; }
+        self.entry_misses += 1;
+        if self.entry_misses < tiers.loops.widen_after_leaves { return; }
+        self.unbounded = true;
+        if let Some(code) = self.code.take() { code.retire(); }
     }
 
     pub(super) fn weigh_decline(&mut self) {
@@ -51,11 +64,6 @@ impl LoopTier {
     /// Iterations per native run, or `None` before the first run.
     pub(super) fn mean_trip(&self) -> Option<u64> {
         self.iterations.checked_div(u64::from(self.runs))
-    }
-
-    /// Whether the site's published code is UltraJIT's, which the loop's body does not pass.
-    pub(super) fn is_ultra(&self) -> bool {
-        self.code.as_ref().and_then(|code| code.lease()).is_some_and(|region| region.is_ultra())
     }
 
     pub(super) fn is_published(&self) -> bool {
@@ -73,33 +81,30 @@ impl LoopTier {
         if let Some(pending) = &self.pending { pending.retire_named_shapes(); }
     }
 
-    /// Notes that the code left at the field access of `pc`.
-    pub(super) fn missed_at(&mut self, pc: u32) {
-        self.miss = Some(pc);
-    }
-
     /// Counts a run of the code that left at `pc`. An operation or element read left `widen_after_leaves`
     /// times joins the widened ones and the code goes, where a compilation remains: the next
     /// entry compiles the loop holding that operation's result as a double.
-    pub(super) fn left_at(&mut self, pc: u32, read: bool) {
-        let widened = self.widened.binary_search(&(pc as usize)).is_ok();
-        if !(read || !widened) || self.abandoned.binary_search(&(pc as usize)).is_ok() || self.compilations >= TIERS.loops.max_compilations { return; }
+    pub(super) fn left_at(&mut self, tiers: &Tiers, pc: usize, read: bool) {
+        let widened = self.widened.binary_search(&pc).is_ok();
+        if !(read || !widened) || self.abandoned.binary_search(&pc).is_ok() || self.compilations >= tiers.loops.max_compilations { return; }
         let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
         self.leaves[at].1 += 1;
-        if self.leaves[at].1 < TIERS.loops.widen_after_leaves { return; }
+        if self.leaves[at].1 < tiers.loops.widen_after_leaves { return; }
         self.leaves.swap_remove(at);
         let list = if widened { &mut self.abandoned } else { &mut self.widened };
-        list.push(pc as usize);
+        list.push(pc);
         list.sort_unstable();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
-    /// Whether code over the element `views` an entry found may run: code over the other
-    /// views goes where a compilation remains, which the entry then makes over these.
-    pub(super) fn select(&mut self, views: ElementViews) -> bool {
-        if self.views == views { return true; }
-        if self.compilations >= TIERS.loops.max_compilations { return false; }
-        self.views = views;
+    /// Whether code over the element `views` an entry found may run: typed code of no kind runs
+    /// over any typed kind; code over any other views goes where a compilation remains, which the
+    /// entry then makes over these, or over no kind where two kinds were found.
+    pub(super) fn select(&mut self, tiers: &Tiers, views: ElementViews) -> bool {
+        let common = self.views.common(views);
+        if common == Some(self.views) { return true; }
+        if self.compilations >= tiers.loops.max_compilations { return false; }
+        self.views = common.unwrap_or(views);
         if let Some(code) = self.code.take() { code.retire(); }
         true
     }
@@ -108,21 +113,21 @@ impl LoopTier {
     /// ran out, or under a policy that compiles no loop regions, takes its backward jump in
     /// the interpreter without reading an entry: reading one at every iteration had cost
     /// V8-v7 Crypto `--jit` a third of its instructions under memory-first.
-    pub(super) fn may_run(&self, policy: crate::MemoryPolicy) -> bool {
+    pub(super) fn may_run(&self, tiers: &Tiers, policy: crate::MemoryPolicy) -> bool {
         self.is_published()
-            || (self.compilations < TIERS.loops.max_compilations && super::super::compiled::loop_tier_compiles(policy))
+            || (self.compilations < tiers.loops.max_compilations && super::super::compiled::loop_tier_compiles(policy))
     }
 
     /// Whether this entry passes to the interpreter's jump while the code compiles: entries
     /// between looks count down, and a look publishes code that is ready.
     #[inline(always)]
-    pub(super) fn awaits_code(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+    pub(super) fn awaits_code<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
         // A site with published code, or none under way, has nothing to wait for.
-        self.pending.is_some() && self.poll_pending(heap, site)
+        self.pending.is_some() && self.poll_pending(vm, site)
     }
 
     #[cold]
-    fn poll_pending(&mut self, heap: &mut crate::heap::Heap, site: &LoopSite) -> bool {
+    fn poll_pending<H: Host>(&mut self, vm: &mut Vm<H>, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
         if self.wait > 0 {
             self.wait -= 1;
@@ -132,13 +137,13 @@ impl LoopTier {
         use super::super::compiled::OsrCompile;
         match pending.poll() {
             Err(pending) => {
-                self.wait = TIERS.lane_body.compile_poll_interval;
+                self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
                 return true;
             }
-            Ok(OsrCompile::Done(region)) => self.publish(heap, region),
+            Ok(OsrCompile::Done(region)) => self.publish(vm, region),
             Ok(OsrCompile::Stale) => {}
-            Ok(OsrCompile::Failed) => self.compilations = TIERS.loops.max_compilations,
+            Ok(OsrCompile::Failed) => self.compilations = site.tiers.loops.max_compilations,
         }
         if site.diagnostics && self.is_published() {
             site.compile_successes.set(site.compile_successes.get().saturating_add(1));
@@ -148,82 +153,41 @@ impl LoopTier {
 
     /// Holds the compile `started`, while the facts its code names hold, and looks for its
     /// code at once.
-    fn start(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, heap: &mut crate::heap::Heap, site: &LoopSite) {
-        self.pending = started.filter(|pending| pending.watch(heap)).map(Box::new);
+    fn start<H: Host>(&mut self, started: Option<super::super::compiled::PendingOsrRegion>, vm: &mut Vm<H>, site: &LoopSite) {
+        self.pending = started.filter(|pending| pending.watch(&mut vm.heap, vm.method_cache_atoms.readers())).map(Box::new);
         self.wait = 0;
         if self.pending.is_none() {
-            self.compilations = TIERS.loops.max_compilations;
+            self.compilations = site.tiers.loops.max_compilations;
             // A declined or failed region retires the site now: later entries build no entry record.
             site.entering.set(false);
         }
-        self.awaits_code(heap, site);
+        self.awaits_code(vm, site);
     }
 
-    /// Publishes `region` while the facts its code names hold.
-    fn publish(&mut self, heap: &mut crate::heap::Heap, mut region: super::super::compiled::CompiledOsrRegion) {
-        let roots = std::mem::take(&mut region.facts.roots);
-        let publication = Rc::new(crate::code_dependencies::PublishedCode::new(region));
-        publication.hold_roots(roots, heap);
-        let code = publication.lease().expect("new publication");
-        let dependent: Rc<dyn crate::code_dependencies::DependentCode> = publication.clone();
-        if !code.facts.subscribe(&dependent, heap) {
-            publication.retire();
-        }
-        self.code = Some(publication);
+    /// Publishes `region` while the facts its code names hold (`ProgramStore::publish_region`).
+    fn publish<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion) {
+        self.code = Some(vm.programs.publish_region(region, &mut vm.heap, vm.method_cache_atoms.readers()));
     }
 }
 
-/// A named field access: its cache site and atom, and whether it reads.
-struct FieldAccess {
-    site: u16,
-    atom: crate::bytecode::Atom,
-    read: bool,
-    /// The register a read's receiver was in, where it names one.
-    base: Option<crate::bytecode::Register>,
-}
-
-impl FieldAccess {
-    fn of(instruction: &WideInstruction) -> Option<Self> {
-        let op = instruction.op();
-        if matches!(op.class(), Class::GetField) {
-            let Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, base }) = instruction.field_lookup() else { return None };
-            return Some(Self { site: cache_site, atom, read: true, base: base.register_index() });
-        }
-        op.is_field_store().then(|| Self { site: instruction.cache_site_index(), atom: instruction.atom_index(), read: false, base: None })
+/// Counts a compilation of `site`'s region, in the tier and, with diagnostics, at the site.
+fn count_compilation(tier: &mut LoopTier, site: &LoopSite) {
+    tier.compilations += 1;
+    super::super::compiled::base_region::count(super::super::compiled::base_region::Event::Compiled);
+    if site.diagnostics {
+        site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
     }
 }
 
-/// Answers the miss the code left at (`LoopTier::missed_at`), which the interpreter has run:
-/// the site's entry is re-patched to the shape the interpreter's cache holds now, so the loop
-/// runs natively again. A leave that patched nothing counts toward widening the read
-/// (`LoopTier::left_at`).
-#[inline(always)]
-pub(super) fn lane_loop_repatch<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) {
-    let missed = site.tier.borrow_mut().miss.take();
-    if let Some(pc) = missed {
-        repatch_miss(cx, r, site, pc);
-    }
-}
-
-#[cold]
-fn repatch_miss<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, pc: u32) {
-    // SAFETY: the lane's VM is live, and nothing borrows it across the call.
-    let machine = unsafe { vm(cx) };
-    let access = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
-        let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).and_then(|packed| FieldAccess::of(&decoded_instruction(body, *packed)))
+/// The region's entry registers holding Ints and those holding other Numbers, in the running
+/// activation's registers `r`.
+fn entry_number_registers(region: &super::super::compiled::LoopRegion, r: Registers) -> (Vec<crate::bytecode::Register>, Vec<crate::bytecode::Register>) {
+    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
+    let doubles = region.registers_where(|register| {
+        let value = r.get(register);
+        value.as_number().is_some() && value.as_int().is_none()
     });
-    let Some(access) = access else { return };
-    let mut tier = site.tier.borrow_mut();
-    let patched = tier.code.clone().and_then(|publication| {
-        let region = publication.lease()?;
-        let watch: Rc<dyn crate::code_dependencies::DependentCode> = publication;
-        let load = machine.native_field_load_of(access.site, access.base.map(|base| r.get(base)))?;
-        Some(region.repatch(pc, access.atom, &load, &watch, &mut machine.heap))
-    });
-    if patched != Some(super::super::compiled::base_region::Repatch::Patched) && access.read {
-        tier.left_at(pc, false);
-    }
+    (ints, doubles)
 }
 
 /// Starts compiling `site`'s region over the tier's element views from the running activation,
@@ -239,11 +203,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     typed_captures: &[u16],
     int_captures: &[u16],
 ) {
-    tier.compilations += 1;
-    super::super::compiled::base_region::count(super::super::compiled::base_region::Event::Compiled);
-    if site.diagnostics {
-        site.compile_attempts.set(site.compile_attempts.get().saturating_add(1));
-    }
+    count_compilation(tier, site);
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     let program = machine.programs.get(machine.active_program);
@@ -251,20 +211,34 @@ pub(super) fn lane_loop_compile<H: Host>(
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
     let native_field_loads = native_field_loads(machine, region);
-    let ints = region.registers_where(|register| r.get(register).as_int().is_some());
-    let doubles = region.registers_where(|register| {
-        let value = r.get(register);
-        value.as_number().is_some() && value.as_int().is_none()
-    });
+    let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded };
     let policy = machine.heap.memory_policy();
+    // A BaseJIT region inlines the calls its sites recorded.
+    let calls = program.as_deref().filter(|_| crate::jit_mode::base_regions()).map(|program| region_calls(cx, machine, program, function)).unwrap_or_default();
+    // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
+    let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
-        &observation, policy, program, function, helpers,
-        &mut |unit| machine.lane_global_reads(program, function, unit), &tier.widened));
+        &observation, (policy, machine.programs.tiers()), program, function, helpers,
+        &mut |unit, table| machine.global_table(program, function, unit, table), (&tier.widened, stores.as_ref()), calls));
+    if let Some(pending) = &started {
+        let (watch, callees) = pending.native_calls();
+        machine.programs.note_pending_native_calls(&watch, callees);
+    }
     machine.host.after_native_compilation();
-    tier.start(started, &mut machine.heap, site);
+    tier.start(started, machine, site);
+}
+
+/// The calls of `function` that a BaseJIT region of it may inline: the callees its call sites
+/// reached, which the lane would activate in place (`lane_direct_callees`).
+fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
+    let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
+    let candidates = lane_direct_callees(machine, own, function, body);
+    machine.region_calls(program, function, own, &candidates)
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
@@ -301,11 +275,11 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
         } else {
             // A typed array read through a field is no loop's hoisted view.
             array.field.is_none().then_some(())?;
-            let (elements, length, _) = vm.lane_typed_array_elements(value, array.written)?;
+            let (elements, length, kind) = vm.lane_typed_array_elements(value, array.written)?;
             entry.push_array(elements, length, length)?;
-            ElementViews::Typed
+            ElementViews::Typed(Some(kind))
         };
-        if *views.get_or_insert(found) != found { return None; }
+        views = Some(views.map_or(Some(found), |seen: ElementViews| seen.common(found))?);
     }
     Some(views.unwrap_or_default())
 }
@@ -316,7 +290,9 @@ pub(super) fn lane_loop_arrays<H: Host>(vm: &mut Vm<H>, r: Registers, region: &L
 /// (`append_dense_element`, `fill_dense_hole`).
 fn push_dense_array<H: Host>(vm: &mut Vm<H>, value: Value, written: bool, entry: &mut LoopEntry) -> Option<()> {
     if !written {
-        let elements = vm.heap.record_array(value)?.elements().as_slice();
+        // A region reads the values in place: a narrow backing widens first.
+        vm.heap.widen_array_elements(value);
+        let elements = vm.heap.record_array(value)?.elements().wide_values()?;
         return entry.push_array(elements.as_ptr().cast_mut(), elements.len(), elements.len());
     }
     if vm.dense_array_length(value).is_none() || !vm.prototypes_hold_no_index(value) {
@@ -340,7 +316,7 @@ pub(super) fn lane_loop_function<H: Host>(cx: *mut LaneContext<H>, code: &Residu
         .lane_stack
         .activations
         .last()
-        .map_or(machine.frames[unsafe { (*cx).frame }].function, |activation| activation.function);
+        .map_or_else(|| machine.frames[unsafe { (*cx).frame() }].function, |activation| activation.function);
     let function = code.function_get(function_index as usize)?;
     let constants = machine.programs.constants(unsafe { (*cx).program }).to_vec();
     Some((function_index, function, function.instructions().collect(), constants))
@@ -420,5 +396,6 @@ pub(super) fn sample_array<H: Host>(vm: &Vm<H>, value: Value) -> Option<crate::t
 /// each with the range its value gives the entry (`IntRange::entering`): an observation the
 /// compiled code's entry contract checks, as `number_arrays`'.
 pub(super) fn int_entries(r: Registers, region: &LoopRegion) -> Vec<(Register, crate::typed_ir::IntRange)> {
-    crate::typed_ir::loop_ints::entering(region.entry_registers(), |register| r.get(register))
+    region.entry_registers().filter_map(|register| r.get(register).as_int()
+        .map(|value| (register, crate::typed_ir::IntRange::entering(value)))).collect()
 }

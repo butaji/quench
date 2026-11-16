@@ -22,15 +22,31 @@ impl AsciiReplace {
         ranges: &mut smallvec::SmallVec<[Range<usize>; 8]>,
     ) -> Option<Self> {
         use crate::vm::wtf16::Units::Ascii;
-        let (Some(Ascii(bytes)), Some(Ascii(literal))) = (
-            heap.string(this)?.existing_flat().map(|flat| flat.view()),
-            heap.string(replacement)?.existing_flat().map(|flat| flat.view()),
-        ) else {
+        let Some(Ascii(literal)) = heap.string(replacement)?.existing_flat().map(|flat| flat.view()) else {
             return None;
         };
         if flags.contains(RegExpFlags::STICKY) || literal.contains(&b'$') {
             return None;
         }
+        let input = heap.string(this)?;
+        let mut plan = |bytes: &[u8]| Self::plan_bytes(bytes, literal, matcher, flags, result_used, ranges);
+        match input.existing_flat().map(|flat| flat.view()) {
+            Some(Ascii(bytes)) => plan(bytes),
+            Some(_) => None,
+            // An ASCII rope is searched in a reused buffer: the ranges index its units, and the
+            // output copies them out.
+            None => input.with_ascii_rope_bytes(plan)?,
+        }
+    }
+
+    fn plan_bytes(
+        bytes: &[u8],
+        literal: &[u8],
+        matcher: &quench_regexp::Regex,
+        flags: RegExpFlags,
+        result_used: bool,
+        ranges: &mut smallvec::SmallVec<[Range<usize>; 8]>,
+    ) -> Option<Self> {
         ascii_match_ranges(matcher, bytes, flags.contains(RegExpFlags::GLOBAL), ranges)?;
         let length = ranges
             .iter()

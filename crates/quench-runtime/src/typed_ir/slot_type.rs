@@ -1,5 +1,6 @@
-//! Compact observations of slot contents. These are not write-maintained proofs.
+//! Compact types of slot contents, joined by every store before it lands (`ValueArena::owner_types`).
 use super::{Type, TypeKind};
+use crate::staged::object::Rep;
 use crate::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,9 +38,9 @@ impl SlotType {
     }
 
     pub(crate) fn from_type(ty: Type) -> Self {
-        let ty = ty.without_object_shape();
+        let ty = ty.without_object_shape().machine();
         match ty.0 {
-            TypeKind::Int32 => Self::Int32,
+            TypeKind::Int(_) => Self::Int32,
             TypeKind::DirectObjectFamily => Self::DirectObject,
             TypeKind::NullableDirectObjectFamily(bits) => {
                 if bits == Type::language(ValueType::Null).kinds() { Self::DirectObjectOrNull }
@@ -82,6 +83,17 @@ impl SlotType {
             (INT32, 0) => Self::Int32,
             (_, 0) => Self::Number,
             _ => Self::Tagged,
+        }
+    }
+
+    /// How an arena word holds a value of this type: an int32 as the tagged word, a Number as the
+    /// IEEE double (`encode_slot`), anything else as the `Value`. A projection, not a stored fact.
+    #[inline(always)]
+    pub(crate) const fn rep(self) -> Rep {
+        match self {
+            Self::Int32 => Rep::Int32,
+            Self::Number => Rep::Float64,
+            _ => Rep::Tagged,
         }
     }
 

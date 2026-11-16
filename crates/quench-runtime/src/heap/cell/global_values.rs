@@ -124,7 +124,7 @@ fn with_table<T>(table: u32, work: impl FnOnce(&mut Table) -> T) -> Option<T> {
 }
 
 /// A new table's id, never zero.
-pub(super) fn new_table() -> u32 {
+pub(crate) fn new_table() -> u32 {
     TABLES.with(|tables| {
         let mut tables = tables.borrow_mut();
         tables.push(Table::default());
@@ -224,12 +224,13 @@ impl GlobalValues {
 impl super::Object {
     /// This global object's table (`global_values`), made on first use.
     pub(crate) fn global_values_table(&mut self) -> u32 {
-        self.extras_mut().global_values.get_or_insert_with(|| Box::new(GlobalValues { table: new_table(), mutable: Vec::new() })).table
+        self.extras_mut().rare_mut().global_values.get_or_insert_with(|| Box::new(GlobalValues { table: new_table(), mutable: Vec::new() })).table
     }
 
     /// The table code that read this global object's values made, if any.
-    #[inline(always)] pub(crate) fn global_values(&self) -> Option<u32> {
-        self.extras()?.global_values.as_ref().map(|values| values.table)
+    #[inline]
+    pub(crate) fn global_values(&self) -> Option<u32> {
+        self.extras()?.rare()?.global_values.as_ref().map(|values| values.table)
     }
 
     /// A change of this object's shape, integrity or prototype use: where it is a global object
@@ -257,7 +258,7 @@ impl super::Object {
                 extras.watch.note_slot_write(slot);
             }
         }
-        if let Some(values) = self.extras_mut_existing().and_then(|extras| extras.global_values.as_mut()) {
+        if let Some(values) = self.extras_mut_existing().and_then(|extras| extras.rare_mut_existing()).and_then(|rare| rare.global_values.as_mut()) {
             values.note_slot_write(slot);
         }
     }

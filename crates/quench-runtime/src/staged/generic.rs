@@ -11,13 +11,14 @@ use crate::vm::operations::equality_operator;
 use crate::Value;
 
 impl<W, P> Operation<W, P> {
-    /// The `Binary` and `ToPropertyKey` operations of `decode`; `None` where an
-    /// operand is no register or the instruction returns from the frame.
+    /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
+    /// an operand is no register or the instruction returns from the frame.
     pub(super) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::Binary => return Self::decode_binary(instruction),
+            Op::JumpBinaryFalse => Self::decode_compare(instruction),
             _ => return None,
         })
     }
@@ -47,6 +48,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             equality(stage, frame, destination, [left, right], (strict, negated)),
         Operation::Binary { destination, left, right, operator } =>
             super::callout::calling(stage, frame, CallOut::Binary { left, right, operator }, Some(destination)),
+        Operation::CompareJump { .. } => super::compare::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }
@@ -81,7 +83,7 @@ fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut 
 
 /// Whether `bits` is `null` or `undefined`.
 #[inline(always)]
-fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub(super) fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let null = stage.eq_imm(bits, Value::NULL.to_bits());
     let undefined = stage.eq_imm(bits, Value::UNDEFINED.to_bits());
     stage.either(null, undefined)
@@ -91,7 +93,7 @@ fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
 /// equal unless it is NaN; two distinct int32 words are unequal; `null` and `undefined` are
 /// equal under `==` only.
 #[inline(always)]
-fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
+pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2], strict: bool) -> (S::Cond, S::Cond) {
     let gap = stage.sub(left, right);
     let identical = stage.eq_imm(gap, 0u64);
     let ordered = stage.ne_imm(left, ValueLayout::CANONICAL_NAN);

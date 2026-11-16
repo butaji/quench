@@ -7,6 +7,7 @@
 use super::*;
 use crate::vm::compiled::regions;
 use crate::heap::PlainPropertyStorage;
+use crate::staged::machine::{Binary, Lane, MachineFlow, MachineScalar, Relation, Unary};
 
 /// A non-null table reservation admitted for this native run. This proves no
 /// receiver identity, ID range, record liveness or property-storage lifetime.
@@ -15,7 +16,7 @@ pub(super) struct CheckedObjectTable(ir::Value);
 
 impl CheckedObjectTable {
     pub(super) fn prove(builder: &mut FunctionBuilder<'_>, base: ir::Value, miss: ir::Block) -> Self {
-        let present = builder.ins().icmp_imm_u(IntCC::NotEqual, base, 0);
+        let present = emit(builder).raw_compare_imm(Relation::NotEqual, base, 0);
         emit_js_guard(builder, present, miss);
         Self(base)
     }
@@ -65,7 +66,7 @@ impl ObjectRecord {
             ObjectTable::Checked(table) => table.base(),
         };
         let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-        let id = builder.ins().ireduce(types::I32, bits);
+        let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
         // Only a dominating verified definition/edge can supply this fact.
         // No safepoint or layout-changing operation may cross its lifetime.
         if !known.is_some_and(|fact| fact.ty.is_direct_object_family()) {
@@ -74,15 +75,15 @@ impl ObjectRecord {
         }
         // A direct object's id names a record of the reservation, whose base every native
         // entry and allocating callout reads (`JsStepDispatch::refresh_allocation_bases`).
-        let id = builder.ins().uextend(types::I64, id);
-        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
+        let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
         Self::Indexed { base: records, offset }
     }
 
     pub(super) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         match self {
             Self::Address(address) => address,
-            Self::Indexed { base, offset } => builder.ins().iadd(base, offset),
+            Self::Indexed { base, offset } => emit(builder).raw_binary(Binary::Add, base, offset),
         }
     }
 
@@ -91,17 +92,16 @@ impl ObjectRecord {
     pub(super) fn offset_address(self, builder: &mut FunctionBuilder<'_>, displacement: ir::Value) -> ir::Value {
         let (base, offset) = match self {
             Self::Address(address) => (address, displacement),
-            Self::Indexed { base, offset } => (base, builder.ins().iadd(offset, displacement)),
+            Self::Indexed { base, offset } => (base, emit(builder).raw_binary(Binary::Add, offset, displacement)),
         };
-        builder.ins().iadd(base, offset)
+        emit(builder).raw_binary(Binary::Add, base, offset)
     }
 
     pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
-        let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
         let address = self.address(builder);
         let shape = match known.and_then(|fact| fact.ty.object_shape()) {
-            Some(shape) => builder.ins().iconst(types::I32, i64::from(shape)),
-            None => builder.ins().load(types::I32, regions::shape_word(), address, layout.auxiliary_offset as i32),
+            Some(shape) => emit(builder).raw_const(Lane::I32, i64::from(shape)),
+            None => exact_shape(builder, regions::shape_word(), address),
         };
         ObjectHeader { record: self, shape, inline: inline_storage(builder, address), address }
     }
@@ -124,32 +124,45 @@ impl ObjectHeader {
         // A function's own read is the rare one; the object path stays the straight line.
         builder.set_cold_block(function_block);
         let record = builder.append_block_param(join, types::I64);
-        let id = builder.ins().ireduce(types::I32, bits);
-        let id = builder.ins().uextend(types::I64, id);
+        let id = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
+        let id = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), id);
         let object = crate::staged::value::is_direct_object(&mut emit(builder), bits);
-        builder.ins().brif(object, object_block, &[], function_block, &[]);
+        emit(builder).branch_if(object, (object_block, &[]), (function_block, &[]));
         builder.switch_to_block(object_block);
-        let offset = builder.ins().imul_imm_u(id, layout.record_size as i64);
-        let object_record = builder.ins().iadd(records, offset);
-        builder.ins().jump(join, &[ir::BlockArg::Value(object_record)]);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
+        let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
+        emit(builder).goto(join, &[object_record]);
         builder.switch_to_block(function_block);
         let is_function = crate::staged::value::is_direct_function(&mut emit(builder), bits);
-        let reserved = builder.ins().icmp_imm_u(IntCC::NotEqual, functions, 0);
-        let readable = builder.ins().band(is_function, reserved);
+        let reserved = emit(builder).raw_compare_imm(Relation::NotEqual, functions, 0);
+        let readable = emit(builder).raw_binary(Binary::And, is_function, reserved);
         emit_js_guard(builder, readable, miss);
-        let offset = builder.ins().imul_imm_u(id, function.record_size as i64);
-        let function_record = builder.ins().iadd(functions, offset);
-        let function_object = builder.ins().iadd_imm_u(function_record, function.object_offset as i64);
-        builder.ins().jump(join, &[ir::BlockArg::Value(function_object)]);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, id, function.record_size as i64);
+        let function_record = emit(builder).raw_binary(Binary::Add, functions, offset);
+        let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
+        emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
-        let shape = builder.ins().load(types::I32, regions::shape_word(), record, layout.auxiliary_offset as i32);
+        let shape = exact_shape(builder, regions::shape_word(), record);
         Self { record: ObjectRecord::Address(record), shape, inline: inline_storage(builder, record), address: record }
     }
 }
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
 pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b> {
-    Emit { builder, property_values: None }
+    Emit { builder, property_values: None, gate: None }
+}
+
+/// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
+/// auxiliary word without the storage-form bits, which no recorded shape carries.
+pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
+    let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
+    let id = builder.ins().load(types::I32, flags, address, layout.layout_offset as i32);
+    let id = builder.ins().uextend(types::I64, id);
+    let offset = builder.ins().imul_imm_u(id, 8);
+    let base = builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64);
+    let entry = builder.ins().iadd(base, offset);
+    let word = builder.ins().load(types::I32, flags, entry, layout.auxiliary_offset as i32);
+    builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)))
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -166,8 +179,9 @@ pub(crate) struct NativeFieldLoad {
     pub(crate) slot: u16,
     pub(crate) storage_len: usize,
     pub(crate) storage: Option<PlainPropertyStorage>,
-    /// The observed slot type (`Heap::slot_type`), not a write-maintained
-    /// invariant: a read speculates on it and leaves where its check fails.
+    /// The slot's type when the plan was made (`Heap::slot_type`), which every store maintains:
+    /// an online body subscribes to it (`LaneDependencies`) and reads the slot at it with no tag
+    /// test; code that does not subscribe tests the tag and leaves where it fails.
     pub(crate) ty: crate::typed_ir::Type,
     /// For a holder read, the value its proved immediate prototype holds when the code was
     /// compiled (`Vm::inherited_constant`): a Stable fact. A read takes it while the receiver's
@@ -221,10 +235,10 @@ pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
     let (low, high) = (shapes[0], shapes[shapes.len() - 1]);
     let span = u64::from(high - low) + 1;
     if shapes.len() == 1 || span > SHAPE_SET_WORDS as u64 * u64::from(SHAPE_SET_WORD_BITS) {
-        let mut tests = shapes.iter().map(|&known| builder.ins().icmp_imm_u(IntCC::Equal, shape, i64::from(known)));
+        let mut tests = shapes.iter().map(|&known| emit(builder).raw_compare_imm(Relation::Equal, shape, i64::from(known)));
         let first = tests.next().expect("a shape set is non-empty");
         let rest: Vec<_> = tests.collect();
-        return rest.into_iter().fold(first, |any, test| builder.ins().bor(any, test));
+        return rest.into_iter().fold(first, |any, test| emit(builder).raw_binary(Binary::Or, any, test));
     }
     let mut words = [0_u64; SHAPE_SET_WORDS];
     for &known in shapes {
@@ -232,21 +246,21 @@ pub(super) fn shape_in_set(builder: &mut FunctionBuilder<'_>, shape: ir::Value, 
         words[(offset / SHAPE_SET_WORD_BITS) as usize] |= 1 << (offset % SHAPE_SET_WORD_BITS);
     }
     let used = span.div_ceil(u64::from(SHAPE_SET_WORD_BITS)) as usize;
-    let offset = builder.ins().iadd_imm_u(shape, -i64::from(low));
-    let in_span = builder.ins().icmp_imm_u(IntCC::UnsignedLessThan, offset, span as i64);
-    let offset = builder.ins().uextend(types::I64, offset);
-    let index = builder.ins().ushr_imm_u(offset, i64::from(SHAPE_SET_WORD_BITS.trailing_zeros()));
-    let mut word = builder.ins().iconst(types::I64, words[used - 1] as i64);
+    let offset = emit(builder).raw_binary_imm(Binary::Add, shape, -i64::from(low));
+    let in_span = emit(builder).raw_compare_imm(Relation::UnsignedLess, offset, span as i64);
+    let offset = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), offset);
+    let index = emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, offset, i64::from(SHAPE_SET_WORD_BITS.trailing_zeros()));
+    let mut word = emit(builder).raw_const(Lane::I64, words[used - 1] as i64);
     for (position, &bits) in words[..used - 1].iter().enumerate().rev() {
-        let here = builder.ins().icmp_imm_u(IntCC::Equal, index, position as i64);
-        let bits = builder.ins().iconst(types::I64, bits as i64);
-        word = builder.ins().select(here, bits, word);
+        let here = emit(builder).raw_compare_imm(Relation::Equal, index, position as i64);
+        let bits = emit(builder).raw_const(Lane::I64, bits as i64);
+        word = emit(builder).raw_select(here, bits, word);
     }
-    let bit = builder.ins().band_imm_u(offset, i64::from(SHAPE_SET_WORD_BITS - 1));
-    let bit = builder.ins().ushr(word, bit);
-    let bit = builder.ins().band_imm_u(bit, 1);
-    let member = builder.ins().icmp_imm_u(IntCC::NotEqual, bit, 0);
-    builder.ins().band(in_span, member)
+    let bit = emit(builder).raw_binary_imm(Binary::And, offset, i64::from(SHAPE_SET_WORD_BITS - 1));
+    let bit = emit(builder).raw_binary(Binary::ShiftRightUnsigned, word, bit);
+    let bit = emit(builder).raw_binary_imm(Binary::And, bit, 1);
+    let member = emit(builder).raw_compare_imm(Relation::NotEqual, bit, 0);
+    emit(builder).raw_binary(Binary::And, in_span, member)
 }
 
 /// The most prototypes of one holder shape an inherited read folds: sibling classes whose
@@ -445,8 +459,7 @@ mod tests {
     }
 }
 
-pub(super) use crate::staged::PackedAccess;
-use crate::staged::{Form, Layout, Slots};
+use crate::staged::{Layout, Slots};
 mod emit;
 pub(super) use emit::Emit;
 
@@ -456,41 +469,23 @@ pub(super) use emit::Emit;
 pub(super) struct CheckedObject(Layout<ir::Value, ir::Value>);
 
 impl CheckedObject {
-    pub(super) fn storage_len(self) -> usize { self.0.storage_len }
+    /// The proof of a layout a staged read established.
+    pub(super) fn of(layout: Layout<ir::Value, ir::Value>) -> Self { Self(layout) }
 
     /// A flat store can reuse the range proof; packed writes use the VM's
     /// narrow-value encoder and layout-preserving barrier helper instead.
     pub(super) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
         debug_assert!(usize::from(slot) < self.0.storage_len);
         let base = match self.0.slots {
-            Slots::Packed(_) => return None,
+            Slots::Packed(_) | Slots::Narrow(_) => return None,
             Slots::Flat(base) => base,
             Slots::Either { inline, flat, .. } => {
-                let is_flat = builder.ins().icmp_imm_u(IntCC::Equal, inline, 0);
+                let is_flat = emit(builder).raw_compare_imm(Relation::Equal, inline, 0);
                 emit_js_guard(builder, is_flat, miss);
                 flat
             }
         };
-        Some(builder.ins().iadd_imm_u(base,
-            i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
-    }
-
-    /// The caller proves receiver identity and exact shape before this operation; `inline`
-    /// is the record's inline-storage bits (`ObjectRecord::header`), `base` the arena's.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn prove(
-        builder: &mut FunctionBuilder<'_>,
-        record: ir::Value,
-        inline: ir::Value,
-        base: ir::Value,
-        plan: NativeFieldLoad,
-        access: PackedAccess,
-        miss: ir::Block,
-    ) -> Option<Self> {
-        if !plan.valid() { return None; }
-        let mut stage = Emit { builder, property_values: Some(base) };
-        crate::staged::own_layout(&mut stage, record, inline, Form::of(plan.storage, plan.storage_len),
-            plan.storage_len, access, miss).map(Self)
+        Some(emit(builder).raw_binary_imm(Binary::Add, base, i64::from(slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
     }
 
     /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
@@ -498,12 +493,10 @@ impl CheckedObject {
     /// shape is held by a dependency, so only the representation is tested.
     pub(super) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, record: ir::Value, inline: ir::Value,
         base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
-        let mut stage = Emit { builder, property_values: Some(base) };
+        let mut stage = Emit { builder, property_values: Some(base), gate: None };
         crate::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss).map(Self)
     }
 
-    /// Read fresh contents using only the established layout and slot bound.
-    pub(super) fn read(self, builder: &mut FunctionBuilder<'_>, slot: u16) -> ir::Value {
-        crate::staged::read_slot(&mut Emit { builder, property_values: None }, self.0, slot)
-    }
+    /// The layout this proof carries, for a staged read of fresh contents through it.
+    pub(super) fn layout(self) -> Layout<ir::Value, ir::Value> { self.0 }
 }

@@ -25,7 +25,7 @@ pub(super) unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, 
     }).flatten();
     if built.is_none() {
         use super::super::dispatch_fast::lane_body_stats::{miss, Miss};
-        miss(if !constructs { Miss::HelperConstructContext } else if vm.construct_target.is_some() || vm.heap.should_collect() { Miss::HelperConstructBusy } else { Miss::HelperConstructNoPlan });
+        miss(vm, if !constructs { Miss::HelperConstructContext } else if vm.construct_target.is_some() || vm.heap.should_collect() { Miss::Busy } else { Miss::NoPlan });
     }
 
     dispatch.refresh_object_bases(vm);

@@ -275,6 +275,7 @@ impl WasmValue {
 
     /// The scalar of type `ty` with bits `bits`, as `bits` reads it back
     /// (the low word for 32-bit types).
+    #[inline(always)]
     pub(crate) fn from_bits(ty: WasmType, bits: u64) -> Self {
         match ty {
             WasmType::I32 => Self::I32(bits as u32 as i32),
@@ -358,6 +359,7 @@ pub enum WasmCallableType {
 struct CallableSignature {
     declaration: Option<u32>,
     shape: WasmSignature,
+    canonical: CanonicalSignature,
 }
 
 /// Expected import facts consumed into the canonical signature pool during lowering.
@@ -403,7 +405,9 @@ pub(crate) struct CallableImport {
     pub(crate) exact: bool,
 }
 
+mod canonical;
 mod interning;
+pub(crate) use canonical::CanonicalSignature;
 
 /// One signature pool; function indices project into its type-index domain.
 #[derive(Clone)]
@@ -452,7 +456,31 @@ impl WasmSignatures {
         name: &str,
         ty: WasmCallableType,
     ) -> Result<u32, crate::Diagnostic> {
-        let (declaration, shape) = match ty {
+        let (declaration, shape) = self.resolve(name, ty)?;
+        self.interned(declaration, shape)
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or_else(|| crate::Diagnostic::unsupported(name, "too many Wasm signature facts"))
+    }
+
+    /// `intern`'s answer for a type the pool already holds, from a pool that is finished:
+    /// a function lowered on its first call interns what the module's lowering interned.
+    pub(super) fn interned_index(
+        &self,
+        name: &str,
+        ty: WasmCallableType,
+    ) -> Result<u32, crate::Diagnostic> {
+        let (declaration, shape) = self.resolve(name, ty)?;
+        self.find(declaration, &shape)
+            .map(|index| index as u32)
+            .ok_or_else(|| crate::Diagnostic::unsupported(name, "Wasm signature missing from a finished pool"))
+    }
+
+    fn resolve(
+        &self,
+        name: &str,
+        ty: WasmCallableType,
+    ) -> Result<(Option<u32>, WasmSignature), crate::Diagnostic> {
+        Ok(match ty {
             WasmCallableType::Embedded(shape) => {
                 if shape
                     .params
@@ -492,10 +520,7 @@ impl WasmSignatures {
                     },
                 )
             }
-        };
-        let index = self.interned(declaration, shape);
-        u32::try_from(index)
-            .map_err(|_| crate::Diagnostic::unsupported(name, "too many Wasm signature facts"))
+        })
     }
 
     pub(crate) fn imports(&self) -> &[CallableImport] {
@@ -598,21 +623,18 @@ impl WasmSignatures {
         let Some(actual_type) = actual.types.get(actual_index as usize) else {
             return false;
         };
-        // A signature index is meaningful only inside its owning pool. When
-        // both references name the very same interned type, it is already a
-        // proof of compatibility (including exact matches) and avoids walking
-        // recursive declaration graphs on hot indirect-call paths.
-        if std::ptr::eq(self, actual) && expected_index == actual_index {
+        // Equal canonical ids are equivalent types, already a proof of compatibility (exact
+        // matches included) that walks no recursive declaration graph on a hot indirect call.
+        // Different ids relate only through subtyping, which declarations alone have.
+        if expected.canonical == actual_type.canonical {
             return true;
         }
-        match expected.declaration {
-            Some(target) => {
+        match (expected.declaration, actual_type.declaration) {
+            (Some(target), _) => {
                 actual.matches_declaration(actual_index, &self.declarations, target, exact)
             }
-            None => match actual_type.declaration {
-                Some(_) => actual.accepts_embedded(actual_index, &expected.shape),
-                None => actual_type.shape == expected.shape,
-            },
+            (None, Some(_)) => actual.accepts_embedded(actual_index, &expected.shape),
+            (None, None) => false,
         }
     }
 }

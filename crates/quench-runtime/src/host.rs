@@ -1,5 +1,4 @@
 use std::io::{self, Write};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A frozen source failure is distinct from an incompatible native image.
 #[cfg(feature = "native-execution")]
@@ -150,6 +149,9 @@ pub trait Host {
     /// The runtime's memory policy says whether it should
     /// (`MemoryPolicy::returns_pages_at_collections`).
     fn at_collection_boundary(&mut self, _policy: crate::MemoryPolicy) {}
+
+    /// A young collection is about to run (a full one's start is `at_collection_boundary`).
+    fn before_collection(&mut self) {}
 
     /// Weak targets have been cleared and VM cleanup has finished. Release native resources
     /// owned by collected values before execution resumes, without running guest code.
@@ -532,11 +534,7 @@ impl Host for SystemHost {
     }
 
     fn clock_millis(&mut self) -> f64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64()
-            * 1000.0
+        crate::clock::unix_millis()
     }
 }
 

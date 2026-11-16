@@ -9,14 +9,17 @@ impl Heap {
     pub(crate) fn alloc_planned_object<const N: usize>(&mut self, header: InlineObjectHeader, prototype: Value, values: &[Value; N], len: usize) -> Value {
         debug_assert!(self.prototype_flagged(prototype));
         self.properties.note_plan_values(header.shape(), &values[..len]);
+        self.settle_widened();
         let object = if len <= INLINE_PROPERTY_COUNT {
-            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
-            inline[..len].copy_from_slice(&values[..len]);
+            // A fixed-length select per slot: a copy of `len` values was a `memcpy` call,
+            // which gave every planned construct a frame.
+            let inline: [Value; INLINE_PROPERTY_COUNT] =
+                std::array::from_fn(|slot| if slot < len { values.get(slot).copied().unwrap_or(Value::UNDEFINED) } else { Value::UNDEFINED });
             Object::from_inline_header(header, inline)
         } else if cfg!(feature = "profile-aggregate") {
             None
         } else {
-            self.properties.young_run_padded(values, len).map(|start| Object::from_run_header(header, start))
+            self.properties.young_run_padded(values, len, header.shape()).map(|start| Object::from_run_header(header, start))
         };
         match object {
             Some(object) => match self.claim_object_record() {
@@ -29,6 +32,41 @@ impl Heap {
             },
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
+    }
+
+    /// `alloc_planned_object` of a receiver whose `len` fields fit its inline slots, passed as
+    /// those slots themselves (`undefined` past `len`): no gathered values array.
+    #[inline(always)]
+    pub(crate) fn alloc_planned_inline(&mut self, header: InlineObjectHeader, prototype: Value, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Value {
+        debug_assert!(self.prototype_flagged(prototype) && len <= INLINE_PROPERTY_COUNT);
+        self.properties.note_plan_values(header.shape(), &inline[..len]);
+        let Some(object) = Object::from_inline_header(header, inline) else {
+            return self.alloc_object_with_properties(prototype, header.shape(), &inline[..len]);
+        };
+        match self.claim_object_record() {
+            // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
+            Some((value, record)) => {
+                unsafe { record.write(object) };
+                value
+            }
+            None => self.insert_admitted_object_record(object),
+        }
+    }
+
+    /// `alloc_planned_inline` where it calls nothing out of line: `None`, before any effect,
+    /// where a value widens its slot's type, has no narrow form, or the record space needs its
+    /// slow path, so a handler's hit path builds no frame.
+    #[inline(always)]
+    pub(crate) fn alloc_planned_inline_quick(&mut self, header: InlineObjectHeader, inline: [Value; INLINE_PROPERTY_COUNT], len: usize) -> Option<Value> {
+        if !self.properties.inline_plan_values_admitted(header.shape(), inline, len) {
+            return None;
+        }
+        let object = Object::from_inline_header(header, inline)?;
+        let id = self.object_records.claim_uninit_quick()?;
+        self.allocated += 1;
+        // SAFETY: the claimed record is uninitialized and written whole, before any safepoint.
+        unsafe { self.object_records.record_ptr(id).write(object) };
+        Some(Value::direct_object(id))
     }
 
     /// A fresh direct object record claimed with nothing written: its `Value` and the address

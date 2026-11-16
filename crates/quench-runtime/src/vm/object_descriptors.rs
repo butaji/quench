@@ -320,10 +320,7 @@ impl<H: Host> Vm<H> {
         if invalid_kind || invalid_attributes {
             return Ok(false);
         }
-        if self
-            .typed_array_length(target)
-            .is_none_or(|length| index >= length)
-        {
+        if self.typed_array_length(target).is_none_or(|length| index >= length) {
             return Ok(false);
         }
         if let Some(value) = descriptor.value
@@ -516,7 +513,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|elements| {
                     elements
                         .get(index)
-                        .copied()
+                        
                         .filter(|value| !value.is_deleted())
                 })
                 .or_else(|| self.heap.sparse_get(target, index).filter(|value| !value.is_deleted()))
@@ -583,7 +580,7 @@ impl<H: Host> Vm<H> {
                 if data.is_module_namespace() || data.deferred_module().is_some() {
                     return None;
                 }
-                if !data.is_arguments_object() {
+                if !data.is_arguments_object() && data.boxed_primitive().is_none() {
                     let shape = data.shape();
                     return self.shape_own_query::<ENUMERABLE>(shape, key);
                 }
@@ -603,7 +600,8 @@ impl<H: Host> Vm<H> {
         Some(found.map(|(_, attributes)| !ENUMERABLE || attributes.enumerable))
     }
 
-    /// `plain_own_query` of an ordinary object other than an arguments object, from its
+    /// `plain_own_query` of an ordinary object other than an arguments object or a primitive wrapper (a
+    /// String wrapper's indices are virtual), from its
     /// `shape` alone: presence reads the slot, enumerability also its attributes.
     fn shape_own_query<const ENUMERABLE: bool>(&mut self, shape: u32, key: Value) -> Option<Option<bool>> {
         let atom = self.string_key_atom(key)?;

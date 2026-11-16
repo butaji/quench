@@ -521,14 +521,25 @@ impl ResidualProgram {
         if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
+        // A Wasm module whose functions lower on their first calls validates the records it
+        // has: lowering a function only to check it would keep every record it saves.
+        let lazy_wasm = self.wasm_lazy.is_some();
         // Validation reads every record, and the cross-function checks read their parents'.
-        self.compile_released();
-        let selective_capture_scope_unsafe =
-            selective_capture_scope_unsafe(&self.functions, &self.atoms);
+        if !lazy_wasm {
+            self.compile_released();
+        }
+        let selective_capture_scope_unsafe = if lazy_wasm {
+            vec![false; self.functions.len()]
+        } else {
+            selective_capture_scope_unsafe(&self.functions, &self.atoms)
+        };
         // Captured name scopes are shared by sibling functions: each is checked once per
         // position in a parent chain.
         let mut checked_captured_names = rustc_hash::FxHashSet::default();
         for (index, function) in self.functions.iter().enumerate() {
+            if lazy_wasm && function.record().is_none() {
+                continue;
+            }
             if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
             }
@@ -542,12 +553,18 @@ impl ResidualProgram {
             }
             // A lane lets the callee of a dead result skip building it, so each claim is the
             // compiler's own derivation (`liveness::register_roots`).
+            // An activation fills only the registers below the live entry bound, so that bound
+            // is the compiler's own derivation too.
             if !function.register_roots.dead_call_results().is_empty()
-                && crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions)
-                    .dead_call_results()
-                    != function.register_roots.dead_call_results()
+                || function.register_roots.entry_fill(function.registers) < function.registers
             {
-                return Err(format!("function {index} claims dead call results its liveness does not prove"));
+                let derived = crate::compile::liveness::register_roots(function, self, &self.field_sites, &self.superinstructions);
+                if derived.dead_call_results() != function.register_roots.dead_call_results() {
+                    return Err(format!("function {index} claims dead call results its liveness does not prove"));
+                }
+                if derived.entry_fill(function.registers) > function.register_roots.entry_fill(function.registers) {
+                    return Err(format!("function {index} claims an entry liveness its liveness does not prove"));
+                }
             }
             if function
                 .self_binding_slot
@@ -1354,6 +1371,7 @@ mod tests {
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            wasm_lazy: None,
         }
     }
 

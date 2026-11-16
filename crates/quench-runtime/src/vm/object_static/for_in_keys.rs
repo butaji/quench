@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::heap::ArrayElements;
+use crate::staged::iteration::{FOR_IN_CURSOR, FOR_IN_EPOCH, FOR_IN_KEYS, FOR_IN_NO_MEMO, FOR_IN_OBJECT, FOR_IN_SHAPE, FOR_IN_STATE_LEN, concrete_for_in_next};
 use crate::vm::enumerable_key_memo::EnumerableSlots;
 
 /// What for-in keeps between loops: the last key snapshot (`ForInOwnKeys`), and the state of
@@ -12,6 +13,19 @@ use crate::vm::enumerable_key_memo::EnumerableSlots;
 pub(in crate::vm) struct ForInMemo {
     own_keys: Option<ForInOwnKeys>,
     spare_state: Option<(Value, u64)>,
+    /// The loop that stepped last: its state with its object, snapshot and snapshot length, so a
+    /// step reads them without decoding the state. The cursor stays the state's own
+    /// `FOR_IN_CURSOR` element, which compiled code steps too (`staged::iteration::for_in_next`).
+    /// Every collection forgets it (`Vm::for_in_forget_active`).
+    active: Option<ActiveForIn>,
+}
+
+#[derive(Clone, Copy)]
+struct ActiveForIn {
+    state: Value,
+    object: Value,
+    keys: Value,
+    len: usize,
 }
 
 impl ForInMemo {
@@ -50,12 +64,6 @@ impl ForInOwnKeys {
     }
 }
 
-/// A for-in state's elements: the (boxed) object, its key snapshot and the cursor, the
-/// index of the snapshot key the next step reads.
-const OBJECT: usize = 0;
-const KEYS: usize = 1;
-const CURSOR: usize = 2;
-
 impl<H: Host> Vm<H> {
     /// The state a for-in over `source` steps (`ForInNext`): its object and key snapshot,
     /// at the first key. `null` and `undefined` list no key.
@@ -75,14 +83,40 @@ impl<H: Host> Vm<H> {
         Ok(self.for_in_state(object, keys?))
     }
 
-    /// The for-in state over `object` and its key snapshot `keys`, at the first key. Only its
-    /// loop's steps read a state, and none after it runs out of keys (`Vm::for_in_next`), so a
-    /// state spared then whose record no collection has passed since is taken over instead
-    /// of allocating one.
+    /// `for_in_state` for the lane's `ForInStart` over an object the memo lists.
+    pub(in crate::vm) fn lane_for_in_state(&mut self, object: Value, keys: Value) -> Value {
+        self.for_in_state(object, keys)
+    }
+
+    /// The for-in state over `object` and its key snapshot `keys`, at the first key, with the
+    /// memo of the snapshot's validity (`for_in_state_record`). Only its loop's steps read a
+    /// state, and none after it runs out of keys (`Vm::for_in_next`), so a state spared then
+    /// whose record no collection has passed since is taken over instead of allocating one.
     fn for_in_state(&mut self, object: Value, keys: Value) -> Value {
-        let elements = [object, keys, Value::integer(0)];
+        let state = self.for_in_state_record(object, keys);
+        // The new loop steps next: it becomes the active one.
+        if let Some(len) = self.heap.array(keys).map(|keys| keys.elements().len()) {
+            self.for_in.active = Some(ActiveForIn { state, object, keys, len });
+        }
+        state
+    }
+
+    /// The state record of a new loop: its object, snapshot and first cursor, with the memo of
+    /// the snapshot's validity where `keys` is the one last listed (`staged::iteration`: its
+    /// shape and epoch as raw words, else `FOR_IN_NO_MEMO`).
+    fn for_in_state_record(&mut self, object: Value, keys: Value) -> Value {
+        let (shape, listed_epoch) = self.for_in.own_keys.as_ref().filter(|listed| listed.keys == keys)
+            .map_or((FOR_IN_NO_MEMO, FOR_IN_NO_MEMO), |listed| (u64::from(listed.shape), listed.epoch));
+        let mut elements = [Value::integer(0); FOR_IN_STATE_LEN];
+        elements[FOR_IN_OBJECT] = object;
+        elements[FOR_IN_KEYS] = keys;
+        elements[FOR_IN_SHAPE] = Value::from_bits(shape);
+        elements[FOR_IN_EPOCH] = Value::from_bits(listed_epoch);
         let epoch = self.heap.collection_epoch();
         if let Some((state, _)) = self.for_in.spare_state.take().filter(|&(_, spared)| spared == epoch) {
+            if self.for_in.active.is_some_and(|active| active.state == state) {
+                self.for_in.active = None;
+            }
             let values = self.heap.array_mut(state).expect("spared for-in state").elements_mut().make_mut();
             elements.into_iter().enumerate().for_each(|(index, value)| values.set(index, value));
             return state;
@@ -120,6 +154,9 @@ impl<H: Host> Vm<H> {
     /// proxy's traps.
     #[inline(always)]
     pub(in crate::vm) fn for_in_step_listed(&mut self, state: Value) -> Option<Option<Value>> {
+        if let Some(key) = self.for_in_staged_step(state) {
+            return Some(Some(key));
+        }
         let Some((object, keys, key, cursor)) = self.for_in_peek(state) else {
             self.for_in.spare_state = Some((state, self.heap.collection_epoch()));
             return Some(None);
@@ -134,24 +171,63 @@ impl<H: Host> Vm<H> {
         Some(Some(key))
     }
 
-    /// The state's object, snapshot, key at the cursor and cursor; `None` past the last key.
+    /// The step the staged row makes (`staged::iteration::for_in_next`) where the state's memo proves
+    /// the object still has the snapshot's keys: its key, the cursor moved past it, with no lookup.
+    /// `None` leaves the step to the walk, which a deleted or non-enumerable key, another kind of
+    /// object and the last key's exhaustion take.
     #[inline(always)]
-    fn for_in_peek(&self, state: Value) -> Option<(Value, Value, Value, usize)> {
+    fn for_in_staged_step(&self, state: Value) -> Option<Value> {
+        let (arrays, objects) = (self.heap.array_record_base()?, self.heap.object_record_base()?);
+        concrete_for_in_next(arrays, objects, state, self.heap.collection_epoch())
+    }
+
+    /// The state's object, snapshot, key at the cursor and cursor; `None` past the last key.
+    /// The loop becomes the active one (`ForInMemo::active`).
+    #[inline(always)]
+    fn for_in_peek(&mut self, state: Value) -> Option<(Value, Value, Value, usize)> {
+        let cursor = self.heap.array(state)?.elements().get(FOR_IN_CURSOR)?.as_int()?;
+        let cursor = usize::try_from(cursor).ok()?;
+        if let Some(active) = self.for_in.active.filter(|active| active.state == state) {
+            if cursor >= active.len {
+                return None;
+            }
+            let key = self.heap.array(active.keys)?.elements().get(cursor)?;
+            return Some((active.object, active.keys, key, cursor));
+        }
+        self.for_in_activate(state, cursor)
+    }
+
+    /// `for_in_peek` of a loop that is not the active one, at `cursor`: its object and snapshot
+    /// read from its state.
+    #[cold]
+    #[inline(never)]
+    fn for_in_activate(&mut self, state: Value, cursor: usize) -> Option<(Value, Value, Value, usize)> {
         let elements = self.heap.array(state)?.elements();
-        let cursor = usize::try_from(elements.get(CURSOR)?.as_int()?).ok()?;
-        let (object, keys) = (elements[OBJECT], elements[KEYS]);
-        let key = *self.heap.array(keys)?.elements().get(cursor)?;
+        let (object, keys) = (elements.get(FOR_IN_OBJECT)?, elements.get(FOR_IN_KEYS)?);
+        let listed = self.heap.array(keys)?.elements();
+        let len = listed.len();
+        let key = listed.get(cursor)?;
+        self.for_in.active = Some(ActiveForIn { state, object, keys, len });
         Some((object, keys, key, cursor))
+    }
+
+    /// Forgets the active loop, whose words a collection may move or free.
+    pub(in crate::vm) fn for_in_forget_active(&mut self) {
+        self.for_in.active = None;
+    }
+
+    fn for_in_store_cursor(&mut self, state: Value, cursor: usize) {
+        let next = Value::integer(i32::try_from(cursor).expect("for-in snapshot fits an index"));
+        let Some(array) = self.heap.array_mut(state) else { return };
+        if !array.replace_in_place(FOR_IN_CURSOR, next) {
+            array.elements_mut().make_mut().set(FOR_IN_CURSOR, next);
+        }
     }
 
     /// Moves the state's cursor past `cursor`.
     #[inline(always)]
     fn for_in_advance(&mut self, state: Value, cursor: usize) {
-        let next = Value::integer(i32::try_from(cursor + 1).expect("for-in snapshot fits an index"));
-        let array = self.heap.array_mut(state).expect("for-in state");
-        if !array.replace_in_place(CURSOR, next) {
-            array.elements_mut().make_mut().set(CURSOR, next);
-        }
+        self.for_in_store_cursor(state, cursor + 1);
     }
 
     /// Whether `keys` is the snapshot of `object`'s current shape (`ForInOwnKeys`) while it
@@ -181,7 +257,7 @@ impl<H: Host> Vm<H> {
     /// The memo's snapshot (`ForInOwnKeys`) for `receiver`: a shape-keyed object of its shape
     /// whose prototypes are the ones listed, each still of its listed shape, in the same
     /// epoch. None of them has an enumerable key then, as when listed.
-    pub(super) fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
+    pub(in crate::vm) fn listed_for_in_keys(&self, receiver: Value) -> Option<Value> {
         let listed = self.for_in.own_keys.as_ref()?;
         let data = self.shape_keyed_object(receiver)?;
         let keys = listed.keys(data.shape(), self.heap.collection_epoch())?;
@@ -235,19 +311,21 @@ impl<H: Host> Vm<H> {
         if self.shape_may_have_accessors(shape) || !self.plain_named_key(atom) {
             return None;
         }
-        self.heap.property_get(data, slot as usize)
+        // SAFETY: the snapshot recorded this slot of `shape`, the receiver's shape.
+        Some(unsafe { self.heap.property_get_unchecked(data, slot as usize) })
     }
 
     /// `base[key]` of a string `key` that names no array index, where the shapes alone answer:
     /// the slot of the key a for-in just stepped to (`enumerated_key_get`), or a read by its
-    /// atom as a named read is (`plain_named_get`, which refuses index atoms). `None` for any
-    /// other key, or a read those decline.
+    /// atom as a named read is, through the (shape, key) proofs (`plain_named_load`, which
+    /// refuses index atoms). `None` for any other key, or a read those decline.
     #[inline(always)]
-    pub(in crate::vm) fn plain_string_keyed_get(&self, base: Value, key: Value) -> Option<Value> {
+    pub(in crate::vm) fn plain_string_keyed_get(&mut self, base: Value, key: Value) -> Option<Value> {
         if let Some(value) = self.enumerated_key_get(base, key) {
             return Some(value);
         }
-        self.plain_named_get(base, self.lookup_string_atom(key)?)
+        let atom = self.lookup_string_atom(key)?;
+        self.plain_named_load(base, atom)
     }
 }
 

@@ -66,18 +66,28 @@ impl Frame<Concrete> for NumberFrame {
 
 impl crate::staged::GlobalFrame<Concrete> for NumberFrame {}
 
+impl crate::staged::CallFrame<Concrete> for NumberFrame {}
+
+impl crate::staged::PropertyFrame<Concrete> for NumberFrame {
+    type Plans = crate::staged::NoPlans;
+
+    fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
+}
+
+impl crate::staged::ElementFrame<Concrete> for NumberFrame {}
+
 impl NumericFrame<Concrete> for NumberFrame {
-    fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
-        match self.values[usize::from(operand.register_index().expect("a register operand"))] {
+    fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        Some(match self.values[usize::from(operand.register_index().expect("a register operand"))] {
             NumberWord::Int(value) => int_word(value),
             NumberWord::Float(value) => int_word(value as i32),
-        }
+        })
     }
-    fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> u64 {
-        match self.values[usize::from(operand.register_index().expect("a register operand"))] {
+    fn number_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        Some(match self.values[usize::from(operand.register_index().expect("a register operand"))] {
             NumberWord::Int(value) => f64::from(value).to_bits(),
             NumberWord::Float(value) => value.to_bits(),
-        }
+        })
     }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { Some(()) }
     fn miss(&self) {}
@@ -92,11 +102,17 @@ fn number_frame(left: NumberWord, right: NumberWord) -> NumberFrame {
 /// The arithmetic result, or `None` where the operation left at its miss edge.
 fn concrete_arithmetic(left: NumberWord, right: NumberWord, operation: NumberArithmetic,
     domain: Domain, overflow: Overflow) -> Option<NumberWord> {
+    concrete_arithmetic_zero(left, right, operation, (domain, overflow), NegativeZero::Exit)
+}
+
+/// `concrete_arithmetic` with `zero` for the product's negative zero.
+fn concrete_arithmetic_zero(left: NumberWord, right: NumberWord, operation: NumberArithmetic,
+    (domain, overflow): (Domain, Overflow), zero: NegativeZero) -> Option<NumberWord> {
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = number_frame(left, right);
     let operation = Operation::Number(NumberOperation::Arithmetic {
         destination: 2, left: Operand::register(0), right: Operand::register(1),
-        operation, domain, overflow,
+        operation, domain, overflow, zero,
     });
     match step(&mut stage, &mut frame, operation) {
         Step::Value(_) => Some(frame.values[2]),
@@ -250,27 +266,13 @@ fn staged_int32_remainder_is_the_number_remainder_or_leaves() {
     }
 }
 
-/// The truncation island `ToInt32(addend ± factor * k)` is the wrapping int32 operations for
-/// every int32 `addend` and `factor` and every exact `k`: the Number product and sum it
-/// truncates are exact binary64 integers.
 #[test]
-fn the_truncation_island_is_the_number_truncation_for_exact_factors() {
-    use crate::staged::numeric::scaled_sum;
-    use crate::typed_ir::loop_ints::{exact_factor, EXACT_FACTOR_BOUND};
-    let ints = [0, 1, -1, 2, 7, i32::MAX, i32::MIN, i32::MAX - 1, i32::MIN + 1, 1 << 30, -(1 << 30), 123_456_789, -987_654_321];
-    let bound = EXACT_FACTOR_BOUND as i32;
-    let constants = [0, 1, -1, 3, -3, 5, 1_000_003, bound - 1, 1 - bound, bound / 2, -bound / 2];
-    for operation in [NumberArithmetic::Add, NumberArithmetic::Subtract] {
-        for scaled_first in [false, true] {
-            for addend in ints { for factor in ints { for constant in constants {
-                assert!(exact_factor(constant));
-                let product = f64::from(factor) * f64::from(constant);
-                let (left, right) = if scaled_first { (product, f64::from(addend)) } else { (f64::from(addend), product) };
-                let exact = if operation == NumberArithmetic::Add { left + right } else { left - right };
-                assert_eq!(scaled_sum(operation, scaled_first, addend, factor, constant), exact as i64 as i32,
-                    "{operation:?} {addend} {factor} {constant} {scaled_first}");
-            }}}
-        }
-    }
-    assert!(!exact_factor(bound) && !exact_factor(-bound) && !exact_factor(i32::MIN));
+fn an_int32_product_keeps_its_zero_only_where_its_sign_is_ignored() {
+    let product = |zero, overflow| concrete_arithmetic_zero(NumberWord::Int(-1), NumberWord::Int(0),
+        NumberArithmetic::Multiply, (Domain::Int32, overflow), zero);
+    assert_eq!(product(NegativeZero::Exit, Overflow::Exit), None, "a negative zero is no int32");
+    assert_eq!(product(NegativeZero::Ignore, Overflow::Exit), Some(NumberWord::Int(0)));
+    assert_eq!(product(NegativeZero::Ignore, Overflow::Wrap), Some(NumberWord::Int(0)));
+    let widened = product(NegativeZero::Ignore, Overflow::Widen);
+    assert!(matches!(widened, Some(NumberWord::Float(bits)) if bits.is_sign_negative()), "widening keeps the Number's sign: {widened:?}");
 }

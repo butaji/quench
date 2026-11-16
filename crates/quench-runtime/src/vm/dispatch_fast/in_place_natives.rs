@@ -10,16 +10,157 @@ impl<H: Host> Vm<H> {
     /// and arrays, and primitives. `None` leaves the call to the native itself.
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
-        self.steady_native_value(native, receiver, args)
-            .or_else(|| math_value(native, args))
-            .or_else(|| self.pure_string_method_call(code, native, receiver, args))
-            .or_else(|| object_value(self, code, native, receiver, args))
-            .or_else(|| collection_value(self, code, native, receiver, args))
-            .or_else(|| array_value(self, code, native, callee, receiver, args))
-            .or_else(|| internal_slot_value(self, native, callee, receiver))
-            .or_else(|| primitive_value(self, native, receiver, args))
+        // One table read selects the families that can answer `native` (`IN_PLACE_FAMILIES`),
+        // tried in the same order the cascade of all eight tried them.
+        let families = IN_PLACE_FAMILIES[native as usize];
+        if families == 0 {
+            return None;
+        }
+        let tries = |family: u16| families & family != 0;
+        if tries(STEADY) && let Some(value) = self.steady_native_value(native, receiver, args) {
+            return Some(value);
+        }
+        if tries(MATH) && let Some(value) = math_value(native, args) {
+            return Some(value);
+        }
+        if tries(PURE_STRING) && let Some(value) = self.pure_string_method_call(code, native, receiver, args) {
+            return Some(value);
+        }
+        if tries(OBJECT) && let Some(value) = object_value(self, code, native, receiver, args) {
+            return Some(value);
+        }
+        if tries(COLLECTION) && let Some(value) = collection_value(self, code, native, receiver, args) {
+            return Some(value);
+        }
+        if tries(ARRAY) && let Some(value) = array_value(self, code, native, callee, receiver, args) {
+            return Some(value);
+        }
+        if tries(INTERNAL_SLOT) && let Some(value) = internal_slot_value(self, native, callee, receiver) {
+            return Some(value);
+        }
+        if tries(PRIMITIVE) && let Some(value) = primitive_value(self, native, receiver, args) {
+            return Some(value);
+        }
+        if tries(PRIMITIVE_LEAF) {
+            return primitive_leaf_value(self, code, native, receiver, args);
+        }
+        None
     }
 }
+
+// The in-place families, one bit each, in the order `in_place_native_value` tries them.
+const STEADY: u16 = 1 << 0;
+const MATH: u16 = 1 << 1;
+const PURE_STRING: u16 = 1 << 2;
+const OBJECT: u16 = 1 << 3;
+const COLLECTION: u16 = 1 << 4;
+const ARRAY: u16 = 1 << 5;
+const INTERNAL_SLOT: u16 = 1 << 6;
+const PRIMITIVE: u16 = 1 << 7;
+const PRIMITIVE_LEAF: u16 = 1 << 8;
+
+/// The families whose functions below can answer `native`: each family's arms, listed
+/// beside the function that holds them. A native outside every family completes through
+/// the native itself, with no in-place attempt.
+const fn in_place_families(native: Native) -> u16 {
+    let mut families = 0;
+    // `Vm::steady_native_value`.
+    if matches!(native, Native::ArrayPush | Native::ArrayPop | Native::StringCharCodeAt | Native::StringCharAt
+        | Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas | Native::WeakSetHas
+        | Native::MapSet | Native::ArrayIsArray | Native::JsonStringify)
+    {
+        families |= STEADY;
+    }
+    if native.is_math_function() {
+        families |= MATH;
+    }
+    if native.is_pure_string_method() {
+        families |= PURE_STRING;
+    }
+    if matches!(native, Native::ObjectCreate | Native::ObjectPrototypeHasOwnProperty
+        | Native::ObjectPrototypePropertyIsEnumerable | Native::ObjectHasOwn | Native::ObjectIs | Native::ReflectGet
+        | Native::ReflectHas | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries
+        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor)
+    {
+        families |= OBJECT;
+    }
+    if matches!(native, Native::MapSet | Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete
+        | Native::SetClear | Native::ArrayBufferIsView)
+        || super::super::data_view::data_view_element(native)
+        || super::super::date::date_reads(native)
+    {
+        families |= COLLECTION;
+    }
+    if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
+        | Native::ArrayShift | Native::ArrayIteratorNext)
+    {
+        families |= ARRAY;
+    }
+    if matches!(native, Native::MapKeys | Native::MapValues | Native::MapEntries | Native::IteratorClose
+        | Native::StringToString | Native::StringValueOf | Native::FunctionToString | Native::RegExpLegacyGetter)
+    {
+        families |= INTERNAL_SLOT;
+    }
+    if matches!(native, Native::StringFromCharCode | Native::Boolean | Native::String | Native::Number
+        | Native::NumberString | Native::StringLocaleCompare | Native::GlobalIsNaN | Native::GlobalIsFinite
+        | Native::NumberIsNaN | Native::NumberIsFinite | Native::NumberIsInteger | Native::NumberIsSafeInteger)
+    {
+        families |= PRIMITIVE;
+    }
+    if primitive_leaf(native) || string_leaf(native) {
+        families |= PRIMITIVE_LEAF;
+    }
+    families
+}
+
+/// Natives of `Vm::call_primitive_native` that, for a primitive receiver and arguments that
+/// are not objects, run no guest code, observe no frame and have no effect beyond allocating
+/// their result: their conversions of primitives run none.
+const fn primitive_leaf(native: Native) -> bool {
+    matches!(native, Native::ParseInt | Native::NumberParseFloat | Native::NumberString | Native::NumberValueOf
+        | Native::BooleanToString | Native::BooleanValueOf | Native::BigIntValueOf | Native::StringFromCodePoint
+        | Native::EncodeUri | Native::EncodeUriComponent | Native::DecodeUri | Native::DecodeUriComponent
+        | Native::GlobalEscape | Native::GlobalUnescape)
+}
+
+/// `String.prototype` methods of `Vm::call_primitive_native` that, for a string receiver and
+/// arguments that are not objects, run no guest code: `replace` and `replaceAll` look
+/// `Symbol.replace` up only on an object pattern (ES2025), and a pattern that is not an object
+/// makes no RegExp.
+const fn string_leaf(native: Native) -> bool {
+    matches!(native, Native::StringReplace | Native::StringReplaceAll | Native::StringNormalize
+        | Native::StringIsWellFormed | Native::StringToWellFormed)
+}
+
+/// A `primitive_leaf` or `string_leaf` native's call made straight into its body, without the
+/// general path's native activation and roots: none is observable, since the body runs no guest
+/// code and no collection. A call that fails had no effect, so the general path repeats it to
+/// raise its error under its activation.
+fn primitive_leaf_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value,
+    args: &[Value]) -> Option<Value> {
+    // Immediates, strings and BigInts: values whose conversions run no guest code.
+    let primitive = |value: Value| !value.is_heap() || vm.heap.is_string(value) || matches!(vm.heap.get(value), Some(Cell::BigInt(_)));
+    if !primitive(receiver) || !args.iter().all(|argument| primitive(*argument))
+        || (string_leaf(native) && !vm.heap.is_string(receiver))
+    {
+        return None;
+    }
+    let result = vm.call_primitive_native(code, native, receiver, args).ok();
+    // A string method reads its receiver as text, which it may make on demand.
+    vm.heap.charge_materialized_text();
+    result
+}
+
+/// `in_place_families` of every native, by discriminant.
+const IN_PLACE_FAMILIES: [u16; Native::COUNT as usize] = {
+    let mut table = [0; Native::COUNT as usize];
+    let mut index = 0;
+    while index < Native::COUNT {
+        table[index as usize] = in_place_families(Native::from_discriminant(index).unwrap());
+        index += 1;
+    }
+    table
+};
 
 /// A Math function of Numbers, which runs no guest code and observes no frame
 /// (`number::math_inline_call`, and `math_numbers` of up to `MATH_INLINE_ARGUMENTS`).

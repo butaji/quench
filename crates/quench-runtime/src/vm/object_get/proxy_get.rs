@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.atom_string(atom))
             }
             PropertyKey::Symbol(key) => Ok(key),
-            PropertyKey::String(_) | PropertyKey::Private(_) => {
+            PropertyKey::String(_) | PropertyKey::Private(..) => {
                 Err(self.type_error(p, "private member is not present on this object".into()))
             }
         }
@@ -43,7 +43,7 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         property: PropertyKey,
     ) -> Result<Value, JsError> {
-        if !matches!(property, PropertyKey::Private(_)) && self.handler_lacks_trap(handler, ProxyTrap::Get) {
+        if !matches!(property, PropertyKey::Private(..)) && self.handler_lacks_trap(handler, ProxyTrap::Get) {
             return self.proxy_get_target(p, target, receiver, Some(property), Value::UNDEFINED);
         }
         let key = self.proxy_key_value(p, property)?;
@@ -117,7 +117,7 @@ impl<H: Host> Vm<H> {
         match property {
             PropertyKey::String(atom) => self.get_property_with_receiver(p, target, atom, receiver),
             PropertyKey::Symbol(symbol) => self.get_symbol_property_with_receiver(p, target, symbol, receiver),
-            PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Get"),
+            PropertyKey::Private(..) => unreachable!("private keys cannot reach Proxy Get"),
         }
     }
 
@@ -185,6 +185,31 @@ impl<H: Host> Vm<H> {
     /// shape lookup excludes) or a collection. `false` for an index key, an arguments
     /// object, a dictionary-shaped target or any other exotic one.
     pub(in crate::vm) fn shape_leaves_atom_unconstrained(&self, target: Value, atom: Atom) -> bool {
+        // The fact table's word for the target's layout says whether its shape holds the name
+        // and in which slot, without a shape lookup, ahead of the array and index checks: a
+        // plain named key is no index, and a non-arguments ordinary object names its own keys
+        // on its shape.
+        // A collection, date, regexp, promise or iterator holds its own names on its shape as
+        // an ordinary object does (`Heap::ordinary_builtin_object`).
+        let facts = self
+            .heap
+            .ordinary_object(target)
+            .or_else(|| self.heap.ordinary_builtin_object(target))
+            .filter(|data| !data.is_arguments_object() && !data.has_side_descriptors() && self.plain_named_key(atom))
+            .and_then(|data| Some((data.layout_id(), super::super::PropertyKey::string(atom).key32()?, data)));
+        if let Some((layout, key32, data)) = facts
+            && let Some(word) = self.symbol_load_proofs.word(layout, key32)
+        {
+            use super::super::symbol_load_proof::{KIND_ABSENT, KIND_ABSENT_OWN, KIND_GETTER, KIND_GETTER_PAIR, KIND_GETTER_SLOT, KIND_INHERITED, KIND_OWN};
+            match word.kind() {
+                KIND_OWN => {
+                    return self.shape_slot_attributes(data.shape(), word.slot()).is_some_and(|attributes| attributes.configurable);
+                }
+                KIND_INHERITED | KIND_ABSENT | KIND_ABSENT_OWN => return true,
+                KIND_GETTER | KIND_GETTER_SLOT | KIND_GETTER_PAIR if word.hops() > 0 => return true,
+                _ => {}
+            }
+        }
         if let Some(array) = self.heap.array(target).and_then(|_| self.object_data(target)).filter(|array| !array.is_arguments_object()) {
             // An array's `length` is non-configurable and writable unless a descriptor says
             // otherwise; its elements are configurable unless a descriptor was recorded.
@@ -203,7 +228,12 @@ impl<H: Host> Vm<H> {
         };
         let shape = data.shape();
         match self.shape_slot(shape, atom) {
-            None => true,
+            None => {
+                if let Some((layout, key32, _)) = facts {
+                    self.symbol_load_proofs.record_absent_own(layout, key32);
+                }
+                true
+            }
             Some(slot) => self.shape_slot_attributes(shape, slot).is_some_and(|attributes| attributes.configurable),
         }
     }

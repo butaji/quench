@@ -15,7 +15,12 @@ impl Heap {
     }
 
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
-        self.is_live(handle.value).then_some(handle.value)
+        let live = self.is_live(handle.value);
+        if live {
+            // A cycle's snapshot may not reach what a weak read hands out.
+            self.shade(handle.value);
+        }
+        live.then_some(handle.value)
     }
 }
 
@@ -118,6 +123,7 @@ impl Heap {
             await_records,
             iterator_records,
             string_records,
+            small_strings,
             v128_records,
             marks,
             aged,
@@ -134,6 +140,7 @@ impl Heap {
             await_records,
             iterator_records,
             string_records,
+            small_strings,
             v128_records,
             marks,
         };

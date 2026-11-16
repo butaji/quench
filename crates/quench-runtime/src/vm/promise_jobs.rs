@@ -1,6 +1,5 @@
 use super::promise::{AggregateMode, AggregateRecord, PromiseJob, PromiseReaction, PromiseState};
 use super::*;
-use crate::heap::AwaitState;
 use crate::HostExecutionContext;
 
 // The initial remaining element represents iteration still in progress.
@@ -456,7 +455,7 @@ impl<H: Host> Vm<H> {
                 next: reaction.next,
                 rejected: state == PromiseState::Rejected,
                 value,
-                execution_context: reaction.execution_context.get(),
+                execution_context: reaction.execution_context,
             }));
     }
 
@@ -499,16 +498,14 @@ impl<H: Host> Vm<H> {
         reaction: PromiseJob,
     ) -> Result<(), JsError> {
         let value = reaction.value;
-        self.run_promise_job(reaction.realm, reaction.execution_context, |vm| {
-            // An await's state is both handlers: taking its continuation is the one lookup.
-            let awaited = vm.heap.await_state_mut(reaction.handler).map(AwaitState::resume);
-            let await_reaction = awaited.is_some();
+        self.run_promise_job(reaction.realm, reaction.execution_context.get(), |vm| {
+            let await_reaction = vm.heap.await_state(reaction.handler).is_some();
             if !await_reaction && !vm.is_function(reaction.handler) {
                 let state = if reaction.rejected { PromiseState::Rejected } else { PromiseState::Fulfilled };
                 return vm.settle_reaction(p, reaction.next, state, value);
             }
             let called = if await_reaction {
-                vm.resume_await(p, reaction.handler, awaited.flatten(), reaction.rejected, value)
+                vm.resume_await(p, reaction.handler, reaction.rejected, value)
             } else {
                 // The job's call roots hold the handler and its argument (`Vm::run_pending_job`).
                 vm.call_value_from_frame(p, reaction.handler, Value::UNDEFINED, &[value])
@@ -534,7 +531,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn settle_reaction(
+    pub(super) fn settle_reaction(
         &mut self,
         p: &ResidualProgram,
         next: Value,
@@ -581,7 +578,7 @@ impl<H: Host> Vm<H> {
     /// as `then` would. Without lifecycle observers the derived promise and both resolving
     /// functions are unobservable, so `promise`'s settlement can resolve `target` directly
     /// through a pass-through reaction.
-    fn promise_then_resolving(
+    pub(super) fn promise_then_resolving(
         &mut self,
         p: &ResidualProgram,
         promise: Value,
@@ -608,7 +605,7 @@ impl<H: Host> Vm<H> {
                     // async_hooks exposes its init, job boundaries, and
                     // settlement even though the resolving callbacks return
                     // no value to JavaScript.
-                    let parent = self.promise_record(promise).and_then(|record| record.host_context.get());
+                    let parent = self.promise_record(promise).and_then(|record| record.host_context().get());
                     let next = self.with_call_roots([promise, target], |vm| {
                         vm.promise_object_with_parent(parent)
                     })?;
@@ -638,7 +635,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         thenable: super::promise::ThenableJob,
     ) -> Result<(), JsError> {
-        self.run_promise_job(thenable.realm, thenable.execution_context, |vm| {
+        self.run_promise_job(thenable.realm, thenable.execution_context.get(), |vm| {
             if vm.is_intrinsic_promise_then(thenable.then)
                 && vm.is_promise(thenable.thenable)
                 && (vm.realm.promise.reaction_capabilities.is_empty()

@@ -1,5 +1,4 @@
 use super::*;
-use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
 mod parallel;
@@ -277,9 +276,9 @@ fn scope_slot_owners_survive_collection_and_release() {
 
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
-    // The prototype reference packs beside the shape and integrity bits, so a record is a
-    // header the size of a property vector plus one payload word of narrow inline values.
-    assert_eq!(size_of::<Object>(), size_of::<ValueVec>() + size_of::<u64>());
+    // The header words live once per layout (`heap::layouts`), so a record is its layout id
+    // plus one payload word of narrow inline values.
+    assert_eq!(size_of::<Object>(), size_of::<u32>() + size_of::<u64>());
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
@@ -678,100 +677,6 @@ fn object_integrity_metadata_survives_collection() {
     assert!(garbage.iter().all(|value| !heap.is_live(*value)));
 }
 
-#[test]
-fn out_of_line_private_brand_keeps_its_home_alive() {
-    let mut heap = Heap::new();
-    let home = heap.alloc(Cell::Object(plain_object()));
-    let instance = heap.alloc(Cell::Object(plain_object()));
-    heap.object_record_mut(instance)
-        .unwrap()
-        .add_private_name(PrivateBrand { home, name: 0 });
-
-    heap.collect([instance]);
-
-    assert!(heap.is_live(instance));
-    assert!(heap.is_live(home));
-
-    heap.collect([]);
-
-    assert!(!heap.is_live(instance));
-    assert!(!heap.is_live(home));
-}
-
-#[test]
-fn object_property_storage_migration_preserves_writes_and_gc_roots() {
-    let mut heap = Heap::new();
-    // Shape `n` holds `n` properties; the add past the inline values migrates them.
-    let migrated = INLINE_PROPERTY_COUNT + 1;
-    for shape in 1..=migrated {
-        heap.register_property_shape(shape as u32, shape, None);
-    }
-    let first = heap.alloc(Cell::Error("first".into()));
-    let replaced = heap.alloc(Cell::Error("replaced".into()));
-    let replacement = heap.alloc(Cell::Error("replacement".into()));
-    let fillers = (2..INLINE_PROPERTY_COUNT)
-        .map(|_| heap.alloc(Cell::Error("filler".into())))
-        .collect::<Vec<_>>();
-    let last = heap.alloc(Cell::Error("last".into()));
-    let object = heap.alloc(Cell::Object(plain_object()));
-    assert!(heap.object(object).unwrap().inline_properties().is_some());
-    heap.object_record_mut(object)
-        .unwrap()
-        .set_extensible(false);
-    heap.property_add(object, first, 1);
-    heap.property_add(object, replaced, 2);
-    for (index, filler) in fillers.iter().enumerate() {
-        heap.property_add(object, *filler, (3 + index) as u32);
-    }
-    assert!(heap.object(object).unwrap().inline_properties().is_some());
-    heap.property_set(object, 1, replacement);
-    heap.property_add(object, last, migrated as u32);
-
-    heap.collect([object]);
-    let data = heap.object(object).unwrap();
-    assert_eq!(data.shape(), migrated as u32);
-    assert!(data.inline_properties().is_none());
-    assert!(!data.is_extensible());
-    assert_eq!(heap.property_get(data, 0), Some(first));
-    assert_eq!(heap.property_get(data, 1), Some(replacement));
-    for (index, filler) in fillers.iter().enumerate() {
-        assert_eq!(heap.property_get(data, 2 + index), Some(*filler));
-    }
-    assert_eq!(heap.property_get(data, migrated - 1), Some(last));
-    assert!(heap.is_live(first));
-    assert!(!heap.is_live(replaced));
-    assert!(heap.is_live(replacement));
-    assert!(heap.is_live(last));
-
-    heap.collect([]);
-    assert!(!heap.is_live(object));
-    assert!(!heap.is_live(first));
-    assert!(!heap.is_live(replacement));
-    assert!(!heap.is_live(last));
-}
-
-#[test]
-fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
-    let mut heap = Heap::new();
-    // A shape of two properties, the pair below, whatever the inline count.
-    heap.register_property_shape(1, 2, None);
-    let kept = heap.alloc(Cell::Error("kept".into()));
-    let deleted = heap.alloc(Cell::Error("deleted".into()));
-    let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
-    heap.property_set(object, 1, Value::DELETED);
-
-    heap.collect([object]);
-
-    assert!(heap.is_live(object));
-    assert!(heap.is_live(kept));
-    assert!(!heap.is_live(deleted));
-
-    heap.collect([]);
-
-    assert!(!heap.is_live(object));
-    assert!(!heap.is_live(kept));
-}
-
 #[cfg(feature = "profile-memory")]
 #[test]
 fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
@@ -785,10 +690,6 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     data.set_module_namespace();
     data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
     data.set_deferred_module(Some(crate::ModuleSource::text("module.js", "export const value = 1;")));
-    data.add_private_name(PrivateBrand {
-        home: object,
-        name: 0,
-    });
 
     assert!(heap.memory_stats().3 > before);
     assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);
@@ -838,7 +739,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let constructor = heap.alloc(Cell::Object(plain_object()));
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
-            object: Box::new(plain_object()),
+            object: plain_object(),
             meta: Rc::new(crate::heap::RegExpMeta {
                 source: "a".into(),
                 flags: crate::vm::RegExpFlags::validated(""),
@@ -1152,7 +1053,7 @@ fn promoted_cells_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
         |heap| {
             heap.alloc(Cell::Set {
-                object: Box::new(plain_object()),
+                object: plain_object(),
                 entries: Default::default(),
             })
         },
@@ -1372,7 +1273,7 @@ fn reclaimable_programs_make_a_full_collection_due_as_old_growth() {
         heap.set_memory_policy(policy);
         collect_minor(&mut heap, []);
         assert!(!heap.should_full_collect());
-        let growth = heap.pacing().minimum_external_budget;
+        let growth = heap.pacing().minimum_program_growth;
         heap.charge_reclaimable_program(growth);
         assert!(heap.should_full_collect());
         heap.collect_with_object_roots([], |_, _, _, _, _| {}, None, None, true);
@@ -1411,11 +1312,12 @@ fn memory_census_counts_array_allocations_once_across_storage_and_collection() {
     assert_eq!(shared.dense_array_elements_bytes, source_payload_bytes);
     assert_eq!(shared.dense_array_headers_bytes, header_bytes);
 
-    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::integer(4));
+    // A double has no narrow form, so the collection below keeps the grown backing wide.
+    heap.array_elements_mut(direct).unwrap().make_mut().push(Value::number(0.5));
     let grown = heap.array_elements(direct).unwrap();
     assert!(grown.capacity() > source.capacity());
     let grown_payload_bytes = grown.capacity() * size_of::<Value>();
-    assert_eq!(source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
+    assert_eq!(&*source.as_slice(), &[Value::integer(1), Value::integer(2), Value::integer(3)]);
     heap.collect([empty_direct, empty_legacy, direct, legacy]);
     let detached = heap.memory_composition();
     assert_eq!(detached.dense_array_backing_count, 2);
@@ -1530,9 +1432,8 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
 #[test]
 fn object_publication_admits_preinitialized_slots_after_census() {
     use crate::typed_ir::Type;
-    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 3] = [
+    let publishers: [(&str, fn(&mut Heap, Object) -> Value); 2] = [
         ("object", Heap::alloc_object),
-        ("flagged-prototype", Heap::alloc_object_under_flagged_prototype),
         ("cell", |heap, object| heap.alloc(Cell::Object(object))),
     ];
     for (publisher, publish) in publishers {
@@ -1551,6 +1452,20 @@ fn object_publication_admits_preinitialized_slots_after_census() {
             assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
         }
     }
+}
+
+#[test]
+fn unfilled_object_records_only_the_values_that_fill_it() {
+    use crate::typed_ir::Type;
+    let mut heap = Heap::new();
+    heap.track_slot_representations(&[(0, None), (1, None)]);
+    let header = crate::heap::InlineObjectHeader::of(Value::NULL, 1);
+    let object = heap.alloc_unfilled_object_under_flagged_prototype(header);
+    assert_eq!(heap.slot_type(1, 0), Type::NEVER);
+    heap.fill_new_object_slot(object, 0, Value::NULL);
+    assert_eq!(heap.slot_type(1, 0), Type::immediate(Value::NULL));
+    assert_eq!(heap.unrepresented_slots(), 0);
+    assert_eq!(heap.property_get(heap.object(object).unwrap(), 0), Some(Value::NULL));
 }
 
 #[test]
@@ -1626,11 +1541,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                     object, realm: Value::NULL, env: Value::NULL,
                     kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
                 })),
-                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord {
-                    state: PromiseState::Pending, result: Value::UNDEFINED,
-                    reactions: Default::default(), rejection: PromiseRejectionState::Unobserved,
-                    host_context: None.into(), module_evaluation: false,
-                } })),
+                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
                 Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
                     ext: IteratorExt::default(),
@@ -1671,10 +1582,454 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     assert_eq!(census.environment_logical_slots, 2 * width);
     assert_eq!(census.environment_sparse_count, 1);
     assert_eq!(census.environment_storage_bytes,
-        size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
+        (1 + super::cell::ENVIRONMENT_PREFIX_WORDS) * size_of::<usize>() + width * size_of::<EnvironmentSlot>() + sparse_bytes);
     assert!(sparse_bytes < width * size_of::<EnvironmentSlot>());
     heap.collect([copy]);
     assert_eq!(heap.memory_composition().environment_storage_bytes, census.environment_storage_bytes);
     heap.collect([]);
     assert_eq!(heap.memory_composition().environment_storage_bytes, 0);
+}
+
+#[test]
+fn a_full_collection_sweeping_strings_on_a_worker_matches_the_serial_sweep() {
+    use crate::vm::wtf16::{JsString, Parts};
+    let run = |on_worker: bool| {
+        let mut heap = Heap::new();
+        if on_worker {
+            heap.force_parallel_mark_for_test();
+        }
+        // Text shared with this frame: every dead heap copy and slice drops a clone of its `Rc`.
+        let shared = JsString::from_str(&"s".repeat(200));
+        let wide = JsString::from_units(&[0x3b1, 0x3b2, 0x3b3, 0x3b4]);
+        let (mut kept, mut dead) = (Vec::new(), Vec::new());
+        for i in 0..300_usize {
+            let mut rope = JsString::from_str(&"r".repeat(1024));
+            rope.push_js_string(&shared);
+            let strings = [
+                JsString::from_str("ab"),
+                JsString::from_str(&"x".repeat(40 + i % 7)),
+                shared.clone(),
+                shared.substring(3..150),
+                wide.clone(),
+                rope,
+            ];
+            for (position, string) in strings.into_iter().enumerate() {
+                let value = heap.alloc_string(string);
+                if (i + position) % 2 == 0 { kept.push(value) } else { dead.push(value) }
+            }
+            // Parts are ASCII strings (`Vm::string_of_parts`).
+            let mut parts = Parts::EMPTY;
+            let (first, second) = (heap.alloc_string(JsString::from_str("part one")), heap.alloc_string(JsString::from_str(&"p".repeat(64))));
+            kept.extend([first, second]);
+            let Some(HeapReference::StringRecord(first)) = first.heap_reference() else { unreachable!() };
+            let Some(HeapReference::StringRecord(second)) = second.heap_reference() else { unreachable!() };
+            assert!(parts.push_text(first) && parts.push_text(second) && parts.push_number(i as f64));
+            let value = heap.alloc_parts_string(parts);
+            if i % 3 == 0 { kept.push(value) } else { dead.push(value) }
+        }
+        for (atom, &value) in dead.iter().chain(&kept).enumerate() {
+            heap.record_string_atom(value, atom as u32);
+        }
+        let texts: Vec<String> = kept
+            .iter()
+            .map(|&value| heap.string(value).map_or_else(String::new, JsString::to_host_owned))
+            .collect();
+        heap.collect_with_object_roots(kept.iter().copied(), |_, _, _, _, _| {}, None, None, true);
+        assert!(kept.iter().all(|&value| heap.is_live(value)));
+        assert!(dead.iter().all(|&value| !heap.is_live(value)));
+        assert!(dead.iter().all(|&value| heap.string_atom(value).is_none()), "a dead string's atom is forgotten");
+        assert!(kept.iter().all(|&value| heap.string_atom(value).is_some()));
+        for (&value, text) in kept.iter().zip(&texts) {
+            assert_eq!(&heap.string(value).map_or_else(String::new, JsString::to_host_owned), text);
+        }
+        assert_eq!(shared.to_host_owned(), "s".repeat(200));
+        (heap.string_records.live_count(), heap.payload_bytes)
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn concurrent_cycles_are_refused_until_every_gate_passes() {
+    use concurrent_mark::{CONCURRENT_CYCLE_MAX_LEGACY_CELLS, CycleMode, CycleRefusal};
+    let mut heap = Heap::new();
+    assert!(!heap.satb_active());
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Off, false), Some(CycleRefusal::Disabled));
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, true), Some(CycleRefusal::NativeCode));
+    // A new heap's pacing favors minor collections.
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), Some(CycleRefusal::Generational));
+    heap.pacing_state.favor_full_collections_for_test();
+    let passing = if cfg!(feature = "profile-memory") { Some(CycleRefusal::ProfilingMemory) } else { None };
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
+    let cells: Vec<Value> = (0..=CONCURRENT_CYCLE_MAX_LEGACY_CELLS)
+        .map(|_| heap.alloc_bigint(crate::bigint::JsBigInt::from(1_u8)))
+        .collect();
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), Some(CycleRefusal::LegacyCells));
+    drop(cells);
+    heap.collect([]);
+    heap.pacing_state.favor_full_collections_for_test();
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
+    // Weak cells hold their entries strongly through a cycle: they refuse none.
+    let weak_ref = heap.alloc(Cell::WeakRef { object: Box::new(plain_object()), target: None });
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
+    assert!(heap.is_live(weak_ref));
+    heap.reset();
+    heap.pacing_state.favor_full_collections_for_test();
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), passing);
+}
+
+#[test]
+fn adaptive_cycles_follow_the_measured_cost() {
+    use concurrent_mark::{CycleExtent, CycleMode, CycleRefusal};
+    if cfg!(feature = "profile-memory") {
+        return;
+    }
+    let mut heap = Heap::new();
+    heap.pacing_state.favor_full_collections_for_test();
+    let refusal = |heap: &Heap| heap.concurrent_cycle_refusal_with(CycleMode::Adaptive, false);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.resident_at_full_start = 2000;
+    heap.live_weight_after_full = 1000;
+    heap.weight_between_fulls = 1000;
+    // The first full collection has no interval or live weight before it to weigh.
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    // A long mark, a large share of the (short) time since the last full collection.
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), None);
+    assert_eq!(heap.concurrent_cycle_refusal_with(CycleMode::Always, false), None);
+    // A short mark pauses too little.
+    heap.judge_cycles(false, 100, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), None);
+    // A cycle within the stop-the-world peak and pause per weight keeps cycles on.
+    heap.last_cycle_extent = CycleExtent { mutator_micros: 1_000, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500, 1_000);
+    assert_eq!(refusal(&heap), None);
+    // One that paused the mutator longer per weight falls back for a full collection, then
+    // cycles are measured anew.
+    heap.last_cycle_extent = CycleExtent { mutator_micros: 9_500, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500, 1_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), None);
+    // One whose interval peaked past the stop-the-world peak for its live weight falls back
+    // for two.
+    heap.resident_at_full_start = 2200;
+    heap.last_cycle_extent = CycleExtent { mutator_micros: 0, planned: true, ..CycleExtent::default() };
+    heap.judge_cycles(true, 500, 1_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.resident_at_full_start = 2000;
+    heap.judge_cycles(false, 10_000, 10_000);
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), Some(CycleRefusal::NotPaying));
+    heap.judge_cycles(false, 10_000, 10_000);
+    assert_eq!(refusal(&heap), None);
+}
+
+#[test]
+fn the_snapshot_barrier_copies_an_old_record_once_before_its_first_write() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2, None);
+    heap.register_property_shape(2, 4, None);
+    let [a, b, c] = [(); 3].map(|_| heap.alloc_object(plain_object()));
+    let owner = heap.alloc_object_pair(Value::NULL, 1, a, b);
+    // Past the inline values: the children live in an arena run.
+    let run_owner = heap.alloc_object_with_properties(Value::NULL, 2, &[a, b, c, Value::NULL]);
+    assert!(heap.object(run_owner).unwrap().inline_properties().is_none());
+    heap.collect([owner, run_owner, c]);
+    let owner_id = owner.direct_object_index().unwrap();
+    let sorted = |mut values: Vec<Value>| {
+        values.retain(|value| value.is_heap());
+        values.sort_by_key(|value| value.to_bits());
+        values
+    };
+    heap.set_satb(true);
+    assert!(heap.satb_active());
+    // Every store takes the barriered path, a store of no reference too.
+    assert!(!heap.store_unlogged(crate::staged::RecordSpace::Object, owner_id, Value::NULL));
+    assert!(unsafe { heap.flat_property_mut_ptr_unchecked(run_owner, 0, crate::typed_ir::Type::ANY) }.is_none());
+    let fresh = heap.alloc_object_pair(Value::NULL, 1, a, b);
+    // Deleting an edge snapshots the old owner's children as they were.
+    heap.property_set(owner, 0, Value::NULL);
+    assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, b]));
+    // Its later writes, and writes to a record newer than the cycle, copy nothing.
+    heap.property_set(owner, 1, c);
+    heap.property_set(fresh, 0, c);
+    assert!(heap.take_satb_values().is_empty());
+    heap.property_set(run_owner, 2, Value::NULL);
+    assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, b, c]));
+    heap.write_barrier(run_owner);
+    assert!(heap.take_satb_values().is_empty());
+    // The generational barrier is off: the owner keeps its mark and nothing is logged.
+    assert!(heap.object_records.is_marked(owner_id));
+    assert_eq!(heap.object_records.remembered_count(), 0);
+    heap.set_satb(false);
+    heap.property_set(owner, 0, a);
+    assert_eq!(heap.object_records.remembered_count(), 1);
+    assert!(heap.take_satb_values().is_empty());
+    // A later cycle snapshots the owner again: the snapshotted bits were forgotten.
+    heap.collect([owner, run_owner]);
+    heap.set_satb(true);
+    heap.property_set(owner, 1, Value::NULL);
+    assert_eq!(sorted(heap.take_satb_values()), sorted(vec![a, c]));
+    heap.set_satb(false);
+}
+
+#[test]
+fn allocation_is_black_while_the_snapshot_barrier_is_on() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2, None);
+    let objects: Vec<Value> = (0..300).map(|_| heap.alloc_object(plain_object())).collect();
+    // Every third object dies, leaving reusable ids below the high water.
+    let kept: Vec<Value> = objects.iter().copied().step_by(3).collect();
+    heap.collect(kept.iter().copied());
+    let reusable = heap.object_records.reusable_ids();
+    assert!(reusable > 0);
+    heap.set_satb(true);
+    // More records than the holes: some reuse ids below the frontier, the rest are fresh.
+    let during: Vec<Value> = (0..reusable + 100).map(|_| heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)).collect();
+    let cell = heap.alloc(Cell::Error("made during the cycle".into()));
+    // A record made during the cycle is newer than its snapshot: writing it copies nothing.
+    heap.property_set(during[0], 0, kept[0]);
+    heap.property_set(*during.last().unwrap(), 0, kept[0]);
+    assert!(heap.take_satb_values().is_empty());
+    let cell_index = cell.legacy_heap_index().unwrap() as usize;
+    assert!(Heap::marked(&heap.marks, cell_index), "a cell made during a cycle is marked at once");
+    heap.set_satb(false);
+    // Everything made during the cycle is marked, and no mark names a free id.
+    assert!(during.iter().all(|value| heap.object_records.is_marked(value.direct_object_index().unwrap())));
+    assert!(heap.object_records.marks_within_occupancy());
+    // The next collection frees them as usual.
+    heap.collect(kept.iter().copied());
+    assert!(during.iter().all(|&value| !heap.is_live(value)) && !heap.is_live(cell));
+    assert!(kept.iter().all(|&value| heap.is_live(value)));
+}
+
+#[test]
+fn an_incremental_cycle_keeps_what_its_snapshot_reached_under_interleaved_mutation() {
+    use std::collections::{HashMap, HashSet};
+    let reachable = |roots: &[Value], fields: &HashMap<Value, Vec<Value>>| {
+        let (mut seen, mut stack) = (HashSet::new(), roots.to_vec());
+        while let Some(node) = stack.pop() {
+            if node.is_heap() && seen.insert(node) {
+                stack.extend(fields.get(&node).into_iter().flatten().copied());
+            }
+        }
+        seen
+    };
+    for seed in 1..=24_u64 {
+        // Budget 0: the marker thread marks beside the mutation, whose steps share its work.
+        for budget in [0, 1, 2, 7, 64, usize::MAX] {
+            let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+            let mut next = move |bound: usize| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state % bound as u64) as usize
+            };
+            let mut heap = Heap::new();
+            // Two-slot objects keep their values inline; four-slot ones in an arena run.
+            heap.register_property_shape(1, 2, None);
+            heap.register_property_shape(2, 4, None);
+            let mut fields: HashMap<Value, Vec<Value>> = HashMap::new();
+            let make = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, wide: bool| {
+                let node = if wide {
+                    heap.alloc_object_with_properties(Value::NULL, 2, &[Value::NULL; 4])
+                } else {
+                    heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)
+                };
+                fields.insert(node, vec![Value::NULL; if wide { 4 } else { 2 }]);
+                node
+            };
+            let store = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, node: Value, slot: usize, value: Value| {
+                heap.property_set(node, slot, value);
+                fields.get_mut(&node).unwrap()[slot] = value;
+            };
+            let nodes: Vec<Value> = (0..48).map(|index| make(&mut heap, &mut fields, index % 3 == 0)).collect();
+            for &node in &nodes {
+                for slot in 0..fields[&node].len() {
+                    let value = if next(3) == 0 { Value::NULL } else { nodes[next(nodes.len())] };
+                    store(&mut heap, &mut fields, node, slot, value);
+                }
+            }
+            let roots = nodes[..3].to_vec();
+            heap.collect(roots.iter().copied());
+            let live = reachable(&roots, &fields);
+            fields.retain(|node, _| live.contains(node));
+            // Edges dropped before the cycle leave garbage its snapshot does not reach.
+            let mut existing: Vec<Value> = fields.keys().copied().collect();
+            existing.sort_by_key(|value| value.to_bits());
+            for _ in 0..12 {
+                let owner = existing[next(existing.len())];
+                let slot = next(fields[&owner].len());
+                store(&mut heap, &mut fields, owner, slot, Value::NULL);
+            }
+            if budget == 0 {
+                assert!(heap.properties.values_stay_in_place(), "a marker thread reads the arena in place");
+            }
+            heap.begin_cycle_with(roots.iter().copied(), budget == 0);
+            let at_start = reachable(&roots, &fields);
+            for _ in 0..300 {
+                let mut now: Vec<Value> = reachable(&roots, &fields).into_iter().collect();
+                now.sort_by_key(|value| value.to_bits());
+                match next(4) {
+                    0 => {
+                        heap.mark_step(budget);
+                    }
+                    1 => {
+                        let node = make(&mut heap, &mut fields, next(2) == 0);
+                        let owner = now[next(now.len())];
+                        let slot = next(fields[&owner].len());
+                        store(&mut heap, &mut fields, owner, slot, node);
+                        store(&mut heap, &mut fields, node, 0, now[next(now.len())]);
+                    }
+                    _ => {
+                        // Move, drop or re-link an edge among what the mutator can reach.
+                        let owner = now[next(now.len())];
+                        let slot = next(fields[&owner].len());
+                        let value = if next(4) == 0 { Value::NULL } else { now[next(now.len())] };
+                        store(&mut heap, &mut fields, owner, slot, value);
+                    }
+                }
+            }
+            heap.finish_cycle(roots.iter().copied());
+            assert!(!heap.cycle_running() && !heap.satb_active());
+            let survivors = reachable(&roots, &fields);
+            for &node in &survivors {
+                assert!(heap.is_live(node), "seed {seed} budget {budget}: a reachable node was freed");
+                let object = heap.object(node).unwrap();
+                for (slot, &value) in fields[&node].iter().enumerate() {
+                    assert_eq!(heap.property_get(object, slot), Some(value), "seed {seed} budget {budget}");
+                }
+            }
+            // What the snapshot could not reach is garbage the cycle frees.
+            for node in existing.iter().filter(|node| !at_start.contains(node)) {
+                assert!(!heap.is_live(*node), "seed {seed}: garbage at the cycle's start survived it");
+            }
+            // The heap collects as usual afterwards.
+            heap.collect(roots.iter().copied());
+            assert!(survivors.iter().all(|&node| heap.is_live(node)));
+            assert!(heap.object_records.marks_within_occupancy());
+        }
+    }
+}
+
+#[test]
+fn reference_counts_match_the_heap_references_after_each_collection() {
+    use std::collections::{HashMap, HashSet};
+    let reachable = |roots: &[Value], fields: &HashMap<Value, Vec<Value>>| {
+        let (mut seen, mut stack) = (HashSet::new(), roots.to_vec());
+        while let Some(node) = stack.pop() {
+            if node.is_heap() && seen.insert(node) {
+                stack.extend(fields.get(&node).into_iter().flatten().copied());
+            }
+        }
+        seen
+    };
+    for seed in 1..=24_u64 {
+        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut next = move |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound as u64) as usize
+        };
+        let mut heap = Heap::new();
+        // Two-slot objects keep their values inline; four-slot ones in an arena run.
+        heap.register_property_shape(1, 2, None);
+        heap.register_property_shape(2, 4, None);
+        heap.set_rc(true);
+        let mut fields: HashMap<Value, Vec<Value>> = HashMap::new();
+        let make = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, wide: bool| {
+            let node = if wide {
+                heap.alloc_object_with_properties(Value::NULL, 2, &[Value::NULL; 4])
+            } else {
+                heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)
+            };
+            fields.insert(node, vec![Value::NULL; if wide { 4 } else { 2 }]);
+            node
+        };
+        let store = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, node: Value, slot: usize, value: Value| {
+            heap.property_set(node, slot, value);
+            fields.get_mut(&node).unwrap()[slot] = value;
+        };
+        let roots: Vec<Value> = (0..3).map(|index| make(&mut heap, &mut fields, index == 0)).collect();
+        for step in 0..600 {
+            let mut now: Vec<Value> = reachable(&roots, &fields).into_iter().collect();
+            now.sort_by_key(|value| value.to_bits());
+            match next(8) {
+                0 | 1 => {
+                    let node = make(&mut heap, &mut fields, next(3) == 0);
+                    let owner = now[next(now.len())];
+                    let slot = next(fields[&owner].len());
+                    store(&mut heap, &mut fields, owner, slot, node);
+                    store(&mut heap, &mut fields, node, 0, now[next(now.len())]);
+                }
+                2..=5 => {
+                    let owner = now[next(now.len())];
+                    let slot = next(fields[&owner].len());
+                    let value = if next(3) == 0 { Value::NULL } else { now[next(now.len())] };
+                    store(&mut heap, &mut fields, owner, slot, value);
+                }
+                full => {
+                    if full == 7 && next(4) == 0 {
+                        heap.collect(roots.iter().copied());
+                    } else {
+                        collect_minor(&mut heap, roots.iter().copied());
+                    }
+                    let live = reachable(&roots, &fields);
+                    for &node in &live {
+                        assert!(heap.is_live(node), "seed {seed} step {step}: a reachable node was freed");
+                        let object = heap.object(node).unwrap();
+                        for (slot, &value) in fields[&node].iter().enumerate() {
+                            assert_eq!(heap.property_get(object, slot), Some(value), "seed {seed} step {step}");
+                        }
+                    }
+                    fields.retain(|node, _| live.contains(node));
+                    let mismatches = heap.rc_mismatches();
+                    assert!(mismatches.is_empty(), "seed {seed} step {step}: counts differ from references: {mismatches:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_dropped_acyclic_old_structure_is_freed_by_the_next_minor_collection_under_counts() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2, None);
+    heap.set_rc(true);
+    let root = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
+    let mut chain = Vec::new();
+    let mut owner = root;
+    for _ in 0..50 {
+        let node = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
+        heap.property_set(owner, 0, node);
+        chain.push(node);
+        owner = node;
+    }
+    // A second edge into the chain's middle, from a node that stays.
+    let keeper = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
+    heap.property_set(root, 1, keeper);
+    heap.property_set(keeper, 0, chain[40]);
+    heap.collect([root]);
+    assert!(heap.rc_mismatches().is_empty());
+    heap.property_set(root, 0, Value::NULL);
+    collect_minor(&mut heap, [root]);
+    assert!(heap.rc_mismatches().is_empty());
+    for (index, &node) in chain.iter().enumerate() {
+        assert_eq!(heap.is_live(node), index >= 40, "node {index}");
+    }
+    assert!(heap.is_live(root) && heap.is_live(keeper));
+    // A zero-count record a root names stays.
+    heap.property_set(keeper, 0, Value::NULL);
+    collect_minor(&mut heap, [root, chain[45]]);
+    assert!(heap.is_live(chain[45]) && heap.is_live(chain[49]) && !heap.is_live(chain[40]));
+    assert!(heap.rc_mismatches().is_empty());
+    collect_minor(&mut heap, [root]);
+    assert!(chain.iter().all(|&node| !heap.is_live(node)));
+    assert!(heap.rc_mismatches().is_empty());
 }

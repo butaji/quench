@@ -5,6 +5,26 @@ use super::*;
 /// no bound since each layer there is a native call of its own.
 const CALL_FORWARDING_DEPTH: usize = 4;
 
+/// SetFunctionLength's value for a bound function of a target whose `length` is
+/// `target_length`, past `bound_count` bound values: 0 for a non-number.
+fn bound_length(target_length: Value, bound_count: f64) -> f64 {
+    match target_length.as_number() {
+        None => 0.0,
+        Some(target_length) if target_length.is_infinite() => target_length.max(0.0),
+        Some(target_length) => (target_length.trunc() - bound_count).max(0.0),
+    }
+}
+
+/// A bound function's own `length` and `name`: read-only, not enumerable, configurable.
+const BOUND_FUNCTION_NAMED_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
+    writable: false,
+    enumerable: false,
+    configurable: true,
+    accessor: false,
+    getter: None,
+    setter: None,
+};
+
 impl<H: Host> Vm<H> {
     pub(super) fn set_function_source(
         &mut self,
@@ -83,14 +103,17 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_caller_value(&mut self, function: Value) -> Result<Value, JsError> {
         // Legacy reflection reads the frame stack (`Vm::materialize_deferred_lane`).
         self.materialize_deferred_lane();
-        let caller = self.function_caller(function);
+        let mut caller = self.function_caller(function);
+        if caller.as_known_closure().is_some() {
+            caller = self.known_closure_function(caller)?;
+        }
         let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
             return Ok(caller);
         };
         let deferred = self
             .programs
             .get(program)
-            .is_some_and(|code| code.function_get(id as usize).is_some_and(|body| body.prototype_unobservable));
+            .is_some_and(|code| code.functions.get(id as usize).is_some_and(|slot| slot.header().prototype_unobservable));
         let atom = self.intern_atom("prototype");
         if deferred && self.own_property(caller, atom).is_none() {
             let parent = self.realm_object_prototype(realm);
@@ -98,6 +121,28 @@ impl<H: Host> Vm<H> {
             self.define_instance_prototype(caller, atom, prototype, false, false)?;
         }
         Ok(caller)
+    }
+
+    /// The function object a call-only closure (`Value::known_closure`) stands for, made when
+    /// legacy reflection hands it out: each frame running it names the object from then on,
+    /// so further reads in those calls return the same one. A closure of another program than
+    /// the running one is not handed out.
+    fn known_closure_function(&mut self, known: Value) -> Result<Value, JsError> {
+        let Some((id, env)) = known.as_known_closure() else {
+            return Ok(known);
+        };
+        let program = self.active_program;
+        let Some(code) = self.programs.get(program) else {
+            return Ok(Value::NULL);
+        };
+        if !self.frames.iter().any(|frame| frame.context.callable() == Some(known) && frame.program == program) {
+            return Ok(Value::NULL);
+        }
+        let function = self.closure(&code, id, env)?;
+        for frame in self.frames.iter_mut().filter(|frame| frame.context.callable() == Some(known)) {
+            frame.context = CallContext::Function(function);
+        }
+        Ok(function)
     }
 
     fn function_caller(&self, function: Value) -> Value {
@@ -123,6 +168,14 @@ impl<H: Host> Vm<H> {
                 CallContext::DirectEval(_) => continue,
                 CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
                 CallContext::Function(caller) | CallContext::Constructor(caller) => {
+                    // A call-only closure's function is a plain sloppy one of its frame's program
+                    // (`Function::prototype_unobservable`).
+                    if let Some((id, _)) = caller.as_known_closure() {
+                        let visible = self.programs.get(self.frames[index].program).is_some_and(|program| {
+                            program.function_get(id as usize).is_some_and(|metadata| !metadata.strict)
+                        });
+                        return if visible { caller } else { Value::NULL };
+                    }
                     let Some(FunctionRecord {
                         kind:
                             FunctionKind::User(program_id, id),
@@ -181,7 +234,7 @@ impl<H: Host> Vm<H> {
             ),
         });
         self.with_call_roots([arguments], |vm| {
-            vm.initialize_arguments_object(arguments, Some(function), &args, expose_callee)?;
+            vm.initialize_arguments_object(arguments, Some(function), &args.values_cow(), expose_callee)?;
             Ok(arguments)
         })
     }
@@ -195,117 +248,104 @@ impl<H: Host> Vm<H> {
         if !self.is_function(target) {
             return Err(JsError(super::call_printer::NOT_CALLABLE_MESSAGE.into()));
         }
-        let env = self.object();
-        let target_atom = self.runtime_atoms.bound_target;
-        let this_atom = self.runtime_atoms.bound_this;
-        let args_atom = self.runtime_atoms.bound_args;
-        self.set_property(env, target_atom, target)?;
-        self.set_property(
-            env,
-            this_atom,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-        )?;
+        // BoundFunctionCreate's [[GetPrototypeOf]], then SetFunctionLength's and SetFunctionName's
+        // reads of the target, which may run guest code; the bound function made after them
+        // observes nothing they could.
+        let target_root = self.heap.root(target);
+        let metadata = self.bound_function_metadata(p, target_root, args.len().saturating_sub(1) as f64);
+        let target = self.heap.root_value(target_root).expect("bound target root remains live");
+        self.heap.release_root(target_root);
+        let (prototype, length, name) = metadata?;
+        let this = args.first().copied().unwrap_or(Value::UNDEFINED);
         let bound_args = self.heap.alloc(Cell::Array {
             object: crate::heap::ArrayObject::new(
                 Self::empty_object(self.array_proto),
                 args.get(1..).unwrap_or_default().to_vec(),
             ),
         });
-        self.set_property(env, args_atom, bound_args)?;
+        // `name` is "bound " and the target's name, interned as a builtin's name is.
+        let name_atom = self.intern_atom(&format!("bound {name}"));
+        let name = self.heap.alloc_string(self.atom_value(name_atom));
+        // Every bound function's own `length` and `name`, and its environment's three values,
+        // reach the shapes the first one's adds recorded: the next ones are made finished there.
+        if let Some((shape, env_shape)) = self.bound_function_shape {
+            let (storage, inline) = self.heap.initial_object_storage(env_shape, &[target, this, bound_args], false);
+            let object_prototype = self.realm_object_prototype(self.realm.globals);
+            let env = self.heap.alloc_object(crate::heap::Object::with_property_storage(object_prototype, storage, inline));
+            let realm = self.realm.globals;
+            let object = self.finished_closure_object(prototype, shape, [Value::number(length), name], None);
+            let function = self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(Native::FunctionBoundCall), env });
+            self.capture_function_name_for_atom(function, name_atom);
+            return Ok(function);
+        }
+        let env = self.object();
+        self.set_property(env, self.runtime_atoms.bound_target, target)?;
+        self.set_property(env, self.runtime_atoms.bound_this, this)?;
+        self.set_property(env, self.runtime_atoms.bound_args, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
-        let function_root = self.heap.root(function);
-        let target_root = self.heap.root(target);
-        let outcome = self.initialize_bound_function_metadata(
-            p,
-            function_root,
-            target_root,
-            args.len().saturating_sub(1) as f64,
-        );
-        self.heap.release_root(target_root);
-        self.heap.release_root(function_root);
-        outcome
+        self.object_data_mut(function).expect("bound function has object storage").set_proto(prototype);
+        let length_atom = self.length_atom;
+        self.set_property_with_attributes(function, length_atom, Value::number(length), BOUND_FUNCTION_NAMED_ATTRIBUTES)?;
+        self.set_property_with_attributes(function, self.runtime_atoms.name, name, BOUND_FUNCTION_NAMED_ATTRIBUTES)?;
+        self.capture_function_name_for_atom(function, name_atom);
+        let shape_of = |vm: &Self, object: Value| vm.object_data(object).map(crate::heap::Object::shape).filter(|&shape| !vm.shape_is_dictionary(shape));
+        self.bound_function_shape = shape_of(self, function).zip(shape_of(self, env));
+        Ok(function)
     }
 
-    fn initialize_bound_function_metadata(
+    /// The own data property `atom` of an ordinary object whose shape holds every own
+    /// property's attributes and no getter (`Vm::plain_function_length`'s test): its value,
+    /// read observing nothing. `None` for an accessor, an absent name or any other object.
+    fn plain_own_data(&self, object: Value, atom: Atom) -> Option<Value> {
+        let data = self.object_data(object)?;
+        if data.has_side_descriptors() || self.shapes[data.shape() as usize].facts.slot_getters() {
+            return None;
+        }
+        let slot = self.shape_slot(data.shape(), atom)?;
+        self.heap.property_get(data, slot).filter(|value| !self.is_accessor_pair(data.shape(), *value))
+    }
+
+    /// What a bound function of the target `target_root` holds is read from it (ECMA-262
+    /// 10.4.1.3, 20.2.3.2): its prototype, its own `length` less the `bound_count` values
+    /// bound (0 for none, or a non-number), and its `name` (empty for a non-string).
+    fn bound_function_metadata(
         &mut self,
         p: &ResidualProgram,
-        function_root: RootId,
         target_root: RootId,
         bound_count: f64,
-    ) -> Result<Value, JsError> {
-        let target = self
-            .heap
-            .root_value(target_root)
-            .expect("bound target root remains live");
+    ) -> Result<(Value, f64, String), JsError> {
+        let target = self.heap.root_value(target_root).expect("bound target root remains live");
         let prototype = self.object_get_prototype_of(p, target)?;
-        let function = self
-            .heap
-            .root_value(function_root)
-            .expect("bound function root remains live");
-        self.object_data_mut(function)
-            .expect("bound function has object storage")
-            .set_proto(prototype);
-        let target = self
-            .heap
-            .root_value(target_root)
-            .expect("bound target root remains live");
+        let prototype_root = self.heap.root(prototype);
+        let outcome = self.bound_function_length_and_name(p, target_root, bound_count);
+        self.heap.release_root(prototype_root);
+        let (length, name) = outcome?;
+        Ok((prototype, length, name))
+    }
+
+    fn bound_function_length_and_name(&mut self, p: &ResidualProgram, target_root: RootId, bound_count: f64) -> Result<(f64, String), JsError> {
+        let target = self.heap.root_value(target_root).expect("bound target root remains live");
+        // A target holding both as own data properties, as a function holds them unless
+        // redefined, answers HasOwnProperty and both reads from its shape, running nothing.
+        if let Some(length) = self.plain_own_data(target, self.length_atom)
+            && let Some(name) = self.plain_own_data(target, self.runtime_atoms.name)
+        {
+            return Ok((bound_length(length, bound_count), self.heap.string(name).map(ToString::to_string).unwrap_or_default()));
+        }
         let length_atom = self.length_atom;
         let length_key = self.heap.alloc_string(self.atom_value(length_atom));
         // HasOwnProperty(Target, "length"): [[GetOwnProperty]], a Proxy's through its trap.
-        let bound_length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
-            let target = self
-                .heap
-                .root_value(target_root)
-                .expect("bound target root remains live");
-            let target_length = self.get_property(p, target, length_atom)?;
-            match target_length.as_number() {
-                None => 0.0,
-                Some(target_length) if target_length.is_infinite() => target_length.max(0.0),
-                Some(target_length) => (target_length.trunc() - bound_count).max(0.0),
-            }
+        let length = if self.own_property_enumerable(p, target, length_key)?.is_some() {
+            let target = self.heap.root_value(target_root).expect("bound target root remains live");
+            bound_length(self.get_property(p, target, length_atom)?, bound_count)
         } else {
             0.0
         };
-        let function = self
-            .heap
-            .root_value(function_root)
-            .expect("bound function root remains live");
-        self.set_builtin_value_named(function, "length", Value::number(bound_length))?;
-        let function = self
-            .heap
-            .root_value(function_root)
-            .expect("bound function root remains live");
-        self.set_property_attributes(
-            function,
-            PropertyKey::string(length_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        let name_atom = self.intern_atom("name");
-        let target = self
-            .heap
-            .root_value(target_root)
-            .expect("bound target root remains live");
+        let target = self.heap.root_value(target_root).expect("bound target root remains live");
+        let name_atom = self.runtime_atoms.name;
         let target_name = self.get_property(p, target, name_atom)?;
-        let target_name = match self.heap.get(target_name) {
-            _ if let Some(name) = self.heap.string(target_name)  => name.to_string(),
-            _ => String::new(),
-        };
-        let function = self
-            .heap
-            .root_value(function_root)
-            .expect("bound function root remains live");
-        self.set_builtin_function_name(function, &format!("bound {target_name}"))?;
-        Ok(self
-            .heap
-            .root_value(function_root)
-            .expect("bound function root remains live"))
+        let name = self.heap.string(target_name).map(ToString::to_string).unwrap_or_default();
+        Ok((length, name))
     }
 
     pub(super) fn call_bound_function(
@@ -358,7 +398,7 @@ impl<H: Host> Vm<H> {
             match self.heap.function(callee) {
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
                     let (target, this, bound) = self.bound_function_parts(*env)?;
-                    if !args.prepend(bound) {
+                    if !args.prepend(&bound) {
                         return None;
                     }
                     (callee, receiver) = (target, this);
@@ -394,7 +434,7 @@ impl<H: Host> Vm<H> {
 
     /// A bound function's target, bound `this` and bound arguments, read from the
     /// environment object `Function.prototype.bind` made (`env`); `None` for any other.
-    pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, &[Value])> {
+    pub(super) fn bound_function_parts(&self, env: Value) -> Option<(Value, Value, std::borrow::Cow<'_, [Value]>)> {
         let data = self.object_data(env)?;
         let shape = data.shape();
         // The environment's three slots, read through the layout its shape keeps for every
@@ -417,11 +457,15 @@ impl<H: Host> Vm<H> {
             }
         };
         let (target, receiver, arguments) = match slots {
-            Some([target, this, args]) => (
-                self.heap.property_get(data, usize::from(target))?,
-                self.heap.property_get(data, usize::from(this)).unwrap_or(Value::UNDEFINED),
-                self.heap.property_get(data, usize::from(args)),
-            ),
+            // SAFETY: the environment's shape is the layout's, outside dictionary storage, which
+            // holds the three slots; nothing deletes a bound function's internal properties.
+            Some([target, this, args]) => unsafe {
+                (
+                    self.heap.property_get_flat(data, usize::from(target)),
+                    self.heap.property_get_flat(data, usize::from(this)),
+                    Some(self.heap.property_get_flat(data, usize::from(args))).filter(|list| !list.is_undefined()),
+                )
+            },
             None => (
                 self.own_property(env, self.runtime_atoms.bound_target)?,
                 self.own_property(env, self.runtime_atoms.bound_this).unwrap_or(Value::UNDEFINED),
@@ -430,7 +474,7 @@ impl<H: Host> Vm<H> {
         };
         let arguments = arguments
             .and_then(|list| self.heap.array_elements(list))
-            .map_or(&[][..], |elements| elements.as_slice());
+            .map_or(std::borrow::Cow::Borrowed(&[][..]), |elements| elements.as_slice());
         Some((target, receiver, arguments))
     }
 }

@@ -53,3 +53,36 @@ fn lane_dependencies_retire_at_holder_departures_only() {
         assert_eq!(code.is_published(), !retires, "holder={holder}");
     }
 }
+
+/// A recursive numeric function has a scalar entry, lowered with its self calls: its numbers in
+/// registers, a status and a result word back, and neither a frame nor a register file to store to.
+#[test]
+fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
+    use super::{DirectCandidates, lane_unit};
+    /// The CLIF instructions of the scalar entry's hot blocks, a loose bound on a call's cost.
+    const HOT_INSTRUCTIONS: usize = 80;
+    let program = crate::Engine::specialize("function fib(n){return n<2?n:fib(n-1)+fib(n-2);} fib(3);", "scalar-entry.js").unwrap();
+    let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
+    vm.execute(&program).unwrap();
+    vm.programs.enable_js_lane_methods();
+    let atom = vm.intern_atom("fib");
+    let callee = vm.own_property(vm.realm.globals, atom).unwrap();
+    let target = vm.resolve_script_call_target(&program, callee).expect("fib is a lane call target");
+    let function = target.function;
+    // SAFETY: a resolved target's view outlives its program.
+    let view = unsafe { &*target.view };
+    let mut direct = vec![DirectCandidates::new(); program.function(function as usize).code.len()];
+    for pc in program.function(function as usize).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).map(|(pc, _)| pc) {
+        let site = crate::vm::dispatch_fast::lane_direct_callee(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
+        direct[pc].push(site);
+    }
+    let (plan, _) = vm.plan_lane_method(&program, function, &|_, _| Vec::new(), &|_, _| None, &|_| (0, 0), &direct, &[],
+        lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS, None, &[]).expect("fib plans");
+    let scalar = plan.lowered.scalar.as_ref().expect("fib has a scalar entry");
+    let clif = scalar.to_string();
+    assert!(clif.contains("(i64, i64, i32) -> i32, i64"), "the entry takes the context, the captures' word and an int32: {clif}");
+    assert!(clif.contains("call_indirect"), "its recursion calls the entry of its cell: {clif}");
+    assert!(!clif.contains("store"), "a scalar entry stores nothing to a frame or a register file: {clif}");
+    let hot: usize = scalar.layout.blocks().filter(|block| !scalar.layout.is_cold(*block)).map(|block| scalar.layout.block_insts(block).count()).sum();
+    assert!(hot <= HOT_INSTRUCTIONS, "{hot} hot instructions: {clif}");
+}

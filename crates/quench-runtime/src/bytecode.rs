@@ -1,6 +1,9 @@
 use smallvec::SmallVec;
 
 mod internal_bindings;
+mod module_records;
+pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
+pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
 pub(crate) use internal_bindings::*;
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
@@ -20,7 +23,10 @@ pub use environment_clone::{EnvironmentClone, EnvironmentClones};
 pub(crate) use environment_clone::Resets;
 mod field_store;
 pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
+mod call_plan;
+pub(crate) use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
 mod instruction;
+mod register_list;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops; mod op_classes; mod op_scan; mod unary_operators;
@@ -62,6 +68,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
 pub(crate) use control_flow::{ControlEdge, Successors, branch_table_entries, for_each_instruction_successor, reachable_from};
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
+pub(crate) use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 /// Property cache sites are 16-bit. A program with more sites than that gives every site
@@ -680,23 +687,12 @@ impl ImmediateLayout {
     }
 }
 
-/// Whether an opcode's meaning is one staged operation (`staged::step`) or only the
-/// interpreter's hand-written path. A tier that meets `Exact` leaves at the exact PC before
-/// the instruction's effects; a tier that meets `Staged` runs the one definition the
-/// interpreter also runs.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Semantics {
-    Staged,
-    Exact,
-}
 
-
-#[macro_use]
 mod op_catalog; mod denotation; mod opcode_table;
-pub(crate) use op_catalog::{Class, JsDenotation, Traits, OPCODE_COUNT, opcode_name};
+pub(crate) use op_catalog::{Class, Decoder, GenericStep, JsDenotation, OwnedStep, Traits, ValueStep, OPCODE_COUNT, opcode_name};
 
 macro_rules! opcodes {
-    ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? $(; semantics $semantics:ident)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
+    ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? $(; class $class:ident)? $(; staged $decoder:ident)? $(; step $step:ident)? $(; owned $owned:ident)? $(; value $value:ident)? $(; traits $($trait:ident)+)? , @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         #[quench_macros::native_operation_exports(19, "quench_js_op_")]
@@ -713,12 +709,18 @@ macro_rules! opcodes {
         impl Op {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
-            const CLASSES: [Class; Self::COUNT] = [$(class_of!($name)),+];
+            const CLASSES: [Class; Self::COUNT] = [$(opcodes!(@class $($class)?)),+];
             pub(crate) const fn class(self) -> Class { Self::CLASSES[self as usize] }
-            const TRAITS: [Traits; Self::COUNT] = [$(traits_of!($name)),+];
+            const TRAITS: [Traits; Self::COUNT] = [$(opcodes!(@traits $($($trait)+)?)),+];
             pub(crate) const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
-            const SEMANTICS: [Semantics; Self::COUNT] = [$(opcodes!(@semantics $($semantics)?)),+];
-            pub(crate) const fn semantics(self) -> Semantics { Self::SEMANTICS[self as usize] }
+            const DECODERS: [Option<Decoder>; Self::COUNT] = [$(opcodes!(@staged $($decoder)?)),+];
+            pub(crate) const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
+            const GENERIC_STEPS: [Option<GenericStep>; Self::COUNT] = [$(opcodes!(@step $($step)?)),+];
+            pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
+            const OWNED_STEPS: [Option<OwnedStep>; Self::COUNT] = [$(opcodes!(@owned $($owned)?)),+];
+            pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
+            const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
+            pub(crate) const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
             pub(crate) fn native_semantic_entry<H: crate::Host>(self) -> crate::NativeJsOperationEntry {
                 match self {
@@ -802,8 +804,17 @@ macro_rules! opcodes {
     (@immediate;) => { compile_error!("opcode must declare an immediate role or layout") };
     (@js $denotation:ident) => { JsDenotation::$denotation };
     (@js) => { JsDenotation::Unsupported };
-    (@semantics $semantics:ident) => { Semantics::$semantics };
-    (@semantics) => { Semantics::Exact };
+    (@class $class:ident) => { Class::$class };
+    (@class) => { Class::Other };
+    (@staged $decoder:ident) => { Some(Decoder::$decoder) };
+    (@staged) => { None };
+    (@step $step:ident) => { Some(GenericStep::$step) };
+    (@step) => { None };
+    (@owned $owned:ident) => { Some(OwnedStep::$owned) };
+    (@owned) => { None };
+    (@value $value:ident) => { Some(ValueStep::$value) };
+    (@value) => { None };
+    (@traits $($trait:ident)*) => { Traits::NONE $(.union(Traits::$trait))* };
 }
 
 const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
@@ -811,114 +822,114 @@ const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
 opcodes!($;
-    Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop, @ Register, @ fields(Unused, Unused, Unused),
-    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex, @ Register, @ fields(Unused, Unused, Unused),
+    Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop; class Nop; traits LEAF_VALUE SCALAR_REGION FRAME_ONLY, @ Register, @ fields(Unused, Unused, Unused),
+    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex; class CloneEnv; step Body; traits NAME_OPERATION, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
-    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, Unused, Unused),
-    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; semantics Staged, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(Register, Unused, Unused),
-    LoadName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
-    LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; semantics Staged, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
-    LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
-    DeleteName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; semantics Staged, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
-    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, BooleanFlag),
-    LoadThis => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadCallee => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
+    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst; class LoadConst; staged Flow; step Body; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; step Body; owned LoadLocal; traits ACTIVATION_FREE, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class StoreLocal; step Body; owned StoreLocal; traits ACTIVATION_FREE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot; class StoreVarBinding; step Body; owned StoreVarBinding; traits NAME_OPERATION, @ Register, @ fields(Register, Unused, Unused),
+    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; class StoreEnvLocal; staged Names; step Body; owned StoreEnvLocal, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; class LoadCapture; staged Value; step Body; owned LoadCapture; traits BOXED_RESULT INLINABLE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot; class StoreCapture; staged Value; step Body; owned StoreCapture, @ Register, @ fields(Register, Unused, Unused),
+    LoadName => READ_THROW; layout Scalar; meaning AtomIndex; class LoadName; staged Proved; step Body; owned LoadName; traits BOXED_RESULT UNIT_REWRITTEN NAME_LEAF NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex; class LoadNameCall; staged Proved; step Body; owned LoadNameCall; traits NAME_OPERATION CALL_LINK GLOBAL_NAME_ACCESS, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
+    LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; class LoadNameTypeof; staged Names; step Body; owned LoadNameTypeof; traits NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
+    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
+    LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
+    DeleteName => READ_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(ResultRegister, Unused, Unused),
+    StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
+    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(Register, Register, BooleanFlag),
+    LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex; class MakeClosure; step Body; traits MAKES_CLOSURE, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class MakeArray; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex; class MakeConstArray; step Body, @ Register, @ fields(ResultRegister, ElementCount, Unused),
     // `a` = the position among the `b` string constants from `imm` of the first strictly equal
     // to register `c`, or `b` when none is: a string `switch`'s case selector, which a
     // `WasmBranchTable` follows.
-    StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Register),
-    MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeObject => CALL_EFFECT; layout Scalar; meaning Unused; js ObjectAllocation, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
-    MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
-    GetIterator => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    IteratorClose => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
+    StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex; class StringCaseIndex; step Body, @ Register, @ fields(ResultRegister, ElementCount, Register),
+    MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeObject => CALL_EFFECT; layout Scalar; meaning Unused; js ObjectAllocation; class MakeObject; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObject2; step Body; traits RETURNING_OBJECT FRAME_RETURNABLE, @ Returnable, @ fields(ResultRegister, Register, Register),
+    MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObjectLiteral; step Body; traits RETURNING_OBJECT_LITERAL FRAME_RETURNABLE, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex; class SuperConstArrayObject2; step Body; traits RETURNING_LITERAL FRAME_RETURNABLE, @ Returnable, @ fields(ResultRegister, Unused, Unused),
+    GetIterator => READ_THROW; layout Scalar; meaning Unused; class GetIterator; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
+    GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Register, Unused),
+    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    IteratorClose => READ_THROW; layout Scalar; meaning Unused; class IteratorClose; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
-    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; semantics Staged, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
-    RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(Unused, Register, Unused),
-    RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
-    SuperCallCheck => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
-    IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Unused),
-    IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class AppendArray; staged Names; step LaneResult, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
+    RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; class RequireObjectCoercible; staged Value; traits INLINABLE PURE_SETUP LIFETIME_SAFE, @ Register, @ fields(Unused, Register, Unused),
+    RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused; class RequireIteratorResult; step Lane, @ Register, @ fields(Unused, Register, Unused),
+    SuperCallCheck => READ_THROW; layout Scalar; meaning Unused; step Body; traits NAME_OPERATION CALL_LINK, @ Register, @ fields(Unused, Unused, Unused),
+    IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPush; step Lane, @ Register, @ fields(Register, Register, Unused),
+    IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPop; step Lane, @ Register, @ fields(Unused, Unused, Unused),
     // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
-    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
+    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; class ForInNext; staged Names; step Lane; traits LANE_LOOP_EXIT, @ Register, @ fields(ResultRegister, Register, Unused),
     // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
-    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
-    SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
-    SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix, @ Register, @ fields(Register, Register, Unused),
-    InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Unused, Unused, Unused),
-    Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
-    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
-    GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
-    ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
-    ToNumeric => READ_THROW; layout Scalar; meaning Unused; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
-    CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
-    MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Unused, Register, Register),
-    DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Register),
-    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
-    SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
-    SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(Register, Register, Register),
-    DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
-    Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary, @ Returnable, @ fields(ResultRegister, Register, Unused),
+    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused; class ForInStart; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
+    SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; class SetFunctionName; step Lane, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix; step Lane, @ Register, @ fields(Register, Register, Unused),
+    InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot; class InitializeTdz; step Body, @ Register, @ fields(Unused, Unused, Unused),
+    Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Await, @ Register, @ fields(ResultRegister, Register, Unused),
+    Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Yield, @ Register, @ fields(ResultRegister, Register, Unused),
+    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair; class YieldStar, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
+    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField; class GetField; staged Property; step Body; traits BOXED_RESULT FIELD_LEAF RETURNING_FIELD INLINABLE PURE_SETUP FRAME_RETURNABLE, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
+    GetIndex => READ_THROW; layout Scalar; meaning Unused; class GetIndex; staged Element; step Body; traits BOXED_RESULT INLINABLE PURE_SETUP ELEMENT_ACCESS LIFETIME_SAFE, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
+    ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; class ToPropertyKey; staged Generic; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
+    ToNumeric => READ_THROW; layout Scalar; meaning Unused; class ToNumeric; staged Value; traits INLINABLE PURE_SETUP LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Register, Unused),
+    CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused; class CopyDataProperties; step Lane, @ Register, @ fields(Register, Register, Register),
+    MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex; class MarkPrivateName; step Lane, @ Register, @ fields(Unused, Register, Register),
+    DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex; class DefinePrivateField; step Lane, @ Register, @ fields(Register, Register, Register),
+    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits INLINABLE, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused; step Lane, @ Register, @ fields(Register, Register, Register),
+    SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag; class SetIndex; staged Element; step Body; traits INLINABLE ELEMENT_ACCESS LIFETIME_SAFE, @ Register, @ fields(Register, Register, Register),
+    DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex; class DefineArrayElement; step Lane, @ Register, @ fields(Register, Register, Unused),
+    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Register, Unused),
+    Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE, @ Returnable, @ fields(ResultRegister, Register, Unused),
     // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
     // order: a template literal's string (ECMA-262 13.15.5.1), made at once.
-    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
-    CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
-    PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    Move => Effect::PURE; layout Scalar; meaning Unused; js Move; semantics Staged, @ Register, @ fields(ResultRegister, Register, Unused),
-    Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallKnown => CALL_EFFECT; layout CallWindow; flow Call, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
-    CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Register, Unused),
-    CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call, @ Returnable, @ fields(ResultRegister, Unused, Unused),
-    Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
-    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump; js Jump; semantics Staged, @ Register, @ fields(Unused, Unused, Unused),
-    JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; semantics Staged, @ Register, @ fields(Register, Unused, Unused),
-    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return; semantics Staged, @ Register, @ fields(Register, Unused, Unused),
-    Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
-    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
-    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldDefinition, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
-    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation; step Body, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    Delete => READ_THROW; layout Scalar; meaning BooleanFlag; class Delete; staged Property; step Body, @ Register, @ fields(ResultRegister, Register, Register),
+    CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex; class CheckPrivate; step Lane, @ Register, @ fields(Register, Unused, Unused),
+    PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex; class PrivateIn; step Lane, @ Register, @ fields(ResultRegister, Register, Unused),
+    Move => Effect::PURE; layout Scalar; meaning Unused; js Move; class Move; staged Flow; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Register, Unused),
+    Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call; class Call; staged Call; traits UNIT_REWRITTEN INLINABLE FRAME_RETURNABLE CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallArray; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallSpread; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
+    CallKnown => CALL_EFFECT; layout CallWindow; flow Call; class CallKnown; staged Call; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
+    CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call; class CallMethod; staged Call; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Unused),
+    CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call; staged Call; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Unused, Unused),
+    Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call; class Construct; staged Call; traits UNIT_REWRITTEN FRAME_RETURNABLE CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
+    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump; js Jump; class Jump; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(Unused, Unused, Unused),
+    JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpFalse; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(Register, Unused, Unused),
+    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpBinaryFalse; staged Generic; step Body; value CompareJump; traits LEAF_BINARY INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(BinaryOperator, Operand, Operand),
+    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return; class Return; staged Flow; traits UNIT_REWRITTEN LEAF_VALUE INLINABLE ACTIVATION_FREE SCALAR_REGION, @ Register, @ fields(Register, Unused, Unused),
+    Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; class Throw; step Body; traits UNIT_REWRITTEN RAISES, @ Register, @ fields(Register, Unused, Unused),
+    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary; class NumericAdd; traits LEAF_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary; class NumericMultiply; traits LEAF_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+    InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused; step Body; traits BINDS_THIS NAME_OPERATION, @ Register, @ fields(Register, Unused, Unused),
+    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldDefinition; class DefineField; step Lane, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused; step Body, @ Register, @ fields(Register, Unused, Unused),
+    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body, @ Register, @ fields(Register, Register, CacheSiteIndex),
+    SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; semantics Staged, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; semantics Staged, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; semantics Staged, @ Register, @ fields(Register, Unused, Unused),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits ACTIVATION_FREE, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; class StoreLocalPlain; staged Local; traits ACTIVATION_FREE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpTrue; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(Register, Unused, Unused),
     // `Call` whose last window argument the instruction before it loaded from the activation's
     // `arguments` binding (`CallPlan::forwards_arguments`).
-    CallForwardingArguments => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
-    WasmI32Add => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    CallForwardingArguments => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call; class CallForwardingArguments; staged Call; traits FRAME_RETURNABLE CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
+    WasmI32Add => Effect::PURE; layout Scalar; meaning Unused; class WasmI32AddRegister, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32Subtract => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32Multiply => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32DivideSigned => Effect::THROWS; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
@@ -943,8 +954,8 @@ opcodes!($;
     WasmI32LessEqualUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32GreaterEqualSigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32GreaterEqualUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32AddImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32SubtractImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32AddImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32AddImmediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32SubtractImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32SubtractImmediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32MultiplyImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32DivideSignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32DivideUnsignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -969,15 +980,15 @@ opcodes!($;
     WasmI32GreaterEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32GreaterEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     // `(b >>> c) & imm`: a bit-field extraction fused from its two operators.
-    WasmI32ShiftRightUnsignedAndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    WasmI32ShiftRightUnsignedAndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32ShiftRightUnsignedAnd, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     // `a = b + c`, then jump when `a` is nonzero: a counted loop's step and test.
-    WasmI32AddImmediateJumpNonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, Register, SignedConstant),
-    WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
-    WasmSelect => Effect::PURE; layout RegisterPair, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
-    WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
-    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable, @ Register, @ fields(Register, Unused, Unused),
+    WasmI32AddImmediateJumpNonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmI32AddJump, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmInstanceBinding, @ Register, @ fields(ResultRegister, Unused, Unused),
+    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex; class WasmFillRegisters, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
+    WasmSelect => Effect::PURE; layout RegisterPair; class WasmSelect, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32Zero, @ Register, @ fields(Register, Unused, Unused),
+    WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32NonZero, @ Register, @ fields(Register, Unused, Unused),
+    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable; class WasmBranchTable, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32Equal => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32NotEqual => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32LessSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
@@ -988,8 +999,8 @@ opcodes!($;
     WasmJumpI32LessEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32GreaterEqualSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32GreaterEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32EqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32NotEqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32EqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32EqualImmediate, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32NotEqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32NotEqualImmediate, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmJumpI32LessSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmJumpI32LessUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmJumpI32GreaterSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
@@ -998,40 +1009,40 @@ opcodes!($;
     WasmJumpI32LessEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmJumpI32GreaterEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmJumpI32GreaterEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF32Unary => Effect::PURE; layout Scalar; meaning WasmF32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmF64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmTableInit => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmIndirectTarget => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmSignatureIndex, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmGlobalGet => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmGlobalSet => WRITE_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Unused),
-    WasmRefFunc => CALL_EFFECT; layout Scalar; meaning WasmFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
+    WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator; class WasmI32Unary, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64Binary, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator; class WasmI64Unary, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator; class WasmScalarConvert, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator; class WasmFloatBinary32, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF32Unary => Effect::PURE; layout Scalar; meaning WasmF32UnaryOperator; class WasmFloatUnary32, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmF64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmTableInit => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; traits UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmIndirectTarget => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmSignatureIndex; class WasmIndirectTarget; traits UNROLL_EXCLUDED, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmGlobalGet => READ_THROW; layout Scalar; meaning Unused; class WasmGlobalGet, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmGlobalSet => WRITE_THROW; layout Scalar; meaning Unused; class WasmGlobalSet, @ Register, @ fields(Register, Register, Unused),
+    WasmRefFunc => CALL_EFFECT; layout Scalar; meaning WasmFunctionIndex; class WasmRefFunc, @ Register, @ fields(ResultRegister, Unused, Unused),
     WasmRefIsNull => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmTableSize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmTableGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmTableSet => Effect::WRITES_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(Register, Register, Register),
-    WasmTableGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout RegisterPair, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmTableFill => Effect::WRITES_HEAP.union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmTableCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryInit => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryAddress => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmMemoryLoad => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryLoadOperator, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmMemoryStore => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryStoreOperator, @ Register, @ fields(Register, Register, Register),
-    WasmI32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmTableSize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; traits UNROLL_EXCLUDED, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmTableGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; traits UNROLL_EXCLUDED, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmTableSet => Effect::WRITES_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; traits UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmTableGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout RegisterPair; traits UNROLL_EXCLUDED, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmTableFill => Effect::WRITES_HEAP.union(Effect::THROWS); layout RegisterPair; traits UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmTableCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; traits UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmMemoryInit => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; traits UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmMemoryCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmMemoryCopy; traits WASM_MEMORY UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmMemoryFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmMemoryFill; traits WASM_MEMORY UNROLL_EXCLUDED, @ Register, @ fields(Register, Register, Register),
+    WasmMemoryAddress => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning ConstantIndex; class WasmMemoryAddress; traits WASM_MEMORY, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmMemoryLoad => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryLoadOperator; class WasmMemoryLoad; traits WASM_MEMORY, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmMemoryStore => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryStoreOperator; class WasmMemoryStore; traits WASM_MEMORY, @ Register, @ fields(Register, Register, Register),
+    WasmI32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Load => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
     WasmF32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
     WasmF64Load => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load8S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load8U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load16S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load16U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load8S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load8S, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load8U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load8U, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load16S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load16S, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load16U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load16U, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Load8S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Load8U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Load16S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
@@ -1047,16 +1058,16 @@ opcodes!($;
     WasmI64Store8 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
     WasmI64Store16 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
     WasmI64Store32 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
-    WasmMemorySize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmMemoryGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Unused, Unused, Unused),
-    WasmSimd => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmSimdOperator, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmSimdShuffle => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Register, Register),
-    DefinePropertyRecord => CALL_EFFECT; layout Scalar; meaning PropertyDefinitionMode, @ Register, @ fields(Register, Register, Register),
+    WasmMemorySize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; class WasmMemorySize; traits WASM_MEMORY, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmMemoryGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; class WasmMemoryGrow; traits UNROLL_EXCLUDED, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; class WasmUnreachable, @ Register, @ fields(Unused, Unused, Unused),
+    WasmSimd => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmSimdOperator; class WasmSimd, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmSimdShuffle => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning ConstantIndex; class WasmSimdShuffle, @ Register, @ fields(ResultRegister, Register, Register),
+    DefinePropertyRecord => CALL_EFFECT; layout Scalar; meaning PropertyDefinitionMode; class DefinePropertyRecord, @ Register, @ fields(Register, Register, Register),
     WasmRefAsNonNull => Effect::THROWS; layout Scalar; meaning WasmNonNullCheck, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI31 => Effect::THROWS; layout Scalar; meaning WasmI31Operator, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmRefTest => Effect::READS_HEAP; layout Scalar; meaning WasmReferenceTarget, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmRefCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmRefTest => Effect::READS_HEAP; layout Scalar; meaning WasmReferenceTarget; class WasmRefTest, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmRefCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmRefCast, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmRefEq => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1065,9 +1076,9 @@ opcodes!($;
     WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(Register, Register, Unused),
 
-    WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNew, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewDefault, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewFixed, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
 
     WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField, @ Register, @ fields(ResultRegister, Register, Register),
@@ -1077,8 +1088,8 @@ opcodes!($;
     WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
     WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
-    WasmArrayNewData => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmArrayNewElem => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    WasmArrayNewData => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewData, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    WasmArrayNewElem => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewElem, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmArrayInitData => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
     WasmArrayInitElem => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair, @ Register, @ fields(Register, Register, Register),
 
@@ -1088,19 +1099,19 @@ opcodes!($;
     WasmThrowRef => Effect::READS_HEAP.union(Effect::THROWS).union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
     WasmStructNewDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmStructNewDefaultDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmRefGetDesc => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmDescriptorTest => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmDescriptorCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmRefGetDesc => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmRefGetDesc, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmDescriptorTest => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorTest, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmDescriptorCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorCast, @ Register, @ fields(ResultRegister, Register, Register),
 
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
-    SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
+    SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; step Lane, @ Register, @ fields(Register, Unused, Unused),
     // `arguments.length` and `arguments[key]` of the `arguments` binding in the local slot:
     // an unmaterialized binding answers from the values its activation kept
     // (`Function::kept_arguments`); any other value is read as `GetField` and
     // `GetIndex` read it.
-    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; semantics Staged, @ Register, @ fields(ResultRegister, Unused, Unused),
-    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Register, Unused),
+    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names, @ Register, @ fields(ResultRegister, Unused, Unused),
+    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentGet, @ Register, @ fields(ResultRegister, Register, Unused),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );
@@ -1256,6 +1267,8 @@ pub struct SourceSpan {
 
 /// Membership views of a function's declared-name lists, which stay the authority for
 /// their order and serialization: a name's declaration kind is one lookup, not a scan.
+/// Made only for a function with a list longer than `LOCAL_SLOT_SCAN`: a short list is
+/// scanned, where a box of sets per called function held 9.6 MB of jsdom-d3-startup's peak.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DeclaredAtomSets {
     global_lexical: rustc_hash::FxHashSet<Atom>,
@@ -1264,7 +1277,13 @@ pub(crate) struct DeclaredAtomSets {
     environment: rustc_hash::FxHashSet<Atom>,
     /// Per local slot: whether its name is a global var or global lexical declaration.
     slots: Box<[SlotDeclaration]>,
+    /// Each local name's first slot, for a function with more than `LOCAL_SLOT_SCAN` locals
+    /// (a script root declaring thousands of globals); a smaller one scans its names.
+    local_slots: Option<rustc_hash::FxHashMap<Atom, u32>>,
 }
+
+/// Locals a name's slot is found among by a scan (`Function::local_slot`).
+const LOCAL_SLOT_SCAN: usize = 32;
 
 /// Whether a local slot's name is among `global_var_atoms` and `global_lexical_atoms`.
 /// What a root environment slot holds for the reads through it.
@@ -1343,6 +1362,8 @@ pub struct Function {
     /// at creation.
     pub prototype_unobservable: bool,
     pub class_initializer: bool,
+    /// A parameter's direct `eval` declares `arguments`, which the call raises a SyntaxError for
+    /// (`Vm::step`'s `Call`); the function otherwise activates as any other.
     pub parameter_eval_arguments_error: bool,
     /// A mapped `arguments` binding whose mapping nothing can observe: nothing in the body
     /// rebinds a parameter, and it only reads `arguments.length` and `arguments[key]` or
@@ -1400,7 +1421,8 @@ pub struct Function {
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
     /// Lazily derived `call_plan`; never serialized.
-    pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
+    /// `CallPlan::to_bits`, packed: the plan's flags are one word, not a byte each.
+    pub(crate) call_plan: std::cell::OnceCell<u16>,
     /// Lazily derived `initializer_stores`; never serialized.
     pub(crate) initializer: std::cell::OnceCell<Option<crate::heap::ThinBoxSlice<InitializerStore>>>,
     pub(crate) handlers: crate::heap::ThinBoxSlice<Handler>,
@@ -1420,7 +1442,7 @@ pub struct Function {
 // once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
-const _: () = assert!(size_of::<Function>() == 400);
+const _: () = assert!(size_of::<Function>() == 368);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
@@ -1463,6 +1485,92 @@ impl FunctionHeader {
     }
 }
 
+/// A slot's `FunctionHeader` in 24 bytes, not 48: each optional word is stored with
+/// `u32::MAX` for none (no program reaches that many functions, atoms or source bytes), and
+/// the seven flags share one byte. `FunctionSlot::header` unpacks it, field by field where
+/// the caller reads one.
+#[derive(Clone, Copy, Debug)]
+struct PackedHeader {
+    parent: u32,
+    name: u32,
+    inferred_name: u32,
+    span_start: u32,
+    span_end: u32,
+    length: u16,
+    dispatch: DispatchClass,
+    flags: u8,
+}
+
+const _: () = assert!(size_of::<PackedHeader>() == 24);
+const _: () = assert!(size_of::<FunctionSlot>() == 64);
+
+const NO_WORD: u32 = u32::MAX;
+
+impl PackedHeader {
+    const ARROW: u8 = 1 << 0;
+    const ASYNC: u8 = 1 << 1;
+    const GENERATOR: u8 = 1 << 2;
+    const CLASS_CONSTRUCTOR: u8 = 1 << 3;
+    const CONSTRUCTIBLE: u8 = 1 << 4;
+    const PROTOTYPE_UNOBSERVABLE: u8 = 1 << 5;
+    const INHERITED_WITH_SCOPE: u8 = 1 << 6;
+
+    fn word(value: Option<u32>) -> u32 {
+        let word = value.unwrap_or(NO_WORD);
+        assert!(value.is_none() || word != NO_WORD, "a header word reaches u32::MAX");
+        word
+    }
+
+    #[inline(always)]
+    fn option(word: u32) -> Option<u32> {
+        (word != NO_WORD).then_some(word)
+    }
+
+    fn pack(header: &FunctionHeader) -> Self {
+        let flag = |on: bool, bit: u8| if on { bit } else { 0 };
+        let (span_start, span_end) = match header.source_span {
+            Some(span) => (Self::word(Some(span.start)), span.end),
+            None => (NO_WORD, 0),
+        };
+        Self {
+            parent: Self::word(header.parent),
+            name: Self::word(header.name),
+            inferred_name: Self::word(header.inferred_name),
+            span_start,
+            span_end,
+            length: header.length,
+            dispatch: header.dispatch,
+            flags: flag(header.is_arrow, Self::ARROW)
+                | flag(header.is_async, Self::ASYNC)
+                | flag(header.is_generator, Self::GENERATOR)
+                | flag(header.is_class_constructor, Self::CLASS_CONSTRUCTOR)
+                | flag(header.constructible, Self::CONSTRUCTIBLE)
+                | flag(header.prototype_unobservable, Self::PROTOTYPE_UNOBSERVABLE)
+                | flag(header.inherited_with_scope, Self::INHERITED_WITH_SCOPE),
+        }
+    }
+
+    #[inline(always)]
+    fn unpack(self) -> FunctionHeader {
+        let flag = |bit: u8| self.flags & bit != 0;
+        FunctionHeader {
+            parent: Self::option(self.parent),
+            name: Self::option(self.name),
+            inferred_name: Self::option(self.inferred_name),
+            source_span: Self::option(self.span_start).map(|start| SourceSpan { start, end: self.span_end }),
+            length: self.length,
+            dispatch: self.dispatch,
+            is_arrow: flag(Self::ARROW),
+            is_async: flag(Self::ASYNC),
+            is_generator: flag(Self::GENERATOR),
+            is_class_constructor: flag(Self::CLASS_CONSTRUCTOR),
+            constructible: flag(Self::CONSTRUCTIBLE),
+            prototype_unobservable: flag(Self::PROTOTYPE_UNOBSERVABLE),
+            inherited_with_scope: flag(Self::INHERITED_WITH_SCOPE),
+        }
+    }
+}
+
 /// What a record built from its program (`ResidualProgram::built_record`) is for: kept as the
 /// function's record, which its first call makes, or read once and dropped.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1481,59 +1589,86 @@ enum RecordUse {
 /// or released, its first read compiling the record again from source or decoding it.
 #[derive(Clone, Debug)]
 pub struct FunctionSlot {
-    header: FunctionHeader,
+    header: PackedHeader,
     record: std::cell::OnceCell<std::rc::Rc<Function>>,
-    unlowered: std::cell::RefCell<Option<std::rc::Rc<Function>>>,
+    unlowered: std::cell::RefCell<Option<Unlowered>>,
+    /// The unlowered record its first runs execute until it lowers (`tier0`).
+    tier0: tier0::Tier0Cell,
+}
+
+/// A slot's unlowered record: as compiled, for a function about to run (a first-call chunk's),
+/// or packed (`binary::pack_unlowered`) for one a whole load left unread, which most such
+/// functions stay (a 3.4 MB bundle: 12K functions, 2K ever called).
+#[derive(Clone, Debug)]
+enum Unlowered {
+    Record(std::rc::Rc<Function>),
+    Packed(Box<binary::PackedUnlowered>),
+}
+
+impl Unlowered {
+    fn function(&self) -> Function {
+        match self {
+            Self::Record(function) => Function::clone(function),
+            Self::Packed(packed) => binary::unpack_unlowered(packed),
+        }
+    }
+
+    fn into_function(self) -> Function {
+        match self {
+            Self::Record(function) => std::rc::Rc::unwrap_or_clone(function),
+            Self::Packed(packed) => binary::unpack_unlowered(&packed),
+        }
+    }
 }
 
 impl FunctionSlot {
+    fn new(header: FunctionHeader, record: Option<Function>, unlowered: Option<Unlowered>) -> Self {
+        let record = record.map_or_else(Default::default, |function| std::rc::Rc::new(function).into());
+        Self { header: PackedHeader::pack(&header), record, unlowered: unlowered.into(), tier0: Default::default() }
+    }
+
     pub(crate) fn compiled(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::from(std::rc::Rc::new(function)),
-            unlowered: Default::default(),
-        }
+        Self::new(FunctionHeader::of(&function), Some(function), None)
     }
 
     /// A function whose record its program compiles again on the function's first read.
     pub(crate) fn released(header: FunctionHeader) -> Self {
-        Self {
-            header,
-            record: std::cell::OnceCell::new(),
-            unlowered: Default::default(),
-        }
+        Self::new(header, None, None)
     }
 
     /// A function whose load settled its dispatch class, the header's last fact, and left
     /// the rest of its lowering to its first read.
     pub(crate) fn unlowered(function: Function) -> Self {
-        Self {
-            header: FunctionHeader::of(&function),
-            record: std::cell::OnceCell::new(),
-            unlowered: std::cell::RefCell::new(Some(std::rc::Rc::new(function))),
-        }
+        Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Record(std::rc::Rc::new(function))))
+    }
+
+    /// An unlowered function its load leaves unread: its record kept packed until its first read.
+    pub(crate) fn unlowered_packed(function: Function) -> Self {
+        Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Packed(binary::pack_unlowered(&function))))
     }
 
     /// Whether the slot holds no record, compiled or unlowered: its first read compiles
     /// the record again or decodes it.
     #[cfg(test)]
     pub(crate) fn is_released(&self) -> bool {
-        self.record.get().is_none() && self.unlowered.borrow().is_none()
+        self.record.get().is_none() && self.unlowered.borrow().is_none() && self.tier0.get().is_none()
     }
 
-    #[inline(always)] pub(crate) fn header(&self) -> &FunctionHeader {
-        &self.header
+    #[inline(always)] pub(crate) fn header(&self) -> FunctionHeader {
+        self.header.unpack()
     }
 
-    /// The compiled record, when it exists.
+    /// The compiled record, when it exists: the lowered one, else the one its first runs
+    /// execute unlowered (`tier0`).
     #[inline(always)] pub(crate) fn record(&self) -> Option<&Function> {
-        self.record.get().map(|function| &**function)
+        self.record.get().map(|function| &**function).or_else(|| self.tier0.get().map(|tier0| tier0.record()))
     }
 
     /// Drops the record, which its program compiles again on the function's next read.
     fn release(&mut self) {
         self.record.take();
         self.unlowered.get_mut().take();
+        self.tier0.take();
     }
 }
 
@@ -1549,6 +1684,8 @@ impl std::ops::Deref for FunctionSlot {
 
 impl std::ops::DerefMut for FunctionSlot {
     fn deref_mut(&mut self) -> &mut Function {
+        // A change to a record still running unlowered makes it the compiled one.
+        self.settle_tier0();
         std::rc::Rc::make_mut(
             self.record
                 .get_mut()
@@ -1640,93 +1777,6 @@ impl FactTables for ResidualProgram {
     }
 }
 
-/// `CallPlan`'s flags as bits, in this order; the struct literal names every field, so a
-/// field left out of the list does not compile.
-macro_rules! call_plan_bits {
-    ($($field:ident),* $(,)?) => {
-        const CALL_PLAN_FLAG_COUNT: u32 = [$(stringify!($field)),*].len() as u32;
-
-        impl CallPlan {
-            fn to_bits(self) -> u32 {
-                let mut bits = 0;
-                let mut index = 0;
-                $(bits |= u32::from(self.$field) << index; index += 1;)*
-                let _ = index;
-                bits
-            }
-
-            fn from_bits(bits: u32) -> Self {
-                let mut index = 0;
-                $(let $field = bits & (1 << index) != 0; index += 1;)*
-                let _ = index;
-                Self { $($field),* }
-            }
-        }
-    };
-}
-call_plan_bits!(
-    plain,
-    in_loop,
-    settles_in_loop,
-    legacy_reflection,
-    live_parameters,
-    addresses_locals,
-    forwards_arguments,
-    keeps_arguments,
-    reads_passed_arguments,
-    registers_only,
-    environment_activation,
-);
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct CallPlan {
-    /// `plain_activation`.
-    pub(crate) plain: bool,
-    /// The dispatch loop may push the activation in place: an ordinary body that is no
-    /// generator, async function, class constructor or field initializer and raises no
-    /// parameter-scope `arguments` error.
-    pub(crate) in_loop: bool,
-    /// An async function whose body never suspends (`Function::suspends`): a plain call may
-    /// push it in place as `in_loop` bodies are pushed, settling the promise it returns with
-    /// the body's completion (`PendingGeneralCall::settles`).
-    pub(crate) settles_in_loop: bool,
-    /// Legacy `caller`/`arguments` reflection may observe the activation
-    /// (`!has_restricted_legacy_caller_access`).
-    pub(crate) legacy_reflection: bool,
-    /// `reflects_live_parameters`.
-    pub(crate) live_parameters: bool,
-    /// Some instruction can reach the frame's local slots: one names a slot
-    /// (`addressed_local_slots`), creates a closure or clones an environment. A plain
-    /// activation without that needs no local storage, since promoted bindings live in
-    /// registers and nothing else reads its locals.
-    pub(crate) addresses_locals: bool,
-    /// The activation passes its `arguments` binding only straight into
-    /// `CallForwardingArguments` calls, so it keeps the argument values instead of an
-    /// `arguments` object until a call needs one (`Function::kept_arguments`).
-    pub(crate) forwards_arguments: bool,
-    /// `forwards_arguments`, or a frameless activation answers the binding from the values
-    /// it kept and makes the object only at its last read (`KeptArguments::Passes`). Its
-    /// frame makes the object on entry.
-    pub(crate) keeps_arguments: bool,
-    /// `Function::reads_passed_arguments_only`: an environment activation keeps every value
-    /// passed after its locals, past its parameters too.
-    pub(crate) reads_passed_arguments: bool,
-    /// The activation's whole state is its registers, plus the values it was passed when it
-    /// forwards them: it reaches no local but a forwarded `arguments` binding, and legacy
-    /// reflection, if any, reads its parameter registers or the forwarded values. A lane
-    /// may run such a body without a frame: an ordinary body (`in_loop`), a base class
-    /// constructor's construction, or a `settles_in_loop` body with no rest parameter or
-    /// `arguments` binding, whose return settles its call's promise (`CallEntry::Settles`).
-    pub(crate) registers_only: bool,
-    /// The activation's state is its registers, its frame locals and the environment its
-    /// closures capture, which it may make on entry: an ordinary body but for the closures
-    /// it makes and the iteration copies of its environment, with no `arguments`, self
-    /// binding, binding site, dynamic scope access or superinstruction, whose every local access is a plain or
-    /// environment load, store or dead-zone opening of a selectively captured layout. A lane
-    /// may run such a body without a frame (`CallEntry::Environment`).
-    pub(crate) environment_activation: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LocalRegister {
     pub(crate) local: u16,
@@ -1751,11 +1801,21 @@ pub(crate) const HIDDEN_PARAMETER_PREFIX: &str = "\0quench:param:";
 /// finds the function on the stack. Most of a program's functions never run during a
 /// collection, so their masks are never built. The loop tier's regions share them
 /// (`osr_loop::LoopRegion::live`) rather than copying a function's masks for each loop.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct RegisterRoots {
     covered: bool,
+    /// The registers below which every register live at entry lies (`entry_fill`), or
+    /// `ALL_LIVE_AT_ENTRY` where liveness proves no bound.
+    entry_live: u16,
     dead_call_results: crate::heap::ThinBoxSlice<u32>,
-    masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+    pub(crate) masks: std::cell::OnceCell<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+}
+
+/// Uncovered, which bounds no register live at entry.
+impl Default for RegisterRoots {
+    fn default() -> Self {
+        Self::new(false)
+    }
 }
 
 impl RegisterRoots {
@@ -1763,9 +1823,31 @@ impl RegisterRoots {
         Self::with_dead_call_results(covered, Default::default())
     }
 
-    /// `dead_call_results` in increasing pc order.
+    /// `dead_call_results` in increasing pc order, with no bound on the live entry registers.
     pub(crate) fn with_dead_call_results(covered: bool, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
-        Self { covered, dead_call_results, masks: std::cell::OnceCell::new() }
+        Self::with_entry_live(covered, Self::ALL_LIVE_AT_ENTRY, dead_call_results)
+    }
+
+    /// `with_dead_call_results`, every register live at entry below `entry_live`.
+    pub(crate) fn with_entry_live(covered: bool, entry_live: u16, dead_call_results: crate::heap::ThinBoxSlice<u32>) -> Self {
+        Self { covered, entry_live, dead_call_results, masks: std::cell::OnceCell::new() }
+    }
+
+    /// An `entry_live` that bounds nothing.
+    pub(crate) const ALL_LIVE_AT_ENTRY: u16 = u16::MAX;
+
+    /// The registers an activation of a function of `registers` registers starts with its
+    /// initial value: those below every register live at its entry. No instruction reads
+    /// another before writing it, and a collection reads a covered function's registers only
+    /// where its masks prove them live, so the rest may hold any value a window held before.
+    #[inline(always)]
+    pub(crate) fn entry_fill(&self, registers: u16) -> u16 {
+        self.entry_live.min(registers)
+    }
+
+    /// The `entry_live` bound as recorded.
+    pub(crate) fn entry_live(&self) -> u16 {
+        self.entry_live
     }
 
     pub(crate) fn covered(&self) -> bool {
@@ -1980,12 +2062,35 @@ impl Function {
                 global_immutable: self.global_immutable_atoms().iter().copied().collect(),
                 environment: self.environment_atoms.iter().copied().collect(),
                 slots,
+                local_slots: (self.local_atoms.len() > LOCAL_SLOT_SCAN).then(|| {
+                    let mut slots = rustc_hash::FxHashMap::default();
+                    for (slot, atom) in self.local_atoms.iter().enumerate().rev() {
+                        slots.insert(*atom, slot as u32);
+                    }
+                    slots
+                }),
             })
         })
     }
 
+    /// The first local slot named `atom`: one probe in a function with many locals, where a
+    /// scan per global write made a script of N declarations cost N^2.
+    pub(crate) fn local_slot(&self, atom: Atom) -> Option<usize> {
+        if self.local_atoms.len() <= LOCAL_SLOT_SCAN {
+            return self.local_atoms.iter().position(|candidate| *candidate == atom);
+        }
+        self.declared_atoms().local_slots.as_ref()?.get(&atom).map(|slot| *slot as usize)
+    }
+
     /// The declaration kinds of local `slot`'s name (none for a slot outside the function).
     pub(crate) fn slot_declaration(&self, slot: usize) -> SlotDeclaration {
+        let (var, lexical) = (self.global_var_atoms(), self.global_lexical_atoms());
+        if var.len() <= LOCAL_SLOT_SCAN && lexical.len() <= LOCAL_SLOT_SCAN {
+            return self.local_atoms.get(slot).map_or_else(SlotDeclaration::default, |atom| SlotDeclaration {
+                global_var: var.contains(atom),
+                global_lexical: lexical.contains(atom),
+            });
+        }
         self.declared_atoms()
             .slots
             .get(slot)
@@ -1995,21 +2100,37 @@ impl Function {
 
     /// Whether `atom` is among `global_lexical_atoms`.
     pub(crate) fn declares_global_lexical(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_lexical_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_lexical.contains(&atom)
     }
 
     /// Whether `atom` is among `global_var_atoms`.
     pub(crate) fn declares_global_var(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_var_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_var.contains(&atom)
     }
 
     /// Whether `atom` is among `global_immutable_atoms`.
     pub(crate) fn declares_global_immutable(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = self.global_immutable_atoms();
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().global_immutable.contains(&atom)
     }
 
     /// Whether `atom` is among `environment_atoms`.
-    #[inline(always)] pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+    pub(crate) fn declares_environment_atom(&self, atom: Atom) -> bool {
+        let atoms: &[Atom] = &self.environment_atoms[..];
+        if atoms.len() <= LOCAL_SLOT_SCAN {
+            return atoms.contains(&atom);
+        }
         self.declared_atoms().environment.contains(&atom)
     }
 
@@ -2030,9 +2151,8 @@ impl Function {
 
     fn derive_activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
         self.activation_binding_reads(tables)
-            || self.instructions().any(|instruction| {
-                instruction.op() == Op::MakeClosure
-                    && tables
+            || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
+                tables
                         .function_is_arrow(instruction.closure_function_index() as usize)
                         .is_none_or(|is_arrow| is_arrow)
             })
@@ -2056,7 +2176,7 @@ impl Function {
     /// (`CallPlan::settles_in_loop`), its promise held by its call.
     fn body_binding_reads(&self, tables: &impl FactTables) -> bool {
         self.body_binding_reads_beside_clones(tables)
-            || self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
+            || self.instructions_of(|op| op == Op::CloneEnv).next().is_some()
     }
 
     /// `body_binding_reads` but for the iteration copies of its environment (`CloneEnv`),
@@ -2064,30 +2184,52 @@ impl Function {
     /// environment activation's window keeps those its closures may observe in the
     /// environment it makes (`window_environment`), which a copy shares as a frame's does.
     fn body_binding_reads_beside_clones(&self, tables: &impl FactTables) -> bool {
+        self.evals_in_scope() || self.reads_implicit_bindings(tables)
+    }
+
+    /// Whether the function runs a direct eval, which declares `var`s in its variable
+    /// environment and reads its scope by name, or records binding sites, the lexical scope
+    /// its closures and evals resolve names in.
+    pub(crate) fn evals_in_scope(&self) -> bool {
+        !self.binding_sites.is_empty()
+            || self.instructions_of(Op::is_call_with_eval_flags).any(|instruction| instruction.direct_eval() || instruction.parameter_eval())
+    }
+
+    /// The implicit bindings (`new.target`, `super`, the home object, a derived constructor's
+    /// `this`) the body reads by a hidden name or a scope operation, which a window activation
+    /// leaves to the frame it becomes: not those of a direct eval, which its record serves.
+    fn reads_implicit_bindings(&self, tables: &impl FactTables) -> bool {
         self.derived_constructor
             // A field initializer or static block keeps its instance's implicit bindings; an
             // arrow inside one (also `class_initializer`) binds none of its own.
             || (self.class_initializer && !self.is_arrow)
             || self.instance_initializer.is_some()
             || self.inherited_with_scope
-            || !self.binding_sites.is_empty()
             || self.instructions_of(name_bindings::may_read_binding).any(|instruction| {
                 name_bindings::reads_hidden_name(instruction, tables)
-                    || name_bindings::reads_binding_op(instruction.op())
-                    || (instruction.op().is_call_with_eval_flags()
-                        && (instruction.direct_eval() || instruction.parameter_eval()))
+                    || matches!(
+                        instruction.op(),
+                        Op::DeleteName | Op::StoreResolvedName | Op::StoreVarBinding | Op::InitializeThis | Op::SuperCallCheck
+                    )
             })
+            // A direct eval beside names resolved through a scope may declare dynamic bindings, which only
+            // a frame (or a suspended record) keeps: the scope's other names the window's handlers serve.
+            || self.evals_in_scope() && self.instructions_of(|op| matches!(op, Op::ResolveName | Op::LoadResolvedName)).next().is_some()
     }
 
     /// Every instruction in fixed-width form.
     pub(crate) fn instructions(&self) -> impl Iterator<Item = WideInstruction> + '_ {
-        self.code.iter().map(|packed| {
-            if packed.is_wide() {
-                self.wide[packed.wide_index()]
-            } else {
-                packed.as_wide()
-            }
-        })
+        self.code.iter().map(|&packed| self.widened(packed))
+    }
+
+    /// The instruction at `pc` in fixed-width form.
+    pub(crate) fn instruction_at(&self, pc: usize) -> WideInstruction {
+        self.widened(self.code[pc])
+    }
+
+    #[inline]
+    fn widened(&self, packed: Instr) -> WideInstruction {
+        if packed.is_wide() { self.wide[packed.wide_index()] } else { packed.as_wide() }
     }
 
     /// Whether a closure environment may hold local `slot`: the selective layout names it or,
@@ -2189,13 +2331,95 @@ impl Function {
 
     /// Whether an activation can suspend: an `await`, or a `yield` of a generator.
     pub(crate) fn suspends(&self) -> bool {
-        self.instructions()
-            .any(|instruction| instruction.op().suspends())
+        // By opcode alone: a wide record's opcode is in the side table.
+        self.code.iter().any(|packed| {
+            if packed.is_wide() { self.wide[packed.wide_index()].op().suspends() } else { packed.op().suspends() }
+        })
+    }
+
+    /// Whether a suspension of the function parks its frame in a record a lane resumes from: a
+    /// generator or an async function. An arrow's `this` is its environment's, which each
+    /// resumption reads again (`Vm::window_this`).
+    fn suspends_in_record(&self) -> bool {
+        self.is_generator || self.is_async
+    }
+
+    /// Whether its locals and the environment its closures capture can live in a window past
+    /// its registers: the layout an environment activation (`CallPlan::environment_activation`)
+    /// and a suspended generator's window (`CallPlan::suspended_environment`) share. Each
+    /// local that is not promoted is a frame local, the captured ones owned by the environment,
+    /// and every instruction that addresses one is a record the window's handlers read
+    /// (`window_reads_locals`); the promoted ones are registers, which the window's register
+    /// file holds as it holds every register. A function's own name binding is a local too,
+    /// which the entry initializes with the callee and whose stores leave the lane
+    /// (`specialize_environment_window`).
+    fn locals_ride_window(&self, tables: &impl FactTables) -> bool {
+        self.arguments_own_their_slots(|atom| tables.atom_name(atom))
+            && (self.arguments_slot.is_none() || self.reads_passed_arguments_only() || self.arguments_ride_window())
+            // The implicit bindings `activation_binding_reads` names, but for clones, are a frame's:
+            // a suspended function's record keeps them (and gives them to the environment its
+            // window makes, `window_environment`), and the opcodes that read them
+            // exit the lane to the frame it becomes.
+            && (self.names_resolve_in_window() || self.holds_scope())
+            && (!self.reads_implicit_bindings(tables) || self.suspends_in_record())
+            && self.instructions().all(|instruction| {
+                instruction.op().immediate_role() != ImmediateRole::SuperinstructionIndex
+                    && self.window_reads_locals(tables, instruction)
+            })
+    }
+
+    /// Whether the handlers of an environment window read every local `instruction` addresses:
+    /// the local loads, stores and dead-zone openings, a field read from a plain local
+    /// (`lane_plain_local_operand`), a binary operator of a suspending function over plain
+    /// locals, whose operands and numeric target the window holds (`lane_store_numeric_local`),
+    /// the reads of the values
+    /// passed, which the window keeps, and a function's store to a `var` binding its Annex B
+    /// block function declares (`StoreVarBinding`), which is a store to the slot: only a
+    /// program's root stores through the global object or an eval's record.
+    fn window_reads_locals(&self, tables: &impl FactTables, instruction: WideInstruction) -> bool {
+        let op = instruction.op();
+        instruction.addressed_local_slots().next().is_none()
+            || match op {
+                Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal | Op::InitializeTdz => true,
+                Op::StoreVarBinding => self.parent.is_some(),
+                Op::GetField => instruction.addressed_local_slots().eq(instruction.local_field_base()),
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply if self.suspends_in_record() => {
+                    instruction.addressed_local_slots().all(|slot| self.plain_local(tables, usize::from(slot)))
+                }
+                _ => op.reads_arguments(),
+            }
+    }
+
+    /// Whether every name of the function resolves by slot, which an environment window answers: none
+    /// goes through a `with` object, a binding site or a dynamic binding (`has_dynamic_scope_access`).
+    fn names_resolve_in_window(&self) -> bool {
+        !self.inherited_with_scope && self.binding_sites.is_empty() && !self.has_dynamic_scope_access()
+    }
+
+    /// Whether a function may lay out an environment window though it resolves names through `with`
+    /// objects, binding sites or dynamic bindings, which its activation's scope chain and, for a
+    /// function that suspends, its record carry: one that makes no iteration copy of its environment
+    /// (`CloneEnv`), which would have to share them (`Vm::iteration_environment`).
+    fn holds_scope(&self) -> bool {
+        self.instructions_of(|op| op == Op::CloneEnv).next().is_none()
+    }
+
+    /// Whether the `arguments` object a suspending function made on entry rides its window as
+    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): a
+    /// window local, or, for a binding a closure captures, its slot in the environment the
+    /// window makes (`mapped_windows::window_binding`). A mapped object (`arguments_alias_parameters`) aliases
+    /// parameters that live in the window as well, the captured ones among them, which ride the
+    /// window's locals until a closure makes its environment and its slots after
+    /// (`ParameterHome`): the window's parameter reads and writes go through the object
+    /// (`lane_load_mapped_parameter`), whose element writes reach the binding
+    /// (`LaneStack::window_parameter`).
+    pub(crate) fn arguments_ride_window(&self) -> bool {
+        self.arguments_slot.is_some() && self.suspends_in_record()
     }
 
     /// The function's `CallPlan`, derived on first use.
     #[inline(always)] pub(crate) fn call_plan(&self, tables: &impl FactTables) -> CallPlan {
-        *self.call_plan.get_or_init(|| self.derive_call_plan(tables))
+        CallPlan::from_bits(u32::from(*self.call_plan.get_or_init(|| u16::try_from(self.derive_call_plan(tables).to_bits()).expect("the plan's flags fit 16 bits"))))
     }
 
     fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
@@ -2206,11 +2430,10 @@ impl Function {
             let registers_layout_of_any_kind = self.parent.is_some()
                 && !self.derived_constructor
                 && self.self_binding_slot.is_none()
-                && !self.parameter_eval_arguments_error
                 && !self.inherited_with_scope
                 && promoted_parameters == usize::from(self.params)
                 // A plain activation makes no closure, whichever bindings it would see.
-                && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+                && self.instructions_of(|op| op == Op::MakeClosure).next().is_none();
             let registers_layout = registers_layout_of_any_kind && !self.is_generator && !self.is_async;
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
@@ -2238,13 +2461,11 @@ impl Function {
             let in_loop = !self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
-                && !self.derived_constructor
-                && !self.parameter_eval_arguments_error;
+                && !self.derived_constructor;
             let settles_in_loop = self.is_async
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor
-                && !self.parameter_eval_arguments_error
                 && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(tables);
@@ -2260,48 +2481,37 @@ impl Function {
                         .addressed_local_slots()
                         .all(|slot| Some(slot) == self.arguments_slot)
                 });
+            // An ordinary call places its arguments in the window's locals, which a promoted
+            // parameter has none of, and fills the registers with `undefined`; a suspended
+            // frame is made with both, and no suspending function starts its registers apart
+            // from `undefined` (Wasm's i32 zero belongs to its bodies, which never suspend).
             let environment_activation = in_loop
                 && self.parent.is_some()
-                && !self.is_class_constructor
-                // Each argument fills its own slot, a hidden one where the list binds its names
-                // apart; a rest list binding directly fills its slot with the gathered array
-                // (`lane_activate_environment`).
-                && self.arguments_own_their_slots(|atom| tables.atom_name(atom))
-                && self.self_binding_slot.is_none()
-                && !self.inherited_with_scope
                 && self.local_registers.is_empty()
-                && (self.arguments_slot.is_none() || self.reads_passed_arguments_only())
-                && self.binding_sites.is_empty()
-                && self.selective_capture_slots.is_some()
                 && self.initial_register == InitialRegister::Undefined
-                && !self.has_dynamic_scope_access()
-                // `in_loop` leaves out the other kinds `activation_binding_reads` names.
-                && !self.body_binding_reads_beside_clones(tables)
-                && self.instructions().all(|instruction| {
-                    let op = instruction.op();
-                    // An iteration's `CloneEnv` copies the window's environment, once a closure
-                    // made one (`lane_clone_window_env`).
-                    op.immediate_role() != ImmediateRole::SuperinstructionIndex
-                        && (instruction.addressed_local_slots().next().is_none()
-                            || matches!(
-                                op,
-                                Op::LoadLocal
-                                    | Op::LoadLocalPlain
-                                    | Op::LoadEnvLocal
-                                    | Op::StoreLocal
-                                    | Op::StoreLocalPlain
-                                    | Op::StoreEnvLocal
-                                    | Op::InitializeTdz
-                            )
-                            // A read whose base is a plain local reads the window's local
-                            // (`lane_plain_local_operand`).
-                            || (op == Op::GetField
-                                && instruction.addressed_local_slots().eq(instruction.local_field_base()))
-                            // The window keeps every value passed, which these answer.
-                            || op.reads_arguments())
-                });
+                && self.locals_ride_window(tables);
+            let suspendable = self.suspends_in_record();
+            let suspended_registers = suspendable
+                && registers_layout_of_any_kind
+                && !self.rest
+                && self.arguments_slot.is_none()
+                && !addresses_locals
+                && !self.has_dynamic_scope_access();
+            // Its locals and closures ride an environment window as an ordinary body's do, and so
+            // does the `arguments` object it made on entry (`arguments_ride_window`); so do its
+            // `with` objects and dynamic bindings, which its record and activation carry.
+            // An async module's body is a program's root, which no function encloses: its slots
+            // that stand for imports and global bindings are read through the activation
+            // (`Vm::root_binding`).
+            let suspended_environment = suspendable
+                && !suspended_registers
+                && (self.parent.is_some() || self.is_async)
+                && self.locals_ride_window(tables);
             CallPlan {
                 environment_activation,
+                suspended_registers,
+                suspended_environment,
+                admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,
@@ -2349,7 +2559,7 @@ impl Function {
         let _ = self.live_parameter_reflection.set(fact(DerivedFact::LiveParameters));
         let _ = self.static_name_scope.set(fact(DerivedFact::StaticNameScope));
         let _ = self.dynamic_scope_access.set(fact(DerivedFact::DynamicScopeAccess));
-        let _ = self.call_plan.set(CallPlan::from_bits(bits >> DERIVED_FACT_COUNT));
+        let _ = self.call_plan.set(u16::try_from(bits >> DERIVED_FACT_COUNT).expect("the plan's flags fit 16 bits"));
     }
 
     /// Whether each fact `derived_facts` packs is this function's own derivation, whether it
@@ -2613,6 +2823,9 @@ impl Function {
                 && load.result_flags() == 0
                 && matches!(constants.get(load.constant_index()), Some(Constant::Undefined))
         };
+        if construct.op() != Op::Construct {
+            return None;
+        }
         let crate::bytecode::ConstructArguments::Registers(window) = construct.construct_arguments() else {
             return None;
         };
@@ -2625,7 +2838,6 @@ impl Function {
             });
         let shaped = parent_of(active, base, receiver, parent)
             && undefined_load(spare)
-            && construct.op() == Op::Construct
             && construct.is_super_construct()
             && construct.result_flags() == 0
             && construct.b() == parent.result_register()
@@ -2792,10 +3004,7 @@ impl Function {
     /// any enclosing function's binding. `is_with_enter` recognizes the atom id of
     /// [`WITH_ENTER_BINDING`] in the owning program's atom table.
     pub(crate) fn contains_with_statement(&self, is_with_enter: impl Fn(usize) -> bool) -> bool {
-        self.instructions().any(|instruction| {
-            instruction.op().is_throwing_name_load()
-                && usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter)
-        })
+        self.instructions_of(Op::is_throwing_name_load).any(|instruction| usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter))
     }
 
     /// Whether neither this function nor any enclosing one has dynamic scope access or
@@ -3153,7 +3362,7 @@ impl Operand {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn register(value: Register) -> Self {
         debug_assert!(value <= Self::PAYLOAD_MASK);
         Self(((OperandKind::Register as u16) << Self::TAG_SHIFT) | value)
@@ -3161,6 +3370,7 @@ impl Operand {
 
     /// A constant-pool operand, when the pool index fits the operand payload;
     /// larger programs load the constant into a register instead.
+    #[inline]
     pub(crate) fn constant(index: u32) -> Option<Self> {
         u16::try_from(index)
             .ok()
@@ -3168,6 +3378,7 @@ impl Operand {
             .map(|index| Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | index))
     }
 
+    #[inline]
     pub(crate) fn local(slot: u16) -> Self {
         debug_assert!(slot <= Self::PAYLOAD_MASK);
         Self(((OperandKind::Local as u16) << Self::TAG_SHIFT) | slot)
@@ -3183,159 +3394,6 @@ impl Operand {
 
     #[inline(always)] pub(crate) fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ModuleRequest {
-    pub source: String,
-    pub phase: ModuleRequestPhase,
-    pub module_type: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ModuleImportBinding {
-    pub source: String,
-    pub phase: ModuleRequestPhase,
-    pub module_type: Option<String>,
-    pub imported: ModuleImportName,
-    pub local: String,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ModuleLinkPlan {
-    pub locals: Vec<(String, String)>,
-    pub reexports: Vec<ModuleReexport>,
-    pub hoisted_functions: Vec<(String, String)>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum ModuleReexport {
-    Named {
-        source: String,
-        imported: String,
-        exported: String,
-    },
-    Star {
-        source: String,
-    },
-    Namespace {
-        source: String,
-        exported: String,
-    },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum ModuleReexportKind {
-    Named,
-    Star,
-    Namespace,
-}
-
-impl ModuleReexportKind {
-    const NAMED_BINARY_TAG: u8 = 0;
-    const STAR_BINARY_TAG: u8 = 1;
-    const NAMESPACE_BINARY_TAG: u8 = 2;
-
-    pub(crate) const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Named => Self::NAMED_BINARY_TAG,
-            Self::Star => Self::STAR_BINARY_TAG,
-            Self::Namespace => Self::NAMESPACE_BINARY_TAG,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            Self::NAMED_BINARY_TAG => Some(Self::Named),
-            Self::STAR_BINARY_TAG => Some(Self::Star),
-            Self::NAMESPACE_BINARY_TAG => Some(Self::Namespace),
-            _ => None,
-        }
-    }
-}
-
-impl ModuleReexport {
-    pub(crate) const fn kind(&self) -> ModuleReexportKind {
-        match self {
-            Self::Named { .. } => ModuleReexportKind::Named,
-            Self::Star { .. } => ModuleReexportKind::Star,
-            Self::Namespace { .. } => ModuleReexportKind::Namespace,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ModuleImportName {
-    Namespace,
-    Named(String),
-}
-
-impl ModuleImportName {
-    pub(crate) const fn binary_tag(&self) -> u8 {
-        match self {
-            Self::Namespace => ModuleImportNameKind::Namespace.binary_tag(),
-            Self::Named(_) => ModuleImportNameKind::Named.binary_tag(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum ModuleImportNameKind {
-    Namespace,
-    Named,
-}
-
-impl ModuleImportNameKind {
-    const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Namespace => 0,
-            Self::Named => 1,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Namespace),
-            1 => Some(Self::Named),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModuleRequestPhase {
-    Evaluation,
-    Defer,
-    Source,
-}
-
-impl ModuleRequestPhase {
-    pub(crate) const fn binary_tag(self) -> u8 {
-        match self {
-            Self::Evaluation => 0,
-            Self::Defer => 1,
-            Self::Source => 2,
-        }
-    }
-
-    pub(crate) const fn from_binary_tag(tag: u8) -> Option<Self> {
-        match tag {
-            0 => Some(Self::Evaluation),
-            1 => Some(Self::Defer),
-            2 => Some(Self::Source),
-            _ => None,
-        }
-    }
-
-    pub(crate) const fn runtime_value(self) -> f64 {
-        self.binary_tag() as f64
-    }
-
-    pub(crate) fn from_runtime_value(value: f64) -> Option<Self> {
-        [Self::Evaluation, Self::Defer, Self::Source]
-            .into_iter()
-            .find(|phase| phase.runtime_value() == value)
     }
 }
 
@@ -3380,6 +3438,48 @@ pub(crate) enum SourceText {
     Local(std::rc::Rc<str>),
     Static(&'static str),
     Kept(KeptText),
+    /// The text of an eval's guest string that was a rope of ASCII text: the program keeps the
+    /// rope, whose pieces other strings share, and makes the text flat only when read, never
+    /// inside the string (`RopeText`).
+    Rope(RopeText),
+}
+
+/// A rope's text, made flat on first read into a buffer of its own. Inspector code-load
+/// evaluates `function testN() { ${payload} }` per iteration: each program kept its own
+/// 2 MB flat copy for the function `testN` it defines, never read again, where the rope's
+/// pieces share the payload.
+#[derive(Clone)]
+pub(crate) struct RopeText {
+    string: crate::vm::wtf16::JsString,
+    flat: std::rc::Rc<std::cell::OnceCell<std::rc::Rc<str>>>,
+}
+
+impl RopeText {
+    /// The text's length in bytes, which for ASCII is its units, read without making it flat.
+    pub(crate) fn len_units(&self) -> usize {
+        self.string.len()
+    }
+
+    /// `string`'s text kept as its rope, when it is an unflattened rope of ASCII text.
+    pub(crate) fn of(string: &crate::vm::wtf16::JsString) -> Option<Self> {
+        string.is_unflattened_ascii_rope().then(|| Self { string: string.clone(), flat: Default::default() })
+    }
+}
+
+impl std::ops::Deref for RopeText {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.flat.get_or_init(|| {
+            let units = self.string.flat_unkept();
+            std::rc::Rc::from(units.ascii_str().expect("an ASCII rope flattens to ASCII text"))
+        })
+    }
+}
+
+impl std::fmt::Debug for RopeText {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RopeText").field("len", &self.string.len()).field("flat", &self.flat.get().is_some()).finish()
+    }
 }
 
 /// Text inside kept bytes: valid UTF-8, checked when made (`KeptText::new`).
@@ -3424,6 +3524,27 @@ impl AsRef<[u8]> for KeptPrefix {
     }
 }
 
+/// What the host does with a deferred record's bytes once they are decoded, set once by the
+/// embedding: the decoded function lives on the heap, so the bytes are read again only if the
+/// record is released and decoded anew, and a mapped compile-cache entry need not keep them
+/// resident (Air: 94 of a 123-page entry resident at its peak, its records decoded).
+static RECORD_READ: std::sync::OnceLock<fn(&[u8])> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_READ`; the first call wins.
+pub fn set_record_read(action: fn(&[u8])) {
+    let _ = RECORD_READ.set(action);
+}
+
+/// What the host does each time a function's record is built on its first use (lowered, decoded
+/// or compiled again), set once by the embedding: new code joining a run is the work its
+/// code-page policy follows (a work clock that runs without collections).
+static RECORD_BUILT: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Sets `RECORD_BUILT`; the first call wins.
+pub fn set_record_built(action: fn()) {
+    let _ = RECORD_BUILT.set(action);
+}
+
 /// A compile-cache entry split into its encoding and the source text
 /// `binary::append_kept_source` kept after it, when it keeps `source_len` bytes of text whose
 /// checksum holds; the entry itself otherwise.
@@ -3440,6 +3561,17 @@ pub(crate) fn split_kept_source(entry: KeptBytes, source_len: usize) -> Result<(
 
 pub(crate) use binary::append_kept_source;
 
+impl SourceText {
+    /// The text's length in bytes, read without making a rope flat.
+    #[allow(clippy::len_without_is_empty)]
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Rope(rope) => rope.len_units(),
+            text => str::len(text),
+        }
+    }
+}
+
 impl std::ops::Deref for SourceText {
     type Target = str;
     fn deref(&self) -> &str {
@@ -3448,6 +3580,7 @@ impl std::ops::Deref for SourceText {
             Self::Local(text) => text,
             Self::Static(text) => text,
             Self::Kept(text) => text,
+            Self::Rope(text) => text,
         }
     }
 }
@@ -3480,8 +3613,6 @@ pub(crate) struct ProgramSource {
     /// Complete static call-printing facts for native images. An unset cell
     /// leaves the dynamic error-path renderer in charge; an empty table is final.
     pub(crate) call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
-    /// The magic comments, found once by the parse that loaded the source.
-    pub(crate) directives: SourceDirectives,
 }
 
 impl ProgramSource {
@@ -3506,13 +3637,12 @@ impl ProgramSource {
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
         // `line_starts` is a memo of `text`, made again on the first line read.
         crate::vm::freeze_source_call_sites(self);
-        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites, directives } = self;
+        let Self { text, typescript, base, line_offset, column_offset, line_starts: _, call_sites } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
-        directives.write_snapshot(writer);
         writer.bool(call_sites.get().is_some());
         if let Some(sites) = call_sites.get() {
             writer.len(sites.len());
@@ -3538,7 +3668,6 @@ impl ProgramSource {
             column_offset: reader.u32()?,
             line_starts: std::cell::OnceCell::new(),
             call_sites: Default::default(),
-            directives: SourceDirectives::read_snapshot(reader)?,
         };
         if reader.bool()? {
             let count = reader.len()?;
@@ -3664,6 +3793,13 @@ pub(crate) struct CacheSiteCounts {
     pub(crate) objects: usize,
 }
 
+impl CacheSiteCounts {
+    /// Whether caches laid out for `layout` hold every site of these counts.
+    pub(crate) fn fits_within(self, layout: Self) -> bool {
+        self.fields <= layout.fields && self.methods <= layout.methods && self.objects <= layout.objects
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
@@ -3699,6 +3835,9 @@ pub struct ResidualProgram {
     /// What each function's closures read of the environments they close over, when the
     /// compiler derived it; without it a closure keeps its whole scope chain.
     pub(crate) closure_reads: Option<std::rc::Rc<ClosureReads>>,
+    /// The kept code of a Wasm module whose functions lower on their first calls: a
+    /// released slot's record is lowered from it (`WasmLazy::lower`).
+    pub(crate) wasm_lazy: Option<std::rc::Rc<crate::wasm::WasmLazy>>,
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
@@ -3806,9 +3945,8 @@ impl ResidualProgram {
     #[cold]
     #[inline(never)]
     fn recompile_function(&self, index: usize) -> &Function {
-        self.functions[index]
-            .record
-            .get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)))
+        let lowered = || &**self.functions[index].record.get_or_init(|| std::rc::Rc::new(self.built_record(index, RecordUse::Kept)));
+        self.tier0_record(index).unwrap_or_else(lowered)
     }
 
     /// `write` applied to `index`'s record: the record itself when it is compiled, else one
@@ -3816,19 +3954,29 @@ impl ResidualProgram {
     /// record once; compiling its released ones all again for that held them all at once
     /// (typescript.js: 21.7K functions, +38 MB at a cold compile's peak).
     pub(crate) fn with_record<R>(&self, index: usize, write: impl FnOnce(&Function) -> R) -> R {
-        match self.functions[index].record() {
+        // A record running unlowered (`tier0`) is not the lowered one encoding reads.
+        match self.functions[index].record.get() {
             Some(function) => write(function),
             None => write(&self.built_record(index, RecordUse::Transient)),
         }
     }
 
-    /// `index`'s record, from its unlowered form, its encoded entry or its source.
+    /// `index`'s record, from its unlowered form, its encoded entry or its source; the host
+    /// counts each as work (`set_record_built`).
     fn built_record(&self, index: usize, purpose: RecordUse) -> Function {
+        let function = self.build_record(index, purpose);
+        if let Some(action) = RECORD_BUILT.get() {
+            action();
+        }
+        function
+    }
+
+    fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
             let mut unlowered = self.functions[index].unlowered.borrow_mut();
             match purpose {
-                RecordUse::Kept => unlowered.take(),
-                RecordUse::Transient => unlowered.clone(),
+                RecordUse::Kept => unlowered.take().map(Unlowered::into_function),
+                RecordUse::Transient => unlowered.as_ref().map(Unlowered::function),
             }
         };
         if let Some(unlowered) = unlowered {
@@ -3839,11 +3987,25 @@ impl ResidualProgram {
             function.decoded.prime_loop(&function.code, &function.wide);
             return function;
         }
+        if let Some(lazy) = &self.wasm_lazy {
+            let function = lazy.lower(index, &self.constants);
+            function.decoded.prime_loop(&function.code, &function.wide);
+            return function;
+        }
         let deferred = self.encoded_records.as_deref().and_then(|records| binary::decode_deferred_function(records, index));
         let function = match deferred {
-            Some(decoded) => decoded.unwrap_or_else(|error| {
-                panic!("function {index} of {} does not decode: {error}", self.source_name)
-            }),
+            Some(decoded) => {
+                let function = decoded.unwrap_or_else(|error| {
+                    panic!("function {index} of {} does not decode: {error}", self.source_name)
+                });
+                if let (Some(action), Some(bytes)) = (
+                    RECORD_READ.get(),
+                    self.encoded_records.as_deref().and_then(|records| binary::deferred_record_bytes(records, index)),
+                ) {
+                    action(bytes);
+                }
+                function
+            }
             None => {
                 if !crate::DYNAMIC_EXECUTION_ENABLED {
                     panic!("native function {index} of {} has no archived record", self.source_name);
@@ -3864,8 +4026,7 @@ impl ResidualProgram {
     /// would have lowered it (`compile::lower_settled`), with its register roots.
     #[cold]
     #[inline(never)]
-    fn lower_unlowered(&self, index: usize, unlowered: std::rc::Rc<Function>) -> Function {
-        let mut function = std::rc::Rc::unwrap_or_clone(unlowered);
+    fn lower_unlowered(&self, index: usize, mut function: Function) -> Function {
         if self.rewrite_ranges.kept_pending { crate::compile::settle_deferred_rewrite(self, index as u32, &mut function); }
         let undefined_constant = *self.undefined_constant.get_or_init(|| {
             let index = self.constants.iter().position(|constant| matches!(constant, Constant::Undefined))
@@ -4000,6 +4161,12 @@ impl ResidualProgram {
         }
     }
 
+    /// Every function, compiled where its slot is not yet (tests).
+    #[cfg(test)]
+    pub(crate) fn compiled_functions(&self) -> impl Iterator<Item = &Function> {
+        (0..self.function_count()).map(|index| self.function(index))
+    }
+
     pub fn function_count(&self) -> usize {
         self.functions.len()
     }
@@ -4103,7 +4270,7 @@ impl ResidualProgram {
     }
 }
 mod binary;
-mod source_directives; pub(crate) use source_directives::SourceDirectives;
+mod tier0;
 #[cfg(feature = "native-execution")]
 mod native_metadata;
 #[cfg(feature = "native-execution")]
@@ -4111,7 +4278,7 @@ pub use native_metadata::NativeProgramNamespace;
 mod chunk_append;
 pub(crate) use chunk_append::{SiteCount, ChunkDelta, TableLengths};
 mod closure_reads;
-pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts};
+pub(crate) use closure_reads::{ClosureReads, EnvironmentDemand, FunctionReadFacts, MakerReads};
 pub(crate) use binary::{decode_static_module_analysis, encode_static_module_analysis, LoadEncoding, LoadRecords};
 mod disassemble;
 mod flow_view;
@@ -4119,3 +4286,50 @@ pub use flow_view::{FlowFunction, FlowInstruction};
 #[cfg(test)]
 mod tests;
 mod validate;
+
+/// Whether function `id` of `code`, an arrow, or an arrow it makes through arrows alone,
+/// reads an implicit binding of the activation it would resolve in: `this`, `arguments`,
+/// `new.target`, a home object or any by-name binding (bounded at eight levels, past which
+/// it answers `true`). A non-arrow binds its own.
+pub(crate) fn arrow_chain_reads_implicit_bindings(code: &ResidualProgram, id: u32) -> bool {
+    fn reads(code: &ResidualProgram, id: u32, depth: u8) -> bool {
+        let Some(depth) = depth.checked_sub(1) else { return true };
+        let Some(function) = code.function_get(id as usize) else { return true };
+        if !function.is_arrow {
+            return false;
+        }
+        function.instructions().any(|instruction| {
+            let op = instruction.op();
+            op.immediate_role() == ImmediateRole::SuperinstructionIndex
+                || op.reads_arguments()
+                || match op {
+                    Op::LoadThis | Op::InitializeThis | Op::SuperCallCheck | Op::LoadCallee | Op::LoadName
+                    | Op::LoadNameCall | Op::LoadNameTypeof | Op::ResolveName | Op::LoadResolvedName | Op::DeleteName
+                    | Op::StoreName | Op::StoreResolvedName | Op::StoreVarBinding => true,
+                    Op::MakeClosure => reads(code, instruction.closure_function_index(), depth),
+                    _ => reads_this_field(code, instruction),
+                }
+        })
+    }
+    reads(code, id, 8)
+}
+
+/// Whether `instruction` reads `this` through a field base (`FieldBase::THIS`): its field
+/// lookup, or a field-site operand in one of its fields. An arrow's `this.x` compiles to a
+/// field read of base `this` with no `LoadThis`, and that `this` is its maker's. A field that
+/// is no operand but decodes as one only answers `true`, which keeps the closure on its
+/// maker's environment.
+fn reads_this_field(code: &ResidualProgram, instruction: WideInstruction) -> bool {
+    let site_base_is_this = |index: usize| code.field_sites.get(index).is_some_and(|site| site.base == FieldBase::THIS);
+    let lookup_reads_this = instruction.op().immediate_role() == ImmediateRole::FieldLookup
+        && match instruction.field_lookup() {
+            Some(FieldLookup::Atom { base, .. }) => base == FieldBase::THIS,
+            Some(FieldLookup::Site(index)) => site_base_is_this(index),
+            None => false,
+        };
+    lookup_reads_this
+        || [instruction.a(), instruction.b(), instruction.c()].into_iter().any(|value| {
+            let operand = Operand(value);
+            operand.kind() == Some(OperandKind::Field) && site_base_is_this(usize::from(operand.payload()))
+        })
+}

@@ -6,7 +6,8 @@
 use super::*;
 use super::super::program_store::lane_publication::LaneKey;
 
-type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
+type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
+#[path = "lane_compile/image.rs"] mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
 pub(super) struct LanePlan {
@@ -21,6 +22,8 @@ pub(super) struct LanePlan {
     pub(super) invalidation: crate::code_dependencies::Invalidation,
     /// The callee instructions its unit inlined at most (`lane_unit::with_budget`).
     pub(super) budget: usize,
+    /// The thresholds of the VM that planned it, which its publication reads (`amortizes_entry`).
+    pub(super) tiers: &'static Tiers,
 }
 
 /// A plan whose code compiles on the code generator's thread. It holds while the facts it
@@ -52,6 +55,9 @@ pub(in crate::vm) enum LaneBodyWork<'a> {
     /// Plan a body from a predecessor's leaves (`generic`) and start compiling its code, its
     /// inlining budget halved `shrinks` times (`PendingLaneMethod::shrinks`).
     Start { generic: &'a [LaneExit], shrinks: u8, observed: Option<u32>, called: bool, caller: &'a super::super::dispatch_fast::LaneView,
+        /// A loop's body: the loop's span and the iterations it has taken, which weigh its
+        /// compile (`loop_model::body_taken`) as `observed` entries weigh a function's.
+        looped: Option<(u64, u64)>,
         /// The activation's array parameters sampled at entry, with their element type (`loop_tier::sample_array`).
         arrays: &'a [(crate::bytecode::Register, crate::typed_ir::Type)] },
     /// Look for the code of the body compiling.
@@ -99,18 +105,6 @@ const REPLAN_BUDGET_DIVISOR: usize = 2;
 const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
-/// The code of one lane body, compiled on the calling thread.
-fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
-    let level = match level {
-        super::jit_backend::CompileLevel::Optimized | super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
-            super::jit_backend::CompileLevel::Large,
-        level => level,
-    };
-    let isa = super::jit_backend::target_isa_level(level)
-        .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
-    compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
-}
-
 use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
@@ -152,15 +146,15 @@ impl<H: Host> Vm<H> {
         trips: &dyn Fn(u32, u32) -> Option<u64>, generic: &[LaneExit], budget: usize) -> Option<lane_unit::Unit> {
         let body = program.function_get(function as usize)?;
         let valid = std::cell::Cell::new(true);
-        let unit = lane_unit::with_trips(program, function, body, budget,
+        let unit = lane_unit::with_trips(program, function, body, (budget, self.programs.tiers().lane_body.max_inlined_instructions),
             &|caller, pc| self.lane_bindings(program, function, generic, targets, &valid, caller, pc), trips,
-            &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(Miss::PlanNoUnit); None })?;
-        if !valid.get() { plan_miss(Miss::PlanInvalidBindings); return None; }
+            &|callee| program.function_get(callee as usize)).or_else(|| { plan_miss(self, Miss::PlanNoUnit); None })?;
+        if !valid.get() { plan_miss(self, Miss::PlanInvalidBindings); return None; }
         unit.frames.iter().all(|frame| match frame.target.callee {
             CalleeBinding::Identity(callee) | CalleeBinding::Forwarded { callee, .. } => self.lane_inlined_target_admitted(program, callee, frame.target.function),
             CalleeBinding::Function => frame.recovery == lane_unit::CallRecovery::RestartCall
                 && numeric_restartable(program, frame.target.function),
-        }).then_some(unit).or_else(|| { plan_miss(Miss::PlanFrameNotAdmitted); None })
+        }).then_some(unit).or_else(|| { plan_miss(self, Miss::PlanFrameNotAdmitted); None })
     }
 
     /// Plans `function`'s lane body at `budget`: its unit, proofs and lowering, and the
@@ -172,20 +166,17 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize, entry: Option<u32>,
         arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Option<(LanePlan, ir::Function)> {
         let unit = self.lane_plan_unit(program, function, targets, trips, generic, budget)?;
-        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(Miss::PlanNoEntry); None })?;
+        let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
-        // Admitting the stores' writes once, here, widens what they widen; the fields then
-        // read the widened slots, and the body's entries admit nothing again.
+        // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
         if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         let closed = unit_closed(&unit, function, |pc| direct_sites.contains_key(&pc), targets);
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
-        let helpers = LaneHelper::addresses::<H>();
-        crate::jit_coverage::note_native_helpers(helpers);
-        let helpers = LaneHelpers::Process(helpers);
+        let helpers = Self::process_helpers();
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
@@ -193,15 +184,25 @@ impl<H: Host> Vm<H> {
         let active = self.active_program;
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
             .map_or(&[][..], |_| self.programs.constants(active));
+        let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
+        let names = |site: u16, atom| self.native_function_name(site, atom);
+        let shape_stable = |shape: u32| self.shape_is_stable(shape);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address(), constants }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let number_reads = super::osr_compile::observed_reads(&unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(Miss::PlanNotLowered); None })?;
-        if lowered.region.native == 0 { plan_miss(Miss::PlanNothingNative); return None; }
+            &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(self, Miss::PlanNothingNative); None })?;
+        if lowered.region.native == 0 { plan_miss(self, Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget }, native))
+        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget, tiers: self.programs.tiers() }, native))
+    }
+
+    /// The lane helpers of this process, noted for the coverage census.
+    fn process_helpers() -> LaneHelpers {
+        let helpers = LaneHelper::addresses::<H>();
+        crate::jit_coverage::note_native_helpers(helpers);
+        LaneHelpers::Process(helpers)
     }
 
     /// Specialize `function` for lane activations, admitting a body only where its first
@@ -215,10 +216,10 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[])
+            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[])
             else { break None };
-            match lane_code(native, super::jit_backend::CompileLevel::run_default()) {
-                Ok(code) => break plan.finish(&code),
+            match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
+                Ok(code) => break plan.finish(&code.code, code.scalar),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
             }
@@ -251,36 +252,54 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
-        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, observed: Option<u32>, called: bool, caller: &super::super::dispatch_fast::LaneView,
+        direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>, (observed, looped): (Option<u32>, Option<(u64, u64)>), called: bool, caller: &super::super::dispatch_fast::LaneView,
         arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> Result<PendingLaneMethod, Unstarted> {
-        let (plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
+        // A plan costs the program's own time, as much as its compile and on its thread: what
+        // decides against the compile after planning decides before it, charging the plan too.
+        // A function whose compiles from this entry are spent plans nothing; one whose last plan
+        // from it did not pay at its size is not planned again until its entries would pay for that size.
+        let site = (self.active_program.raw(), function, entry);
+        let tiers = self.programs.tiers();
+        if !self.programs.lane_compiles_left(&site, tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
+        // each, the loop region's measure): inlining only adds to it.
+        let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
+        let planned = self.programs.planned_lane_ir(&site);
+        if let Some(entries) = observed
+            && !pays_compile(tiers, program, function, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, true, false) { return Err(Unstarted::Unpaid); }
+        if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
+        let plan_started = std::time::Instant::now();
+        let (mut plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
             .ok_or(Unstarted::Declined)?;
+        let planned_ir = native.dfg.num_insts();
+        self.programs.note_planned_lane_ir(site, planned_ir);
+        let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !amortizes_entry(&plan.unit, function, &plan.direct) { plan_miss(Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        if entry.is_none() && !called && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !pays_compile(program, function, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
-        if !self.programs.admit_lane_compile(&key, TIERS.lane_body.max_compiles) { plan_miss(Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if let Some(entries) = observed && !pays_compile(plan.tiers, program, function, entries, planned_ir, caller, false, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
+        if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(plan.tiers, span, planned_ir, false) { return Err(Unstarted::Unpaid); }
+        if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         watch.hold_roots(plan.lowered.region.stable.roots.clone(), &mut self.heap);
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
         if !plan.dependencies().subscribe(&plan.lowered.region.stable,
             &watcher, &mut self.heap, self.method_cache_atoms.readers()) {
-            plan_miss(Miss::PlanDependencies); return Err(Unstarted::Declined);
+            plan_miss(self, Miss::PlanDependencies); return Err(Unstarted::Declined);
         }
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
-            generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed });
-        let ir = native.dfg.num_insts();
+            generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed, plan_us });
+        let scalar = plan.lowered.scalar.take();
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
-            let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
+            let code = image::compile(native, scalar, super::jit_backend::CompileLevel::run_default());
             let took = started.elapsed();
-            super::tier_model::note_compile(took, ir);
-            if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |code| code.len()))); }
+            if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |image| image.code.len()))); }
             code
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
@@ -303,9 +322,9 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn lane_body_work(&mut self, program: &ResidualProgram, function: u32,
         targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, trips: &dyn Fn(u32, u32) -> Option<u64>, captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
-        let (mut observed, mut called, mut caller, mut arrays) = (None, false, None, Vec::new());
+        let (mut observed, mut looped, mut called, mut caller, mut arrays) = (None, None, false, None, Vec::new());
         let mut pending = match work {
-            LaneBodyWork::Start { generic, shrinks, observed: seen, called: by_bodies, caller: view, arrays: sampled } => { (observed, called, caller, arrays) = (seen, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
+            LaneBodyWork::Start { generic, shrinks, observed: seen, looped: iterations, called: by_bodies, caller: view, arrays: sampled } => { (observed, looped, called, caller, arrays) = (seen, iterations, by_bodies, Some(view), sampled.to_vec()); (generic.to_vec(), lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS >> shrinks) }
             LaneBodyWork::Poll(pending) => match self.lane_body_poll(pending) {
                 Ok(outcome) => return outcome,
                 Err(replan) => replan,
@@ -319,7 +338,7 @@ impl<H: Host> Vm<H> {
             // A function with an ahead-of-time body takes it where a first compile would.
             if let Some(published) = self.install_ahead_body(program, function, entry, &generic) { return LaneBodyOutcome::Published(published); }
             let direct = direct(self);
-            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, observed, called, caller.expect("a started body names its view"), &arrays) {
+            let started = match self.start_lane_method(program, function, targets, trips, captures, &direct, &generic, budget, entry, (observed, looped), called, caller.expect("a started body names its view"), &arrays) {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
@@ -379,7 +398,7 @@ impl PendingLaneMethod {
     fn poll(mut self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
-            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
+            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code.code, code.scalar)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) =>
                 LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
             std::task::Poll::Ready(_) => LaneCompile::Done(None),
@@ -411,10 +430,10 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(super) fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
+    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
-        let amortizes = amortizes_entry(unit, self.function, &self.direct);
+        let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
         let (dependencies, recovery_space) = (self.dependencies(), super::dispatch_fast::LaneRecoverySpace::inlined(&unit.frames));
         let (scratch_width, caller_registers) = (usize::from(unit.registers - unit.caller_registers), unit.caller_registers);
         let names_shapes = self.names_shapes();
@@ -424,17 +443,15 @@ impl LanePlan {
         }
         // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
-        #[cfg(test)]
-        LANE_METHODS_COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        #[cfg(test)]
-        LANE_CALLS_INLINED.fetch_add(unit.frames.len(), std::sync::atomic::Ordering::Relaxed);
+        let scalar = scalar.map(|at| memory.pointer().addr() + at);
         Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
             scratch_width, caller_registers,
             amortizes, direct: self.direct, closed: self.closed,
+            framed: false, _records: Vec::new(), constructors: Box::default(),
         })
     }
 }
@@ -463,43 +480,8 @@ impl LaneMethod {
     }
 }
 
-/// What a lane body's code relies on beyond its guards, its direct callees' included, once
-/// each. A receiver's shape is guarded at each field use (and proved again after any call,
-/// `State::call_effect`), so an object leaving it falls out at the guard: only its slots'
-/// observations are dependencies, and a compaction retires code that names shape ids
-/// (`LaneView::invalidate_shape_bindings`). A holder's (prototype's) layout is read
-/// without a guard, so its departures are dependencies too.
-#[derive(Default)]
-pub(in crate::vm) struct LaneDependencies {
-    pub(in crate::vm) slots: Vec<crate::code_dependencies::SlotDependency>,
-    departure_shapes: Vec<u32>,
-}
-
-impl LaneDependencies {
-    fn of(loads: impl Iterator<Item = NativeFieldLoad> + Clone, direct: &[DirectCallee]) -> Self {
-        let mut slots: Vec<_> = loads.clone().filter_map(NativeFieldLoad::slot_dependency)
-            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.slots.iter().copied())).collect();
-        slots.sort_unstable_by_key(|dependency| (dependency.shape, dependency.slot));
-        slots.dedup();
-        let mut departure_shapes: Vec<_> = loads.filter_map(|load| load.holder)
-            .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.departure_shapes.iter().copied())).collect();
-        departure_shapes.sort_unstable();
-        departure_shapes.dedup();
-        Self { slots, departure_shapes }
-    }
-
-    /// Makes `code` retire when a fact it took changes: a slot's observation, a holder
-    /// shape's departure, or one of its Stable facts; `false` where a reader table is full.
-    pub(in crate::vm) fn subscribe(&self, stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
-        heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
-        self.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
-            && self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
-            && stable.holders.iter().all(|holder| crate::heap::subscribe_prototype_values(*holder, code))
-            && stable.atoms.iter().all(|atom| method_atoms.subscribe(*atom, code))
-            && stable.globals.iter().all(|fact| crate::heap::subscribe_global_value(*fact, code))
-            && stable.layouts.iter().all(|fact| crate::heap::subscribe_global_layout(*fact, code))
-            && stable.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
-    }
-}
+#[path = "lane_compile/dependencies.rs"]
+mod dependencies;
+pub(in crate::vm) use dependencies::LaneDependencies;
 
 #[cfg(test)] #[path = "lane_compile/tests.rs"] mod tests;

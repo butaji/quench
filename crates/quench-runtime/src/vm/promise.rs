@@ -14,13 +14,27 @@ use rustc_hash::FxHashSet;
 /// of one shape and prototype (`Vm::promise_species_proved`), held as a dependency: the walk
 /// that proved it found `constructor` in a data slot of a prototype and the constructor's own
 /// `@@species` holding the intrinsic getter, and both objects are watched prototypes whose
-/// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their slots or a
-/// change to any prototype's layout retires it, as does a collection. A use reads no slot.
+/// values it watches (`heap::watch_prototype_values`, holder then constructor): a write to their
+/// slots advances the intrinsic epoch, a change to any prototype's layout the chain epoch, and
+/// either retires it, as does a collection. A use reads no slot: a layout id and two epochs.
 pub(super) struct PromiseSpeciesProof {
-    shape: u32,
-    prototype: Value,
+    layout: u32,
+    epochs: (u64, u64),
     realm: Value,
-    watches: [crate::heap::PrototypeValueWatch; 2],
+    /// Keeps the subscriptions whose retirement advances the intrinsic epoch.
+    _watches: [crate::heap::PrototypeValueWatch; 2],
+}
+
+/// That promises of one layout read `then` as plain data inherited from their prototype,
+/// holding `then`: the receiver's layout fixes its own keys and prototype link, the chain epoch
+/// every prototype's layout, and the intrinsic epoch the prototype's values, which a write to
+/// them advances while the prototype's values are watched (`heap::watch_prototype_values`).
+#[derive(Clone, Copy)]
+pub(super) struct PromiseThenMemo {
+    layout: u32,
+    epochs: (u64, u64),
+    realm: Value,
+    then: Value,
 }
 
 pub(super) fn module_cache_key(name: &str, module_type: &str) -> String {
@@ -353,7 +367,9 @@ pub(super) struct PromiseJob {
     pub(super) next: Value,
     pub(super) rejected: bool,
     pub(super) value: Value,
-    pub(super) execution_context: Option<HostExecutionContext>,
+    /// In one word (`StoredHostContext`): queued jobs had taken 64 bytes each, and doxbee-promise
+    /// queued 25K at once.
+    pub(super) execution_context: crate::heap::StoredHostContext,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -363,7 +379,7 @@ pub(super) struct ThenableJob {
     pub(super) then: Value,
     pub(super) thenable: Value,
     pub(super) promise: Value,
-    pub(super) execution_context: Option<HostExecutionContext>,
+    pub(super) execution_context: crate::heap::StoredHostContext,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -809,14 +825,7 @@ impl<H: Host> Vm<H> {
         };
         let promise = self.heap.alloc_promise(crate::heap::PromiseCell {
             object: Self::empty_object(prototype),
-            record: PromiseRecord {
-                state: PromiseState::Pending,
-                result: Value::UNDEFINED,
-                reactions: Default::default(),
-                rejection: PromiseRejectionState::Unobserved,
-                host_context: host_context.into(),
-                module_evaluation: false,
-            },
+            record: PromiseRecord::pending(host_context.into()),
         });
         if let Some(identity) = host_context {
             let mut context = crate::NativeContext::new(self);
@@ -1480,7 +1489,7 @@ impl<H: Host> Vm<H> {
         let Some(completion) = self.promise_record(promise).cloned() else {
             return Err(self.type_error(p, "module completion promise is unavailable".into()));
         };
-        match completion.state {
+        match completion.state() {
             PromiseState::Pending => {
                 let Some(record) = self.realm.promise.modules.get_mut(key) else {
                     return Ok(());
@@ -1499,9 +1508,9 @@ impl<H: Host> Vm<H> {
             }
             PromiseState::Fulfilled => self.complete_main_module(p, key),
             PromiseState::Rejected => {
-                self.fail_main_module(p, key, completion.result)?;
+                self.fail_main_module(p, key, completion.result())?;
                 Err(JsError::thrown(
-                    completion.result,
+                    completion.result(),
                     "main module evaluation rejected".into(),
                 ))
             }
@@ -1569,8 +1578,8 @@ impl<H: Host> Vm<H> {
                     immutable: true,
                 });
                 let value = self.heap.alloc(Cell::TypedArray {
-                    kind,
                     object: Box::new(crate::heap::BufferViewObject {
+                        native: crate::heap::NativeView::typed(kind),
                         object: Self::empty_object(self.typed_array_proto(kind)),
                         offset: 0,
                     }),
@@ -1915,7 +1924,7 @@ impl<H: Host> Vm<H> {
             }
             Some(
                 crate::vm::property_key::PropertyKey::Symbol(_)
-                | crate::vm::property_key::PropertyKey::Private(_),
+                | crate::vm::property_key::PropertyKey::Private(..),
             ) => false,
         };
         if triggers_evaluation {
@@ -3330,7 +3339,7 @@ impl<H: Host> Vm<H> {
                 .and_then(ModuleRecord::evaluation_promise)
                 .is_some_and(|promise| {
                     self.promise_record(promise)
-                        .is_some_and(|record| record.state == PromiseState::Pending)
+                        .is_some_and(|record| record.state() == PromiseState::Pending)
                 })
         {
             let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
@@ -3491,7 +3500,7 @@ impl<H: Host> Vm<H> {
     fn watch_module_evaluation(&mut self, promise: Value) {
         let settled = self.promise_record_mut(promise).is_none_or(|record| {
             record.module_evaluation = true;
-            record.state != PromiseState::Pending
+            record.state() != PromiseState::Pending
         });
         self.realm.promise.async_module_settled |= settled;
     }
@@ -3542,7 +3551,7 @@ impl<H: Host> Vm<H> {
             let promise = module.evaluation_promise()?;
             let settled = self
                 .promise_record(promise)
-                .is_some_and(|record| record.state != PromiseState::Pending);
+                .is_some_and(|record| record.state() != PromiseState::Pending);
             settled.then_some((key, promise, module.pending_namespace()?))
         })
     }
@@ -3566,14 +3575,14 @@ impl<H: Host> Vm<H> {
             let Some(record) = self.promise_record(promise).cloned() else {
                 continue;
             };
-            match record.state {
+            match record.state() {
                 PromiseState::Pending => {}
                 PromiseState::Fulfilled => self.settle_static_module(p, &key, Ok(namespace))?,
                 PromiseState::Rejected => self.settle_static_module(
                     p,
                     &key,
                     Err(JsError::thrown(
-                        record.result,
+                        record.result(),
                         "module evaluation rejected".into(),
                     )),
                 )?,
@@ -3747,7 +3756,7 @@ impl<H: Host> Vm<H> {
             {
                 let pending = self
                     .promise_record(evaluation)
-                    .is_some_and(|record| record.state == PromiseState::Pending);
+                    .is_some_and(|record| record.state() == PromiseState::Pending);
                 if pending && self.deferred_dependency_batch {
                     let key = module_cache_key(&module.name, "javascript");
                     let Some(module_record) = self.realm.promise.modules.get_mut(&key) else {
@@ -3766,11 +3775,11 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "module evaluation promise is unavailable".into())
                     );
                 };
-                match record.state {
+                match record.state() {
                     PromiseState::Fulfilled => {}
                     PromiseState::Rejected => {
                         return Err(JsError::thrown(
-                            record.result,
+                            record.result(),
                             "module evaluation rejected".into(),
                         ));
                     }
@@ -4831,9 +4840,15 @@ impl<H: Host> Vm<H> {
         let then_atom = self.runtime_atoms.then;
         // A `then` that reads as plain data (`plain_named_load`), as an intrinsic promise's
         // does, is the value [[Get]] would answer, without its general lookup.
-        let read = match self.plain_named_load(value, then_atom) {
+        let read = match self.memoized_resolution_then(value) {
             Some(then) => Ok(then),
-            None => self.get_property(p, value, then_atom),
+            None => match self.plain_named_load(value, then_atom) {
+                Some(then) => {
+                    self.remember_resolution_then(value, then);
+                    Ok(then)
+                }
+                None => self.get_property(p, value, then_atom),
+            },
         };
         let then = match read {
             Ok(then) => then,
@@ -4850,13 +4865,13 @@ impl<H: Host> Vm<H> {
         }
         let execution_context = self
             .host
-            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context.get()));
+            .capture_job_context(self.promise_record(promise).and_then(|record| record.host_context().get()));
         self.realm.jobs.push_back(super::PendingJob::Thenable(ThenableJob {
             realm: self.realm.globals,
             then,
             thenable: value,
             promise,
-            execution_context,
+            execution_context: execution_context.into(),
         }));
         Ok(())
     }
@@ -4928,8 +4943,55 @@ impl<H: Host> Vm<H> {
         if self.object_data(value).is_none() {
             return Some(Value::UNDEFINED);
         }
+        if let Some(then) = self.memoized_resolution_then(value) {
+            return Some(then);
+        }
         let then_atom = self.runtime_atoms.then;
-        self.plain_named_load(value, then_atom)
+        let then = self.plain_named_load(value, then_atom)?;
+        self.remember_resolution_then(value, then);
+        Some(then)
+    }
+
+    /// The `then` a resolution reads from promise `value` (`PromiseThenMemo`), where the memo
+    /// holds for it: one layout compare and two epoch compares instead of the read.
+    #[inline(always)]
+    fn memoized_resolution_then(&self, value: Value) -> Option<Value> {
+        let memo = self.promise_then_memo.get()?;
+        let object = &self.heap.promise(value)?.object;
+        (object.layout_id() == memo.layout
+            && memo.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
+            && memo.realm == self.realm.globals)
+            .then_some(memo.then)
+    }
+
+    /// Remembers `then`, which a plain read of promise `value` found inherited as data
+    /// (`plain_named_load`): its prototype becomes a watched prototype whose value writes
+    /// advance the intrinsic epoch. Any other value, an own `then` or no prototype records
+    /// nothing.
+    #[cold]
+    #[inline(never)]
+    fn remember_resolution_then(&mut self, value: Value, then: Value) {
+        let key = PropertyKey::string(self.runtime_atoms.then);
+        let Some(record) = self.heap.promise(value) else { return };
+        let (layout, shape, prototype) = (record.object.layout_id(), record.object.shape(), record.object.proto());
+        // The read found `then` on the prototype itself: the receiver has none of its own.
+        if record.object.has_side_descriptors() || !self.is_function(then) || self.property_shape_slot(shape, key).is_some() {
+            return;
+        }
+        self.heap.mark_prototype(prototype);
+        let Some(holder) = self.heap.object(prototype) else { return };
+        if holder.has_side_descriptors() || holder.watched_subject().is_none() || self.property_shape_slot(holder.shape(), key).is_none() {
+            return;
+        }
+        if crate::heap::watch_prototype_values(holder.exact_shape()).is_none() {
+            return;
+        }
+        self.promise_then_memo.set(Some(PromiseThenMemo {
+            layout,
+            epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+            realm: self.realm.globals,
+            then,
+        }));
     }
 
     /// `promise_resolve_value` of a promise no one has observed yet, with the `then`
@@ -4952,7 +5014,7 @@ impl<H: Host> Vm<H> {
                 then,
                 thenable: value,
                 promise,
-                execution_context,
+                execution_context: execution_context.into(),
             }));
             return true;
         }
@@ -4983,19 +5045,19 @@ impl<H: Host> Vm<H> {
         intrinsic
     }
 
-    /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved shape and
-    /// prototype, with no side descriptors, under the value epoch the proof was made in.
+    /// Whether the `PromiseSpeciesProof` answers `promise`: a receiver of the proved layout
+    /// (shape and prototype), with no side descriptors, under the epochs the proof was made in.
     #[inline]
     fn promise_species_proved(&self, promise: Value) -> bool {
         let proofs = self.promise_species_proof.borrow();
-        let Some(proof) = proofs.as_ref().filter(|proof| proof.watches.iter().all(|watch| watch.is_published())) else {
+        let Some(proof) = proofs.as_ref() else {
             return false;
         };
         let Some(data) = self.heap.ordinary_object(promise) else {
             return false;
         };
-        data.shape() == proof.shape
-            && data.proto() == proof.prototype
+        data.layout_id() == proof.layout
+            && proof.epochs == (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch())
             && !data.has_side_descriptors()
             && proof.realm == self.realm.globals
     }
@@ -5009,17 +5071,28 @@ impl<H: Host> Vm<H> {
         let Some(data) = self.heap.ordinary_object(promise) else {
             return;
         };
-        let (shape, key) = (data.shape(), PropertyKey::string(self.runtime_atoms.constructor));
-        let Some(SymbolLoadAnswer::Inherited { prototype, holder, .. }) =
-            self.symbol_load_proofs.answer(shape, key, crate::heap::prototype_layout_epoch())
+        let (layout, key) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor));
+        let Some(SymbolLoadAnswer::Inherited { hops, .. }) =
+            self.symbol_load_proofs.answer(data.layout_id(), key)
         else {
             return;
         };
+        // The holder is `hops` links up from the promise.
+        let mut holder = promise;
+        for _ in 0..hops {
+            let Some(link) = self.heap.object(holder) else { return };
+            holder = link.proto();
+        }
         self.heap.mark_prototype(holder);
         self.heap.mark_prototype(constructor);
         let watch = |object| self.heap.object(object).and_then(|data| crate::heap::watch_prototype_values(data.exact_shape()));
         *self.promise_species_proof.borrow_mut() = watch(holder).zip(watch(constructor))
-            .map(|(holder, constructor)| PromiseSpeciesProof { shape, prototype, realm: self.realm.globals, watches: [holder, constructor] });
+            .map(|(holder, constructor)| PromiseSpeciesProof {
+                layout,
+                epochs: (crate::heap::intrinsic_epoch(), crate::heap::prototype_layout_epoch()),
+                realm: self.realm.globals,
+                _watches: [holder, constructor],
+            });
     }
 
     pub(super) fn promise_then(
@@ -5039,7 +5112,7 @@ impl<H: Host> Vm<H> {
             // A %Promise% capability has no guest executor (see `promise_resolve_for_constructor`):
             // its promise is settled directly when the reaction runs.
             let next = if constructor == vm.intrinsic_promise_constructor() {
-                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context.get())?
+                vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context().get())?
             } else {
                 let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
                 vm.realm
@@ -5064,7 +5137,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         }
         let next = self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
-            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context.get())
+            vm.promise_object_with_parent(vm.promise_record(promise).expect("promise record").host_context().get())
         })?;
         let (resolve, reject) = self.promise_resolving_functions(next);
         self.realm
@@ -5096,15 +5169,15 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED
             },
             next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context.get())).into(),
+            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
         };
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.
         let record = self.promise_record_mut(promise).unwrap();
-        if record.state == PromiseState::Pending {
-            record.reactions.push(reaction);
+        if record.state() == PromiseState::Pending {
+            record.push_reaction(reaction);
         } else {
-            let (state, result) = (record.state, record.result);
+            let (state, result) = (record.state(), record.result());
             self.enqueue_promise_reaction(p, reaction, state, result);
         }
     }

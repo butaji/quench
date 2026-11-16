@@ -29,7 +29,7 @@ pub(super) fn lane_loop_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, o
     let mut entry = super::super::compiled::LoopEntry::new();
     let views = lane_loop_entry(cx, r, region, &mut entry)?;
     let continuation = lane_loop_run(cx, r, site, region, &mut entry, views, pc as u32);
-    count_continuation(&continuation);
+    count_continuation(cx, &continuation);
     if matches!(continuation, LoopContinuation::Jump) {
         site.note_decline();
     }
@@ -46,6 +46,8 @@ pub(super) fn lane_loop_resume<H: Host>(cx: *mut LaneContext<H>, r: Registers, o
         // The backward jump's own record polls the interrupt.
         LoopContinuation::Safepoint => script(at(region.backedge)),
         LoopContinuation::Completed(next, value) => LaneBodyLeft::Completed(at(next), value),
+        LoopContinuation::Recovered(left) => left,
+        LoopContinuation::Threw(next) => LaneBodyLeft::Raised(at(next)),
         LoopContinuation::Callee => {
             let mut carried = Carried::script(cx);
             // SAFETY: `lane_body_call` set both before the region left.

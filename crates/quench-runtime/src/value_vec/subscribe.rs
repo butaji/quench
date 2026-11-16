@@ -13,9 +13,9 @@ impl ValueArena {
         self.subscribe_shape(dependency.shape, code) && self.slot_readers.subscribe(owner, code)
     }
 
-    /// Observe the next write that changes `dependency`'s slot observation, not departures of
-    /// its shape: native code guards the shape it embeds at each use, so an object that leaves
-    /// that shape falls out at the guard, and only a compaction, which renumbers shape IDs,
+    /// Retire `code` at the next write that widens `dependency`'s slot type, before that write
+    /// lands, not at departures of its shape: native code guards the shape it embeds at each
+    /// use (or depends on it, `subscribe_shape`), and a compaction, which renumbers shape IDs,
     /// retires the code. The caller keeps the shape IDs it embeds for that retirement.
     pub(crate) fn subscribe_slot_observation(&mut self, dependency: SlotDependency, code: &Rc<dyn DependentCode>) -> bool {
         let Some(owner) = self.admits_slot_dependency(dependency) else { return false };

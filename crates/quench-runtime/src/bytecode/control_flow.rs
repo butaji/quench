@@ -215,6 +215,11 @@ impl Successors {
         &self.starts
     }
 
+    /// How control reaches each of `targets`, in the same order.
+    pub(crate) fn edges(&self) -> &[ControlEdge] {
+        &self.edges
+    }
+
     /// Every pc's successor targets, in pc order.
     pub(crate) fn targets(&self) -> &[u32] {
         &self.targets

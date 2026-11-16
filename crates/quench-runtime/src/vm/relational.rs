@@ -238,6 +238,27 @@ impl<H: Host> Vm<H> {
     /// `ordinary_instanceof_walk`.
     #[inline(always)]
     pub(super) fn steady_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+        // A primitive is no instance, decided before `prototype` is read
+        // (OrdinaryHasInstance step 3): a value outside the heap, or a string.
+        if Self::primitive_instance(value, &self.heap) {
+            self.steady_instanceof_target(constructor)?;
+            return Some(false);
+        }
+        let target = self.steady_instanceof_target(constructor)?;
+        self.instanceof_chain(value, target)
+    }
+
+    /// Whether `value` is a primitive for `instanceof`: outside the heap, or a string.
+    #[inline(always)]
+    fn primitive_instance(value: Value, heap: &crate::heap::Heap) -> bool {
+        value.direct_object_index().is_none() && (value.heap_index().is_none() || heap.is_string(value))
+    }
+
+    /// The encoded link of `constructor`'s `prototype` object where the steady case holds:
+    /// the remembered constructor layout, the native `@@hasInstance` inherited, and a
+    /// `prototype` that is an object record.
+    #[inline(always)]
+    fn steady_instanceof_target(&self, constructor: Value) -> Option<ProtoLink> {
         let FunctionRecord { kind, object, .. } = self.heap.function(constructor)?;
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
             return None;
@@ -248,25 +269,30 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        // A primitive is no instance, decided before `prototype` is read
-        // (OrdinaryHasInstance step 3): a value outside the heap, or a string.
-        if value.direct_object_index().is_none() && (value.heap_index().is_none() || self.heap.is_string(value)) {
-            return Some(false);
-        }
         // SAFETY: the memo names the slot of `prototype` in the shape it holds, which is
         // never a dictionary's, so the slot exists.
         let prototype = unsafe { self.heap.property_get_shaped(object, slot) }?;
         if prototype.is_deleted() {
             return None;
         }
-        let target = ProtoLink::object_record(prototype.direct_object_index()?);
-        let mut object = match value.direct_object_index() {
-            Some(record) => self.heap.object_record_by_id(record),
-            // Another object kind (an array, a function, a typed array, a Buffer) starts from
-            // its own link; a proxy's [[GetPrototypeOf]] may run its trap, which the walk makes.
-            None => self.ordinary_link_holder(value)?,
+        Some(ProtoLink::object_record(prototype.direct_object_index()?))
+    }
+
+    /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
+    /// object whose chain is all object records: `None` for anything else (no proof, another
+    /// heap value, a link outside the records), which `proved_instanceof` decides. Calls
+    /// nothing, so a handler's hit path builds no frame.
+    #[inline(always)]
+    pub(super) fn record_instanceof(&self, value: Value, constructor: Value) -> Option<bool> {
+        let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
+        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|watch| watch.is_published()) {
+            return None;
+        }
+        let target = proof.1;
+        let Some(record) = value.direct_object_index() else {
+            return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
         };
-        // The walk compares encoded links; only a link outside the object records decodes.
+        let mut object = self.heap.object_record_by_id(record);
         loop {
             let link = object.proto_link();
             if link == target {
@@ -275,17 +301,49 @@ impl<H: Host> Vm<H> {
             if link == ProtoLink::NULL {
                 return Some(false);
             }
-            object = match link.object_record_id() {
-                Some(id) => self.heap.object_record_by_id(id),
-                None => self.ordinary_link_holder(object.proto())?,
-            };
+            object = self.heap.object_record_by_id(link.object_record_id()?);
         }
+    }
+
+    /// `steady_instanceof` through the proof `constructor` holds (`Vm::instanceof_proofs`):
+    /// its `prototype` link, read once and kept while no slot or layout of the constructor
+    /// (marked a prototype) changes, so a use reads neither its layout nor its `prototype`.
+    #[inline(always)]
+    pub(super) fn proved_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
+        let proof = &self.instanceof_proofs[instanceof_holder_index(constructor)];
+        if proof.0 != constructor || !proof.2.as_ref().is_some_and(|watch| watch.is_published()) {
+            return self.prove_instanceof(value, constructor);
+        }
+        let target = proof.1;
+        if Self::primitive_instance(value, &self.heap) {
+            return Some(false);
+        }
+        self.instanceof_chain(value, target)
+    }
+
+    /// `proved_instanceof` without a current proof: the steady case, which then records one.
+    #[inline(never)]
+    fn prove_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
+        let holds = self.steady_instanceof(value, constructor)?;
+        if let Some(target) = self.steady_instanceof_target(constructor)
+            && let Some(shape) = self.heap.function(constructor).map(|function| function.object.exact_shape())
+        {
+            self.heap.mark_prototype(constructor);
+            let watch = crate::code_dependencies::new_dependency();
+            let code: std::rc::Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
+            // The mark may have changed the exact shape the subscription names.
+            let shape = self.heap.function(constructor).map_or(shape, |function| function.object.exact_shape());
+            if crate::heap::subscribe_prototype_values(shape, &code) {
+                self.instanceof_proofs[instanceof_holder_index(constructor)] = (constructor, target, Some(watch));
+            }
+        }
+        Some(holds)
     }
 
     /// The object of `value`, a heap object other than a proxy, whose prototype link
     /// `[[GetPrototypeOf]]` reads without running guest code.
     #[inline(always)]
-    fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
@@ -359,6 +417,19 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let property = PropertyKey::string(atom);
+        let found = match self.proved_has(object, property) {
+            Some(found) => found,
+            None => self.plain_in_chain(object, property)?,
+        };
+        // The answer is a fact the native tiers take of the site (`in_presence`).
+        self.remember_presence(object, atom, found);
+        Some(found)
+    }
+
+    /// Whether a shape along the chain of `object`, ordinary objects up to `null`, names `property`
+    /// (`plain_in`'s walk): `None` where an object on it is not ordinary or holds the key in a
+    /// side table.
+    fn plain_in_chain(&self, object: Value, property: PropertyKey) -> Option<bool> {
         let mut current = object;
         loop {
             let data = self.heap.ordinary_object(current)?;
@@ -375,6 +446,27 @@ impl<H: Host> Vm<H> {
             if current.is_null() {
                 return Some(false);
             }
+        }
+    }
+
+    /// `HasProperty` of `key` on the ordinary `object` from the fact table (K-ENTRY): any
+    /// answer but an absent key is a present one, and a table miss proves the chain once
+    /// (`Vm::prove_load`). `None` where neither answers.
+    #[inline]
+    pub(super) fn proved_has(&mut self, object: Value, key: PropertyKey) -> Option<bool> {
+        use super::symbol_load_proof::SymbolLoadAnswer;
+        let data = self.heap.ordinary_object(object)?;
+        let (layout, side) = (data.layout_id(), data.has_side_descriptors());
+        match self.symbol_load_proofs.answer(layout, key) {
+            Some(SymbolLoadAnswer::Own(_)) => Some(true),
+            Some(SymbolLoadAnswer::Absent) if !side => Some(false),
+            Some(SymbolLoadAnswer::Inherited { .. } | SymbolLoadAnswer::Getter { .. }) if !side => Some(true),
+            Some(_) => None,
+            None => match self.prove_load(object, key) {
+                super::object_get::ProvedLoad::Value(_) | super::object_get::ProvedLoad::Getter => Some(true),
+                super::object_get::ProvedLoad::Absent => Some(false),
+                super::object_get::ProvedLoad::Unproved => None,
+            },
         }
     }
 
@@ -442,7 +534,7 @@ impl<H: Host> Vm<H> {
     /// Whether `holder` holds a current proof that it inherits the native `@@hasInstance`
     /// (`Vm::instanceof_inheriting_holders`).
     #[inline(always)]
-    fn remembers_inheriting_holder(&self, holder: Value) -> bool {
+    pub(super) fn remembers_inheriting_holder(&self, holder: Value) -> bool {
         self.instanceof_inheriting_holders[instanceof_holder_index(holder)]
             == Some((holder, crate::heap::prototype_layout_epoch()))
     }
@@ -627,11 +719,12 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
 
 /// The `Vm::instanceof_constructor_layouts` entry a constructor of `shape` takes.
 #[inline(always)]
-fn instanceof_layout_index(shape: u32) -> usize {
+pub(super) fn instanceof_layout_index(shape: u32) -> usize {
     shape as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS
 }
 
 /// The `Vm::instanceof_inheriting_holders` entry of `holder`, by its cell.
+#[inline(always)]
 fn instanceof_holder_index(holder: Value) -> usize {
     holder.heap_index().map_or(0, |index| index as usize % INSTANCEOF_CONSTRUCTOR_LAYOUTS)
 }

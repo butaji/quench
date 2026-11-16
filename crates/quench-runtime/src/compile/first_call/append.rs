@@ -25,13 +25,13 @@ impl Engine {
     ) -> Option<ChunkDelta> {
         let source = program.source.as_ref().filter(|source| source.base == 0)?;
         let replay = program.replay.as_deref()?;
-        let header = *program.functions.get(function as usize)?.header();
+        let header = program.functions.get(function as usize)?.header();
         let span = header.source_span?;
         let chunk = ChunkText::of(source, span)?;
         let (line_starts, utf16_excess) = replay.views.layout(&source.text);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess };
+        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess, run: None };
         let allocator = lazy_bodies::sized_arena(&chunk.text);
         let mut free_names = FreeNames::default();
         let nested = replay.direct_stubs;
@@ -68,7 +68,7 @@ fn parse_text<'a>(
     free_names: Option<&mut FreeNames>,
 ) -> oxc_parser::ParserReturn<'a> {
     let Some(free_names) = free_names else {
-        return lazy_bodies::parse(allocator, &chunk.text, SourceType::script(), None, None, None, false);
+        return lazy_bodies::parse(allocator, &chunk.text, SourceType::script(), None, None, None, false, false, crate::compile::annex_b_targets::Recognize::No, None);
     };
     let strict = window.outer.is_some_and(|(_, scopes)| scopes.strict());
     lazy_bodies::parse_chunk(allocator, &chunk.text, function_start - chunk.start, chunk.start, strict, free_names)
@@ -88,7 +88,7 @@ fn chunk_analysis(parsed: &oxc_parser::ParserReturn<'_>, name: &str, skimmed: Op
     }
     let semantic = semantic_stats::checked_semantic(&parsed.program, name).ok()?;
     let private_name_ids = private_name_ids(&semantic.semantic);
-    let unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program);
+    let unobservable = call_only::prototype_unobservable_functions(&semantic.semantic, &parsed.program, &Default::default());
     private_name_ids.is_empty().then_some(unobservable)
 }
 

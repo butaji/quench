@@ -33,23 +33,32 @@ pub(crate) fn new_dependency() -> Rc<PublishedCode<()>> { Rc::new(PublishedCode:
 /// No borrow of the publication survives acquiring a lease or retiring it.
 pub(crate) struct PublishedCode<T> {
     code: std::cell::RefCell<Option<Rc<T>>>,
+    /// Whether `code` still holds it: read on every cache hit, so a plain flag rather than a
+    /// borrow of `code`.
+    published: std::cell::Cell<bool>,
     /// Set when the code retires, for runs already inside it (`Invalidation`).
     invalidation: Invalidation,
-    /// The entry word to put back (`stub`) if it still holds this code's `entry`.
-    entry_link: std::cell::Cell<Option<(*const std::cell::Cell<usize>, usize, usize)>>,
+    /// The entry words to put back (`stub`) while they still hold this code's `entry`.
+    entry_links: std::cell::RefCell<smallvec::SmallVec<[EntryLink; ENTRY_WORDS]>>,
     /// The heap identities its code embeds, kept alive while it is published (`hold_roots`).
     roots: std::cell::RefCell<FoldedRoots>,
 }
 
+/// An entry word, the entry it holds and the stub it returns to: a view's cell words (`EntryCell`).
+type EntryLink = (*const std::cell::Cell<usize>, usize, usize);
+
+/// The entry words of a view's cell that a published body owns: its `entry` and its `scalar` entry.
+const ENTRY_WORDS: usize = 2;
+
 impl<T> PublishedCode<T> {
-    /// Names the entry word whose `entry` this code retiring takes back to `stub`.
+    /// Names an entry word whose `entry` this code retiring takes back to `stub`.
     pub(crate) fn on_retire(&self, word: &std::cell::Cell<usize>, entry: usize, stub: usize) {
-        self.entry_link.set(Some((std::ptr::from_ref(word), entry, stub)));
+        self.entry_links.borrow_mut().push((std::ptr::from_ref(word), entry, stub));
     }
     pub(crate) fn new(code: T) -> Self { Self::with_invalidation(code, Invalidation::default()) }
     /// Code compiled to read `invalidation` at its invalidation points.
     pub(crate) fn with_invalidation(code: T, invalidation: Invalidation) -> Self {
-        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), invalidation, entry_link: std::cell::Cell::new(None), roots: Default::default() }
+        Self { code: std::cell::RefCell::new(Some(Rc::new(code))), published: std::cell::Cell::new(true), invalidation, entry_links: Default::default(), roots: Default::default() }
     }
     /// Keeps `roots`, the heap identities its code embeds, alive until it retires: `heap` roots
     /// them at every collection (`Heap::extend_folded_roots`).
@@ -60,17 +69,20 @@ impl<T> PublishedCode<T> {
         heap.hold_folded_roots(&code);
     }
     pub(crate) fn lease(&self) -> Option<Rc<T>> { self.code.borrow().clone() }
-    pub(crate) fn is_published(&self) -> bool { self.code.borrow().is_some() }
+    #[inline(always)]
+    pub(crate) fn is_published(&self) -> bool { self.published.get() }
     pub(crate) fn retire(&self) {
         self.invalidation.set();
         *self.roots.borrow_mut() = FoldedRoots::default();
-        if let Some((word, entry, stub)) = self.entry_link.take() {
+        let links = std::mem::take(&mut *self.entry_links.borrow_mut());
+        for (word, entry, stub) in links {
             // SAFETY: the word is a view's, which outlives the publications it names (the
             // view owns its body and its pins).
             let word = unsafe { &*word };
             if word.get() == entry { word.set(stub); }
         }
         self.code.borrow_mut().take();
+        self.published.set(false);
     }
 }
 
@@ -89,6 +101,27 @@ pub(crate) struct SlotDependency {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) ty: Type,
+}
+
+/// What an `instanceof` of one constructor depends on when its code takes the constructor's
+/// `prototype` as a Stable fact (`Vm::instanceof_fact`): the encoded link of that prototype and the
+/// slot of the constructor's own `prototype` property in its exact shape (a write retires the
+/// code, as does a departure of that shape, which an own `@@hasInstance` would be), and the exact
+/// shape of the holder the constructor inherits the native `@@hasInstance` from (a prototype value
+/// or layout change retires the code).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct InstanceofFact {
+    pub(crate) link: u32,
+    pub(crate) shape: u32,
+    pub(crate) slot: u16,
+    pub(crate) holder: u32,
+}
+
+impl InstanceofFact {
+    /// The slot dependency on the constructor's `prototype`, an object.
+    pub(crate) fn slot_dependency(self) -> SlotDependency {
+        SlotDependency { shape: self.shape, slot: self.slot, ty: Type::DIRECT_OBJECT_FAMILY }
+    }
 }
 
 type Link = Option<NonZeroU32>;
@@ -163,11 +196,14 @@ impl CodeReaders {
     /// A widening visits only this owner's readers, before the incompatible effect. An owner
     /// without readers, every owner of a run without native code, is the test alone; the
     /// walk is out of line (`retire_readers`).
+    /// Whether the owner had readers.
     #[inline(always)]
-    pub(crate) fn retire(&mut self, owner: u32) {
-        if self.heads.get(owner as usize).is_some_and(Option::is_some) {
+    pub(crate) fn retire(&mut self, owner: u32) -> bool {
+        let readers = self.heads.get(owner as usize).is_some_and(Option::is_some);
+        if readers {
             self.retire_readers(owner);
         }
+        readers
     }
 
     #[inline(never)]
@@ -284,6 +320,7 @@ impl Fuses {
         for record in &mut self.0 {
             if record.subject == subject && record.slot as usize == slot && record.state == FuseState::Intact {
                 record.state = FuseState::Popped;
+                crate::heap::note_intrinsic_change();
             }
         }
     }
@@ -294,6 +331,7 @@ impl Fuses {
         for record in &mut self.0 {
             if record.subject == subject && record.state == FuseState::Intact {
                 record.state = FuseState::Unproved;
+                crate::heap::note_intrinsic_change();
             }
         }
     }
@@ -302,6 +340,9 @@ impl Fuses {
     pub(crate) fn forget(&mut self, subject: u32) {
         for record in &mut self.0 {
             if record.subject == subject {
+                if record.state == FuseState::Intact {
+                    crate::heap::note_intrinsic_change();
+                }
                 *record = FuseRecord::default();
             }
         }
@@ -310,6 +351,7 @@ impl Fuses {
     /// Every proof is made again: no subject names the change (a restored heap).
     pub(crate) fn forget_all(&mut self) {
         self.0 = Default::default();
+        crate::heap::note_intrinsic_change();
     }
 }
 

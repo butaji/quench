@@ -58,8 +58,8 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
     let this = lane_call_this(vm, &target, object)?;
     // SAFETY: the record's value register is one of the running function's.
-    let stored = ActivationArguments::Kept(unsafe { r.0.add(usize::from(i.a)) }, 1);
-    Some(match lane_activate_keeping::<H, false>(cx, r, ip, &target, stored, this, false, None) {
+    let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
+    Some(match lane_activate_kept::<H, false>(cx, r, ip, &target, stored, this) {
         Ok((registers, next)) => {
             if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
                 script.completion = Completion::Assigns;
@@ -86,11 +86,15 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
 
 /// The frame completion of an activation that neither constructs, settles a promise nor
 /// steps an array: a setter's store keeps yielding the value stored, a proxy trap's access
-/// owes its target's invariants (the next of `traps`).
+/// owes its target's invariants (the next of `traps`), and a generator's step its iterator
+/// result, which a delegate's step makes fresh.
 pub(super) fn frame_completion(completion: Option<Completion>, traps: &mut impl Iterator<Item = (usize, TrapCheck)>) -> CallCompletion {
     match completion {
         Some(Completion::Assigns) => CallCompletion::Assigned,
         Some(Completion::ReadsTrapped | Completion::AssignsTrapped) => CallCompletion::Trapped(traps.next().expect("each trapped activation has its entry").1),
+        Some(generator @ (Completion::Generates | Completion::Delegates)) => {
+            CallCompletion::Generator(super::super::generator::GeneratorResume::new(generator == Completion::Generates))
+        }
         _ => CallCompletion::Value,
     }
 }
@@ -116,6 +120,7 @@ impl<H: Host> Vm<H> {
         match completion {
             CallCompletion::Constructor(this) if !self.is_object_like(value) => *this,
             CallCompletion::Assigned | CallCompletion::Trapped(TrapCheck { access: TrapAccess::Store | TrapAccess::StrictStore, .. }) => self.read(caller, destination),
+            CallCompletion::WasmExport(result) => self.wasm_export_result(value, *result),
             _ => value,
         }
     }

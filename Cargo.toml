@@ -6,6 +6,7 @@ resolver = "2"
 exclude = ["vendor/oxc-parser", "vendor/oxc-regular-expression", "vendor/iana-time-zone"]
 members = [
     "quench-bench",
+    "crates/quench-gate",
     "crates/quench-js-check",
     "crates/quench-lint",
     "crates/quench-macros",

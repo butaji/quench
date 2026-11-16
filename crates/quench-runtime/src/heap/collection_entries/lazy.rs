@@ -1,6 +1,6 @@
 //! A Map's or Set's entry table, allocated on its first write: most collections a DOM builds
 //! stay empty (jsdom-d3-startup: 57 thousand empty Maps and Sets per document, each table a
-//! 112-byte block), and an empty one reads as a table shared by every empty collection.
+//! 32-byte block and its slots), and an empty one reads as a table shared by every empty collection.
 
 use super::{CollectionEntries, CollectionEntry};
 use std::ops::{Deref, DerefMut};

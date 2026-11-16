@@ -189,9 +189,11 @@ pub(super) fn coalesce_promoted_moves(
     }
 }
 
-/// Removes each `Move` whose destination no path reads before writing it again: the copy into
-/// a temporary or a promoted local that coalescing left behind once its readers moved to the
-/// source. A parameter's register is kept, as legacy `f.arguments` reflection reads it.
+/// Removes each `Move` or `LoadConst` whose destination no path reads before writing it again:
+/// the copy into a temporary or a promoted local that coalescing left behind once its readers
+/// moved to the source, or the `undefined` a promoted local was opened with before its first
+/// real write. Both are pure and write only their result, so a dead one is unobservable. A
+/// parameter's register is kept, as legacy `f.arguments` reflection reads it.
 fn remove_dead_moves(
     function: &mut BcFunction,
     methods: &(impl liveness::MethodArguments + ?Sized),
@@ -199,20 +201,15 @@ fn remove_dead_moves(
     superinstructions: &[Superinstruction],
     current: &mut Option<CodeFacts>,
 ) -> bool {
-    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+    let removable = |i: Instr| matches!(i.op(), Op::Move | Op::LoadConst) && !i.is_wide() && i.result_flags() == 0;
+    if !function.code.iter().any(|&instruction| removable(instruction)) {
         return false;
     }
     let Some(analysis) = CodeLiveness::of(current, function, methods, field_sites, superinstructions)
     else {
         return false;
     };
-    let protected = protected_positions(
-        &function.code,
-        &function.wide,
-        &function.handlers,
-        function.parameter_end_pc,
-        &function.binding_sites,
-    );
+    let protected = function_protected_positions(function);
     let parameter_storage = function
         .local_registers
         .iter()
@@ -221,7 +218,7 @@ fn remove_dead_moves(
     let mut changed = Vec::new();
     for (pc, is_protected) in (0..function.code.len()).map(|pc| (pc, protected.contains(pc))) {
         let mov = function.code[pc];
-        if mov.op() != Op::Move || mov.is_wide() || is_protected {
+        if !removable(mov) || is_protected {
             continue;
         }
         let destination = register_bit(mov.result_register());
@@ -646,22 +643,19 @@ fn substitute_register_read(instruction: Instr, from: Register, to: Register) ->
 /// function, so each producer that falls into a `Return` of its result carries the flag and
 /// dispatch needs no look-ahead for terminal calls.
 pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
-    let boundaries = region_boundaries(
-        function.code.len(),
-        &function.handlers,
-        function.parameter_end_pc,
-        &[],
-    );
-    let decoded = function.instructions().collect::<Vec<_>>();
-    for pc in 1..decoded.len() {
-        let (producer, next) = (decoded[pc - 1], decoded[pc]);
-        if boundaries.contains(pc)
-            || next.op() != Op::Return
-            || !fuses(producer.op(), Op::Return, |recipe| {
-                matches!(recipe, Recipe::ReturnResult)
-            })
+    // Only a return's producer is decoded, and the region boundaries are found once one is.
+    let mut boundaries = None;
+    for pc in 1..function.code.len() {
+        if function.instruction_at(pc).op() != Op::Return {
+            continue;
+        }
+        let (producer, next) = (function.instruction_at(pc - 1), function.instruction_at(pc));
+        if !fuses(producer.op(), Op::Return, |recipe| matches!(recipe, Recipe::ReturnResult))
             || producer.result_flags() != 0
             || producer.result_register() != next.register_a()
+            || boundaries
+                .get_or_insert_with(|| region_boundaries(function.code.len(), &function.handlers, function.parameter_end_pc, &[]))
+                .contains(pc)
         {
             continue;
         }
@@ -829,6 +823,11 @@ fn fuse_const_array_object2(
         0,
         site,
     ))
+}
+
+/// `protected_positions` of `function` as it stands.
+fn function_protected_positions(function: &BcFunction) -> crate::bitset::BitSet {
+    protected_positions(&function.code, &function.wide, &function.handlers, function.parameter_end_pc, &function.binding_sites)
 }
 
 pub(super) fn protected_positions(

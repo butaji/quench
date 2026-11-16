@@ -11,11 +11,12 @@ use std::{
 
 mod legacy_try;
 mod shared_wast;
-pub use shared_wast::EXECUTION_MODE_VARIABLE;
+pub use shared_wast::{mode_named, EXECUTION_MODE_VARIABLE};
 mod wast_json;
 pub use wast_json::wast_to_json;
 mod wast_protocol;
 mod wast_script;
+mod wast_values;
 pub use wast_script::{run_wast, DirectiveResult, WastReport};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

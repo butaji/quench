@@ -234,6 +234,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            wasm_lazy: None,
     }
 }
 
@@ -358,6 +359,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
             closure_reads: None,
+            wasm_lazy: None,
     };
     let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
@@ -620,7 +622,7 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         line_offset: 0,
         column_offset: 0,
         line_starts: Default::default(),
-        call_sites: Default::default(), directives: Default::default(),
+        call_sites: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
         assert_eq!(source.source_line(index as u32 + 1), Some(expected));
@@ -634,7 +636,7 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         line_offset: 1,
         column_offset: 2,
         line_starts: Default::default(),
-        call_sites: Default::default(), directives: Default::default(),
+        call_sites: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
     assert_eq!(wrapped.source_line(2), Some("second"));
@@ -650,7 +652,7 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         line_offset,
         column_offset,
         line_starts: Default::default(),
-        call_sites: Default::default(), directives: Default::default(),
+        call_sites: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));
     assert_eq!(retained.source_line(2), Some("second"));

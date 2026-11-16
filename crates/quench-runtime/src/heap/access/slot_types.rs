@@ -7,7 +7,15 @@ impl Heap {
     /// and declines the writer before its raw stores; the next admission sees the wider domain.
     pub(crate) fn admit_slot_writes(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type) -> bool {
         if slot >= self.properties.shape_length(shape) { return false; }
-        !self.properties.note_slot_type(shape, slot, writes)
+        let widened = self.properties.note_slot_type(shape, slot, writes);
+        self.settle_widened();
+        // A raw writer stores tagged values; a slot of raw doubles takes none.
+        !widened && !self.properties.holds_raw_doubles(shape, slot)
+    }
+
+    /// Whether the word of `slot` of an object of `shape` is a raw double (`ValueArena::holds_raw_doubles`).
+    pub(crate) fn slot_holds_raw_doubles(&self, shape: u32, slot: usize) -> bool {
+        self.properties.holds_raw_doubles(shape, slot)
     }
 
     /// The recorded content type; `Type::ANY` when tracking is disabled or the slot is absent.

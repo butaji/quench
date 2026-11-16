@@ -1,5 +1,5 @@
 use super::*;
-use crate::vm::dispatch_fast::operand_feedback::OperandClass;
+use crate::vm::dispatch_fast::operand_feedback::{OperandClass, OperandKinds};
 
 /// How the values of a register are held, from the narrowest to the widest: a raw int32, a
 /// Number as `f64`, a tagged word. A register takes the widest of what its writers produce.
@@ -11,13 +11,15 @@ pub(super) enum Repr {
     Tagged,
 }
 
-pub(super) type Reprs = BTreeMap<Register, Repr>;
+/// The representation of each web, by its number.
+pub(super) type Reprs = Vec<Repr>;
 
-pub(super) fn operand_repr(reprs: &Reprs, source: Option<Source>) -> Repr {
+pub(super) fn operand_repr(reprs: &[Repr], source: Option<Source>) -> Repr {
     match source {
-        Some(Source::Register(register)) => reprs.get(&register).copied().unwrap_or(Repr::Tagged),
+        Some(Source::Register(register)) => reprs.get(usize::from(register)).copied().unwrap_or(Repr::Tagged),
         Some(Source::Constant(word)) if word >> HALF == INT_HIGH => Repr::Int,
         Some(Source::Constant(_)) => Repr::Double,
+        Some(Source::Value(_)) => Repr::Tagged,
         None => Repr::Unseen,
     }
 }
@@ -76,15 +78,26 @@ fn heap_repr(numbers: bool, widened: bool) -> Repr {
     }
 }
 
-/// The representation a row's result needs: a division, a double operand or a `widened` row
-/// (its int32 speculation failed) gives a double; a bitwise row an int32 unless widened.
-pub(super) fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool, numbers: bool) -> Repr {
-    if row.heap.is_some() {
-        return heap_repr(numbers, widened);
+/// The representation a row's result needs: a step's result is whatever the interpreter's
+/// operation wrote, a tagged word, as is a logical negation's boolean; a Number negation gives a
+/// double (an int32 zero negates to `-0`); a division, a double operand or a `widened` row (its int32
+/// speculation failed) gives a double; a bitwise row an int32 unless widened.
+pub(super) fn result_repr(row: &Decoded, reprs: &[Repr], widened: bool, numbers: bool) -> Repr {
+    if row.step.is_some() {
+        return Repr::Tagged;
     }
-    let operands = operand_repr(reprs, row.a).max(operand_repr(reprs, row.b));
-    match row.kind {
+    if let Some(heap) = row.heap {
+        return if heap.yields_tagged() { Repr::Tagged } else if heap.yields_double() { Repr::Double } else { heap_repr(numbers, widened) };
+    }
+    kind_repr(row.kind, operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)), widened)
+}
+
+/// The representation a non-heap row of `kind` writes, given the greatest representation of its `operands`.
+fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
+    match kind {
+        Kind::Not => Repr::Tagged,
         _ if operands == Repr::Tagged => Repr::Tagged,
+        Kind::Neg => Repr::Double,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Repr::Double,
         Kind::Add | Kind::Sub | Kind::Mul => if widened || operands == Repr::Double { Repr::Double } else { Repr::Int },
@@ -94,7 +107,7 @@ pub(super) fn result_repr(row: &Decoded, reprs: &Reprs, widened: bool, numbers: 
 }
 
 /// Whether the row at `pc` is widened: named by a leave, recorded as declining its int32 step
-/// (`kinds`), or a loaded value among widened ones.
+/// (`kinds`, its site's, where it is a caller instruction), or a loaded value among widened ones.
 fn row_widened(widened: &[usize], pc: usize, with_loads: bool, kinds: Option<&OperandKinds>) -> bool {
     with_loads || widened.contains(&pc) || kinds.is_some_and(|kinds| !selected(kinds.class()).speculates())
 }
@@ -104,37 +117,39 @@ fn loads_widened(decoded: &[Decoded], header: u32, widened: &[usize]) -> bool {
     decoded.iter().enumerate().any(|(k, row)| row.heap.is_some() && widened.contains(&(header as usize + k)))
 }
 
-/// The representation of every register the region names, to a fixed point: where the
-/// compile began (`seen`, the live registers' sample; dead at the header: none yet), then each
-/// writer's result, which the sites' feedback (`kinds`, per row) widens where it recorded a
-/// declined int32 step.
-pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened: &[usize], seen: [&[Register]; SEEN], kinds: &[OperandKinds], webs: &Webs) -> Reprs {
-    let header = region.header;
+/// Where a web starts: unseen where the region is not entered with it, else what the compile
+/// observed of its register (`seen`: the ints, then the doubles).
+fn entry_repr(entered: bool, register: Register, seen: [&[Register]; SEEN]) -> Repr {
+    match (entered, seen[0].contains(&register), seen[1].contains(&register)) {
+        (false, ..) => Repr::Unseen,
+        (_, true, _) => Repr::Int,
+        (_, _, true) => Repr::Double,
+        _ => Repr::Tagged,
+    }
+}
+
+/// The representation of every web the region names, to a fixed point: where the compile
+/// began (`ints`, `doubles`; dead at the header: none yet), then each writer's result.
+pub(super) fn representations(span: &Span, decoded: &[Decoded], (widened, kinds): (&[usize], &[Option<OperandKinds>]), seen: [&[Register]; SEEN], webs: &Webs) -> Reprs {
+    let header = span.header;
     // One loaded value that left for its int32 speculation widens every loaded value at once: the
     // next compile need not discover them one leave at a time.
     let loads_widened = loads_widened(decoded, header, widened);
-    let mut reprs = Reprs::new();
-    let entered = webs.entry_live(region);
-    for row in decoded {
-        for web in row.registers() {
-            let register = webs.orig[usize::from(web)];
-            let start = match (entered.contains(&usize::from(web)), seen[0].contains(&register), seen[1].contains(&register)) {
-                (false, ..) => Repr::Unseen,
-                (_, true, _) => Repr::Int,
-                (_, _, true) => Repr::Double,
-                _ => Repr::Tagged,
-            };
-            reprs.insert(web, start);
-        }
-    }
+    let entered = webs.entry_live(span);
+    let mut reprs: Reprs = webs.orig.iter().enumerate().map(|(web, register)| entry_repr(entered.contains(&web), *register, seen)).collect();
     let mut changed = true;
     while changed {
         changed = false;
         for (k, row) in decoded.iter().enumerate() {
+            if let Some(also) = row.also.filter(|also| reprs[usize::from(*also)] < Repr::Tagged) {
+                reprs[usize::from(also)] = Repr::Tagged;
+                changed = true;
+            }
             let Some(dst) = row.dst else { continue };
-            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), kinds.get(k)), region.number_registers().contains(&webs.orig[usize::from(dst)]));
-            if reprs[&dst] < result {
-                reprs.insert(dst, result);
+            let numbers = span.number_registers().contains(&webs.orig[usize::from(dst)]) || row.global.is_some_and(Access::numeric);
+            let result = result_repr(row, &reprs, row_widened(widened, header as usize + k, loads_widened && row.heap.is_some(), kinds.get(k).and_then(Option::as_ref)), numbers);
+            if reprs[usize::from(dst)] < result {
+                reprs[usize::from(dst)] = result;
                 changed = true;
             }
         }
@@ -144,24 +159,24 @@ pub(super) fn representations(region: &LoopRegion, decoded: &[Decoded], widened:
 
 /// Whether the row takes general (tagged word) semantics: its result or an operand of a
 /// relation is no int32.
-pub(super) fn is_general(row: &Decoded, reprs: &Reprs) -> bool {
+pub(super) fn is_general(row: &Decoded, reprs: &[Repr]) -> bool {
     match row.dst {
-        Some(dst) => reprs[&dst] != Repr::Int,
+        Some(dst) => reprs[usize::from(dst)] != Repr::Int,
         None => operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)) >= Repr::Double,
     }
 }
 
-/// The registers of `repr`, the most named first.
-pub(super) fn ranked(decoded: &[Decoded], reprs: &Reprs, repr: Repr) -> Vec<Register> {
-    let mut uses: BTreeMap<Register, usize> = BTreeMap::new();
+/// The webs of `repr`, the most named first.
+pub(super) fn ranked(decoded: &[Decoded], reprs: &[Repr], repr: Repr) -> Vec<Register> {
+    let mut uses = vec![0usize; reprs.len()];
     for row in decoded {
-        for register in row.registers() {
-            *uses.entry(register).or_default() += 1;
+        for web in row.registers() {
+            uses[usize::from(web)] += 1;
         }
     }
-    let mut ranked: Vec<_> = uses.into_iter().filter(|(register, _)| reprs[register] == repr).collect();
+    let mut ranked: Vec<(Register, usize)> = (0..reprs.len()).filter(|web| uses[*web] > 0 && reprs[*web] == repr).map(|web| (web as Register, uses[web])).collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    ranked.into_iter().map(|(register, _)| register).collect()
+    ranked.into_iter().map(|(web, _)| web).collect()
 }
 
 #[cfg(test)]

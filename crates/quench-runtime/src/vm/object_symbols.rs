@@ -233,7 +233,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.array_elements(keys).map_or_else(Vec::new, |elements| {
             elements
                 .iter()
-                .copied()
+                
                 .filter(|key| {
                     !self.heap.string(*key).is_some_and(|name| name.host_string().starts_with("\0quench:"))
                 })
@@ -278,7 +278,7 @@ impl<H: Host> Vm<H> {
             return true;
         }
         let excluded = self.heap.array_elements(exclusions).map_or_else(smallvec::SmallVec::new, |elements| {
-            elements.iter().copied().collect::<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>()
+            elements.iter().collect::<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>()
         });
         self.copy_plain_properties(target, source, &excluded, PropertyCopyKind::CreateDataProperty)
     }

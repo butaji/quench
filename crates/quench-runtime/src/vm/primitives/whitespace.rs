@@ -16,6 +16,6 @@ pub(super) fn is_ecma_whitespace(unit: u16) -> bool {
     )
 }
 
-pub(crate) fn is_ecma_whitespace_character(character: char) -> bool {
+pub(in crate::vm) fn is_ecma_whitespace_character(character: char) -> bool {
     u16::try_from(u32::from(character)).is_ok_and(is_ecma_whitespace)
 }

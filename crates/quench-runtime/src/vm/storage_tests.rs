@@ -82,3 +82,48 @@ fn packed_scope_names_iterate_as_given() {
     assert_eq!(names.iter().collect::<Vec<_>>(), [("a", 0, 1), ("", 1, 2), ("é\u{1F600}", 0, 3), ("longer", 2, 4)]);
     assert_eq!(ScopeNames::from_iter([]).iter().count(), 0);
 }
+
+#[test]
+fn arrays_with_named_properties_keep_both_their_properties_and_their_elements() {
+    // An array keeps a named property store behind its extras (`ArrayObject`): RegExp
+    // results, an array given fields, one in dictionary storage, and copies of each.
+    let source = r#"(function () {
+        const out = [];
+        const match = /(b+)(?<tail>c)?/.exec("aabbbc");
+        out.push(match.index, match.input, match[0], match[1], match.groups.tail, match.length);
+        const fields = [1, 2, 3];
+        fields.name = "f"; fields.push(4); fields.extra = { deep: 5 };
+        for (let i = 0; i < 100; i++) fields.push(i);
+        out.push(fields.name, fields.extra.deep, fields.length, fields[3], fields[103]);
+        const dictionary = [7, 8];
+        for (let i = 0; i < 64; i++) dictionary["k" + i] = i;
+        delete dictionary.k3;
+        dictionary.push(9);
+        out.push(dictionary.k63, dictionary.k3, dictionary.length, dictionary[2], Object.keys(dictionary).length);
+        const copy = fields.slice(1, 3);
+        out.push(copy.length, copy[0], copy.name);
+        const spread = [...match];
+        out.push(spread.length, spread[1]);
+        const all = [];
+        for (let i = 0; i < 2000; i++) { const a = [i, i + 1]; if (i % 3 === 0) a.tag = i; all.push(a); }
+        let junk = 0;
+        for (let i = 0; i < 300000; i++) junk += [i, { i }].length;
+        let sum = junk - 600000;
+        for (const a of all) sum += a[1] + (a.tag === undefined ? 0 : a.tag);
+        out.push(sum, fields[103], fields.extra.deep, dictionary.k63, match.groups.tail);
+        Object.defineProperty(fields, "fixed", { value: 1, writable: false });
+        Object.freeze(fields);
+        out.push(Object.isFrozen(fields), fields.fixed, fields[0]);
+        return JSON.stringify(out);
+    })()"#;
+    let (vm, value) = evaluate(source);
+    let text = vm.heap.string(value).expect("a string result").to_string();
+    let mut sum = 0;
+    for i in 0..2000 {
+        sum += i + 1 + if i % 3 == 0 { i } else { 0 };
+    }
+    let expected = format!(
+        r#"[2,"aabbbc","bbbc","bbb","c",3,"f",5,104,4,99,63,null,3,9,66,2,2,null,3,"bbb",{sum},99,5,63,"c",true,1,1]"#
+    );
+    assert_eq!(text, expected);
+}

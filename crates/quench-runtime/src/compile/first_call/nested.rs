@@ -8,8 +8,56 @@ use super::*;
 use capture_scope::{CaptureScope, ScopeChain};
 use std::rc::Rc;
 
-/// The names a lazily parsed function's subtree reads from outside it, by the function's start.
-pub(in crate::compile) type FreeNames = FxHashMap<u32, Box<[Box<str>]>>;
+/// The names a lazily parsed function's subtree reads from outside it, by the function's
+/// start, and where its body ends.
+#[derive(Default, Debug)]
+pub(in crate::compile) struct FreeNames {
+    names: FxHashMap<u32, Box<[Box<str>]>>,
+    /// Each body's end, by its function's start, where it is known.
+    ends: std::collections::BTreeMap<u32, u32>,
+}
+
+impl FreeNames {
+    /// Notes the free names of the function at `start`, whose body ends at `end`.
+    pub(in crate::compile) fn insert(&mut self, start: u32, names: Box<[Box<str>]>, end: Option<u32>) {
+        self.names.insert(start, names);
+        match end {
+            Some(end) => self.ends.insert(start, end),
+            None => self.ends.remove(&start),
+        };
+    }
+
+    pub(in crate::compile) fn get(&self, start: &u32) -> Option<&Box<[Box<str>]>> {
+        self.names.get(start)
+    }
+
+    pub(in crate::compile) fn contains_key(&self, start: &u32) -> bool {
+        self.names.contains_key(start)
+    }
+
+    #[cfg(test)]
+    pub(in crate::compile) fn iter(&self) -> impl Iterator<Item = (&u32, &Box<[Box<str>]>)> {
+        self.names.iter()
+    }
+
+    /// The functions starting in `range` whose free names are known, with their bodies' ends.
+    pub(in crate::compile) fn ends_in(&self, range: std::ops::Range<u32>) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.ends.range(range).map(|(start, end)| (*start, *end))
+    }
+}
+
+/// Where the body of the function `program` holds alone (`alone_start`) ends.
+pub(in crate::compile) fn alone_body_end(program: &Program<'_>) -> Option<u32> {
+    let function = match program.body.first()? {
+        Statement::FunctionDeclaration(function) => function,
+        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
+            Expression::FunctionExpression(function) => function,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    function.body.as_ref().map(|body| body.span.end)
+}
 
 /// The bindings a stub's function reads from the scopes it closes over, by name: each with the
 /// level of its scope (the innermost is 0) and its slot, the names packed into one text so the
@@ -69,18 +117,14 @@ pub(in crate::compile) struct NestedStub {
 /// references its own analysis leaves unresolved, but its own `arguments`, and a declaration's
 /// own name, which the scope around it binds. None for a function that may reach its scopes
 /// by name (direct `eval`, `with`), whose captures its names do not bound.
-pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping) -> Option<(u32, Box<[Box<str>]>)> {
+pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semantic::Scoping, released: &[Box<str>]) -> Option<(u32, Box<[Box<str>]>)> {
     let text = program.source_text.get(program.span.start as usize..program.span.end as usize)?;
     if reaches_scopes_by_name(text) {
         return None;
     }
     let (start, own) = match program.body.first()? {
         Statement::FunctionDeclaration(function) => (function.span.start, function.id.as_ref().map(|id| id.name.as_str())),
-        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
-            Expression::FunctionExpression(function) => (function.span.start, None),
-            _ => return None,
-        },
-        _ => return None,
+        _ => (alone_start(program)?, None),
     };
     let mut names: Vec<Box<str>> = scoping
         .root_unresolved_references()
@@ -89,6 +133,7 @@ pub(in crate::compile) fn free_names(program: &Program<'_>, scoping: &oxc_semant
         .filter(|name| *name != "arguments")
         .chain(own)
         .map(Box::from)
+        .chain(released.iter().filter(|name| &***name != "arguments").cloned())
         .collect();
     names.sort_unstable();
     names.dedup();
@@ -115,6 +160,26 @@ pub(in crate::compile) fn skimmed_free_names(body: &oxc_parser::SkimmedBody<'_>)
     Some(names.into_boxed_slice())
 }
 
+/// The start of the function `program` holds alone, as `free_names` reads it.
+/// A method checks alone as an object literal's one method (`ParseOptions::lazy_nested_bodies`).
+pub(in crate::compile) fn alone_start(program: &Program<'_>) -> Option<u32> {
+    match program.body.first()? {
+        Statement::FunctionDeclaration(function) => Some(function.span.start),
+        Statement::ExpressionStatement(statement) => match statement.expression.without_parentheses() {
+            Expression::FunctionExpression(function) => Some(function.span.start),
+            Expression::ObjectExpression(object) => match object.properties.as_slice() {
+                [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] if property.method => match &property.value {
+                    Expression::FunctionExpression(function) => Some(function.span.start),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The free names of the bodies a parse of one function's text releases, added to `found` at
 /// their places in the program's text, `delta` past their places in the parsed text.
 pub(in crate::compile) struct FreeNameCheck<'f> {
@@ -136,28 +201,33 @@ impl<'f> FreeNameCheck<'f> {
         !self.direct
     }
 
-    /// Adds the free names of `body`, a function the parser skimmed in `text`, if it takes it:
-    /// every one it can name the captures of, in a place that is not about to call it.
+    /// Adds the free names of `body`, a function the parser skimmed in `text` (only where the
+    /// functions compile on first call, `checks` false), if it takes it: every one it can name
+    /// the captures of, in a place that is not about to call it.
     pub(in crate::compile) fn skim(&mut self, body: oxc_parser::SkimmedBody<'_>, text: &str) -> bool {
-        // An arrow inside a function compiled at load compiles there: released, it parses twice.
-        if body.arrow && !self.direct {
-            return false;
-        }
         let names = skimmed_free_names(&body);
-        if self.direct && (body.in_function && names.is_none() || crate::compile::call_only::invoked_where_made(text, body.end)) {
+        if body.in_function && names.is_none() || crate::compile::call_only::invoked_where_made(text, body.end) {
             return false;
         }
         if let Some(names) = names {
-            self.found.insert(body.start.wrapping_add(self.delta), names);
+            self.found.insert(body.start.wrapping_add(self.delta), names, Some(body.end.wrapping_add(self.delta)));
         }
         true
     }
 
     /// Adds the free names of `body`, as the parser releases it.
     pub(in crate::compile) fn check(&mut self, body: oxc_parser::LazyBody<'_, '_>) {
-        let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
-        if let Some((start, names)) = free_names(body.program, built.semantic.scoping()) {
-            self.found.insert(start.wrapping_add(self.delta), names);
+        // The parse's free names where it found them (`LazyBody::early`), else the analysis'.
+        let found = match body.early {
+            Some(early) => crate::compile::lazy_bodies::parse_free_names(body.program, early),
+            None => {
+                let built = crate::compile::semantic_stats::builder(body.program).build(body.program);
+                free_names(body.program, built.semantic.scoping(), &[])
+            }
+        };
+        if let Some((start, names)) = found {
+            let end = alone_body_end(body.program).map(|end| end.wrapping_add(self.delta));
+            self.found.insert(start.wrapping_add(self.delta), names, end);
         }
     }
 }

@@ -1,5 +1,5 @@
 //! Darwin arm64 native-entry recovery. Only owned guard/poll faults are ours.
-use super::{ACTIVE_CONTEXT, CallContext, Entry, GuardSupport, TERMINATED_STATUS, trap_status};
+use super::{ACTIVE_CONTEXT, CallContext, GuardSupport, TERMINATED_STATUS, WasmEntry, trap_status};
 use std::sync::OnceLock;
 
 // AAPCS64 preserves x19..x28, fp/lr and the low halves of v8..v15.
@@ -12,7 +12,7 @@ const FRAME_BYTES: usize = VECTOR_BASE + VECTOR_PAIRS * PAIR_BYTES;
 
 #[unsafe(naked)]
 unsafe extern "C" fn trampoline(
-    _: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64, _: Entry,
+    _: *mut CallContext, _: u64, _: u64, _: *const u64, _: *mut u64, _: WasmEntry,
 ) -> u32 {
     core::arch::naked_asm!(
         "stp x29, x30, [sp, #-{frame}]!",
