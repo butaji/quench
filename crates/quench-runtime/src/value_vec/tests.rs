@@ -238,6 +238,20 @@ fn compaction_narrows_a_run_of_narrow_values_and_a_widening_restores_it() {
 }
 
 #[test]
+fn only_a_widening_for_a_value_keeps_the_shape_wide() {
+    let mut arena = ValueArena::default();
+    arena.register_shape(1, 8);
+    let values = [Value::integer(1), Value::heap(17), Value::TRUE, Value::NULL, Value::integer(-3), Value::FALSE, Value::integer(9), Value::NULL];
+    let run = arena.with_values(1, &values);
+    let narrow = arena.narrow_into_released(run).expect("narrow values narrow");
+    // An added property widens structurally: the shape still narrows.
+    let wide = arena.widen(narrow);
+    let narrow = arena.narrow_into_released(wide).expect("a structural widening leaves the shape narrowable");
+    let wide = arena.widen_for_value(narrow);
+    assert!(arena.narrow_into_released(wide).is_none());
+}
+
+#[test]
 fn snapshot_preserves_offsets_free_ranges_and_value_bits_after_compaction() {
     let mut arena = ValueArena::default();
     arena.register_shape(1, 3);
