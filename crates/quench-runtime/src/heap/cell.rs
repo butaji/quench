@@ -4065,10 +4065,14 @@ impl IteratorRecord {
 #[repr(C)]
 pub(crate) struct FunctionRecord {
     pub(crate) object: Object,
+    /// Beside the object, whose 12 bytes it fills to the words after: after them, its 12
+    /// bytes and two of padding made the record 48 bytes (jsdom-d3: 114K records at its peak).
+    pub(crate) kind: FunctionKind,
     pub(crate) realm: Value,
     pub(crate) env: Value,
-    pub(crate) kind: FunctionKind,
 }
+
+const _: () = assert!(size_of::<FunctionRecord>() == 40);
 
 impl FunctionRecord {
     /// The program whose code this function runs, which keeps that program alive.
