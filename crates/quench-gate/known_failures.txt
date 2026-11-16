@@ -8,7 +8,6 @@ vm::compiled::base_body::forms::a_ten_deep_call_chain_makes_its_steps_in_the_cal
 vm::compiled::base_body::forms::an_environment_binding_in_its_dead_zone_raises_as_the_interpreter_does
 vm::compiled::base_body::forms::initialize_this_publishes_the_receiver_to_the_rows_after_it
 vm::compiled::base_body::tests::class_construction_and_super_print_what_the_interpreter_prints
-vm::compiled::base_body::tests::global_counter_loops_run_in_a_body_without_leaving
 vm::compiled::base_body::tests::inlined::a_callee_with_a_loop_and_two_returns_runs_inlined
 vm::compiled::base_body::tests::inlined::a_global_callee_is_inlined_without_a_guard_and_completes
 vm::compiled::base_body::tests::property_writes_run_in_a_body

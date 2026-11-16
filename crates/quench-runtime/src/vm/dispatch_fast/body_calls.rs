@@ -136,8 +136,6 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_call<H: Host>(_vm: u64, _residu
 /// # Safety
 /// As `lane_body_call`; `call_pc` is a record of the running body's function.
 unsafe fn lane_body_call_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
-    // A body entered through its cell has no activation yet, which a call pushes above.
-    lane_materialize_running_leaf(cx);
     // SAFETY: the caller's contract.
     match unsafe { BodyCall::at(cx, call_pc) } {
         Some(call) => body_call(cx, &call),
@@ -279,9 +277,6 @@ fn constructed_in_place<H: Host>(vm: &mut Vm<H>, call: &BodyCall, callee: Value)
 /// activation.
 fn construct_activated<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, callee: Value) -> u64 {
     let vm = unsafe { vm(cx) };
-    // What is left resolves a target and pushes an activation above the body's own, which a
-    // body entered through its cell makes now.
-    lane_materialize_running_leaf(cx);
     let Some(target) = lane_construct_target(cx, vm, callee) else { return miss(vm, Miss::Callee) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
     if target.forwards() { return construct_forwarded(vm, call, callee); }
