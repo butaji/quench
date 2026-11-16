@@ -54,7 +54,7 @@ done
 
 if [ "$failed" -eq 0 ]; then
   git notes --ref=gate add -f -m "gate pass tree=$tree modes=$(IFS=,; echo "${summary[*]}") at=$(date -u +%FT%TZ)" "$commit"
-  echo "gate: pass recorded on $commit (push it with: git push origin refs/notes/gate)"
+  echo "gate: pass recorded on $commit (the record stays in this clone; note the tree on the landing issue)"
 else
   echo "gate: FAILED on $commit; details in $out"
   exit 1
