@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{Engine, Value};
 use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::vm::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Expect, Tier};
 use crate::vm::tier_events::Event;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19713,7 +19713,7 @@ fn environment_rest_gathers_nothing_from_too_few_values() {
       }
       print(JSON.stringify(seen.slice(0, 4)) + ' ' + seen.every((rest, index) => rest.length === [0, 0, 0, 2][index % 4]));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_outcomes_agree_after(&[], source, Tier::Full);
     assert_eq!(run.outcome.printed, ["[[],[],[],[3,4]] true"]);
 }
 
@@ -20292,7 +20292,7 @@ fn lane_generator_window_mapped_arguments_alias_parameters_through_the_owning_ac
       }
       print(String(total));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_outcomes_agree_after(&[], source, Tier::Full);
     assert_eq!(run.outcome.printed, ["2000"]);
 }
 
