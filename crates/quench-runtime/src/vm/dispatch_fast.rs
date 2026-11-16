@@ -8208,6 +8208,11 @@ fn lane_activate_getter<H: Host>(
     lane_activate_kept::<H, true>(cx, r, ip, &target, &[], this)
 }
 
+/// The private-name site keys of a nested read's two steps, as offsets from its record's
+/// address (`lane_private_field_slot_at`): a record spans more bytes than steps, so no other
+/// record's key is one of them.
+const NESTED_STEPS: [usize; 2] = [1, 2];
+
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
 /// register or `this`, or a nested site's chain of two. `None` leaves the read to the
 /// general path.
@@ -8231,9 +8236,9 @@ unsafe fn lane_field_value<H: Host>(
     if i.b == crate::bytecode::FieldBase::NESTED {
         let site = *code.field_sites.get(i.imm() as usize)?;
         let base = unsafe { lane_field_base(cx, r, site.base) }?;
-        let value = lane_field_step(cx, record + 1, code, base, site.first.0, site.first.1)?;
+        let value = lane_field_step(cx, record + NESTED_STEPS[0], code, base, site.first.0, site.first.1)?;
         return match site.second {
-            Some((atom, cache)) => lane_field_step(cx, record + 2, code, value, atom, cache),
+            Some((atom, cache)) => lane_field_step(cx, record + NESTED_STEPS[1], code, value, atom, cache),
             None => Some(value),
         };
     }
