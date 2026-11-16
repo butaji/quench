@@ -31,8 +31,8 @@ fn named(output: &str, outcome: &str) -> Vec<String> {
 
 /// Runs the library tests whose names contain any of `filters`. A run that matched no test, or
 /// that ended without its summary (a failed build, a crashed test binary), is an error; test failures are the caller's to judge.
-pub fn tally(config: &Config, filters: &[String]) -> Result<Tally, String> {
-    let mut command = config.cargo("test");
+pub fn tally(config: &Config, profile: &str, filters: &[String]) -> Result<Tally, String> {
+    let mut command = config.cargo_in("test", profile);
     command.args(["-p", PACKAGE, "--lib", "--"]).args(filters);
     let finished = process::run(&mut command)?;
     let (passed, failed) = (named(&finished.stdout, PASSED), named(&finished.stdout, FAILED));
@@ -47,6 +47,6 @@ pub fn tally(config: &Config, filters: &[String]) -> Result<Tally, String> {
 
 /// Runs the selection, every test of which must pass; returns how many did.
 pub fn run(config: &Config, filters: &[String]) -> Result<usize, String> {
-    let tally = tally(config, filters)?;
+    let tally = tally(config, crate::config::PROFILE, filters)?;
     if tally.failed.is_empty() { Ok(tally.passed.len()) } else { Err(tally.excerpt) }
 }

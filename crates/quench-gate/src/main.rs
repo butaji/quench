@@ -1,5 +1,5 @@
 //! `quench-gate`: the single definition of green. It runs the build check, the exact lint
-//! ratchets, the census, the oracle tests, the C-parity gate and the conformance smoke, in
+//! ratchets, the census, every library test (with and without debug assertions), the C-parity gate and the conformance smoke, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
 //! usage: quench-gate [--quick] [--jobs N] [--record] [--passed]
@@ -12,11 +12,14 @@ mod census;
 mod config;
 mod conformance;
 mod cparity;
+mod debug;
 mod lint;
 mod oracle;
+mod owners;
 mod passed;
 mod pool;
 mod process;
+mod ratchet;
 mod runtime_tests;
 mod step;
 mod tiers;
@@ -29,11 +32,12 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 6] = [
+const STEPS: [Step; 7] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
-    Step { name: "oracle", quick: false, blocking: false, run: oracle::run },
+    Step { name: "library", quick: false, blocking: false, run: oracle::run },
+    Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
 ];

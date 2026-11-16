@@ -72,8 +72,13 @@ impl Config {
 
     /// `cargo <subcommand> --profile experiment -j<jobs>` in the repository root.
     pub fn cargo(&self, subcommand: &str) -> Command {
+        self.cargo_in(subcommand, PROFILE)
+    }
+
+    /// `cargo <subcommand> --profile <profile> -j<jobs>` in the repository root.
+    pub fn cargo_in(&self, subcommand: &str, profile: &str) -> Command {
         let mut command = self.command("cargo");
-        command.arg(subcommand).args(["--profile", PROFILE]).arg(format!("-j{}", self.jobs));
+        command.arg(subcommand).args(["--profile", profile]).arg(format!("-j{}", self.jobs));
         command
     }
 }
