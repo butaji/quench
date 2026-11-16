@@ -10,9 +10,7 @@ vm::compiled::base_body::forms::initialize_this_publishes_the_receiver_to_the_ro
 vm::compiled::base_body::tests::class_construction_and_super_print_what_the_interpreter_prints
 vm::compiled::base_body::tests::inlined::a_callee_with_a_loop_and_two_returns_runs_inlined
 vm::compiled::base_body::tests::inlined::a_global_callee_is_inlined_without_a_guard_and_completes
-vm::compiled::base_body::tests::property_writes_run_in_a_body
 vm::compiled::base_body::tests::returns::non_number_constants_and_local_initializations_are_fast_rows
-vm::compiled::base_body::tests::this_fields_run_in_a_method_body
 vm::compiled::base_body::tests::typeof_instanceof_and_in_run_in_a_body
 vm::compiled::base_region::region_tests::a_guard_failing_inside_an_inlined_callee_resumes_in_the_callee
 vm::compiled::base_region::region_tests::a_hot_loop_calling_a_small_function_runs_inlined_with_no_leaves

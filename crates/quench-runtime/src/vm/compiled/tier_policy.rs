@@ -272,10 +272,12 @@ impl TierRows {
     /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
     pub(in crate::vm) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
 
-    /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
+    /// The rows a VM made now holds: `PROCESS`, or the floor rows under `QUENCH_DEV=floor-rows`,
+    /// admitting every compile where a test forced it.
     pub(in crate::vm) fn made() -> &'static Tiers {
         #[cfg(test)]
         if FORCED_ADMISSION.get() { return &ADMITTING; }
+        if crate::trace::Dev::FloorRows.on() { return &FLOOR; }
         Self::PROCESS.table()
     }
 

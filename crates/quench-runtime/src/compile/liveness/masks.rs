@@ -64,6 +64,9 @@ impl RegisterMasks {
         }
         Some(if u32::from(function.registers) <= u64::BITS {
             Self::Narrow(live_masks::<u64>(function, methods, fields, superinstructions).into_boxed_slice())
+        } else if u32::from(function.registers) <= u128::BITS {
+            // Solved at two words, a quarter of a set's work per transfer.
+            Self::new(live_masks::<u128>(function, methods, fields, superinstructions).into_iter().map(RegisterSet::from).collect())
         } else {
             Self::new(live_masks::<RegisterSet>(function, methods, fields, superinstructions))
         })

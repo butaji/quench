@@ -643,22 +643,19 @@ fn substitute_register_read(instruction: Instr, from: Register, to: Register) ->
 /// function, so each producer that falls into a `Return` of its result carries the flag and
 /// dispatch needs no look-ahead for terminal calls.
 pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
-    let boundaries = region_boundaries(
-        function.code.len(),
-        &function.handlers,
-        function.parameter_end_pc,
-        &[],
-    );
-    let decoded = function.instructions().collect::<Vec<_>>();
-    for pc in 1..decoded.len() {
-        let (producer, next) = (decoded[pc - 1], decoded[pc]);
-        if boundaries.contains(pc)
-            || next.op() != Op::Return
-            || !fuses(producer.op(), Op::Return, |recipe| {
-                matches!(recipe, Recipe::ReturnResult)
-            })
+    // Only a return's producer is decoded, and the region boundaries are found once one is.
+    let mut boundaries = None;
+    for pc in 1..function.code.len() {
+        if function.instruction_at(pc).op() != Op::Return {
+            continue;
+        }
+        let (producer, next) = (function.instruction_at(pc - 1), function.instruction_at(pc));
+        if !fuses(producer.op(), Op::Return, |recipe| matches!(recipe, Recipe::ReturnResult))
             || producer.result_flags() != 0
             || producer.result_register() != next.register_a()
+            || boundaries
+                .get_or_insert_with(|| region_boundaries(function.code.len(), &function.handlers, function.parameter_end_pc, &[]))
+                .contains(pc)
         {
             continue;
         }

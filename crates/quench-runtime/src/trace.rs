@@ -109,6 +109,8 @@ setting! {
         StartupSnapshot = "startup-snapshot",
         /// No-JIT loop kernels: each loop's kernel or the reason it has none.
         LoopKernel = "loop-kernel",
+        /// Every run of a lane body that ends anywhere but its completion: function and exit.
+        BodyLeave = "body-leave",
     }
 }
 
@@ -125,6 +127,9 @@ setting! {
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
         /// instruction counts then see the code a run installs.
         SyncCompile = "sync-compile",
+        /// Every tier controller reads the floor rows (`tier_policy::TierRows::Floor`), as the
+        /// tier oracle's tests do, so a failure they show reproduces in a process.
+        FloorRows = "floor-rows",
         /// Every JavaScript JIT compile at `CompileLevel::Quick` (no mid-end optimization,
         /// one-pass register allocation), to measure the level's cost and code quality.
         QuickCompile = "quick-compile",

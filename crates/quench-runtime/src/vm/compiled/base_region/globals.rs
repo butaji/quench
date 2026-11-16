@@ -170,15 +170,6 @@ pub(super) fn global_holes(
     }))
 }
 
-/// Whether a store row's operand cannot be written straight to the slot: the place's type is not the
-/// slot's observed type (a wider value would widen the observation, which the VM must notice).
-pub(super) fn declines(decoded: &Decoded, operand: Place) -> bool {
-    decoded.heap == Some(Heap::GlobalStore)
-        && decoded
-            .global
-            .is_some_and(|access| !value_fact(operand).is_subtype(access.slot.ty))
-}
-
 /// The row that defines a name call's receiver, `undefined`, in the frame slot of `register`.
 pub(super) fn receiver_row(homes: &Homes, register: Register, pc: u32) -> Result<Planned, String> {
     let row = HeapRow {

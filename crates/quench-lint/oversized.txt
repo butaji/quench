@@ -1336,10 +1336,10 @@ file-lines crates/quench-runtime/src/compile/class.rs 1250
 file-lines crates/quench-runtime/src/compile/early.rs 2007
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1003
-file-lines crates/quench-runtime/src/compile/rewrite.rs 1676
+file-lines crates/quench-runtime/src/compile/rewrite.rs 1673
 file-lines crates/quench-runtime/src/heap.rs 4642
 file-lines crates/quench-runtime/src/heap/access.rs 869
-file-lines crates/quench-runtime/src/compile/rewrite.rs 1674
+file-lines crates/quench-runtime/src/compile/rewrite.rs 1673
 file-lines crates/quench-runtime/src/heap.rs 4447
 file-lines crates/quench-runtime/src/heap/access.rs 836
 file-lines crates/quench-runtime/src/heap/array_elements.rs 664

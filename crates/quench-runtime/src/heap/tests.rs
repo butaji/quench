@@ -1053,7 +1053,7 @@ fn promoted_cells_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
         |heap| {
             heap.alloc(Cell::Set {
-                object: Box::new(plain_object()),
+                object: plain_object(),
                 entries: Default::default(),
             })
         },
