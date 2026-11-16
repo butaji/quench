@@ -3475,7 +3475,8 @@ impl<H: Host> Vm<H> {
     fn active_cache_layout(&self) -> ProgramCacheLayout {
         // SAFETY: a context stays in its box while the VM lives.
         let layout = unsafe { (*self.active_context).layout };
-        debug_assert_eq!(layout, self.program_cache_layouts[self.active_program.raw() as usize]);
+        // Before any program the default context is active, with the default layout.
+        debug_assert_eq!(layout, self.program_cache_layouts.get(self.active_program.raw() as usize).copied().unwrap_or_default());
         layout
     }
     #[inline(always)]
