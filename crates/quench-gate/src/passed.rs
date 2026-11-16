@@ -1,7 +1,8 @@
 //! The pass record: a full gate run that passed on a clean tree adds a note to the commit in
 //! `refs/notes/gate` naming its tree, and `--passed` answers whether the checked-out commit has
 //! one for its tree. The pre-push hook reads the note, so a protected branch takes only a tree the
-//! whole gate passed, and the note travels with the commit to every clone that fetches the ref.
+//! whole gate passed. The note stays in the clone that ran the gate (the git proxy takes no
+//! `refs/notes` pushes): the integrator gates what it pushes and mirrors the tree hash on Linear.
 
 use crate::{config::Config, process, step::Outcome};
 
@@ -28,7 +29,7 @@ pub fn record(config: &Config, outcomes: &[Outcome]) -> Result<String, String> {
     let steps: Vec<&str> = outcomes.iter().map(|outcome| outcome.name).collect();
     let note = format!("{RECORD_PREFIX}{tree} steps={}", steps.join(","));
     let added = process::run(config.command("git").args(["notes", NOTES_REF, "add", "-f", "-m", &note, "HEAD"]))?;
-    if added.success { Ok(format!("{note} (push with: git push origin refs/notes/gate)")) } else { Err(added.excerpt()) }
+    if added.success { Ok(note) } else { Err(added.excerpt()) }
 }
 
 /// Whether the checked-out clean commit has a pass record for its tree.

@@ -1,8 +1,10 @@
 #!/usr/bin/env sh
 # A push to a protected branch carries only a commit whose tree has a full quench-gate pass
-# record (`refs/notes/gate`, written by the gate when every step passes on a clean tree).
+# record (`refs/notes/gate`, written by the gate when every step passes on a clean tree). The
+# record lives in the clone that ran the gate (the git proxy takes no refs/notes pushes), so the
+# integrator gates the exact commit it pushes and mirrors the tree hash on the landing issue.
 # Install once per clone:
-#   git config core.hooksPath .githooks && git fetch origin refs/notes/gate:refs/notes/gate
+#   git config core.hooksPath .githooks
 # Git feeds the hook "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
 set -eu
 
