@@ -12,6 +12,9 @@ use super::*;
 pub(in crate::vm) struct LaneDependencies {
     pub(in crate::vm) slots: Vec<crate::code_dependencies::SlotDependency>,
     pub(super) departure_shapes: Vec<u32>,
+    /// The direct callees' bodies, whose entries the code calls: a change of a Stable fact one of
+    /// them folded retires it, and so the code that would still enter it.
+    pub(super) callees: Vec<Rc<LaneMethod>>,
 }
 
 impl LaneDependencies {
@@ -24,16 +27,25 @@ impl LaneDependencies {
             .chain(direct.iter().filter_map(|callee| callee.body.as_ref()).flat_map(|body| body.dependencies.departure_shapes.iter().copied())).collect();
         departure_shapes.sort_unstable();
         departure_shapes.dedup();
-        Self { slots, departure_shapes }
+        let callees = direct.iter().filter_map(|callee| callee.body.clone()).collect();
+        Self { slots, departure_shapes, callees }
     }
 
     /// Makes `code` retire when a fact it took changes: a slot's observation, a holder
-    /// shape's departure, or one of its Stable facts; `false` where a reader table is full.
+    /// shape's departure, or one of its Stable facts or its direct callees'; `false` where a reader table is full.
     pub(in crate::vm) fn subscribe(&self, stable: &lane_region::StableFacts, code: &Rc<dyn crate::code_dependencies::DependentCode>,
         heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
         self.slots.iter().all(|dependency| heap.subscribe_slot_observation(*dependency, code))
             && self.departure_shapes.iter().all(|shape| heap.subscribe_shape(*shape, code))
             && subscribe_stable(stable, code, heap, method_atoms)
+            && self.subscribe_callees(code, heap, method_atoms)
+    }
+
+    /// Subscribes `code` to the Stable facts of its direct callees' bodies, and theirs in turn.
+    fn subscribe_callees(&self, code: &Rc<dyn crate::code_dependencies::DependentCode>,
+        heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders) -> bool {
+        self.callees.iter().all(|callee| subscribe_stable(&callee.stable, code, heap, method_atoms)
+            && callee.dependencies.subscribe_callees(code, heap, method_atoms))
     }
 }
 

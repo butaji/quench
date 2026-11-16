@@ -17623,7 +17623,9 @@ pub(in crate::vm) fn lane_direct_callee<H: Host>(vm: &Vm<H>, view: &LaneView, fu
 fn lane_direct_calls<H: Host>(cx: *mut LaneContext<H>) -> bool {
     let vm = unsafe { vm(cx) };
     let script_calls = unsafe { (*cx).script_calls };
-    script_calls && !vm.with_scope_entered && vm.construct_target.is_none()
+    // A direct callee's registers follow the caller's window, where an activation that keeps its
+    // locals there (`lane_context_locals_in_window`) has them: such a run calls through the lane.
+    script_calls && !vm.with_scope_entered && vm.construct_target.is_none() && !unsafe { lane_context_locals_in_window::<H>(cx as usize) }
 }
 
 /// Whether a run of `own`'s specialized body may start: the one thing per run it cannot

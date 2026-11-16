@@ -47,8 +47,8 @@ pub(crate) struct PublishedCode<T> {
 /// An entry word, the entry it holds and the stub it returns to: a view's cell words (`EntryCell`).
 type EntryLink = (*const std::cell::Cell<usize>, usize, usize);
 
-/// The entry words of a view's cell that a published body owns: its `entry` and its `scalar` entry.
-const ENTRY_WORDS: usize = 2;
+/// The words of a view's cell that a published body owns: its `body`, its `entry` and its `scalar` entry.
+const ENTRY_WORDS: usize = 3;
 
 impl<T> PublishedCode<T> {
     /// Names an entry word whose `entry` this code retiring takes back to `stub`.
