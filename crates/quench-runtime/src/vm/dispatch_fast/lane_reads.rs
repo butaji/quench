@@ -110,7 +110,7 @@ impl Reads {
     }
 
     /// The value of a constant or local operand.
-    #[inline] pub(super) fn word(&self, operand: Operand) -> Option<Value> {
+    #[inline(always)] pub(super) fn word(&self, operand: Operand) -> Option<Value> {
         match operand.kind()? {
             // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
             OperandKind::Constant => self.immediate.or_else(|| unsafe { &*self.constants }

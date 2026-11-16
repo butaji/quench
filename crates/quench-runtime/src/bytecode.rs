@@ -3372,6 +3372,7 @@ impl Operand {
 
     /// A constant-pool operand, when the pool index fits the operand payload;
     /// larger programs load the constant into a register instead.
+    #[inline]
     pub(crate) fn constant(index: u32) -> Option<Self> {
         u16::try_from(index)
             .ok()
@@ -3379,6 +3380,7 @@ impl Operand {
             .map(|index| Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | index))
     }
 
+    #[inline]
     pub(crate) fn local(slot: u16) -> Self {
         debug_assert!(slot <= Self::PAYLOAD_MASK);
         Self(((OperandKind::Local as u16) << Self::TAG_SHIFT) | slot)
