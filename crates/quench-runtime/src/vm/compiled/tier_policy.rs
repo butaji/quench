@@ -30,7 +30,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -98,10 +98,6 @@ pub(in crate::vm) struct Priors {
     /// The divisor of the entries and the interpreter time so far that gives the credible lower
     /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
-    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
-    /// weight of its prior in IR instructions (eight compiles of a hundred).
-    pub(in crate::vm) compile_forgetting_permille: u64,
-    pub(in crate::vm) compile_prior_ir: u64,
     /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
     /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
     /// work, none of which overlaps the program as a compile on the code generator's thread does.
@@ -385,7 +381,7 @@ const MEASURED: Tiers = Tiers {
             Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
         ],
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,

@@ -27,14 +27,11 @@ pub(super) struct LaneBodyHistory {
     demanded: bool,
     /// The timed runs of its current body and of the interpreter (`audit`).
     audit: audit::Audit,
-    /// When its body began warming, which prices what the interpreter has spent on it
-    /// (`LaneView::interpreted_ns`).
-    warm_started: Option<std::time::Instant>,
 }
 
 #[path = "lane_body_audit.rs"]
 mod audit;
-pub(super) use audit::{audit_nanos, Epochs, Verdict};
+pub(super) use audit::{Epochs, Verdict};
 
 /// The entries and the milliseconds of warming past which a function specializes by its
 /// recurrence alone (`LaneView::recurrent`).
@@ -163,11 +160,10 @@ impl LaneView {
         u32::from(self.tiers.lane_body.warmup()) << self.tier().history.get().lifetimes.min(MAX_DOUBLINGS)
     }
 
-    /// The nanoseconds since its body began warming: the time the interpreter has spent on the
-    /// function (and on whatever ran between its entries), which a body would have run for
-    /// as long again.
-    pub(in crate::vm) fn interpreted_ns(&self) -> u64 {
-        self.tier().history.get().warm_started.map_or(0, audit_nanos)
+    /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
+    /// trip count its region's runs took (loops without a native run count one iteration).
+    pub(in crate::vm) fn loop_work(&self) -> u64 {
+        self.loops.iter().map(|site| site.span() * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
     }
 
     /// Whether a closed loop of the function runs in a region that has run natively and still
@@ -359,10 +355,7 @@ impl LaneView {
             }
             LaneBody::Unspecialized { entries, recompiles, stuck } => {
                 let ticks = warm_ticks();
-                if entries == 0 {
-                    self.tier().warm_since.set(ticks);
-                    self.tier().history.set(LaneBodyHistory { warm_started: Some(std::time::Instant::now()), ..self.tier().history.get() });
-                }
+                if entries == 0 { self.tier().warm_since.set(ticks); }
                 *body = LaneBody::Unspecialized { entries: entries.saturating_add(1), recompiles, stuck };
                 return true;
             }

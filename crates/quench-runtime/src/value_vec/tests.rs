@@ -54,7 +54,7 @@ fn young_runs_reclaim_the_dead_at_once_and_move_survivors_below_the_floor() {
     let mut arena = ValueArena::default();
     arena.register_shape(1, 3);
     let values = |n: f64| [Value::number(n), Value::number(n + 0.5), Value::number(n + 0.25), Value::UNDEFINED];
-    let young = |arena: &mut ValueArena, n: f64| ValueVec { start: arena.young_run_padded(&values(n), 3).unwrap(), auxiliary: 1 };
+    let young = |arena: &mut ValueArena, n: f64| ValueVec { start: arena.young_run_padded(&values(n), 3, 1).unwrap(), auxiliary: 1 };
     let ordinary = arena.with_values(1, &values(9.0)[..3]);
     let mut runs: Vec<ValueVec> = (0..8).map(|n| young(&mut arena, f64::from(n))).collect();
     assert!(runs.iter().all(|run| arena.holds_young_run(*run)));

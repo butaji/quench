@@ -128,7 +128,9 @@ impl Lowering<'_, '_> {
         let mut seen = Seen::default();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));
         proved.signless = signless;
-        self.prove_loops(&mut proved, &model, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
+        if self.entry_bounds {
+            self.prove_loops(&mut proved, &model, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
+        }
         proved
     }
 

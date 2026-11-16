@@ -28,12 +28,28 @@ pub(super) struct LoopTier {
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
+    /// Entries the published code's guards declined in a row, and whether the next compilation
+    /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
+    /// bound misses every versioned entry.
+    entry_misses: u16,
+    pub(super) unbounded: bool,
 }
 
 impl LoopTier {
     pub(super) fn weigh_run(&mut self, backedges: u64) {
         self.runs = self.runs.saturating_add(1);
+        self.entry_misses = 0;
         self.iterations = self.iterations.saturating_add(backedges);
+    }
+
+    /// Counts an entry the published code's guards declined: past `widen_after_leaves` in a row,
+    /// the code goes and the next compilation versions no loop bound on entry, once.
+    pub(super) fn missed_entry(&mut self, tiers: &Tiers) {
+        if self.unbounded || self.compilations >= tiers.loops.max_compilations { return; }
+        self.entry_misses += 1;
+        if self.entry_misses < tiers.loops.widen_after_leaves { return; }
+        self.unbounded = true;
+        if let Some(code) = self.code.take() { code.retire(); }
     }
 
     pub(super) fn weigh_decline(&mut self) {
@@ -198,7 +214,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     let calls = program.as_deref().filter(|_| crate::jit_mode::base_regions()).map(|program| region_calls(cx, machine, program, function)).unwrap_or_default();

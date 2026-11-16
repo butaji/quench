@@ -266,7 +266,7 @@ impl<H: Host> Vm<H> {
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
         let planned = self.programs.planned_lane_ir(&site);
         if let Some(entries) = observed
-            && !pays_compile(tiers, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, false) { return Err(Unstarted::Unpaid); }
+            && !pays_compile(tiers, program, function, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, true, false) { return Err(Unstarted::Unpaid); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
         let plan_started = std::time::Instant::now();
         let (mut plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
@@ -281,7 +281,7 @@ impl<H: Host> Vm<H> {
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !pays_compile(plan.tiers, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
+        if let Some(entries) = observed && !pays_compile(plan.tiers, program, function, entries, planned_ir, caller, false, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(plan.tiers, span, planned_ir, false) { return Err(Unstarted::Unpaid); }
         if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
@@ -294,12 +294,11 @@ impl<H: Host> Vm<H> {
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
             generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed, plan_us });
-        let (ir, priors, scalar) = (native.dfg.num_insts(), &plan.tiers.priors, plan.lowered.scalar.take());
+        let scalar = plan.lowered.scalar.take();
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
             let code = image::compile(native, scalar, super::jit_backend::CompileLevel::run_default());
             let took = started.elapsed();
-            super::tier_model::note_compile(priors, took, ir);
             if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |image| image.code.len()))); }
             code
         });

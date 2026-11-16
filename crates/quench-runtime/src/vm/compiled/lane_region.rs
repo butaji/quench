@@ -548,6 +548,8 @@ struct Lowering<'a, 'f> {
     /// Each hoisted base's tagged value and view, by register, across its loop's iterations.
     array_vars: BTreeMap<ArraySource, ArrayVariables>,
     views: ElementViews,
+    /// Whether loops version their bounds on entry (`RegionPlan::entry_bounds`).
+    entry_bounds: bool,
     /// Successful write-through stores defining a loop-header field's SSA variable.
     loop_fields: Vec<LoopField>,
     loop_stores: BTreeMap<usize, LoopStore>,
@@ -1378,6 +1380,9 @@ pub(super) struct RegionPlan {
     pub(super) coverage: Coverage,
     pub(super) completion: Completion,
     pub(super) views: ElementViews,
+    /// Whether loops may version their bounds on entry (`int_ranges::prove_loops`): an OSR site
+    /// whose entries kept missing compiles again without (`LoopTier::missed_entry`).
+    pub(super) entry_bounds: bool,
 }
 
 /// Futamura's first projection for one region: the same `lower` a lane body, a static typed
@@ -1440,7 +1445,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views)
+            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1464,7 +1469,7 @@ pub(super) fn lower_body(
     let isa = super::jit_backend::target_isa()?;
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
         generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], typed_captures: &[], int_captures: &[],
-        plan: RegionPlan { coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
+        plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views: ElementViews::Dense } };
     // The scalar entry lowers first: the body calls it only where it exists.
     let abi = scalar::ScalarAbi::of(program, function_id, unit, direct).filter(|_| entry.is_none());
@@ -1504,6 +1509,7 @@ pub(super) fn lower(
     coverage: Coverage,
     completion: Completion,
     views: ElementViews,
+    entry_bounds: bool,
 ) -> Option<LoweredRegion> {
     // A loop entry may take the rotated residual of its proven condition.
     let residual = super::static_loops::specialize(program, unit, coverage.entry())
@@ -1651,6 +1657,7 @@ pub(super) fn lower(
         loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
         array_vars: BTreeMap::new(),
         views,
+        entry_bounds,
         loop_fields: Vec::new(),
         loop_stores: BTreeMap::new(),
         ranges: int_ranges::IntRanges::new(0),

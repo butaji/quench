@@ -2415,6 +2415,8 @@ pub(crate) struct Observation<'a> {
     /// The depth-zero capture slots holding int32s when compiled: a read of such a capture
     /// takes the checked integer view where its uses are integer arithmetic.
     pub(crate) int_captures: &'a [u16],
+    /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
+    pub(crate) entry_bounds: bool,
 }
 
 
