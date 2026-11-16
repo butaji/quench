@@ -223,10 +223,8 @@ fn an_inlined_math_imul_matches_the_interpreter_across_arguments_and_replacement
       for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
       print(total);
     "#;
-    let run = |mode, lane_methods| printed(source, "lane-body-imul.js", mode, lane_methods);
-    let interpreted = run(crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 1);
-    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed.len(), 1);
 }
 
 /// Each Math function a body runs inline (`native_calls::Inline`) gives the native's value
@@ -260,10 +258,8 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
       for (let call = 0; call < 300; call++) sweep();
       print(hash, Math.max(), Math.min(), Math.floor(), Math.max(1, 2, 3));
     "#;
-    let run = |mode, lane_methods| printed(source, "lane-body-math.js", mode, lane_methods);
-    let interpreted = run(crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 2);
-    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed.len(), 2);
 }
 
 /// A function entered a few times whose loop is hot, and leaves at its calls, gets its lane body
@@ -318,9 +314,8 @@ fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
       for (let repeat = 0; repeat < 700; repeat++) result += total("quench-lane", 24);
       print(result + " " + total({ length: 2, charCodeAt: (i) => i * 7 }, 9));
     "#;
-    let interpreted = printed(source, "lane-direct-natives.js", crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 1);
-    assert_eq!(printed(source, "lane-direct-natives.js", crate::ExecutionMode::Compiled, true), interpreted);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed.len(), 1);
 }
 
 /// A lane body whose activation holds an environment runs it natively: its own locals

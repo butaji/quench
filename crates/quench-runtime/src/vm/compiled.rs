@@ -50,7 +50,7 @@ use std::rc::Rc;
 mod osr_loop;
 mod exit_protocol;
 mod region_lend;
-pub(super) use exit_protocol::ExitTable;
+pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
 pub(super) use lane_region::ElementViews;
@@ -214,7 +214,7 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopOutcome, LoopRegion,
+    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
     MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
@@ -3030,11 +3030,11 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
-/// Counts a lane-ABI region's run that ended in `outcome`, `lent` the payload, in the VM's tier events.
-fn note_osr_run(events: &super::tier_events::TierEvents, outcome: &LoopOutcome, lent: bool) {
+/// Counts a lane-ABI region's run of `region` that ended in `run`, `lent` the payload, in the VM's tier events.
+fn note_osr_run(events: &super::tier_events::TierEvents, run: &RegionRun, region: &LoopRegion, lent: bool) {
     use super::tier_events::Event;
-    let left = matches!(outcome, LoopOutcome::Exit(_) | LoopOutcome::Inlined { .. } | LoopOutcome::Left { .. } | LoopOutcome::Callee);
-    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, left), (Event::OsrInlined, matches!(outcome, LoopOutcome::Inlined { .. }))] {
+    let inlined = !run.nested && matches!(run.exit, LaneExit::Inlined { .. });
+    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, run.left(region)), (Event::OsrInlined, inlined)] {
         if happened { events.record(event); }
     }
 }
@@ -3095,12 +3095,12 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         lane: (usize, bool),
         from: u32,
-    ) -> LoopOutcome {
+    ) -> RegionRun {
         let start = self.start_at(region, from);
         // SAFETY: the caller's contract covers `vm`.
         unsafe { (*vm).programs.tier_events().record(super::tier_events::Event::OsrRun) };
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
-        unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, region, interrupt) }
+        unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, interrupt) }
             else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
     }
 
@@ -3122,7 +3122,7 @@ impl CompiledOsrRegion {
         frame: usize,
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
-    ) -> LoopOutcome {
+    ) -> RegionRun {
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
             osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
@@ -3131,10 +3131,10 @@ impl CompiledOsrRegion {
             // A region that calls callees by their entries runs on the lane frame's payload, which their
             // own helpers read (`region_lend`).
             let lend = self.calls.enters_callees().then_some(direct_calls);
-            osr_lane::enter(native, vm, region, program, (code, resume), registers, interrupt, (lane_context, lend))
-        }) }.unwrap_or(LoopOutcome::Terminated);
+            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend))
+        }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
         // SAFETY: as above; the activation that held `vm` has returned.
-        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, self.calls.enters_callees());
+        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
     }
 
@@ -3197,31 +3197,50 @@ fn process_peak_rss_kib() -> i64 {
     }
 }
 
-/// The directory the `jit-dump` trace channel names: each loop region
+/// The directory the `jit-dump` trace channel names: each loop region and body
 /// compiled writes its machine code and its CLIF there (`dump_native_code`), for attaching
 /// instruction-level profiles to native code.
 fn native_dump_directory() -> Option<&'static std::path::Path> {
     crate::trace::Channel::JitDump.value().map(std::path::Path::new)
 }
 
-/// Writes a compiled loop region's executable mapping as `loop-<n>.bin` and its CLIF as
-/// `loop-<n>.clif` into `directory`, numbered in compilation order, and reports where the
-/// mapping lives on stderr. A failed write leaves the run as it is.
-fn dump_native_code(directory: &std::path::Path, header: u32, code: &CodeMemory, clif: &str) {
+/// What a dumped piece of native code was compiled for: a loop region, named by its header's
+/// bytecode position, or a function's body, named by its function and, where it has one, the
+/// byte offset of its scalar entry (the per-call path the C-parity gate measures).
+#[derive(Clone, Copy)]
+pub(super) enum DumpSite {
+    Loop { header: u32 },
+    Body { function: u32, scalar: Option<usize> },
+}
+
+impl std::fmt::Display for DumpSite {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Loop { header } => write!(out, "loop header={header}"),
+            Self::Body { function, scalar: None } => write!(out, "body function={function}"),
+            Self::Body { function, scalar: Some(at) } => write!(out, "body function={function} scalar={at}"),
+        }
+    }
+}
+
+/// Writes compiled code's executable mapping as `code-<n>.bin` and its CLIF as `code-<n>.clif`
+/// into `directory`, numbered in compilation order, and reports what it was compiled for and
+/// where the mapping lives on stderr. A failed write leaves the run as it is.
+fn dump_native_code(directory: &std::path::Path, site: DumpSite, code: &CodeMemory, clif: &str) {
     // SAFETY: the mapping is `code.length` readable bytes while `code` lives.
     let bytes = unsafe { std::slice::from_raw_parts(code.pointer(), code.length()) };
-    dump_native_bytes(directory, header, bytes, Some(code.pointer()), clif);
+    dump_native_bytes(directory, site, bytes, Some(code.pointer()), clif);
 }
 
 /// Publication is diagnostic data, not a reason to allocate executable memory.
-fn dump_native_bytes(directory: &std::path::Path, header: u32, bytes: &[u8], address: Option<*mut u8>, clif: &str) {
+fn dump_native_bytes(directory: &std::path::Path, site: DumpSite, bytes: &[u8], address: Option<*mut u8>, clif: &str) {
     static COMPILED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let number = COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _ = std::fs::write(directory.join(format!("loop-{number:03}.bin")), bytes);
-    let _ = std::fs::write(directory.join(format!("loop-{number:03}.clif")), clif);
+    let _ = std::fs::write(directory.join(format!("code-{number:03}.bin")), bytes);
+    let _ = std::fs::write(directory.join(format!("code-{number:03}.clif")), clif);
     match address {
-        Some(address) => eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} address={address:p} bytes={}", bytes.len()),
-        None => eprintln!("QUENCH_JS_JIT_DUMP loop-{number:03} header={header} unpublished bytes={}", bytes.len()),
+        Some(address) => eprintln!("QUENCH_JS_JIT_DUMP code-{number:03} {site} address={address:p} bytes={}", bytes.len()),
+        None => eprintln!("QUENCH_JS_JIT_DUMP code-{number:03} {site} unpublished bytes={}", bytes.len()),
     }
 }
 
@@ -3555,7 +3574,7 @@ impl LaneExit {
     }
     /// Where the activation resumes: an entry leave at its first record.
     pub(super) fn resumed(self) -> Self {
-        if matches!(self, Self::Entry | Self::Stub) { Self::At(0) } else { self }
+        if self.entered_nothing() { Self::At(0) } else { self }
     }
 }
 

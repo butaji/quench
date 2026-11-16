@@ -84,6 +84,31 @@ pub fn hottest(code: &[Instruction]) -> Option<&[Instruction]> {
         .min_by_key(|body| body.iter().filter(|instruction| !instruction.is_nop()).count())
 }
 
+/// The instructions one call runs through a scalar entry at `entry` (a byte offset): from the
+/// entry, the fall-through of every conditional branch (the path its checks expect) and the
+/// target of every unconditional jump, up to the return. A function without a loop has no
+/// iteration to measure; this path is its per-call cost.
+pub fn call_path(code: &[Instruction], entry: u64) -> Option<Vec<Instruction>> {
+    let mut at = index_of(code, entry)?;
+    let mut visited = Visited::new(code.len());
+    let mut path = Vec::new();
+    while visited.insert(at) {
+        let instruction = &code[at];
+        path.push(instruction.clone());
+        if !instruction.falls_through() && !instruction.is_conditional_jump() {
+            match target_index(code, at) {
+                Some(next) => at = next,
+                None => break,
+            }
+        } else if at + 1 < code.len() {
+            at += 1;
+        } else {
+            break;
+        }
+    }
+    Some(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +123,25 @@ mod tests {
         assert_eq!(found, [Loop { header: 1, branch: 3 }]);
         let body = hottest(&code).expect("one loop");
         assert_eq!(body.len(), 3);
+    }
+
+    #[test]
+    fn a_call_path_takes_fall_throughs_and_jumps_up_to_the_return() {
+        let code = parse(
+            "  0:	mov    %rax,%rbx
+  3:	cmp    $0x2,%rdi
+  7:	jl     0x20
+  9:	jmp    0x10
+  b:	ud2
+ 10:	add    $0x1,%rax
+ 14:	ret
+ 20:	mov    %rdi,%rax
+ 23:	ret
+",
+        );
+        let path = call_path(&code, 0x3).expect("an entry");
+        let addresses: Vec<u64> = path.iter().map(|instruction| instruction.address).collect();
+        assert_eq!(addresses, [0x3, 0x7, 0x9, 0x10, 0x14]);
+        assert!(call_path(&code, 0x5).is_none());
     }
 }

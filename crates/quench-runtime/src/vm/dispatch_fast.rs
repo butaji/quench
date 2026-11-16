@@ -322,6 +322,12 @@ impl LoopSite {
         self.entering.get()
     }
 
+    /// Whether its loop runs in a region entered from the lane: a closed one that still enters and
+    /// has run natively (a region that never ran makes none of the loop's work native).
+    pub(super) fn runs_region(&self) -> bool {
+        self.call_boundary_pcs.is_empty() && self.active_region().is_some() && self.enters() && self.tier.borrow().runs() > 0
+    }
+
     fn is_admitted(&self) -> bool {
         !self.promotion_only
             && self.analysis_failure.is_none_or(|failure| failure.is_call_boundary())
@@ -1942,9 +1948,12 @@ type ScriptGeneration = u32;
 struct Admission(u64);
 
 impl Admission {
+    /// Where the program sits in the word: above the generation.
+    const PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
+
     #[inline(always)]
     const fn new(generation: ScriptGeneration, program: ProgramId) -> Self {
-        Self(generation as u64 | (program.raw() as u64) << 32)
+        Self(generation as u64 | (program.raw() as u64) << Self::PROGRAM_SHIFT)
     }
 
     /// A bit no target's or memo's admission has: the lane's carries it while a condition
@@ -1959,7 +1968,7 @@ impl Admission {
 
     #[inline(always)]
     const fn program(self) -> ProgramId {
-        ProgramId::from_raw((self.0 >> 32) as u32)
+        ProgramId::from_raw((self.0 >> Self::PROGRAM_SHIFT) as u32)
     }
 }
 
@@ -8208,6 +8217,11 @@ fn lane_activate_getter<H: Host>(
     lane_activate_kept::<H, true>(cx, r, ip, &target, &[], this)
 }
 
+/// The private-name site keys of a nested read's two steps, as offsets from its record's
+/// address (`lane_private_field_slot_at`): a record spans more bytes than steps, so no other
+/// record's key is one of them.
+const NESTED_STEPS: [usize; 2] = [1, 2];
+
 /// A `GetField` record's value where caches answer it (`lane_cached_field`): one read of a
 /// register or `this`, or a nested site's chain of two. `None` leaves the read to the
 /// general path.
@@ -8231,9 +8245,9 @@ unsafe fn lane_field_value<H: Host>(
     if i.b == crate::bytecode::FieldBase::NESTED {
         let site = *code.field_sites.get(i.imm() as usize)?;
         let base = unsafe { lane_field_base(cx, r, site.base) }?;
-        let value = lane_field_step(cx, record + 1, code, base, site.first.0, site.first.1)?;
+        let value = lane_field_step(cx, record + NESTED_STEPS[0], code, base, site.first.0, site.first.1)?;
         return match site.second {
-            Some((atom, cache)) => lane_field_step(cx, record + 2, code, value, atom, cache),
+            Some((atom, cache)) => lane_field_step(cx, record + NESTED_STEPS[1], code, value, atom, cache),
             None => Some(value),
         };
     }
@@ -10213,7 +10227,7 @@ enum LoopContinuation {
     /// The general path executes the instruction at this PC.
     Exit(u32),
     /// The general path executes callee PC `pc` of inlined frame `frame`, in the activation
-    /// its call makes (`LoopOutcome::Inlined`).
+    /// its call makes (`LaneExit::Inlined`).
     Inlined { frame: usize, pc: u32 },
     /// Native code of a stitched region left inside an inlined callee, and the lane recovered the
     /// activations around it (`lane_inlined_continuation`).
@@ -10255,7 +10269,7 @@ fn lane_loop_run<H: Host>(
     views: super::compiled::ElementViews,
     from: u32,
 ) -> LoopContinuation {
-    use super::compiled::LoopOutcome;
+    use super::compiled::{LaneExit, RegionRun};
     let mut tier = site.tier.borrow_mut();
     if !tier.select(site.tiers, views) {
         return LoopContinuation::Jump;
@@ -10289,93 +10303,99 @@ fn lane_loop_run<H: Host>(
     };
     // SAFETY: `r` and `machine` are the running lane activation's storage and VM; the
     // callback executes no guest code, allocates nothing, and retains no VM references.
-    let outcome = unsafe { lane_region_run::<H>(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) };
+    let run = unsafe { lane_region_run::<H>(cx, r, entry, (&*code, region), (site.function, from), (machine, program, interrupt)) };
     if site.diagnostics {
-        site.native_entry_attempts
-            .set(site.native_entry_attempts.get().saturating_add(1));
-        match outcome {
-            LoopOutcome::NotEntered => {
-                if crate::trace::Channel::OsrReject.on() {
-                    eprintln!(
-                        "QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={}",
-                        site.function,
-                        site.header,
-                    );
-                }
-                site.entry_guard_misses
-                    .set(site.entry_guard_misses.get().saturating_add(1));
+        lane_loop_diagnose(cx, r, site, region, run, program);
+    }
+    let RegionRun { exit, nested } = run;
+    if exit.entered_nothing() {
+        // An entry guard missed: registers are untouched, so the backward jump runs in the interpreter.
+        site.tier.borrow_mut().missed_entry(site.tiers);
+        return LoopContinuation::Jump;
+    }
+    if matches!(exit, LaneExit::Terminated) {
+        return LoopContinuation::Safepoint;
+    }
+    // A run pays for its entry with the iterations it completed, wherever it leaves.
+    site.note_run(entry.backedge_count());
+    if nested {
+        return lane_region_left(cx, r, site.function, exit);
+    }
+    match exit {
+        LaneExit::At(pc) if region.holds_exit(exit) => LoopContinuation::Exit(pc as u32),
+        LaneExit::At(pc) => LoopContinuation::Resume(pc as u32),
+        LaneExit::Inlined { frame, pc } => lane_inlined_continuation(cx, r, site, (region, &code), (frame, pc)),
+        // The call made the callee's activation, whose own records the lane runs next.
+        LaneExit::Callee => LoopContinuation::Callee,
+        LaneExit::Returned { pc, value } => LoopContinuation::Completed(pc as u32, value),
+        LaneExit::Threw { pc } => LoopContinuation::Threw(pc as u32),
+        LaneExit::Entry | LaneExit::Stub | LaneExit::Terminated => unreachable!("handled before the run paid"),
+    }
+}
+
+/// The diagnostics of a loop site's native attempt that ended in `run`, under its `site.diagnostics`.
+fn lane_loop_diagnose<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, region: &super::compiled::LoopRegion, run: super::compiled::RegionRun, program: ProgramId) {
+    use super::compiled::LaneExit;
+    let bump = |count: &std::cell::Cell<u64>| count.set(count.get().saturating_add(1));
+    bump(&site.native_entry_attempts);
+    if run.nested {
+        bump(&site.native_region_runs);
+        return;
+    }
+    match run.exit {
+        LaneExit::Entry | LaneExit::Stub => {
+            if crate::trace::Channel::OsrReject.on() {
+                eprintln!("QUENCH_JS_JIT_OSR_ENTRY_MISS function={} header={}", site.function, site.header);
             }
-            LoopOutcome::Inlined { .. } => {
-                site.native_region_runs.set(site.native_region_runs.get().saturating_add(1));
-                site.native_exits.set(site.native_exits.get().saturating_add(1));
-            }
-            LoopOutcome::Resume(_) | LoopOutcome::Returned { .. } | LoopOutcome::Threw { .. } | LoopOutcome::Callee | LoopOutcome::Left { .. } => {
-                site.native_region_runs
-                    .set(site.native_region_runs.get().saturating_add(1));
-            }
-            // The poll's leave for a published body is a handover, not a guard's exit.
-            LoopOutcome::Exit(pc) if loop_body::left_for_tier_up(cx, site, pc) => {
-                site.native_region_runs.set(site.native_region_runs.get().saturating_add(1));
-            }
-            LoopOutcome::Exit(pc) => {
-                site.native_region_runs
-                    .set(site.native_region_runs.get().saturating_add(1));
-                site.native_exits.set(site.native_exits.get().saturating_add(1));
-                // Attribute a guard exit to its recovery PC before the lane resumes.
-                // Reuse the opt-in OSR trace; ordinary execution keeps no extra table
-                // or per-site allocation, and the exit budget is unchanged.
-                if crate::trace::Channel::OsrReject.on() {
-                    eprintln!(
-                        "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
-                        program.raw(), site.function, site.header,
-                    );
-                    // Read recovered operands only for a non-inlined activation. These
-                    // getters neither coerce a guest value nor allocate guest storage.
-                    // Raw state distinguishes index/append/capacity guards without
-                    // changing native exits or inventing a second guard policy.
-                    if region.inlining.is_none() {
-                        // SAFETY: the lane's program and VM outlive this synchronous trace;
-                        // native execution has returned and restored the canonical registers.
-                        let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
-                        if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
-                            let instruction = decoded_instruction(body, packed);
-                            if instruction.op().is_set_index() {
-                                let key = r.get(instruction.register_c());
-                                let base = r.get(instruction.register_b());
-                                if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
-                                    eprintln!(
-                                        "QUENCH_JS_JIT_OSR_SET_INDEX_EXIT program={} function={} header={} pc={pc} key_bits={:016x} key_number={:?} length={} capacity={}",
-                                        program.raw(), site.function, site.header,
-                                        key.to_bits(), key.as_number(),
-                                        array.elements().len(), array.elements().capacity(),
-                                    );
-                                }
-                            }
-                        }
+            bump(&site.entry_guard_misses);
+        }
+        LaneExit::Terminated => {}
+        LaneExit::Inlined { .. } => {
+            bump(&site.native_region_runs);
+            bump(&site.native_exits);
+        }
+        // A guard's exit inside the loop; the poll's leave for a published body is a handover, not one.
+        LaneExit::At(pc) if region.holds_exit(run.exit) && !loop_body::left_for_tier_up(cx, site, pc as u32) => {
+            bump(&site.native_region_runs);
+            bump(&site.native_exits);
+            lane_loop_trace_exit(cx, r, site, region, program, pc as u32);
+        }
+        _ => bump(&site.native_region_runs),
+    }
+}
+
+/// Attributes a guard exit at `pc` to its recovery PC before the lane resumes, under the opt-in
+/// OSR trace; ordinary execution keeps no extra table or per-site allocation.
+fn lane_loop_trace_exit<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite, region: &super::compiled::LoopRegion, program: ProgramId, pc: u32) {
+    if crate::trace::Channel::OsrReject.on() {
+        eprintln!(
+            "QUENCH_JS_JIT_OSR_EXIT program={} function={} header={} pc={pc}",
+            program.raw(), site.function, site.header,
+        );
+        // Read recovered operands only for a non-inlined activation. These
+        // getters neither coerce a guest value nor allocate guest storage.
+        // Raw state distinguishes index/append/capacity guards without
+        // changing native exits or inventing a second guard policy.
+        if region.inlining.is_none() {
+            // SAFETY: the lane's program and VM outlive this synchronous trace;
+            // native execution has returned and restored the canonical registers.
+            let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
+            if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
+                let instruction = decoded_instruction(body, packed);
+                if instruction.op().is_set_index() {
+                    let key = r.get(instruction.register_c());
+                    let base = r.get(instruction.register_b());
+                    if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
+                        eprintln!(
+                            "QUENCH_JS_JIT_OSR_SET_INDEX_EXIT program={} function={} header={} pc={pc} key_bits={:016x} key_number={:?} length={} capacity={}",
+                            program.raw(), site.function, site.header,
+                            key.to_bits(), key.as_number(),
+                            array.elements().len(), array.elements().capacity(),
+                        );
                     }
                 }
             }
-            LoopOutcome::Terminated => {}
         }
-    }
-    match outcome {
-        // An entry guard missed: registers are untouched, so the backward jump runs in
-        // the interpreter.
-        LoopOutcome::NotEntered => { site.tier.borrow_mut().missed_entry(site.tiers); LoopContinuation::Jump }
-        // A run pays for its entry with the iterations it completed, wherever it leaves.
-        LoopOutcome::Resume(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Resume(pc) }
-        LoopOutcome::Exit(pc) => { site.note_run(entry.backedge_count()); LoopContinuation::Exit(pc) }
-        LoopOutcome::Inlined { frame, pc } => { site.note_run(entry.backedge_count()); lane_inlined_continuation(cx, r, site, (region, &code), (frame, pc)) }
-        // The call made the callee's activation, whose own records the lane runs next; the
-        // run left as any exit does, so it too pays with the iterations it completed.
-        LoopOutcome::Callee => { site.note_run(entry.backedge_count()); LoopContinuation::Callee }
-        LoopOutcome::Left { exit } => { site.note_run(entry.backedge_count()); lane_region_left(cx, r, site.function, exit) }
-        LoopOutcome::Returned { pc, value } => {
-            site.note_run(entry.backedge_count());
-            LoopContinuation::Completed(pc, value)
-        }
-        LoopOutcome::Threw { pc } => { site.note_run(entry.backedge_count()); LoopContinuation::Threw(pc) }
-        LoopOutcome::Terminated => LoopContinuation::Safepoint,
     }
 }
 
@@ -10392,15 +10412,16 @@ unsafe fn lane_region_run<H: Host>(
     (code, region): (&super::compiled::CompiledOsrRegion, &super::compiled::LoopRegion),
     (function, from): (u32, u32),
     (machine, program, interrupt): (*mut Vm<H>, ProgramId, *const crate::execution_interrupt::ExecutionInterrupt),
-) -> super::compiled::LoopOutcome {
+) -> super::compiled::RegionRun {
+    use super::compiled::{LaneExit, RegionRun};
     // A job's frameless lane (a generator step) has no frame for the region's activation.
     if code.needs_frame() && !unsafe { &*cx }.has_frame() {
-        return super::compiled::LoopOutcome::NotEntered;
+        return RegionRun::own(LaneExit::Entry);
     }
     if !lane_region_admits(cx, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
         let grown = !unsafe { lane_context_locals_in_window::<H>(cx as usize) } && lane_room_prepare(cx, code.calls.recovery_space());
-        return if grown { super::compiled::LoopOutcome::Exit(region.header) } else { super::compiled::LoopOutcome::NotEntered };
+        return RegionRun::own(if grown { LaneExit::At(region.header as usize) } else { LaneExit::Entry });
     }
     // SAFETY: the caller's contract.
     unsafe { code.run::<H>(r.0, entry, region, machine, program, function, (*cx).frame(), interrupt, (cx as usize, lane_direct_calls(cx)), from) }

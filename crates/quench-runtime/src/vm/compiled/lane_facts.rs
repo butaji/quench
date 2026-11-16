@@ -88,7 +88,7 @@ pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
 /// compile request passes.
 pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u32, entries: u32, ir: usize, caller: &super::super::dispatch_fast::LaneView, unplanned: bool, diagnostics: bool) -> bool {
     let length = program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64;
-    super::tier_model::admits(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region: caller.enters_region(), ir }, unplanned, diagnostics)
+    super::tier_model::admits(tiers, &super::tier_model::Observed { length, loop_work: caller.loop_work(), entries, region_runs: caller.region_runs(), ir }, unplanned, diagnostics)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

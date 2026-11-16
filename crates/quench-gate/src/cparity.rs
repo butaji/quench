@@ -5,10 +5,12 @@
 //! (`crates/quench-tier-corpus/cparity.txt`): growth fails, improvement lowers the ceiling,
 //! and a tier's output must equal the interpreter's.
 //!
-//! The hot loop is the compiled region of the on-stack-replacement site that took the most
-//! back-edges (`stats`), taken from the first tier's run (headers are bytecode positions, the
-//! same on every tier); its hottest loop is `flow::hottest`. Dumps are deterministic only when
-//! compiles run synchronously, so the runs set `QUENCH_DEV=sync-compile`.
+//! The hot loop is the on-stack-replacement site that took the most back-edges (`stats`), taken
+//! from the first tier's run (headers are bytecode positions, the same on every tier). It is
+//! measured in the loop region compiled for it, else in the body compiled for its function; its
+//! hottest loop is `flow::hottest`. A kernel with no loop (a recursive function) is measured
+//! per call, along the scalar entry of the body that has one (`flow::call_path`). Dumps are
+//! deterministic only when compiles run synchronously, so the runs set `QUENCH_DEV=sync-compile`.
 
 mod asm;
 mod classes;
@@ -30,10 +32,12 @@ use crate::{
     step::Verdict,
     tiers::{self, INTERPRETER},
 };
+use asm::Instruction;
 use classes::Fields;
+use stats::{Dump, Hot, Site};
 use table::{Table, Tally};
 
-const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
+pub const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
 const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
@@ -43,7 +47,7 @@ const DEV_VARIABLE: &str = "QUENCH_DEV";
 const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 
 /// The kernel sources, in name order.
-fn kernels(directory: &Path) -> io::Result<Vec<PathBuf>> {
+pub fn kernels(directory: &Path) -> io::Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();
@@ -76,13 +80,47 @@ fn node(config: &Config, host: &Path, kernel: &Path, flag: &str, dumps: Option<&
     if run.success { Ok(run) } else { Err(format!("{} {flag} failed:\n{}", kernel.display(), run.excerpt())) }
 }
 
-/// The measure of the hottest loop in the region of `header`, if the run dumped one with a loop.
-fn hottest(directory: &Path, stderr: &str, header: u32) -> Result<Option<Fields>, String> {
-    let Some(dump) = stats::dumps(stderr).into_iter().rfind(|dump| dump.header == header) else {
+/// The disassembled code of `dump`.
+fn code(directory: &Path, dump: &Dump) -> Result<Vec<Instruction>, String> {
+    asm::disassemble(&directory.join(format!("{}.bin", dump.name)))
+}
+
+/// The hottest loop of the last dump compiled for `site`, if it has one.
+fn loop_of(directory: &Path, dumps: &[Dump], site: impl Fn(Site) -> bool) -> Result<Option<Fields>, String> {
+    let Some(dump) = dumps.iter().rfind(|dump| site(dump.site)) else {
         return Ok(None);
     };
-    let code = asm::disassemble(&directory.join(format!("{}.bin", dump.name)))?;
-    Ok(flow::hottest(&code).map(classes::measure))
+    Ok(flow::hottest(&code(directory, dump)?).map(classes::measure))
+}
+
+/// The per-call path of the last body dumped with a scalar entry.
+fn scalar_call(directory: &Path, dumps: &[Dump]) -> Result<Option<Fields>, String> {
+    let Some((dump, entry)) = dumps.iter().rev().find_map(|dump| match dump.site {
+        Site::Body { scalar: Some(entry), .. } => Some((dump, entry)),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    Ok(flow::call_path(&code(directory, dump)?, entry).map(|path| classes::measure(&path)))
+}
+
+/// The measure of the program's hot code: the hot loop in its region or its function's body,
+/// else the per-call path of a scalar entry.
+fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Option<Fields>, String> {
+    let dumps = stats::dumps(stderr);
+    if let Some(hot) = hot {
+        if let Some(fields) = loop_of(directory, &dumps, |site| site == Site::Loop { header: hot.header })? {
+            return Ok(Some(fields));
+        }
+        if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Body { function, .. } if function == hot.function))? {
+            return Ok(Some(fields));
+        }
+    }
+    // A tier that reports no loop statistics (b-jit) has its regions' dumps alone.
+    if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Loop { .. }))? {
+        return Ok(Some(fields));
+    }
+    scalar_call(directory, &dumps)
 }
 
 /// Runs one kernel on every tier and settles each measurement against the ratchet.
@@ -97,8 +135,8 @@ fn measure(config: &Config, host: &Path, kernel: &Path, table: &mut Table, tally
             tally.failures.push(format!("{name} {}: printed {:?}, the interpreter {expected:?}", tier.name(), run.stdout));
             continue;
         }
-        hot = stats::hot_header(&run.stderr).or(hot);
-        let measured = hot.map(|header| hottest(&directory, &run.stderr, header)).transpose()?.flatten();
+        hot = stats::hot_loop(&run.stderr).or(hot);
+        let measured = hottest(&directory, &run.stderr, hot)?;
         table.settle(name, tier.name(), measured, config.record, tally);
     }
     Ok(())

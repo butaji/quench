@@ -37,7 +37,7 @@ use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
 use super::typed_ir::Type;
-use super::{LaneExit, NativeFieldLoad};
+use super::NativeFieldLoad;
 use oxc_ast::ast::UnaryOperator;
 
 /// The most instructions a region spans. Native code polls termination only at backward
@@ -60,42 +60,6 @@ mod function;
 mod iteration;
 #[path = "osr_loop/receivers.rs"]
 mod receivers;
-
-/// What native code writes to its result word: the outcome in the high word, a bytecode PC
-/// in the low one.
-/// The outcome of one native run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::vm) enum LoopOutcome {
-    /// An entry guard failed: registers are untouched, and the interpreter takes the jump.
-    NotEntered,
-    /// Control left the region by a jump to this PC, which the lane runs next.
-    Resume(u32),
-    /// The instruction at this PC needs the general path, which executes it.
-    Exit(u32),
-    /// The instruction at callee PC `pc` of inlined frame `frame` needs the general path:
-    /// the lane makes the callee's activation there from the registers native code left in
-    /// the entry's scratch window (`LoopEntry::scratch_value`).
-    Inlined { frame: usize, pc: u32 },
-    /// The region completed its activation with `value` at the record `pc`: a `Return`
-    /// inside the loop, or a returning call. The lane completes the activation as its own
-    /// body would (`lane_return_value_general`), which is not an exit.
-    Returned { pc: u32, value: Value },
-    /// The region ended the activation by an exception, in `Vm::lane_raised`, raised at the
-    /// record `pc` (`LaneExit::Threw`): the lane unwinds from it.
-    Threw { pc: u32 },
-    /// A call activated the callee's lane body, and the run left there (`LaneExit::Callee`):
-    /// the lane resumes in the activation the call made, at `LaneContext::callee_resume`,
-    /// not in this region's view.
-    Callee,
-    /// A call the region made by its callee's entry left inside the callee: the callee's own leave,
-    /// read in the innermost of the native frames its call pushed on the lane stack, which the lane
-    /// links and continues in (`dispatch_fast::lane_frames_resumed`).
-    Left { exit: LaneExit },
-    /// Termination was requested while the code ran: its poll faulted, so registers may
-    /// hold values of an unfinished iteration, which nothing reads before the request ends
-    /// the execution.
-    Terminated,
-}
 
 /// An array a region indexes, by its register; `written` when the region stores into it.
 /// The array is the register's value at entry, or, with `field`, the value of that cached
@@ -981,7 +945,7 @@ fn pure_setup(op: Op) -> bool {
 /// which reruns them. The read itself and the moves of the object arguments drop out, so the
 /// registers they write, which the setup's function may reuse otherwise, hold nothing for
 /// the region. Leaving at a callee's instruction makes the callee's activation
-/// (`LoopOutcome::Inlined`).
+/// (`LaneExit::Inlined`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn inline_region<'a>(
     function: &Function,
