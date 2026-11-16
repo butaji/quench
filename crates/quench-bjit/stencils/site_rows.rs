@@ -4,11 +4,11 @@
 
 use crate::layout::{JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_PROPERTY_BUFFER, JS_STEP_RECEIVER, JS_STEP_VM, PROPERTY_BUFFER_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver};
-use crate::words::{hole, hole64};
+use crate::words::{hole, hole64, is_int};
 use crate::places::tagged_place;
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Stage, entry};
-use crate::codes::{CHAIN_SECOND_AT, FIELD_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
+use crate::codes::{MEM, CHAIN_SECOND_AT, FIELD_ROW, SITE_OBJECT_AT, SITE_ROW, SITE_STORE_ROW, THIS_SITE_ROW, THIS_STORE_ROW, HELD_LINK_AT, HELD_ROW, LIVE_ROW, REALM_ROW};
 use crate::heap_rows::{stage_site, word_at};
 
 #[inline(always)]
@@ -38,14 +38,20 @@ fn site_row<const D: u8, const CHAIN: bool>(s: S, payload: usize, object: u64) -
 }
 
 /// A store of the value operand (hole 1) through the site's cache entry (hole 2) into the object
-/// `object` names (`entry::site_store`): a leave writes nothing.
+/// `object` names (`entry::site_store`), through the store gate where `GATED`. An ungated store
+/// takes a value the plan proved immediate and of the slot's type, or a frame word the slot's int32
+/// type admits once it is an int32 (`StoreArm::holds`): a leave writes nothing.
 #[inline(always)]
-fn site_store_row<const A: u8>(s: S, payload: usize, object: u64) -> Out {
+fn site_store_row<const A: u8, const GATED: bool>(s: S, payload: usize, object: u64) -> Out {
+    let value = tagged_place::<A, HOLE_A>(&s);
+    if !GATED && A == MEM && !is_int(value) {
+        return Out::Exit(s);
+    }
     let header = word_at(payload, JS_STEP_PROPERTY_BUFFER) as usize;
     let mut stage = StencilStage::storing(HOLE_B, word_at(header, PROPERTY_BUFFER_BASE), payload);
     let tables = (word_at(payload, JS_STEP_FIELD_ENTRIES), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
     let offset = stage_site(&mut stage);
-    need!(s, entry::site_store(&mut stage, tables, object, offset, tagged_place::<A, HOLE_A>(&s), ()));
+    need!(s, entry::site_store(&mut stage, tables, object, offset, (value, GATED), ()));
     Out::Next(s)
 }
 
@@ -94,9 +100,9 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s
     match KIND {
         FIELD_ROW => field_row::<D>(s, payload),
         SITE_ROW => site_row::<D, ENTRY>(s, payload, register_object(&s)),
-        SITE_STORE_ROW => site_store_row::<A>(s, payload, word_at(s.frame, hole::<0>())),
+        SITE_STORE_ROW => site_store_row::<A, ENTRY>(s, payload, word_at(s.frame, hole::<0>())),
         THIS_SITE_ROW => site_row::<D, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
-        THIS_STORE_ROW => site_store_row::<A>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
+        THIS_STORE_ROW => site_store_row::<A, ENTRY>(s, payload, word_at(payload, JS_STEP_RECEIVER)),
         HELD_ROW => held_row::<D, ENTRY>(s, payload),
         LIVE_ROW => live_row(s),
         REALM_ROW => realm_row(s, payload),

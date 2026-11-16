@@ -135,14 +135,12 @@ impl Planned {
 
 /// Whether a heap row is the variant its decode's `hole` selects: an array the entry record holds
 /// is named by its record offset, else by its slot; a site read is a chain of two reads, a
-/// folded read of the receiver stands on the receiver, and a global store of a value held in a frame
-/// slot (any value, not a Number) takes the store gate.
-fn heap_variant(heap: Heap, hole: u64, operand: Place) -> bool {
+/// folded read of the receiver stands on the receiver. A store's variant is its gate (`Decoded::gated`).
+fn heap_variant(heap: Heap, hole: u64) -> bool {
     match heap {
         Heap::Store | Heap::Index => hole != 0,
         Heap::TypedStore(_) | Heap::TypedIndex(_) | Heap::TypedLength => true,
         Heap::SiteChain | Heap::ThisChain | Heap::ThisHeld => true,
-        Heap::GlobalStore => operand == Place::Mem,
         _ => false,
     }
 }
@@ -206,7 +204,7 @@ fn slot_holes(heap: Heap, dst_hole: u64, a_hole: u64) -> Option<[u64; HOLES]> {
 /// The plan of a heap row, given its (place, hole) of destination, first and second operand; a row
 /// that defines a second register (a name call's receiver) has its definition run after it.
 fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
-    let entry = heap_variant(heap, decoded.hole, a);
+    let entry = if matches!(heap, Heap::GlobalStore | Heap::SiteStore | Heap::ThisStore) { decoded.gated(a) } else { heap_variant(heap, decoded.hole) };
     let holes = heap_holes(decoded, homes, heap, entry, [dst_hole, a_hole, b_hole]);
     // The row's stencil reads pinned operands and delivers a pinned result itself.
     let row = HeapRow { heap, dst, a, b, entry };
@@ -252,9 +250,9 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, varian
     let floats = [dst, a, b].iter().any(|place| matches!(place, Place::PinF(_))) && decoded.heap.is_none();
     let ((a, a_hole), (b, b_hole)) = if floats { (double(a, a_hole), double(b, b_hole)) } else { ((a, a_hole), (b, b_hole)) };
     if let Some(heap) = decoded.heap {
-        // A global store whose operand's type the slot's observation does not admit is the VM's own.
-        if declines(decoded, a) {
-            return plan_step(&Decoded::step(Step::CallOut, None), layout, pc, helpers);
+        // A store whose operand's type its slot's observation does not admit is the VM's own.
+        if let Some(step) = decoded.declines(a) {
+            return plan_step(&Decoded::step(step, None), layout, pc, helpers);
         }
         return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
