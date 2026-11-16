@@ -1,5 +1,5 @@
 //! `quench-gate`: the single definition of green. It runs the build check, the exact lint
-//! ratchets, the census, every library test (with and without debug assertions), the C-parity gate and the conformance smoke, in
+//! ratchets, the census, every library test (with and without debug assertions), the C-parity gate and the conformance suites, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
 //! usage: quench-gate [--quick] [--jobs N] [--record] [--passed]
@@ -17,7 +17,6 @@ mod lint;
 mod oracle;
 mod owners;
 mod passed;
-mod pool;
 mod process;
 mod ratchet;
 mod runtime_tests;
@@ -71,15 +70,15 @@ fn main() -> ExitCode {
     step::print(&outcomes);
     let all_passed = outcomes.iter().all(|outcome| outcome.passed);
     let recorded = passed::record(&config, &outcomes);
-    println!("\npass record: {}", recorded.as_ref().map_or_else(Clone::clone, |path| path.display().to_string()));
+    println!("\npass record: {}", recorded.unwrap_or_else(|reason| reason));
     if all_passed { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
 /// Prints where the pass record is, or why there is none, and exits accordingly.
-fn report(record: Result<std::path::PathBuf, String>) -> ExitCode {
+fn report(record: Result<String, String>) -> ExitCode {
     match record {
-        Ok(path) => {
-            println!("passed: {}", path.display());
+        Ok(note) => {
+            println!("passed: {note}");
             ExitCode::SUCCESS
         }
         Err(reason) => {

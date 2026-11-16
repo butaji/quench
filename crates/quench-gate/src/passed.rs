@@ -1,13 +1,13 @@
-//! The pass record: a full gate run that passed on a clean tree leaves a file named by that
-//! tree's hash, and `--passed` answers whether the checked-out tree has one. The pre-push hook
-//! reads it, so a branch reaches the integration branch only as a tree the whole gate passed.
-
-use std::{fs, path::PathBuf};
+//! The pass record: a full gate run that passed on a clean tree adds a note to the commit in
+//! `refs/notes/gate` naming its tree, and `--passed` answers whether the checked-out commit has
+//! one for its tree. The pre-push hook reads the note, so a protected branch takes only a tree the
+//! whole gate passed, and the note travels with the commit to every clone that fetches the ref.
 
 use crate::{config::Config, process, step::Outcome};
 
-/// Where pass records live, under the target directory.
-const RECORDS: &str = "quench-gate/passed";
+/// The notes ref that holds pass records, and the line each record starts with.
+const NOTES_REF: &str = "--ref=gate";
+const RECORD_PREFIX: &str = "gate pass tree=";
 
 /// The hash of the checked-out tree, when the work tree matches it (tracked files unchanged).
 fn clean_tree(config: &Config) -> Result<String, String> {
@@ -19,23 +19,22 @@ fn clean_tree(config: &Config) -> Result<String, String> {
     if tree.success { Ok(tree.stdout.trim().to_owned()) } else { Err(tree.excerpt()) }
 }
 
-fn record_path(config: &Config, tree: &str) -> PathBuf {
-    config.target.join(RECORDS).join(tree)
-}
-
-/// Writes the record of a full run in which every step passed; says why when it writes none.
-pub fn record(config: &Config, outcomes: &[Outcome]) -> Result<PathBuf, String> {
+/// Adds the record of a full run in which every step passed; says why when it adds none.
+pub fn record(config: &Config, outcomes: &[Outcome]) -> Result<String, String> {
     if config.quick || !outcomes.iter().all(|outcome| outcome.passed) {
         return Err("only a full run with every step passing is recorded".into());
     }
-    let path = record_path(config, &clean_tree(config)?);
-    let summary: String = outcomes.iter().map(|outcome| format!("{} {}\n", outcome.name, outcome.detail.lines().next().unwrap_or_default())).collect();
-    fs::create_dir_all(path.parent().unwrap_or(&config.target)).and_then(|()| fs::write(&path, summary)).map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    Ok(path)
+    let tree = clean_tree(config)?;
+    let steps: Vec<&str> = outcomes.iter().map(|outcome| outcome.name).collect();
+    let note = format!("{RECORD_PREFIX}{tree} steps={}", steps.join(","));
+    let added = process::run(config.command("git").args(["notes", NOTES_REF, "add", "-f", "-m", &note, "HEAD"]))?;
+    if added.success { Ok(format!("{note} (push with: git push origin refs/notes/gate)")) } else { Err(added.excerpt()) }
 }
 
-/// Whether the checked-out clean tree has a pass record.
-pub fn check(config: &Config) -> Result<PathBuf, String> {
-    let path = record_path(config, &clean_tree(config)?);
-    if path.exists() { Ok(path) } else { Err(format!("no full gate pass is recorded for this tree ({})", path.display())) }
+/// Whether the checked-out clean commit has a pass record for its tree.
+pub fn check(config: &Config) -> Result<String, String> {
+    let tree = clean_tree(config)?;
+    let notes = process::run(config.command("git").args(["notes", NOTES_REF, "show", "HEAD"]))?;
+    let wanted = format!("{RECORD_PREFIX}{tree} ");
+    notes.stdout.lines().find(|line| line.starts_with(&wanted)).map(str::to_owned).ok_or_else(|| format!("no full gate pass is recorded for tree {tree}"))
 }

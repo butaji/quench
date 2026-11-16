@@ -1,19 +1,19 @@
 #!/usr/bin/env sh
-# The gate decides what may be pushed (quench-gate is the only definition of green).
-# A push to the integration branch needs a full gate pass recorded for the exact tree
-# being pushed; any other push runs the quick gate (lint, census, C-parity).
+# A push to a protected branch carries only a commit whose tree has a full quench-gate pass
+# record (`refs/notes/gate`, written by the gate when every step passes on a clean tree).
+# Install once per clone:
+#   git config core.hooksPath .githooks && git fetch origin refs/notes/gate:refs/notes/gate
+# Git feeds the hook "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
 set -eu
 
-integration_ref="refs/heads/v2-jit"
-gate() { cargo run -q --profile experiment -p quench-gate -- "$@"; }
+protected="refs/heads/v2-merged refs/heads/v2-jit"
 
 while read -r _local_ref local_sha remote_ref _remote_sha; do
-  [ "$remote_ref" = "$integration_ref" ] || continue
-  if [ "$(git rev-parse HEAD)" != "$local_sha" ]; then
-    echo "pre-push: check out the commit pushed to v2-jit ($local_sha) so its gate record can be read" >&2
+  case " $protected " in *" $remote_ref "*) ;; *) continue ;; esac
+  tree=$(git rev-parse "$local_sha^{tree}")
+  if ! git notes --ref=gate show "$local_sha" 2>/dev/null | grep -q "^gate pass tree=$tree "; then
+    echo "pre-push: $local_sha has no gate pass record for tree $tree; run quench-gate on it first" >&2
     exit 1
   fi
-  gate --passed
-  exit 0
 done
-gate --quick
+exit 0
