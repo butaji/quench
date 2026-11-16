@@ -62,22 +62,15 @@ const FAMILIES: &[(&str, &str)] = &[
     ("object-rest-spread-keys", "var {p, ...rest} = o; t = {...rest, [s.length]: i}; acc += Object.keys(t).length;"),
     ("property-key-string-int-symbol-object", "var key = i % 4 === 0 ? i : i % 4 === 1 ? 'k' + (i & 3) : i % 4 === 2 ? Symbol.for('s') : { toString() { return 'ts'; } }; t = {[key]: i}; acc += Reflect.ownKeys(t).length;"),
     ("property-key-flips-from-string-to-int", "var key = i < 1500 ? 'k' + (i & 3) : i; t = {[key]: i}; acc += Object.keys(t).length + (typeof Object.keys(t)[0] === 'string' ? 1 : 0);"),
-    ("iterator-result-primitive-and-function", "try { for (var v of { [Symbol.iterator]() { return { next() { return i % 3 === 0 ? 1 : i % 3 === 1 ? function () {} : { done: true }; } }; } }) acc += 1; } catch (e) { acc += e instanceof TypeError ? 2 : 3; }"),
+    ("iterator-result-primitive-and-function", "try { for (var v of { [Symbol.iterator]() { return { next() { return i % 3 === 0 ? 1 : i % 3 === 1 ? Object.assign(function () {}, { done: true }) : { done: true }; } }; } }) acc += 1; } catch (e) { acc += e instanceof TypeError ? 2 : 3; }"),
     ("iterator-result-record-then-done", "var n = 0; for (var v of { [Symbol.iterator]() { return { next() { return n++ < 3 ? { value: n, done: false } : { done: true }; } }; } }) acc += v;"),
     ("define-field-shape-change", "class B { constructor(n) { if (n) this.pre = 1; } } class D extends B { a = i; b = 2; } t = new D(i % 50 === 0); acc += t.a + t.b + ('pre' in t ? 1 : 0);"),
     ("append-array-non-dense-spread", "var sp = i % 40 === 0 ? [1, , 3] : i % 40 === 1 ? 'ab' : arr; t = [0, ...sp, 9]; acc += t.length;"),
     ("for-in-mutated-object", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'a') { delete m.b; m.d = 4; } acc += key.length; }"),
-    ("property-key-string-int-symbol-object", "var key = i % 4 === 0 ? i : i % 4 === 1 ? 'k' + (i & 3) : i % 4 === 2 ? Symbol.for('s') : { toString() { return 'ts'; } }; t = {[key]: i}; acc += Reflect.ownKeys(t).length;"),
-    ("property-key-flips-from-string-to-int", "var key = i < 1500 ? 'k' + (i & 3) : i; t = {[key]: i}; acc += Object.keys(t).length + (typeof Object.keys(t)[0] === 'string' ? 1 : 0);"),
-    ("iterator-result-primitive-and-function", "try { for (var v of { [Symbol.iterator]() { return { next() { return i % 3 === 0 ? 1 : i % 3 === 1 ? function () {} : { done: true }; } }; } }) acc += 1; } catch (e) { acc += e instanceof TypeError ? 2 : 3; }"),
-    ("iterator-result-record-then-done", "var n = 0; for (var v of { [Symbol.iterator]() { return { next() { return n++ < 3 ? { value: n, done: false } : { done: true }; } }; } }) acc += v;"),
-    ("define-field-shape-change", "class B { constructor(n) { if (n) this.pre = 1; } } class D extends B { a = i; b = 2; } t = new D(i % 50 === 0); acc += t.a + t.b + ('pre' in t ? 1 : 0);"),
-    ("append-array-non-dense-spread", "var sp = i % 40 === 0 ? [1, , 3] : i % 40 === 1 ? 'ab' : arr; t = [0, ...sp, 9]; acc += t.length;"),
     ("append-array-element-after-spread-hits-and-misses", "t = [...arr, i, i / 4, i & 1 ? 'x' : i, {a: i}]; acc += t.length + t[4] + (typeof t[6] === 'string' ? 1 : 0);"),
     ("append-array-grows-past-capacity", "t = [...arr, ...arr, ...arr, i, i, i, i, i]; acc += t.length + t[12];"),
     ("append-array-in-region-with-field-reads", "t = [o.p, o.q, i, i / 4]; acc += t.length + t[3] + o.p;"),
     ("append-array-miss-after-field-read", "t = [o.p, i & 1 ? 'x' : i, {a: o.q}, ...arr, i]; acc += t.length + o.q;"),
-    ("for-in-mutated-object", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'a') { delete m.b; m.d = 4; } acc += key.length; }"),
     ("for-in-memoized-shape-steps", "var m = {a: 1, b: 2, c: 3}; for (var key in m) { if (key === 'b') continue; acc += key.length + m[key]; }"),
     ("for-in-memoized-then-shape-change", "var m = i % 100 === 0 ? {a: 1, b: 2, c: i} : {a: 1, b: 2}; for (var key in m) acc += m[key];"),
     ("for-in-nested-memoized", "for (var a in {x: 1, y: 2}) for (var b in {x: 1, y: 2}) acc += a.length + b.length;"),
@@ -112,6 +105,7 @@ const FAMILIES: &[(&str, &str)] = &[
     ("in-operator-throws", "try { acc += 'p' in i; } catch (e) { acc += e instanceof TypeError ? 1 : 0; }"),
     ("block-scopes-with-closures", "var fs = []; for (let j = 0; j < 3; j++) { let c = j * i; fs.push(function () { return c + j; }); } acc += fs[0]() + fs[1]() + fs[2]();"),
     ("local-tdz-read-and-assign", "var rd = 0; try { rd = zz; } catch (e) { rd = 1; } try { zz = 2; } catch (e) { rd += 2; } let zz = i; zz = zz + rd; acc += zz;"),
+    ("closure-made-in-a-loop-over-window-locals", "var g = () => 1; acc += g();"),
     ("env-local-captured-binding", "var cn = 0; var bump = () => { cn = cn + i; return cn; }; bump(); bump(); acc += cn + bump();"),
     ("typeof-string-identity", "var ty = typeof i; acc += (ty === 'number' ? 1 : 0) + (typeof o === typeof arr ? 2 : 0) + (typeof t).length;"),
     ("derived-constructor-this-after-super", "class P { constructor(n) { this.n = n; } } class Q extends P { constructor(n) { super(n + 1); this.m = this.n * 2; } } t = new Q(i & 7); acc += t.n + t.m;"),
@@ -198,6 +192,7 @@ fn every_opcode_family_ends_in_b_jit_as_the_interpreter_does() {
     let mut divergent = Vec::new();
     for (family, body) in FAMILIES {
         let source = program(body);
+        eprintln!("family {family}");
         let interpreted = run(&source, ExecutionMode::Interpreted);
         assert!(interpreted.contains('|'), "{family} did not run to its digest: {interpreted}");
         let compiled = run(&source, ExecutionMode::Compiled);

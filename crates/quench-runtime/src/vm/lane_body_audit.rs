@@ -144,3 +144,8 @@ impl Verdict {
         format!("{{\"body_ns\":{},\"interpreter_ns\":{},\"retired\":{}}}", self.body_nanos, self.interpreter_nanos, self.retire)
     }
 }
+
+/// The nanoseconds since `started`.
+pub(in crate::vm) fn audit_nanos(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}

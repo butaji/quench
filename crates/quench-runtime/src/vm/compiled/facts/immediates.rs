@@ -1,7 +1,7 @@
 //! What a constant or immediate denotes, the one reading every tier uses.
 
 use crate::bytecode::{Constant, Operand, OperandKind};
-use crate::typed_ir::Type;
+use crate::typed_ir::{IntRange, Type};
 use crate::value::Value;
 
 /// The value a constant denotes where it is an immediate (no heap allocation): numbers,
@@ -27,11 +27,12 @@ pub(in crate::vm) fn is_int32(value: Value) -> bool {
     Type::immediate(value).is_subtype(Type::INT32)
 }
 
-/// A constant's type: an immediate's, a string's or a BigInt's.
+/// A constant's type: an immediate's (an int32 number, its own range), a string's or a BigInt's.
 pub(in crate::vm) fn constant_type(constant: &Constant) -> Type {
     match constant {
         Constant::String(_) | Constant::StringUnits(_) => Type::language(crate::ValueType::String),
         Constant::BigInt(_) => Type::language(crate::ValueType::BigInt),
-        constant => immediate(constant).map_or(Type::ANY, Type::immediate),
+        constant => immediate(constant).map_or(Type::ANY, |value|
+            value.as_int().map_or_else(|| Type::immediate(value), |int| Type::int(IntRange::singleton(int)))),
     }
 }

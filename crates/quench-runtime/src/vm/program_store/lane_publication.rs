@@ -63,9 +63,8 @@ impl ProgramStore {
         self.lane_installed.borrow().get(key).and_then(Weak::upgrade).filter(|published| published.is_published())
     }
 
-    /// Counts a compile of `key`'s function from `key`'s entry; whether the bound on them allows
-    /// it. Each entry has its own bound: loop-entry bodies spending a shared one left the
-    /// function's own body no recompile after its first leaves (`find` in the C-parity tree kernel).
+    /// Counts a compile of `key`'s function from the entry it starts at (the function's own, or
+    /// one loop's: each has its own count); whether the bound `max` on them allows it.
     pub(in crate::vm) fn admit_lane_compile(&self, key: &LaneKey, max: u8) -> bool {
         let mut compiles = self.lane_compiles.borrow_mut();
         let count = compiles.entry((key.0, key.1, key.2)).or_insert(0);

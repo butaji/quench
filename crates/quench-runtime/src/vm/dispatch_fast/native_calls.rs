@@ -98,7 +98,7 @@ pub(super) fn lane_body_native_call<H: Host>(cx: *mut LaneContext<H>, call: &sup
     use super::super::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
     // A returning call's completion is its activation's, which the lane makes.
-    if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeReturning); }
+    if call.site.returns { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning); }
     let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) else { return super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the

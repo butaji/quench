@@ -22,7 +22,7 @@ use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::vm::in_presence::InPresence;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
-use super::NativeFieldLoad;
+use super::{ElementViews, NativeFieldLoad};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{PINNED, PINNED_F, Row as Placed, Stencil};
 use super::LaneHelpers;
@@ -35,6 +35,7 @@ mod call_plan;
 mod sites;
 pub(in crate::vm::compiled) mod callees;
 mod decode;
+mod entry_facts;
 pub(in crate::vm::compiled) mod function;
 pub(in crate::vm) use function::inlined_exit_key;
 mod globals;
@@ -56,6 +57,7 @@ use sites::*;
 #[path = "base_region/region_tests.rs"]
 mod region_tests;
 use decode::*;
+use entry_facts::*;
 use globals::*;
 use link::*;
 use plan::*;
@@ -183,21 +185,24 @@ pub(in crate::vm) enum Event {
     BodyCompile,
 }
 
-/// The rows planned as a fast arm (`Step::Fast`, or a constant a row writes as it is), by the opcode
-/// they stand for, counted whether or not the trace channel is on: a test asks that an operation's
-/// fast row exists in the bodies it compiled.
 #[cfg(test)]
-static FAST_ROWS: [std::sync::atomic::AtomicU64; crate::bytecode::Op::COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::bytecode::Op::COUNT];
+thread_local! {
+    /// The rows planned as a fast arm (`Step::Fast`, or a constant a row writes as it is), by the opcode
+    /// they stand for, counted whether or not the trace channel is on: a test asks that an operation's
+    /// fast row exists in the bodies it compiled. Per thread, as bodies compile on the thread that runs
+    /// them, so a test counts its own rows and no test running beside it answers for it.
+    static FAST_ROWS: [std::cell::Cell<u64>; crate::bytecode::Op::COUNT] = [const { std::cell::Cell::new(0) }; crate::bytecode::Op::COUNT];
+}
 
-/// The fast rows planned for `op`.
+/// The fast rows planned for `op` on this thread.
 #[cfg(test)]
 pub(in crate::vm) fn fast_rows(op: crate::bytecode::Op) -> u64 {
-    FAST_ROWS[op as usize].load(std::sync::atomic::Ordering::Relaxed)
+    FAST_ROWS.with(|rows| rows[op as usize].get())
 }
 
 #[cfg(test)]
 fn note_fast(op: u16) {
-    FAST_ROWS[usize::from(op)].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    FAST_ROWS.with(|rows| rows[usize::from(op)].update(|count| count + 1));
 }
 
 /// The direct-cell call sites the stitcher inlined (`call_plan::plan_call`), counted whether or not

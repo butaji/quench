@@ -45,7 +45,7 @@ pub(crate) use spread::Passing;
 pub(crate) use decode::DecodeContext;
 pub(crate) use compare::{Comparison, Nullish};
 pub(crate) use concrete::Concrete;
-pub(crate) use numeric::{Domain, NumberOperation, NumericFrame, NumericStage, Overflow};
+pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
 pub(crate) mod add;
 pub(crate) mod add_plan;

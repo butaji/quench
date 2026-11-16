@@ -79,7 +79,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The last backedge of the loop at `header`, if one closes there.
-    fn loop_end(&self, header: usize) -> Option<usize> {
+    pub(super) fn loop_end(&self, header: usize) -> Option<usize> {
         self.unit.instructions.iter().rposition(|instruction|
             instruction.op().is_jump() && instruction.jump_target() as usize == header).filter(|end| *end >= header)
     }

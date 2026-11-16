@@ -37,7 +37,6 @@
 pub(super) mod inline;
 use super::{Exit, SLOT};
 use super::super::direct_callee::DirectCallee;
-use super::super::entry_cell::capture_word;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
 use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
@@ -72,16 +71,19 @@ impl CallForm {
     /// helper binds the frame's `this` and publishes the receiver, or runs the eval in the frame.
     pub(super) fn of(instruction: WideInstruction) -> Option<Self> {
         let bound_this = if instruction.writes_current_this() { crate::bytecode::SET_THIS_REGISTER } else { 0 };
-        if !instruction.op().makes_script_call() || instruction.op().class() == Class::CallKnown || instruction.result_flags() & !bound_this != 0 {
-            return None;
-        }
+        let op = instruction.op();
+        let calls = op.makes_script_call() && op.class() != Class::CallKnown && instruction.result_flags() & !bound_this == 0;
+        calls.then(|| Self::shaped(instruction))
+    }
+
+    /// The form of a script call `instruction` (`of`).
+    fn shaped(instruction: WideInstruction) -> Self {
         let in_place = instruction.writes_current_this() || instruction.resolves_dynamic_scope();
-        let over_registers = instruction.op().class() == Class::Construct && !instruction.is_super_construct() && !ImmediateLayout::construct_array_arguments(instruction.imm());
-        Some(match instruction.op().class() {
+        match instruction.op().class() {
             Class::Call if !in_place => Self::Plain,
-            Class::Construct if over_registers && !in_place => Self::Construct,
+            Class::Construct if !in_place && !instruction.is_super_construct() && !ImmediateLayout::construct_array_arguments(instruction.imm()) => Self::Construct,
             _ => Self::Stepped,
-        })
+        }
     }
 
     /// The helper whose row makes the call.
@@ -163,7 +165,7 @@ impl DirectFacts {
             validity: word(ENTRY_CELL.validity_offset),
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
             descriptor: std::ptr::from_ref(callee).addr(),
-            captures: capture_word(callee.capture_values, callee.capture_len, callee.capture_stores),
+            captures: callee.capture_word(),
             global_this: callee.sloppy.map(|global| global.to_bits()),
             registers: callee.registers,
             construction: callee.forwarder.is_some(),

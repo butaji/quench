@@ -12,7 +12,7 @@ use super::base_region::{Known, RealmProof};
 use super::lane_facts::bind_callees;
 use crate::code_dependencies::{InstanceofFact, Invalidation};
 use crate::vm::global_facts::GlobalTable;
-use crate::bytecode::{Register, WideInstruction};
+use crate::bytecode::{Class, Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
 
@@ -21,6 +21,16 @@ use crate::compile::liveness::RegisterMasks;
 fn observed(parameters: &[Value]) -> (Vec<Register>, Vec<Register>) {
     let registers = |wanted: fn(Value) -> bool| (0..parameters.len()).filter(|k| wanted(parameters[*k])).map(|k| k as Register).collect();
     (registers(|value| value.as_int().is_some()), registers(|value| value.as_int().is_none() && value.as_number().is_some()))
+}
+
+/// Whether `code` indexes a register an entry's parameter holds a typed array in: a body has no row of a typed
+/// element (its loop regions do), so its first access of one would leave, and every entry after it.
+fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register) -> bool) -> bool {
+    code.iter().any(|instruction| match instruction.op().class() {
+        Class::GetIndex => instruction.operand_b().register_index().is_some_and(&is_typed),
+        Class::SetIndex => is_typed(instruction.register_b()),
+        _ => false,
+    })
 }
 
 /// The PCs a previous body left at: its rows there take the general (tagged) semantics.
@@ -46,7 +56,7 @@ impl LaneMethod {
             recovery_space: super::super::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, amortizes: body.loops || body.covered >= tiers.amortizing_instructions(super::tier_policy::lane_body_tier()) || !direct.is_empty(),
-            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames,
+            direct, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None,
         })
     }
 }
@@ -112,12 +122,12 @@ impl<H: Host> Vm<H> {
         let masks: Option<&std::rc::Rc<RegisterMasks>> = program.shared_register_root_masks(function);
         let code: Vec<_> = body.instructions().collect();
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
+        if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let (ints, doubles) = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
         let invalidation = Invalidation::default();
-        // Where the VM and the program run specialized, the code holds Stable facts: its stores run in
-        // place for the atoms no method cache names, and its prototype-held reads fold to their values.
+        // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let folds = self.specialized && program.specialized;
         let SiteFacts { constructors, presences, globals } = self.site_facts(folds, program, function, (&code, parameters), body);
         let reads = |site: u16| self.native_field_read_descriptors(site);

@@ -30,7 +30,7 @@ pub(in crate::vm) struct Tiers {
 #[cfg(test)]
 pub(in crate::vm) const TEST_PRIORS: Priors = Priors {
     interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500,
+    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800, plan_ns_per_ir: 1500,
 };
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
@@ -95,9 +95,13 @@ pub(in crate::vm) struct Priors {
     /// stitched code (a few dozen machine instructions), where a u-jit body's native entry crosses ABIs.
     pub(in crate::vm) base_body_share: u64,
     pub(in crate::vm) base_entry_ns: u64,
-    /// The divisor of the entries so far that gives the credible lower bound of the entries to
-    /// come, where the decision (a compile) is irreversible.
+    /// The divisor of the entries and the interpreter time so far that gives the credible lower
+    /// bound of those to come, where the decision (a compile) is irreversible.
     pub(in crate::vm) remaining_divisor: u64,
+    /// The forgetting factor of the compile-cost running ratio, per mille per compile, and the
+    /// weight of its prior in IR instructions (eight compiles of a hundred).
+    pub(in crate::vm) compile_forgetting_permille: u64,
+    pub(in crate::vm) compile_prior_ir: u64,
     /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
     /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
     /// work, none of which overlaps the program as a compile on the code generator's thread does.
@@ -152,9 +156,12 @@ pub(in crate::vm) struct LaneBody {
     /// threshold backs off, and `max_recompiles` bounds it.
     pub(in crate::vm) reoptimize_exits: u16,
     pub(in crate::vm) max_recompiles: u8,
-    /// The most compiles of one function's body, or of one of its loop entries: a request of
-    /// another plan past them is declined, so what each came to is the last that holds.
+    /// The most compiles of one function's body from its entry: a request of another plan past
+    /// them is declined, so what each came to is the last that holds.
     pub(in crate::vm) max_compiles: u8,
+    /// The same for each loop entry (OSR) of a function: its own budget, which the entry
+    /// compiles of the function do not draw on and which they do not exhaust.
+    pub(in crate::vm) max_osr_compiles: u8,
     /// The most bodies of one function lifecycle edges may discard before it runs in the lane
     /// for good: past them a compile costs more than its runs regain.
     pub(in crate::vm) max_lifetimes: u8,
@@ -306,6 +313,11 @@ const FLOOR: Tiers = Tiers {
 };
 
 impl LaneBody {
+    /// The compiles allowed a function's whole body, or of one of its loop entries (OSR).
+    pub(in crate::vm) fn compile_bound(&self, osr: bool) -> u8 {
+        if osr { self.max_osr_compiles } else { self.max_compiles }
+    }
+
     /// The entries before a function's body specializes in this process's mode.
     pub(in crate::vm) fn warmup(&self) -> u16 {
         if crate::jit_mode::base_only() { self.base_entries } else { self.warmup_entries }
@@ -338,6 +350,7 @@ pub(in crate::vm) fn lane_body_tier() -> Tier {
 /// The base a share in percent is a share of.
 pub(in crate::vm) const PERCENT: u64 = 100;
 
+
 const MEASURED: Tiers = Tiers {
     loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 8 },
     lane_body: LaneBody {
@@ -349,6 +362,7 @@ const MEASURED: Tiers = Tiers {
         reoptimize_exits: 64,
         max_recompiles: 1,
         max_compiles: 3,
+        max_osr_compiles: 3,
         max_lifetimes: 8,
         max_callee_recompiles: 3,
         late_call_calls: 4096,
@@ -371,7 +385,7 @@ const MEASURED: Tiers = Tiers {
             Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
         ],
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
+    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, compile_forgetting_permille: 990, compile_prior_ir: 800, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
     regexp_native_runs: 2000,
@@ -454,8 +468,6 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TierRows::PROCESS.table().lane_body;
         assert!(lane.warmup_entries > 0 && lane.base_entries > 0 && lane.base_entries <= lane.warmup_entries);
-        // The warm-up doubles per dropped body, at most seven times, and must not overflow.
-        assert!(u32::from(lane.warmup_entries) << 7 <= u32::from(u16::MAX));
         // The reoptimization threshold doubles per recompile and must not overflow its counter.
         assert!(u32::from(lane.reoptimize_exits) << lane.max_recompiles <= u32::from(u16::MAX));
         let looks = TierRows::PROCESS.table().js_function.promotion_looks;

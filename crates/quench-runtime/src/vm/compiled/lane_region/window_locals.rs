@@ -16,7 +16,7 @@ use crate::staged::environment::{environment_slot, environment_slot_define, envi
 enum Access {
     /// Read into a register (`LoadLocal`).
     Read(Register),
-    /// Assign (`define` false) or give a declaration's first value (`StoreLocal`), also into `result`.
+    /// Assign (`define` false: `StoreLocal`, `StoreVarBinding`) or give a declaration's first value (`StoreLocal`), also into `result`.
     Write { source: Register, result: Option<Register>, define: bool },
     /// Open the dead zone (`InitializeTdz`).
     Open,
@@ -47,15 +47,28 @@ impl Lowering<'_, '_> {
         let held = |register: Register| (register < self.unit.registers).then_some(register);
         let access = match instruction.op().class() {
             Class::LoadLocal if !instruction.writes_numeric_local() => Access::Read(held(instruction.result_register())?),
-            Class::StoreLocal if !function.is_self_binding_slot(instruction.local_slot()) => Access::Write {
-                source: held(instruction.register_a())?,
-                result: instruction.optional_register_b().map_or(Some(None), |register| held(register).map(Some))?,
-                define: instruction.boolean_field(InstructionField::C)?,
-            },
+            Class::StoreLocal | Class::StoreVarBinding => self.store_access(function, instruction)?,
             Class::InitializeTdz => Access::Open,
             _ => return None,
         };
         Some((slot, access))
+    }
+
+    /// The store of `instruction` to a slot of `function`, over registers the unit holds. A function's Annex B store to its
+    /// `var` binding (`StoreVarBinding`) is a store to the slot (`Function::window_reads_locals`); only a program's root
+    /// stores through the global object.
+    fn store_access(&self, function: &Function, instruction: WideInstruction) -> Option<Access> {
+        let held = |register: Register| (register < self.unit.registers).then_some(register);
+        let source = held(instruction.register_a())?;
+        if function.is_self_binding_slot(instruction.local_slot()) { return None; }
+        if instruction.op().class() == Class::StoreVarBinding {
+            return function.parent.is_some().then_some(Access::Write { source, result: None, define: false });
+        }
+        Some(Access::Write {
+            source,
+            result: instruction.optional_register_b().map_or(Some(None), |register| held(register).map(Some))?,
+            define: instruction.boolean_field(InstructionField::C)?,
+        })
     }
 
     /// Whether `instruction` at `pc` is an environment-owned local access this lowering makes.

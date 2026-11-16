@@ -18,7 +18,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     }).expect("the function has a loop");
     let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
         .expect("the loop is admitted");
-    let observation = Observation { native_field_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[], entry_bounds: true };
+    let observation = Observation { native_field_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[] };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         (crate::MemoryPolicy::Throughput, super::super::tier_policy::STATIC_ROWS), &program, id,
         super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default())
@@ -431,4 +431,38 @@ fn a_callee_that_changes_the_loops_snapshot_is_seen_after_the_call() {
          function run(n) { var t = 0; for (var i = 0; i < n; i++) { grow(i); t = (t + box.n + xs.length + shared) | 0; } return t; }
          print(run(100000));", "run"));
     assert_eq!(output.len(), 1);
+}
+
+/// An index `base + counter * scale` whose last element is the array's last (`60000 - 1`) runs natively; one
+/// element further (the length), or before the first, is the entry's exact leave, and the interpreter's
+/// read of the element past the array (`undefined`, so a `NaN` sum) is the result either way. A negative
+/// scale reaches back from its base.
+#[test]
+fn an_affine_index_at_the_ends_of_its_array_leaves_the_entry_as_the_interpreter_does() {
+    crate::vm::compiled::tier_policy::force_admission();
+    let (output, _) = osr_run(
+        "var data = new Float64Array(60000); for (var j = 0; j < data.length; j++) data[j] = j % 7;
+         function strided(a, n, c, base) { var s = 0; for (var k = 0; k < n; k++) s += a[k * c + base]; return s; }
+         var total = 0; for (var r = 0; r < 20; r++) total += strided(data, 12000, 5, 0);
+         print([total, strided(data, 12000, 5, 4), strided(data, 12000, 5, 5), strided(data, 12000, -5, 59995),
+                strided(data, 12000, -5, 59994), strided(data, 12000, 5, 60000)].join());", "strided");
+    assert_eq!(output, ["719980,36000,NaN,35999,NaN,NaN"]);
+}
+
+/// A matrix product whose last read is the last element of its operands (`i * n + k`, `k * n + j` at
+/// `n - 1`) is computed natively; with an operand one element short, the last read is the length and
+/// leaves the loop's entry, which the interpreter then runs.
+#[test]
+fn a_matrix_product_over_arrays_one_element_short_matches_the_interpreter() {
+    crate::vm::compiled::tier_policy::force_admission();
+    let (output, _) = osr_run(
+        "function mm(A, B, C, n) { for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) { var s = 0;
+           for (var k = 0; k < n; k++) s += A[i * n + k] * B[k * n + j]; C[i * n + j] = s; } }
+         var n = 48, A = new Float64Array(n * n), B = new Float64Array(n * n), C = new Float64Array(n * n), D = new Float64Array(n * n);
+         for (var i = 0; i < n * n; i++) { A[i] = (i % 13) * 0.5; B[i] = (i % 7) - 3; }
+         for (var r = 0; r < 4; r++) mm(A, B, C, n);
+         var t = 0; for (var i = 0; i < n * n; i++) t += C[i];
+         mm(A, new Float64Array(B.buffer, 0, n * n - 1), D, n);
+         print([t, C[0], C[n * n - 1], D[n * n - 1], D[n * n - 2]].join());", "mm");
+    assert_eq!(output, ["-447,36.5,-16,NaN,-37"]);
 }

@@ -763,6 +763,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Whether `value` is a typed array, whose elements a loop region reads in place
+    /// (`lane_typed_array_elements`) and a function body has no row for.
+    pub(super) fn is_typed_array(&self, value: Value) -> bool {
+        self.typed_array_view(value).is_some()
+    }
+
     /// What an element access reads of the typed array `object` before its buffer: one heap
     /// read, where `typed_array_length` and the buffer checks would each make their own.
     fn typed_array_view(&self, object: Value) -> Option<TypedArrayView> {

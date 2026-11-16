@@ -4,7 +4,8 @@
 //! the entry's address, so the code never changes when the site's feedback does (the entry
 //! record is the one feedback authority).
 
-use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload, store_slot};
+use super::object::{Form, Rep, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
+use super::slot_store::store_slot;
 use super::{RecordSpace, Stage};
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
@@ -90,7 +91,7 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    store_slot(stage, record, payload, slot, Form::Either, value, miss)
+    store_slot(stage, record, payload, slot, Form::Either, (value, Rep::Tagged), miss)
 }
 
 /// A store of `value` through the own cache entry `offset` bytes into the table of `tables`: the

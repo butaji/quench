@@ -5,7 +5,7 @@ use crate::vm::compiled::regions;
 #[path = "frame_call_out.rs"] pub(super) mod call_out;
 #[path = "frame_truthiness.rs"] mod truthiness;
 #[path = "frame_operands.rs"] mod operands;
-pub(in crate::vm) use operands::{operand_int, operand_number, operand_to_int32, register_int_value, register_number_value};
+pub(in crate::vm) use operands::{held_long, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
 use truthiness::register_truthiness;
 
 /// The lane's register file.
@@ -289,6 +289,13 @@ pub(super) fn register_int(builder: &mut FunctionBuilder<'_>, registers: &mut Re
     *registers.int[register].get_or_insert_with(|| builder.declare_var(types::I32))
 }
 
+/// `register`'s 64-bit integer view (`Registers::long`).
+#[inline(always)]
+pub(super) fn register_long(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
+    register: usize) -> Variable {
+    *registers.long[register].get_or_insert_with(|| builder.declare_var(types::I64))
+}
+
 /// `register`'s float64 view (`Registers::float`).
 #[inline(always)]
 pub(super) fn register_float(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
@@ -325,6 +332,10 @@ pub(super) fn register_read(builder: &mut FunctionBuilder<'_>, registers: &mut R
             let variable = register_int(builder, registers, index);
             builder.use_var(variable)
         }
+        Representation::Int64 => {
+            let variable = register_long(builder, registers, index);
+            builder.use_var(variable)
+        }
         Representation::Float64 => {
             let variable = register_float(builder, registers, index);
             builder.use_var(variable)
@@ -342,6 +353,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     let variable = match fact.value.representation {
         Representation::Tagged => registers.tagged[index],
         Representation::Int32 => register_int(builder, registers, index),
+        Representation::Int64 => register_long(builder, registers, index),
         Representation::Float64 => register_float(builder, registers, index),
     };
     builder.def_var(variable, value);
@@ -351,6 +363,7 @@ pub(super) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     state.proofs.headers[index] = None;
     state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
+    state.proofs.kept_shapes.remove(&register);
     state.proofs.fields.retain(|field| field.owner != Some(register));
 }
 
@@ -365,6 +378,7 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         .then(|| register_tagged(builder, registers, state, source));
     let header = state.proofs.headers[source_index];
     let receiver = state.proofs.receivers.contains(&source);
+    let kept = state.proofs.kept_shapes.get(&source).copied();
     let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
         (*owner == Some(source)).then_some((*shape, *projection))).collect();
     let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
@@ -379,6 +393,7 @@ pub(super) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(source_index));
     for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }
+    if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
     state.proofs.fields.extend(fields);
     value
 }

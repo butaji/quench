@@ -6,7 +6,8 @@
 use super::*;
 use super::super::program_store::lane_publication::LaneKey;
 
-type LaneCode = Result<Vec<u8>, super::jit_backend::NativeCompileRejection>;
+type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
+#[path = "lane_compile/image.rs"] mod image;
 
 /// A lowered lane body: the method it becomes once its code exists.
 pub(super) struct LanePlan {
@@ -104,18 +105,6 @@ const REPLAN_BUDGET_DIVISOR: usize = 2;
 const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
 
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
-/// The code of one lane body, compiled on the calling thread.
-fn lane_code(function: ir::Function, level: super::jit_backend::CompileLevel) -> LaneCode {
-    let level = match level {
-        super::jit_backend::CompileLevel::Optimized | super::jit_backend::CompileLevel::Quick if function.dfg.num_insts() > LANE_BACKTRACKING_MAX_INSTS =>
-            super::jit_backend::CompileLevel::Large,
-        level => level,
-    };
-    let isa = super::jit_backend::target_isa_level(level)
-        .ok_or(super::jit_backend::NativeCompileRejection::Publish)?;
-    compile_native_function(function, &*isa, lane_region::LANE_BODY_MAX_CODE_BYTES, |code| Some(code.to_vec()))
-}
-
 use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
 
@@ -180,8 +169,7 @@ impl<H: Host> Vm<H> {
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
         let mut fields = self.lane_unit_fields(program, &unit, &left_at);
-        // Admitting the stores' writes once, here, widens what they widen; the fields then
-        // read the widened slots, and the body's entries admit nothing again.
+        // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
         if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
@@ -198,12 +186,13 @@ impl<H: Host> Vm<H> {
             .map_or(&[][..], |_| self.programs.constants(active));
         let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
         let names = |site: u16, atom| self.native_function_name(site, atom);
+        let shape_stable = |shape: u32| self.shape_is_stable(shape);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, names: Some(&names) }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let number_reads = super::osr_compile::observed_reads(&unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
-            &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(self, Miss::PlanNotLowered); None })?;
+            &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(self, Miss::PlanNothingNative); None })?;
         if lowered.region.native == 0 { plan_miss(self, Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, budget, tiers: self.programs.tiers() }, native))
@@ -227,10 +216,10 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[])
+            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[])
             else { break None };
-            match lane_code(native, super::jit_backend::CompileLevel::run_default()) {
-                Ok(code) => break plan.finish(&code),
+            match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
+                Ok(code) => break plan.finish(&code.code, code.scalar),
                 Err(reason) if plan.replans(reason) => budget /= 2,
                 Err(_) => break None,
             }
@@ -271,16 +260,16 @@ impl<H: Host> Vm<H> {
         // from it did not pay at its size is not planned again until its entries would pay for that size.
         let site = (self.active_program.raw(), function, entry);
         let tiers = self.programs.tiers();
-        if !self.programs.lane_compiles_left(&site, tiers.lane_body.max_compiles) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if !self.programs.lane_compiles_left(&site, tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         // Before its first plan, a body's size is at least its own bytecodes' (`ir_per_bytecode`
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
         let planned = self.programs.planned_lane_ir(&site);
         if let Some(entries) = observed
-            && !pays_compile(tiers, program, function, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, true, false) { return Err(Unstarted::Unpaid); }
+            && !pays_compile(tiers, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, false) { return Err(Unstarted::Unpaid); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
         let plan_started = std::time::Instant::now();
-        let (plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
+        let (mut plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
             .ok_or(Unstarted::Declined)?;
         let planned_ir = native.dfg.num_insts();
         self.programs.note_planned_lane_ir(site, planned_ir);
@@ -292,9 +281,9 @@ impl<H: Host> Vm<H> {
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
-        if let Some(entries) = observed && !pays_compile(plan.tiers, program, function, entries, planned_ir, caller, false, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
+        if let Some(entries) = observed && !pays_compile(plan.tiers, entries, native.dfg.num_insts(), caller, self.programs.js_jit_diagnostics_enabled()) { return Err(Unstarted::Unpaid); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(plan.tiers, span, planned_ir, false) { return Err(Unstarted::Unpaid); }
-        if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.max_compiles) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
+        if !self.programs.admit_lane_compile(&key, plan.tiers.lane_body.compile_bound(entry.is_some())) { plan_miss(self, Miss::PlanCompileBound); return Err(Unstarted::Declined); }
         let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
         watch.hold_roots(plan.lowered.region.stable.roots.clone(), &mut self.heap);
         let watcher: Rc<dyn crate::code_dependencies::DependentCode> = watch.clone();
@@ -305,11 +294,13 @@ impl<H: Host> Vm<H> {
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
             function, osr: entry.is_some(), unit: plan.unit.instructions.len(), ir: native.dfg.num_insts(), key: key.3,
             generic: generic.len(), direct: plan.direct.len(), budget, observed, closed: plan.closed, plan_us });
+        let (ir, priors, scalar) = (native.dfg.num_insts(), &plan.tiers.priors, plan.lowered.scalar.take());
         let code = super::jit_backend::run_in_background(move || {
             let started = std::time::Instant::now();
-            let code = lane_code(native, super::jit_backend::CompileLevel::run_default());
+            let code = image::compile(native, scalar, super::jit_backend::CompileLevel::run_default());
             let took = started.elapsed();
-            if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |code| code.len()))); }
+            super::tier_model::note_compile(priors, took, ir);
+            if let Some(census) = census { eprintln!("{}", census.report(took, code.as_ref().map_or(0, |image| image.code.len()))); }
             code
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
@@ -408,7 +399,7 @@ impl PendingLaneMethod {
     fn poll(mut self: Box<Self>) -> Result<LaneCompile, Box<Self>> {
         Ok(match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
-            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code)),
+            std::task::Poll::Ready(Some(Ok(code))) => LaneCompile::Done(self.plan.finish(&code.code, code.scalar)),
             std::task::Poll::Ready(Some(Err(reason))) if self.plan.replans(reason) =>
                 LaneCompile::Replan(std::mem::take(&mut self.generic), self.plan.budget),
             std::task::Poll::Ready(_) => LaneCompile::Done(None),
@@ -440,7 +431,7 @@ impl LanePlan {
 
     /// The method its compiled `code` makes, published to executable memory. The method
     /// takes its direct callees whole: the code names them by address.
-    pub(super) fn finish(mut self, code: &[u8]) -> Option<LaneMethod> {
+    pub(super) fn finish(mut self, code: &[u8], scalar: Option<usize>) -> Option<LaneMethod> {
         let stable = std::mem::take(&mut self.lowered.region.stable);
         let unit = &self.unit;
         let amortizes = amortizes_entry(self.tiers, unit, self.function, &self.direct);
@@ -453,8 +444,9 @@ impl LanePlan {
         }
         // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
+        let scalar = scalar.map(|at| memory.pointer().addr() + at);
         Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,

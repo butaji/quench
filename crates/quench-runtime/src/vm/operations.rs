@@ -101,6 +101,11 @@ impl NumberArithmetic {
     pub(super) const fn int32_projection_is_wrapping(self) -> bool {
         matches!(self, Self::Add | Self::Subtract)
     }
+
+    /// Whether the result of two integers is an integer: all but a division.
+    pub(super) const fn integral(self) -> bool {
+        !matches!(self, Self::Divide)
+    }
 }
 
 /// Whether swapping two already-evaluated operands preserves the canonical Number

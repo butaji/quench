@@ -7,7 +7,7 @@ use super::Stage;
 use super::region::Region;
 use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, object_record_at, own_layout,
     recorded_shape,
-    proto_link, proto_object_record_id, read_slot};
+    proto_link, proto_object_record_id, read_slot, Rep};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// One step of a proved property read, over the record the read has reached.
@@ -74,7 +74,7 @@ pub(super) fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
 fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16, form: Form, storage_len: usize,
     miss: S::Miss) -> Option<S::Word> {
     let layout = slot_layout(stage, at, form, storage_len, miss)?;
-    Some(read_slot(stage, layout, slot))
+    Some(read_slot(stage, layout, slot, Rep::Tagged))
 }
 
 /// The layout `IcOp::LoadSlot` reads through: the reached record's, whose shape is guarded
@@ -144,7 +144,7 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     let at = Reached { record, shape: Some(recorded_shape(&mut stage, word)), inline: None };
     guard_shape(&mut stage, &at, shape, ())?;
     let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
-    Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
+    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)))
 }
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
@@ -177,7 +177,7 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     debug_assert!(FORM == HINTED_FORM || named & forms == FORM, "a fixed form's matched hint names it");
     let formed = if FORM == HINTED_FORM { hint } else { stage.constant(u64::from(FORM)) };
     let layout = formed_own_layout(&mut stage, record, formed, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
-    Some(crate::Value::from_bits(read_slot(&mut stage, layout, slot)))
+    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)))
 }
 
 /// The own data value the field cache entry of the site `offset` bytes into `entries` (the
@@ -193,7 +193,7 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
 #[inline(always)]
 pub(crate) unsafe fn concrete_site_own_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
-    super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
+    super::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// `site_read` through `Concrete`: own and prototype-held entries alike.
@@ -203,7 +203,7 @@ pub(crate) unsafe fn concrete_site_own_read(property_values: *const crate::Value
 #[cfg(test)]
 pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
-    super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::Value::from_bits)
+    super::entry::site_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// The value `object.first.second` reads through the field cache entries `first` and `second`
@@ -215,7 +215,7 @@ pub(crate) unsafe fn concrete_site_read(property_values: *const crate::Value, (e
 #[inline(always)]
 pub(crate) unsafe fn concrete_site_own_chain(property_values: *const crate::Value, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
-    super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::Value::from_bits)
+    super::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// The store of `value` into the own data field the site's entry `offset` bytes into `entries`

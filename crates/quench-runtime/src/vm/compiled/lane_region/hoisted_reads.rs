@@ -6,11 +6,17 @@ impl Lowering<'_, '_> {
     /// `instruction`, whose value `read` holds since the loop's preheader: its register
     /// takes the held value and facts, and the receiver the facts the read proved.
     pub(super) fn hoisted_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, read: LoopRead) {
-        let LoopRead { value: variable, ty, representation, receiver, header } = read;
+        let LoopRead { value: variable, ty, representation, receiver, header, .. } = read;
         if let Some(receiver) = receiver {
             prove_receiver(state, instruction, receiver, header);
         }
         let raw = self.builder.use_var(variable);
+        if representation == Representation::Int64 {
+            // An integer operation's word, evaluated once for the loop (`hoist_pure`), or advanced by its counter's steps.
+            self.define(state, instruction.result_register(), raw, RegisterFact::definition(ty, Representation::Int64));
+            self.native += 1;
+            return;
+        }
         if representation == Representation::Int32 && instruction.op().is_load_capture() {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.
@@ -20,17 +26,7 @@ impl Lowering<'_, '_> {
         }
         let destination = instruction.result_register();
         let value = match field_lookup(instruction) {
-            Some(lookup @ FieldLookup::Atom { atom, base, cache_site }) if instruction.op().is_get_field() => {
-                let exit = self.guard_exit(state, pc as u32);
-                let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
-                let value = self.field_value(state, (base, lookup), &[], held, exit)
-                    .expect("a hoisted read answers from its variable");
-                #[cfg(test)]
-                record_hoisted_field(cache_site, representation);
-                #[cfg(not(test))] let _ = cache_site;
-                state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty });
-                value
-            }
+            Some(lookup @ FieldLookup::Atom { .. }) if instruction.op().is_get_field() => self.hoisted_field(state, pc, lookup, read),
             _ if representation == Representation::Int32 => int_tagged(&mut self.builder, raw),
             _ => raw,
         };
@@ -40,6 +36,21 @@ impl Lowering<'_, '_> {
             self.define_int_view(state, destination, value, int);
         }
         self.native += 1;
+    }
+
+    /// The value of the field read `lookup` at `pc`, which `read` holds since the preheader: the
+    /// field value the receiver's register proves from here on.
+    fn hoisted_field(&mut self, state: &mut State, pc: usize, lookup: FieldLookup, read: LoopRead) -> ir::Value {
+        let FieldLookup::Atom { atom, base, cache_site } = lookup else { unreachable!("a hoisted field read names an atom") };
+        let exit = self.guard_exit(state, pc as u32);
+        let held = HeldRead { hoisted: Some(read), ..HeldRead::default() };
+        let value = self.field_value(state, (base, lookup), &[], held, exit)
+            .expect("a hoisted read answers from its variable");
+        #[cfg(test)]
+        record_hoisted_field(cache_site, read.representation);
+        #[cfg(not(test))] let _ = cache_site;
+        state.proofs.fields.push(FieldValue { owner: base.register_index(), atom, value, ty: read.ty });
+        value
     }
 }
 

@@ -59,9 +59,12 @@ fn array_source(unit: &super::super::lane_unit::Unit, leaders: &CompoundBitSet, 
 }
 
 /// Each loop's array bases, by the source (`array_source`) the loop does not redefine. A
-/// register's array has the region's `views`; a capture's, a typed array's.
+/// register's array has the region's `views`; a capture's, a typed array's. A source a lowered
+/// loop around another proves too is proved there alone: its view is proved once for the whole nest,
+/// where the base is invariant (`loops` hold only native operations, which cannot change a view).
 pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize, usize)], leaders: &CompoundBitSet,
-    captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16]) -> Vec<LoopArray> {
+    captured: impl Fn(usize, usize) -> bool, views: ElementViews, typed_captures: &[u16],
+    lowered: impl Fn(usize) -> bool) -> Vec<LoopArray> {
     let mut arrays = Vec::new();
     for &(header, back) in loops {
         let body = &unit.instructions[header..=back];
@@ -84,12 +87,18 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
             }
         }
     }
-    arrays
+    arrays.iter().copied().filter(|inner| !enclosed(&arrays, inner, &lowered)).collect()
+}
+
+/// Whether a loop of `arrays` that is `lowered` and encloses `inner`'s proves its source too.
+fn enclosed(arrays: &[LoopArray], inner: &LoopArray, lowered: &impl Fn(usize) -> bool) -> bool {
+    arrays.iter().any(|outer| outer.source == inner.source && outer.header < inner.header
+        && inner.back <= outer.back && lowered(outer.header) && lowered(outer.back))
 }
 
 impl Lowering<'_, '_> {
-    /// The hoisted array `register` names at `pc` (`copied_from`, `resolved_base`), of the
-    /// innermost loop around `pc` that proved it, if any.
+    /// The hoisted array `register` names at `pc` (`copied_from`, `resolved_base`), of the loop
+    /// around `pc` that proved it (the outermost lowered one: `loop_arrays`), if any.
     pub(super) fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
         let source = copied_from(&self.unit.instructions, |at| self.blocks[at].is_some(),
             |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && self.unit.instructions[at].op().is_load_capture(), pc, register?);
@@ -100,16 +109,16 @@ impl Lowering<'_, '_> {
 }
 
 impl Lowering<'_, '_> {
-    /// Whether the element access at `pc` goes through a hoisted dense view
-    /// (`loop_element_read`, `dense_element_write`), whose miss leaves the body, so nothing
-    /// runs between the access and its next instruction.
-    pub(super) fn dense_loop_access(&self, pc: usize) -> bool {
+    /// Whether the element access at `pc` goes through a hoisted view (`element_read`,
+    /// `dense_element_write`), whose miss leaves the body, so nothing runs between the access
+    /// and its next instruction.
+    pub(super) fn hoisted_access(&self, pc: usize) -> bool {
         let instruction = self.unit.instructions[pc];
         let base = match instruction.op().class() {
             Class::GetIndex => instruction.operand_b().register_index(),
             Class::SetIndex => Some(instruction.register_b()),
             _ => None,
         };
-        self.loop_array(pc, base).is_some_and(|array| array.views == ElementViews::Dense)
+        self.loop_array(pc, base).is_some()
     }
 }
