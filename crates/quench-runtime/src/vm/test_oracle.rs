@@ -54,6 +54,13 @@ pub(super) struct Outcome {
     pub(super) answer: Option<u64>,
 }
 
+impl Outcome {
+    /// The `answer` global as a Number, whatever its representation (an int32 or a double).
+    pub(super) fn answer_number(&self) -> Option<f64> {
+        self.answer.map(Value::from_bits).and_then(Value::as_number)
+    }
+}
+
 /// A run's outcome and what its VM's tiers did.
 pub(super) struct Run {
     pub(super) outcome: Outcome,

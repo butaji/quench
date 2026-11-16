@@ -20977,7 +20977,7 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(40930.0));
+    assert_eq!(run.outcome.answer_number(), Some(40930.0));
 }
 
 #[test]
@@ -21002,7 +21002,7 @@ fn lane_global_reads_and_coercions_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(2506320.0));
+    assert_eq!(run.outcome.answer_number(), Some(2506320.0));
 }
 
 #[test]
@@ -21022,7 +21022,7 @@ fn lane_typeof_tests_decide_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(805995.0));
+    assert_eq!(run.outcome.answer_number(), Some(805995.0));
 }
 
 #[test]
@@ -21046,7 +21046,7 @@ fn lane_constructions_build_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(17472780.0));
+    assert_eq!(run.outcome.answer_number(), Some(17472780.0));
 }
 
 #[test]
@@ -21091,7 +21091,7 @@ fn lane_parser_node_constructions_build_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1600989.0));
+    assert_eq!(run.outcome.answer_number(), Some(1600989.0));
 }
 
 #[test]
@@ -21115,7 +21115,7 @@ fn lane_nested_lengths_read_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(135000.0));
+    assert_eq!(run.outcome.answer_number(), Some(135000.0));
 }
 
 #[test]
@@ -21142,7 +21142,7 @@ fn lane_capture_stores_write_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1843176980.0));
+    assert_eq!(run.outcome.answer_number(), Some(1843176980.0));
 }
 
 #[test]
@@ -21178,7 +21178,7 @@ fn lane_inherited_constants_follow_prototype_writes() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1225140.0));
+    assert_eq!(run.outcome.answer_number(), Some(1225140.0));
 }
 
 #[test]
@@ -21210,7 +21210,7 @@ fn lane_array_length_reads_dense_length_only() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(540398.0));
+    assert_eq!(run.outcome.answer_number(), Some(540398.0));
 }
 
 #[test]
@@ -21231,7 +21231,7 @@ fn lane_hoisted_length_survives_inlined_calls() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1650000.0));
+    assert_eq!(run.outcome.answer_number(), Some(1650000.0));
 }
 
 #[test]
@@ -21259,7 +21259,7 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(163500.0));
+    assert_eq!(run.outcome.answer_number(), Some(163500.0));
 }
 
 #[test]
@@ -21281,7 +21281,7 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1290000.0));
+    assert_eq!(run.outcome.answer_number(), Some(1290000.0));
 }
 
 #[test]
@@ -21311,7 +21311,7 @@ fn lane_bodies_construct_by_activation() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(1600093342.0));
+    assert_eq!(run.outcome.answer_number(), Some(1600093342.0));
 }
 
 #[test]
@@ -21330,7 +21330,7 @@ fn lane_bodies_allocate_literals() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(-1474336480.0));
+    assert_eq!(run.outcome.answer_number(), Some(-1474336480.0));
 }
 
 /// The osr diagnostics of function `name` after `source` runs compiled under every memory
@@ -21425,7 +21425,7 @@ fn lane_bodies_construct_empty_arrays() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(720000.0));
+    assert_eq!(run.outcome.answer_number(), Some(720000.0));
 }
 
 #[test]
@@ -21449,7 +21449,7 @@ fn lane_bodies_add_properties_at_feedback_stores() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(36219000.0));
+    assert_eq!(run.outcome.answer_number(), Some(36219000.0));
 }
 
 #[test]
@@ -21535,7 +21535,7 @@ fn lane_bodies_read_function_fields_natively() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(691000.0));
+    assert_eq!(run.outcome.answer_number(), Some(691000.0));
 }
 
 #[test]
@@ -21566,7 +21566,7 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(8748000.0));
+    assert_eq!(run.outcome.answer_number(), Some(8748000.0));
 }
 
 #[test]
@@ -21588,7 +21588,7 @@ fn lane_feedback_stores_take_polymorphic_own_slots() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(17138.0));
+    assert_eq!(run.outcome.answer_number(), Some(17138.0));
 }
 
 #[test]
@@ -21615,7 +21615,7 @@ fn lane_equality_and_relations_of_int32_fields_and_parameters() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(9980000.0));
+    assert_eq!(run.outcome.answer_number(), Some(9980000.0));
 }
 
 #[test]
@@ -21637,7 +21637,7 @@ fn loop_stores_to_packed_objects_write_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(748800.0));
+    assert_eq!(run.outcome.answer_number(), Some(748800.0));
 }
 
 #[test]
@@ -21665,7 +21665,7 @@ fn lane_instanceof_decides_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(901022.0));
+    assert_eq!(run.outcome.answer_number(), Some(901022.0));
 }
 
 #[test]
@@ -21713,7 +21713,7 @@ fn lane_strict_equality_decides_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(4307110.0));
+    assert_eq!(run.outcome.answer_number(), Some(4307110.0));
 }
 
 #[test]
@@ -21866,7 +21866,7 @@ fn lane_outer_captures_read_like_the_interpreter() {
     "#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(168662875.0));
+    assert_eq!(run.outcome.answer_number(), Some(168662875.0));
 }
 
 #[test]
@@ -21892,7 +21892,7 @@ fn lane_element_stores_append_like_the_interpreter() {
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(4571092.0));
+    assert_eq!(run.outcome.answer_number(), Some(4571092.0));
 }
 
 #[test]
@@ -21915,7 +21915,7 @@ fn lane_element_stores_fill_holes_like_the_interpreter() {
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(4523109.0));
+    assert_eq!(run.outcome.answer_number(), Some(4523109.0));
 }
 
 #[test]
@@ -21937,7 +21937,7 @@ fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(2005786796.0));
+    assert_eq!(run.outcome.answer_number(), Some(2005786796.0));
 }
 
 #[test]
@@ -21960,7 +21960,7 @@ fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(3000684.0));
+    assert_eq!(run.outcome.answer_number(), Some(3000684.0));
 }
 
 #[test]
@@ -21977,7 +21977,7 @@ fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(-558229.0));
+    assert_eq!(run.outcome.answer_number(), Some(-558229.0));
 }
 
 #[test]
@@ -21997,7 +21997,7 @@ fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpret
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
     // Node's answer for the same program.
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(61024.0));
+    assert_eq!(run.outcome.answer_number(), Some(61024.0));
 }
 
 #[test]
@@ -22050,7 +22050,7 @@ fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
       globalThis.answer = total;
     })();"#;
     let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
-    assert_eq!(run.outcome.answer.map(f64::from_bits), Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
+    assert_eq!(run.outcome.answer_number(), Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
 }
 
 #[test]
