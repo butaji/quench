@@ -3361,6 +3361,7 @@ impl Operand {
         }
     }
 
+    #[inline]
     pub(crate) fn register(value: Register) -> Self {
         debug_assert!(value <= Self::PAYLOAD_MASK);
         Self(((OperandKind::Register as u16) << Self::TAG_SHIFT) | value)

@@ -36,7 +36,7 @@ impl RecordOperand {
     }
 
     /// The staged operand, and the immediate the frame answers its constant index with.
-    fn staged(self) -> (Operand, Option<Value>) {
+    #[inline(always)] fn staged(self) -> (Operand, Option<Value>) {
         let constant = |index| Operand::constant(index).expect("a record's constant operand was a constant operand");
         match self {
             Self::Register(register) => (Operand::register(register), None),
@@ -47,7 +47,7 @@ impl RecordOperand {
     }
 
     /// The value the operand holds in `r`, as the frame reads it.
-    pub(super) fn value<H: Host>(self, cx: *mut LaneContext<H>, r: Registers) -> Option<Value> {
+    #[inline(always)] pub(super) fn value<H: Host>(self, cx: *mut LaneContext<H>, r: Registers) -> Option<Value> {
         match self {
             Self::Register(register) => Some(r.get(register)),
             operand => {
@@ -58,8 +58,8 @@ impl RecordOperand {
     }
 
     /// The staged operands of a jump over `operands`, and the reads that answer them.
-    pub(super) fn staged_pair<H: Host>(cx: *mut LaneContext<H>, operands: [Self; 2]) -> ([Operand; 2], Reads) {
-        let [(left, left_immediate), (right, right_immediate)] = operands.map(Self::staged);
+    #[inline(always)] pub(super) fn staged_pair<H: Host>(cx: *mut LaneContext<H>, operands: [Self; 2]) -> ([Operand; 2], Reads) {
+        let [(left, left_immediate), (right, right_immediate)] = [operands[0].staged(), operands[1].staged()];
         ([left, right], Reads::of_jump::<H>(cx, left_immediate.or(right_immediate)))
     }
 }

@@ -404,8 +404,8 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
 ///
 /// # Safety
 /// `cx` is the running lane's context. Called through `LaneHost::read_name`, a constant
-/// function pointer in the inlined frame `staged_load_name` builds, so the call is direct.
-#[inline(never)]
+/// function pointer in the inlined frame `staged_load_name` builds, so the call inlines.
+#[inline(always)]
 unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     match read {

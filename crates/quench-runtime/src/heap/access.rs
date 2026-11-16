@@ -733,6 +733,7 @@ impl Heap {
     ///
     /// A native reader may combine this with an ID from a current live, rooted direct-object
     /// Value. It must end before any safepoint and must not retain a record pointer afterward.
+    #[inline]
     pub(crate) fn object_record_base(&self) -> Option<*const Object> {
         self.object_records.base_ptr()
     }

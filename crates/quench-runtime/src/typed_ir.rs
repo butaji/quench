@@ -195,6 +195,7 @@ impl Type {
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
+    #[inline]
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         self == Self::NEVER || self == expected
             || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }
