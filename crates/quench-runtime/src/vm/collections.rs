@@ -743,11 +743,11 @@ impl<H: Host> Vm<H> {
         };
         let cell = match native {
             Native::Map => Cell::Map {
-                object: Box::new(Self::empty_object(prototype)),
+                object: Self::empty_object(prototype),
                 entries: Default::default(),
             },
             Native::Set => Cell::Set {
-                object: Box::new(Self::empty_object(prototype)),
+                object: Self::empty_object(prototype),
                 entries: Default::default(),
             },
             _ => return Err(JsError("invalid collection constructor".into())),

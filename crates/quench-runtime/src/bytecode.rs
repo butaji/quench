@@ -2151,9 +2151,8 @@ impl Function {
 
     fn derive_activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
         self.activation_binding_reads(tables)
-            || self.instructions().any(|instruction| {
-                instruction.op() == Op::MakeClosure
-                    && tables
+            || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
+                tables
                         .function_is_arrow(instruction.closure_function_index() as usize)
                         .is_none_or(|is_arrow| is_arrow)
             })
@@ -2177,7 +2176,7 @@ impl Function {
     /// (`CallPlan::settles_in_loop`), its promise held by its call.
     fn body_binding_reads(&self, tables: &impl FactTables) -> bool {
         self.body_binding_reads_beside_clones(tables)
-            || self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
+            || self.instructions_of(|op| op == Op::CloneEnv).next().is_some()
     }
 
     /// `body_binding_reads` but for the iteration copies of its environment (`CloneEnv`),
@@ -2193,9 +2192,7 @@ impl Function {
     /// its closures and evals resolve names in.
     pub(crate) fn evals_in_scope(&self) -> bool {
         !self.binding_sites.is_empty()
-            || self.instructions().any(|instruction| {
-                instruction.op().is_call_with_eval_flags() && (instruction.direct_eval() || instruction.parameter_eval())
-            })
+            || self.instructions_of(Op::is_call_with_eval_flags).any(|instruction| instruction.direct_eval() || instruction.parameter_eval())
     }
 
     /// The implicit bindings (`new.target`, `super`, the home object, a derived constructor's
@@ -2217,18 +2214,22 @@ impl Function {
             })
             // A direct eval beside names resolved through a scope may declare dynamic bindings, which only
             // a frame (or a suspended record) keeps: the scope's other names the window's handlers serve.
-            || self.evals_in_scope() && self.instructions().any(|instruction| matches!(instruction.op(), Op::ResolveName | Op::LoadResolvedName))
+            || self.evals_in_scope() && self.instructions_of(|op| matches!(op, Op::ResolveName | Op::LoadResolvedName)).next().is_some()
     }
 
     /// Every instruction in fixed-width form.
     pub(crate) fn instructions(&self) -> impl Iterator<Item = WideInstruction> + '_ {
-        self.code.iter().map(|packed| {
-            if packed.is_wide() {
-                self.wide[packed.wide_index()]
-            } else {
-                packed.as_wide()
-            }
-        })
+        self.code.iter().map(|&packed| self.widened(packed))
+    }
+
+    /// The instruction at `pc` in fixed-width form.
+    pub(crate) fn instruction_at(&self, pc: usize) -> WideInstruction {
+        self.widened(self.code[pc])
+    }
+
+    #[inline]
+    fn widened(&self, packed: Instr) -> WideInstruction {
+        if packed.is_wide() { self.wide[packed.wide_index()] } else { packed.as_wide() }
     }
 
     /// Whether a closure environment may hold local `slot`: the selective layout names it or,
@@ -2400,7 +2401,7 @@ impl Function {
     /// function that suspends, its record carry: one that makes no iteration copy of its environment
     /// (`CloneEnv`), which would have to share them (`Vm::iteration_environment`).
     fn holds_scope(&self) -> bool {
-        !self.instructions().any(|instruction| instruction.op() == Op::CloneEnv)
+        self.instructions_of(|op| op == Op::CloneEnv).next().is_none()
     }
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as
@@ -2432,7 +2433,7 @@ impl Function {
                 && !self.inherited_with_scope
                 && promoted_parameters == usize::from(self.params)
                 // A plain activation makes no closure, whichever bindings it would see.
-                && !self.instructions().any(|instruction| instruction.op() == Op::MakeClosure);
+                && self.instructions_of(|op| op == Op::MakeClosure).next().is_none();
             let registers_layout = registers_layout_of_any_kind && !self.is_generator && !self.is_async;
             // Plain but for an `arguments` binding.
             // An arrow's `this` is its environment's, which its activation binds
@@ -3003,10 +3004,7 @@ impl Function {
     /// any enclosing function's binding. `is_with_enter` recognizes the atom id of
     /// [`WITH_ENTER_BINDING`] in the owning program's atom table.
     pub(crate) fn contains_with_statement(&self, is_with_enter: impl Fn(usize) -> bool) -> bool {
-        self.instructions().any(|instruction| {
-            instruction.op().is_throwing_name_load()
-                && usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter)
-        })
+        self.instructions_of(Op::is_throwing_name_load).any(|instruction| usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter))
     }
 
     /// Whether neither this function nor any enclosing one has dynamic scope access or
