@@ -35,14 +35,14 @@ use crate::{
 use asm::Instruction;
 use classes::Fields;
 use stats::{Dump, Hot, Site};
-use table::{Table, Tally};
+use table::{Measured, Table, Tally};
 
 pub const KERNELS: &str = "crates/quench-tier-corpus/cparity/js";
 const RATCHET: &str = "crates/quench-tier-corpus/cparity.txt";
 const DUMPS: [&str; 2] = ["quench-gate", "cparity"];
 const JAVASCRIPT: &str = "js";
 const TRACE_VARIABLE: &str = "QUENCH_TRACE";
-const TRACE_CHANNELS: &str = "js-jit,jit-dump=";
+const TRACE_CHANNELS: &str = "js-jit,loop-kernel,jit-dump=";
 const DEV_VARIABLE: &str = "QUENCH_DEV";
 const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 
@@ -105,22 +105,25 @@ fn scalar_call(directory: &Path, dumps: &[Dump]) -> Result<Option<Fields>, Strin
 }
 
 /// The measure of the program's hot code: the hot loop in its region or its function's body,
-/// else the per-call path of a scalar entry.
-fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Option<Fields>, String> {
+/// or the interpreter's kernel running it, else the per-call path of a scalar entry.
+fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Measured, String> {
     let dumps = stats::dumps(stderr);
     if let Some(hot) = hot {
         if let Some(fields) = loop_of(directory, &dumps, |site| site == Site::Loop { header: hot.header })? {
-            return Ok(Some(fields));
+            return Ok(Measured::Code(fields));
         }
         if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Body { function, .. } if function == hot.function))? {
-            return Ok(Some(fields));
+            return Ok(Measured::Code(fields));
+        }
+        if stats::kernel_runs(stderr, hot.header) {
+            return Ok(Measured::Kernel);
         }
     }
     // A tier that reports no loop statistics (b-jit) has its regions' dumps alone.
     if let Some(fields) = loop_of(directory, &dumps, |site| matches!(site, Site::Loop { .. }))? {
-        return Ok(Some(fields));
+        return Ok(Measured::Code(fields));
     }
-    scalar_call(directory, &dumps)
+    Ok(scalar_call(directory, &dumps)?.map_or(Measured::Nothing, Measured::Code))
 }
 
 /// Runs one kernel on every tier and settles each measurement against the ratchet.

@@ -424,17 +424,18 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
 
 /// A loop over a typed array runs as a b-jit region whose element and `length` rows read the typed view its entry
 /// recorded (`LoopEntry::push_array`), one row per element kind; the stores convert as the interpreter's do (the clamp,
-/// ToInt32, the binary32 rounding). The functions that index a typed parameter have no body (it would leave at its
-/// first element), so nothing leaves.
+/// ToInt32, the binary32 rounding). Each loop carries two recurrences, which the interpreter's kernel would interpret
+/// per iteration, so the loop is b-jit's and not the kernel's. The functions that index a typed parameter
+/// have no body (it would leave at its first element), so nothing leaves.
 #[test]
 fn a_loop_over_a_typed_array_runs_as_a_base_region_that_never_leaves() {
     for kind in ["Float64Array", "Int32Array", "Uint8ClampedArray", "Float32Array", "Int8Array"] {
         let source = format!(r#"(function () {{
-          function fill(a) {{ for (let i = 0; i < a.length; i++) a[i] = i * 0.25 - 3; }}
-          function sum(a) {{ let s = 0; for (let i = 0; i < a.length; i++) s = s + a[i]; return s; }}
+          function fill(a) {{ let c = 0, d = 0; for (let i = 0; i < a.length; i++) {{ a[i] = i * 0.25 - 3; c = c ^ i; d = d | i; }} return c + d; }}
+          function sum(a) {{ let s = 0, c = 0; for (let i = 0; i < a.length; i++) {{ s = s + a[i]; c = c ^ i; }} return s + c; }}
           const a = new {kind}(2000);
           let total = 0;
-          for (let round = 0; round < 12; round++) {{ fill(a); total = total + sum(a); }}
+          for (let round = 0; round < 12; round++) {{ total = total + fill(a) + sum(a); }}
           globalThis.answer = total;
         }})();"#);
         let run = assert_tier_agrees(&source, Tier::BJit, Expect { completed: 0, leaves: 0 });
