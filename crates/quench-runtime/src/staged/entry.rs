@@ -95,16 +95,20 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
 }
 
 /// A store of `value` through the own cache entry `offset` bytes into the table of `tables`: the
-/// record's shape is the entry's, the gate admits the write, and the slot is plain.
+/// record's shape is the entry's, the gate admits the write where it is `gated`, and the slot is
+/// plain. A value the caller proved immediate and of the slot's observed type is not `gated`: it
+/// needs no barrier log and widens no observation (`slot_store::gate_open`).
 #[inline(always)]
-pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, value: S::Word, miss: S::Miss) -> Option<()> {
+pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, (value, gated): (S::Word, bool), miss: S::Miss) -> Option<()> {
     site_tables(stage, tables, miss)?;
     let (id, record, entry) = site_record(stage, tables, object, offset, miss)?;
     let own = own_entry(stage, entry);
     stage.guard(own, miss)?;
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
-    let open = stage.store_gate(RecordSpace::Object, id, value);
-    stage.guard(open, miss)?;
+    if gated {
+        let open = stage.store_gate(RecordSpace::Object, id, value);
+        stage.guard(open, miss)?;
+    }
     let slot = entry_slot(stage, entry);
     plain_store(stage, record, slot, value, miss)
 }
@@ -449,7 +453,7 @@ mod tests {
             let records = heap.object_record_base().expect("object records exist") as u64;
             let store = |heap: &Heap, entry: [u32; 3], value: Value| {
                 let mut stage = crate::staged::Concrete::storing(heap);
-                site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, value.to_bits(), ()).is_some()
+                site_store(&mut stage, (entry.as_ptr() as u64, records), object.to_bits(), 0u64, (value.to_bits(), true), ()).is_some()
             };
             let read = |heap: &Heap, entry: [u32; 3]| concrete_read_entry(heap, object, &entry);
             for slot in 0..count as u32 {

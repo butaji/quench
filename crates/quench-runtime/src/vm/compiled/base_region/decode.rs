@@ -1,5 +1,6 @@
 use super::*;
 use crate::vm::global_facts::LexicalSlot;
+use crate::staged::property::StoreArm;
 
 /// The row kind of a binary operator, from one table for arithmetic, bitwise and relational
 /// operators.
@@ -98,11 +99,17 @@ pub(super) struct Decoded {
     /// The global lexical binding's word the row reads or stores live (`globals`), at the address in `hole`, under the global
     /// object's layout: a Stable fact the code takes.
     pub(super) lexical: Option<LexicalSlot>,
+    /// The observed type of the own slot a field store writes, where its site proves one own load
+    /// (`NativeFieldLoad::ty`).
+    pub(super) slot: Option<crate::typed_ir::Type>,
+    /// The step a store row's instruction runs as where the row declines its operand (`declines`):
+    /// the instruction's own (`steps::lowering`).
+    pub(super) declined: Option<Step>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, declined: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -118,6 +125,38 @@ impl Decoded {
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
         self.add.is_some() || self.folded.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
+    }
+
+    /// The observed type of the slot a store row writes in place: a global object's slot or a field's.
+    fn stored_slot_type(&self) -> Option<crate::typed_ir::Type> {
+        match self.heap {
+            Some(Heap::GlobalStore) => self.global.map(|access| access.slot.ty),
+            Some(Heap::SiteStore | Heap::ThisStore) => self.slot,
+            _ => None,
+        }
+    }
+
+    /// How the store row writes its operand in `place` to its slot (`StoreArm::of`): straight, where
+    /// the place's type is the slot's observed type; once its frame word is an int32, for a field
+    /// store of a frame slot whose type holds int32 (`StoreArm::holds`); else not at all, as a wider
+    /// value would widen the observation, which the VM must notice.
+    fn store_arm(&self, place: Place) -> Option<StoreArm> {
+        let arm = StoreArm::of((0, 0), self.stored_slot_type()?, value_fact(place))?;
+        let tested = place == Place::Mem && matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore));
+        (arm.holds.is_none() || tested && arm.holds == Some(crate::typed_ir::Type::INT32)).then_some(arm)
+    }
+
+    /// The step a store row runs as where it cannot write its operand in `place` (`store_arm`): the
+    /// instruction's own.
+    pub(super) fn declines(&self, place: Place) -> Option<Step> {
+        self.stored_slot_type().filter(|_| self.store_arm(place).is_none()).and(self.declined)
+    }
+
+    /// Whether the store row writes its operand in `place` through the store gate: unless the value is
+    /// proven immediate, or is the int32 its slot's type holds (`store_arm`), it may need a barrier log.
+    pub(super) fn gated(&self, place: Place) -> bool {
+        !value_fact(place).is_subtype(crate::typed_ir::Type::IMMEDIATE)
+            && !self.store_arm(place).is_some_and(|arm| arm.holds.is_some())
     }
 
     /// Whether the row makes a call or a step the interpreter's operation runs, either of which may
@@ -279,7 +318,14 @@ fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded
         None => (Heap::ThisStore, None),
     };
     let value = Some(Source::Register(instruction.register_a()));
-    Some(Decoded { base, hole: entry_offset(instruction.cache_site_index()), atom: Some(atom), ..Decoded::heap(heap, None, value, None) })
+    let site = instruction.cache_site_index();
+    Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: own_slot_type(known, site), ..Decoded::heap(heap, None, value, None) })
+}
+
+/// The observed type of the own slot cache `site` stores to, where it proves exactly one own load.
+fn own_slot_type(known: Known, site: u16) -> Option<crate::typed_ir::Type> {
+    let [load] = known.reads?(site)[..] else { return None };
+    (load.holder.is_none() && load.valid()).then_some(load.ty)
 }
 
 /// Whether `instruction` is a field store a row makes (`field_store_row`).
@@ -399,7 +445,8 @@ fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
 pub(super) fn decode(region: &LoopRegion, (facts, known): (Facts, Known), pc: u32, instruction: WideInstruction, helpers: LaneHelpers) -> Decoded {
     numeric_row(&|index| region.number_constant(index), instruction)
         .flatten()
-        .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0))
+        .or_else(|| heap_row(region, facts, known, pc, instruction).filter(|_| instruction.result_flags() == 0)
+            .map(|row| Decoded { declined: row.stored_slot_type().map(|_| lowering(instruction, known, helpers)), ..row }))
         .or_else(|| value_row(known, instruction))
         .unwrap_or_else(|| names(known, instanceof_arm(known, pc, instruction, decode_step(pc, instruction, known, (helpers, matches!(facts, Facts::Site))))))
 }

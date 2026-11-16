@@ -188,7 +188,8 @@ const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
     (uses(Entry::Never, true, false, false), &[CAPTURE_ROW..=CAPTURE_ROW, ENV_ROW..=ENV_ROW, FIELD_ROW..=FIELD_ROW, LENGTH_ROW..=LENGTH_ROW, THIS_ROW..=THIS_ROW,
         LOAD_LOCAL_ROW..=LOAD_LOCAL_ROW, LOAD_CHECKED_ROW..=LOAD_CHECKED_ROW, GLOBAL_READ_ROW..=GLOBAL_READ_ROW, LEXICAL_READ_ROW..=LEXICAL_READ_ROW,
         CONSTANT_ROW..=CONSTANT_ROW]),
-    (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW]),
+    (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
+        IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW]),
     (uses(Entry::Kept, true, false, false), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW]),
     (uses(Entry::Kept, true, false, true), &[INDEX_ROW..=INDEX_ROW]),
     (uses(Entry::Always, true, false, true), &[TYPED_INDEX_ROW..=TYPED_INDEX_LAST]),
@@ -196,7 +197,7 @@ const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
     (uses(Entry::Always, true, false, false), &[TYPED_LENGTH_ROW..=TYPED_LENGTH_ROW]),
     (uses(Entry::Kept, false, true, true), &[STORE_ROW..=STORE_ROW]),
     (uses(Entry::Never, false, true, false), &[STORE_LOCAL_ROW..=STORE_LOCAL_ROW, STORE_CHECKED_ROW..=STORE_CHECKED_ROW, CAPTURE_SET_ROW..=CAPTURE_SET_ROW,
-        ENV_SET_ROW..=ENV_SET_ROW, ENV_DEFINE_ROW..=ENV_DEFINE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
+        ENV_SET_ROW..=ENV_SET_ROW, ENV_DEFINE_ROW..=ENV_DEFINE_ROW,
         APPEND_ROW..=APPEND_ROW, LEXICAL_WRITE_ROW..=LEXICAL_WRITE_ROW]),
     (uses(Entry::Kept, false, false, false), &[ADD_PACKED_ROW..=ADD_PACKED_ROW, ADD_ARENA_ROW..=ADD_ARENA_ROW, ADD_EITHER_ROW..=ADD_EITHER_ROW,
         THIS_ADD_PACKED_ROW..=THIS_ADD_PACKED_ROW, THIS_ADD_ARENA_ROW..=THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW..=THIS_ADD_EITHER_ROW]),
@@ -261,13 +262,15 @@ pub fn heap_library() -> Vec<HeapCode> {
         for (&a, &b) in srcs.iter().flat_map(|a| srcs.iter().map(move |b| (a, b))) {
             rows.insert(heap_canonical((STORE_ROW, entry, MEM, a, b)));
         }
-        rows.extend(srcs.iter().map(|&a| heap_canonical((GLOBAL_STORE_ROW, entry, MEM, a, MEM))));
+        for heap in [GLOBAL_STORE_ROW, SITE_STORE_ROW, THIS_STORE_ROW] {
+            rows.extend(srcs.iter().map(|&a| heap_canonical((heap, entry, MEM, a, MEM))));
+        }
     }
     typed_rows(&dsts, &srcs, &mut rows);
     for &dst in &dsts {
         rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }
-    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, SITE_STORE_ROW, THIS_STORE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
+    for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));
     }
     for heap in ADD_ROWS {
