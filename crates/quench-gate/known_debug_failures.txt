@@ -4,7 +4,6 @@ staged::string_length::tests::the_row_reads_the_length_of_every_flat_form_throug
 value_vec::tests::raw_arena_word_accesses_outside_staged_and_value_vec_only_shrink
 vm::catch_tests::a_catch_unwinds_the_with_scopes_it_leaves
 vm::catch_tests::a_throw_from_a_compiled_callee_is_caught_by_a_compiled_caller_without_leaving
-vm::catch_tests::an_uncaught_throw_crosses_three_compiled_frames_to_the_interpreter
 vm::catch_tests::finally_blocks_and_rethrows_across_compiled_frames_match_the_interpreter
 vm::compiled::base_body::forms::a_numeric_operator_with_a_local_target_is_a_helper_step
 vm::compiled::base_body::forms::a_ten_deep_call_chain_makes_its_steps_in_the_callees
