@@ -16,6 +16,9 @@ const SITE_HEADER_KEY: &str = "\"header_pc\":";
 const SITE_COUNT_KEY: &str = "\"lane_backedge_count\":";
 const SITE_STATUS_KEY: &str = "\"status\":\"";
 const ADMITTED: &str = "admitted";
+/// `loop-kernel: loop <header>..<backedge>: kernel`, the interpreter's kernel taking a loop.
+const KERNEL_PREFIX: &str = "loop-kernel: loop ";
+const KERNEL_SUFFIX: &str = ": kernel";
 
 /// What dumped code was compiled for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +84,14 @@ fn function_sites(stats: &str) -> impl Iterator<Item = (Hot, u64)> + '_ {
     sites(stats).map(move |(header, count)| (Hot { function, header }, count))
 }
 
+/// Whether the interpreter's loop kernel took the loop at `header`.
+pub fn kernel_runs(stderr: &str, header: u32) -> bool {
+    stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix(KERNEL_PREFIX)?.strip_suffix(KERNEL_SUFFIX))
+        .any(|span| number::<u32>(span) == Some(header))
+}
+
 /// The admitted loop that took the most back-edges: the hot loop of the program.
 pub fn hot_loop(stderr: &str) -> Option<Hot> {
     stderr
@@ -121,5 +132,12 @@ mod tests {
     fn the_hot_loop_is_the_admitted_site_with_the_most_back_edges() {
         assert_eq!(hot_loop(STDERR), Some(Hot { function: 3, header: 4 }));
         assert_eq!(hot_loop("nothing\n"), None);
+    }
+
+    #[test]
+    fn a_kernel_runs_the_loop_its_trace_line_names() {
+        let stderr = "loop-kernel: loop 2..10: no shape\nloop-kernel: loop 4..8: kernel\n";
+        assert!(kernel_runs(stderr, 4));
+        assert!(!kernel_runs(stderr, 2) && !kernel_runs(stderr, 8));
     }
 }
