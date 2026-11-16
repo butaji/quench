@@ -6288,6 +6288,16 @@ script_handler! {
             r.set(i.a, value);
             next!(cx, r, following(ip), view)
         }
+        sibling!(lane_load_outer_capture_remembered::<H>, r, ip, view)
+    }
+}
+
+script_handler! {
+    /// `lane_load_outer_capture` past its links: the staged read through the walk the lane
+    /// remembers. Apart, so the linked read spills nothing for it.
+    #[inline(never)]
+    fn lane_load_outer_capture_remembered<>(cx, r, ip, i, view) {
+        let imm = i.imm();
         let at = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
         if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, at, false) {
             #[cfg(feature = "profile-lane-exits")]
