@@ -52,11 +52,15 @@ impl Heap {
         collection: Value,
         move_slot: impl Fn(usize) -> usize,
     ) {
-        let registered = match self.get_mut(collection) {
+        let mut registered = match self.get_mut(collection) {
             Some(Cell::Map { entries, .. }) => entries.take_iterators(),
             Some(Cell::Set { entries, .. }) => entries.take_iterators(),
             _ => return,
         };
+        // A fresh iterator may reuse a collected one's record while the old registration
+        // remains: its position moves once.
+        registered.sort_unstable_by_key(|iterator| iterator.to_bits());
+        registered.dedup();
         let mut running = Vec::with_capacity(registered.len());
         for iterator in registered {
             // The registry does not keep its iterators alive: a collected one's identity
