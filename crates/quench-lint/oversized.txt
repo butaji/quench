@@ -1332,7 +1332,7 @@ file-lines crates/quench-runtime/src/compile/ast/call.rs 708
 file-lines crates/quench-runtime/src/compile/ast/destructure.rs 991
 file-lines crates/quench-runtime/src/compile/ast/expression.rs 962
 file-lines crates/quench-runtime/src/compile/ast/statement.rs 838
-file-lines crates/quench-runtime/src/compile/class.rs 1250
+file-lines crates/quench-runtime/src/compile/class.rs 1243
 file-lines crates/quench-runtime/src/compile/early.rs 2007
 file-lines crates/quench-runtime/src/compile/regexp.rs 611
 file-lines crates/quench-runtime/src/compile/replay.rs 1003
@@ -2459,7 +2459,7 @@ function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::captured_scop
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::collect_body_lexical_bindings 56
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_function 344
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_plain_function 70
-function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_replayable_object_method 46
+function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::compile_replayable_object_method 42
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish 256
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::finish_early 69
 function-lines crates/quench-runtime/src/compile.rs::Compiler<'a>::program 274
