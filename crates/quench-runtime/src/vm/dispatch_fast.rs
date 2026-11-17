@@ -24891,6 +24891,10 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
 ) -> Ip {
     unsafe {
         let registers = lane_fill_prepared_values::<H, N>(entry, values, registers);
+        // A capture walk inside the returned run may have cached the closure's dense slots in the
+        // window's capture word (`lane_capture_value`): the same environment's, which the entry
+        // passes as it passed it before.
+        Registers(registers).set_capture(entry.capture);
         debug_assert!(
             (*cx).registers.0 == registers
                 && (*cx).base == (*entry.view).records()
