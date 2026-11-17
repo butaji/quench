@@ -7502,7 +7502,9 @@ script_handler! {
                 // A live hint another receiver of this site answers stays: rewriting it at
                 // every receiver switch re-marked and re-watched the prototype each time
                 // (V8-v7 Richards: 0.71M rewrites, 5% of its run).
-                if matches!(hit, super::object::PolymorphicHit::Holder) {
+                // SAFETY: `ip` is this live `GetField` record.
+                let kept = unsafe { (*ip).operand.field.shape == HOLDER_HINT && vm.holder_hint_live((*ip).call_link.get()) };
+                if matches!(hit, super::object::PolymorphicHit::Holder) && !kept {
                     set_prototype_hint(ip, |owned| {
                         if owned.is_some_and(|index| vm.holder_hint_live(index)) {
                             return None;

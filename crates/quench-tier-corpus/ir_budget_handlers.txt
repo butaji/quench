@@ -126,14 +126,13 @@ int_mul_ovf 9.0 NumberBitwise::from_operator
 int_sub 25.0 lane_inc_dec_loop<false, 4, true>
 int_sub 15.0 lane_operator_int32<9, false>
 k_dispatch 101.0 lane_script_call_leaf<4, 1>
-k_dispatch 94.0 lane_get_field_polymorphic<false, false>
+k_dispatch 91.5 lane_get_field_polymorphic<false, false>
 k_dispatch 39.0 lane_returning_operator<17, true, 4>
 k_dispatch 29.0 lane_get_field_own_bound<true, 536870912>
 k_dispatch 28.5 lane_operator<8>
 k_dispatch 25.0 lane_inc_dec_loop<false, 4, true>
 k_dispatch 21.0 lane_get_index_proved
 k_dispatch 12.0 lane_operator_integer_constant<19>
-k_dispatch 11.5 set_prototype_hint<quench_runtime::vm::dispatch_fast::lane_get_field_polymorphic<false, false>::{closure#0}::{closure#0}>
 k_dispatch 7.5 lane_operator<18>
 k_json 1067.1 parse_json_text<quench_runtime::vm::json::heap_builder::JsonHeapBuilder>
 k_json 544.0 Vm::json_write_plain
@@ -519,7 +518,7 @@ str_concat_acc 10.0 stored_length
 str_concat_acc 7.0 ShortAscii::as_str
 str_concat_acc 3.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 str_concat_acc 1.7 Vm::collect_inner
-str_concat_acc 1.0 RecordSpace::load_free_word
+str_concat_acc 1.1 RecordSpace::load_free_word
 str_concat_acc 0.9 RecordSpace::claim_slow
 str_concat_acc 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 str_concat_acc 0.6 Vec::spec_extend

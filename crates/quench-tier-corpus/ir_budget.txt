@@ -38,7 +38,7 @@ int_mod_var 7 27 68.1
 int_mul 5 21 112.6
 int_mul_ovf 18 60 140.5
 int_sub 4 18 39.2
-k_dispatch 14 48 368.6
+k_dispatch 14 48 354.6
 k_json 812 2442 5702.5
 k_nbody_pair 21.1 70 1479.1
 k_regexp 40.2 127 1371.3

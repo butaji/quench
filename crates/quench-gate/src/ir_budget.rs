@@ -256,6 +256,21 @@ fn ranking(measured: &[Measured]) -> String {
     std::iter::once(format!("{:>8}{:>5}  handler (Ir/iter summed over ops, ops it runs in)", "Ir", "ops")).chain(lines).collect::<Vec<_>>().join("\n")
 }
 
+/// Name parts of the lane handlers that run only where a fast form missed: in steady state each
+/// is waste (a site that never settles, a cache that never fills), whose budget is zero.
+const SLOW_PATHS: [&str; 6] = ["_miss", "_refresh", "_slow", "deopt", "bail", "_general"];
+
+/// The slow-path handlers (`SLOW_PATHS`) each op runs in steady state, largest first.
+fn waste(measured: &[Measured]) -> String {
+    let mut rows: Vec<(f64, String)> = measured.iter().flat_map(|(op, _, split)| {
+        split.iter().filter(|(handler, share)| *share >= 1.0 && handler.starts_with("lane_") && SLOW_PATHS.iter().any(|part| handler.contains(part)))
+            .map(move |(handler, share)| (*share, format!("{share:>8.1}  {op:<16}{handler}")))
+    }).collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let head = format!("{:>8}  {:<16}{}", "Ir", "op", "slow path run in steady state (zero budget)");
+    std::iter::once(head).chain(rows.into_iter().map(|(_, row)| row)).collect::<Vec<_>>().join("\n")
+}
+
 /// The recorded split: op, handler, share, one per line.
 fn parse_splits(text: &str) -> BTreeMap<String, BTreeMap<String, f64>> {
     let mut splits: BTreeMap<String, BTreeMap<String, f64>> = BTreeMap::new();
@@ -349,7 +364,7 @@ pub fn run(config: &Config) -> Verdict {
     }
     let mode = env::var(MODE_VARIABLE).map_or_else(|_| INTERPRETER.to_owned(), |mode| format!("--{mode}"));
     let measured = measure(config, &mode, &ops)?;
-    let report = format!("{}\n\n{}", table(&measured, &rows), ranking(&measured));
+    let report = format!("{}\n\n{}\n\n{}", table(&measured, &rows), ranking(&measured), waste(&measured));
     let over = measured.iter().filter(|(name, count, _)| rows.get(name).is_some_and(|row| *count > row.budget + SAME_COUNT)).count();
     if mode != INTERPRETER {
         return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{report}", measured.len()));
