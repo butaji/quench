@@ -43,7 +43,7 @@ math_floor 22 72 203.9
 math_imul 7 27 221.1
 math_minmax 15 51 324.1
 math_round 23 75 231.6
-math_sqrt 9 33 167.1
+math_sqrt 9 33 160.1
 mixed_int_dbl 7 27 72.1
 neg_op 6 24 97.1
 not_op 5.5 23 65.6

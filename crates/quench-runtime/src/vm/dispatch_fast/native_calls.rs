@@ -58,6 +58,12 @@ macro_rules! math_rows {
         fn math_handler<H: Host>(native: Native) -> Option<Handler> {
             match native { $(Native::$native => Some(lane_call_math_native::<H, $row>),)* _ => None }
         }
+        fn math_field_call_handler<H: Host>(native: Native) -> Option<Handler> {
+            match native { $(Native::$native => Some(lane_get_field_math_call::<H, $row>),)* _ => None }
+        }
+        pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); [$($row),*].len()] {
+            [$(lane_get_field_math_call::<H, $row> as *const ()),*]
+        }
     };
 }
 math_rows!(
@@ -83,6 +89,61 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// The `GetField` of `Math.f(x)`: the field read, the argument's `Move` into the call's
+    /// window and the call of Math row `ROW` (`lane_call_math_native`) as one dispatch, each
+    /// register written as the three records write it (`install_math_field_call`). A read the
+    /// hint misses takes the field's own refresh; another callee or argument, the `Move`
+    /// record, so the call's own handler decides.
+    fn lane_get_field_math_call<ROW: u8>(cx, r, ip, i, view) {
+        let Some(callee) = own_bound_value::<H, false, HINTED_FORM>(cx, r, i) else {
+            sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, callee);
+        let move_ip = following(ip);
+        // SAFETY: the installer matched the `Move` and the `Call` that follow in this view.
+        let (copy, call_ip) = (unsafe { &*move_ip }, following(move_ip));
+        let call = unsafe { &*call_ip };
+        let native = const { math_row_native(ROW) };
+        let argument = r.get(copy.b);
+        let value = if callee_is_native(unsafe { vm(cx) }, callee, native) {
+            super::number::math_inline_call(native, std::slice::from_ref(&argument))
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            next!(cx, r, move_ip, Carried::script_in(cx, view))
+        };
+        r.set(copy.a, argument);
+        r.set(call.a, value);
+        next!(cx, r, following(call_ip), Carried::script_in(cx, view))
+    }
+}
+
+/// Fuses the call `call_ip`, which `native_call_handler` just gave Math row handler `handler`,
+/// with the `GetField` of its callee and the `Move` of its one argument before it
+/// (`lane_get_field_math_call`): the field record a register's bound own read, writing the
+/// callee register; the copy a plain `Move` into the call's one-value window.
+pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip: Ip, native: Native) {
+    let Some(fused) = math_field_call_handler::<H>(native) else { return };
+    // SAFETY: `call_ip` is a record of the running view, which starts at the context's base.
+    let pc = unsafe { call_ip.offset_from((*cx).base) };
+    if pc < 2 {
+        return;
+    }
+    // SAFETY: both records precede the call in the same view.
+    let (copy_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2)) };
+    let (call, copy, field) = unsafe { (&*call_ip, &*copy_ip, &*field_ip) };
+    let one_argument = ImmediateLayout::argument_count(call.imm()) == 1
+        && ImmediateLayout::call_window_base(call.imm()) == copy.a;
+    let copies = copy.handler == lane_move::<H, 0> as *const ();
+    let reads_callee = field.a == call.b
+        && (field.handler == lane_get_field_own::<H, false> as *const () || own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler));
+    if one_argument && copies && reads_callee && copy.a != field.a {
+        requicken::<H>(field_ip, fused);
     }
 }
 

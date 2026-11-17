@@ -7249,44 +7249,53 @@ script_handler! {
     }
 }
 
+/// The value the bound own-field read of record `i` answers (`lane_get_field_own_bound`), `None`
+/// where its hint misses.
+#[inline(always)]
+fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    // No closure: an `and_then` over one stays a call where its caller is not a handler.
+    let object = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })?;
+    {
+        let record = object.direct_object_index()?;
+        // SAFETY: binding preceded handler installation; the rooted direct Value names
+        // a live record of this range. Resumption binds an initially empty outer context.
+        #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
+        let (base, machine) = {
+            const {
+                assert!(std::mem::offset_of!(LaneContext<H>, vm)
+                    == std::mem::offset_of!(LaneContext<H>, binding)
+                        + std::mem::offset_of!(LaneBinding, object_base)
+                        + std::mem::size_of::<*const Object>());
+            }
+            let base: *const Object;
+            let machine: *const Vm<H>;
+            // SAFETY: the asserted adjacent pointer fields belong to this live context.
+            // Loading both together starts the independent heap lookup before the shape
+            // branch, instead of delaying the VM load until after that branch.
+            unsafe {
+                std::arch::asm!(
+                    "ldp {base}, {machine}, [{source}, #{offset}]",
+                    base = out(reg) base,
+                    machine = out(reg) machine,
+                    source = in(reg) std::ptr::addr_of!((*cx).binding),
+                    offset = const std::mem::offset_of!(LaneBinding, object_base),
+                    options(pure, readonly, nostack, preserves_flags),
+                );
+            }
+            (base, machine)
+        };
+        #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
+        let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
+        let receiver = unsafe { &*base.add(record as usize) };
+        unsafe { &*machine }.own_field_hint_hit::<FORM>(i.field_hint(), receiver)
+    }
+}
+
 script_handler! {
     /// The record range is fixed for the owning heap's lifetime; only this value's type
     /// and shape vary. Each resolved record borrow ends before the next instruction.
     fn lane_get_field_own_bound<THIS: bool, FORM: u32>(cx, r, ip, i, view) {
-        let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
-            let record = object.direct_object_index()?;
-            // SAFETY: binding preceded handler installation; the rooted direct Value names
-            // a live record of this range. Resumption binds an initially empty outer context.
-            #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
-            let (base, machine) = {
-                const {
-                    assert!(std::mem::offset_of!(LaneContext<H>, vm)
-                        == std::mem::offset_of!(LaneContext<H>, binding)
-                            + std::mem::offset_of!(LaneBinding, object_base)
-                            + std::mem::size_of::<*const Object>());
-                }
-                let base: *const Object;
-                let machine: *const Vm<H>;
-                // SAFETY: the asserted adjacent pointer fields belong to this live context.
-                // Loading both together starts the independent heap lookup before the shape
-                // branch, instead of delaying the VM load until after that branch.
-                unsafe {
-                    std::arch::asm!(
-                        "ldp {base}, {machine}, [{source}, #{offset}]",
-                        base = out(reg) base,
-                        machine = out(reg) machine,
-                        source = in(reg) std::ptr::addr_of!((*cx).binding),
-                        offset = const std::mem::offset_of!(LaneBinding, object_base),
-                        options(pure, readonly, nostack, preserves_flags),
-                    );
-                }
-                (base, machine)
-            };
-            #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
-            let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
-            let receiver = unsafe { &*base.add(record as usize) };
-            unsafe { &*machine }.own_field_hint_hit::<FORM>(i.field_hint(), receiver)
-        });
+        let value = own_bound_value::<H, THIS, FORM>(cx, r, i);
         let Some(value) = value else {
             sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
         };
@@ -14792,7 +14801,11 @@ script_handler! {
         // callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            requicken::<H>(ip, native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i)));
+            let handler = native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i));
+            requicken::<H>(ip, handler);
+            if handler as *const () != lane_native_call::<H> as *const () {
+                native_calls::install_math_field_call::<H>(cx, ip, native);
+            }
         }
         sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
     }
@@ -15824,7 +15837,7 @@ pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_string_concat, lane_d
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
-use native_calls::{native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
+use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
 
@@ -19590,6 +19603,7 @@ impl FieldHit {
         if handler == lane_get_field_own::<H, true> as *const ()
             || handler == lane_get_field_own::<H, false> as *const ()
             || own_bound_handlers::<H>().contains(&handler)
+            || math_field_call_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
         } else if handler == lane_get_field_holder::<H, true> as *const ()
