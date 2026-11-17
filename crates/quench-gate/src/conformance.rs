@@ -1,89 +1,76 @@
-//! Step 6: conformance smoke. A checked-in subset of test262 (`crates/quench-test262/smoke.txt`)
-//! and of the WebAssembly spec tests (`crates/quench-wasm-test/smoke.txt`) runs in every
-//! execution mode through the existing runners (`run-test`, `run`); any failure fails the step.
-//! Both lists hold paths below their corpus (git submodules), one per line, `#` for comments.
+//! Step 6: the conformance suites. All of test262 (`run-all`) and the WebAssembly spec suite
+//! (`run`) in every trunk execution mode; a test262 test that timed out is run again alone
+//! (`run-test`) before it counts, since a timeout under load says nothing about the engine.
 
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
-use crate::{config::Config, pool, process, step::Verdict, tiers};
+use crate::{build::{TEST262_CASE as TEST262_RUNNER, TEST262_SUITE as SUITE_RUNNER, WASM_SUITE as WASM_RUNNER}, config::Config, process, step::Verdict, tiers};
 
-const TEST262_LIST: &str = "crates/quench-test262/smoke.txt";
-const WASM_LIST: &str = "crates/quench-wasm-test/smoke.txt";
 const TEST262_ROOT: &str = "tests/test262";
 const TEST262_ROOT_VARIABLE: &str = "TEST262_DIR";
+const TEST262_REPORT_VARIABLE: &str = "TEST262_REPORT";
+const TEST262_RATCHET_VARIABLE: &str = "TEST262_RATCHET";
+const TEST262_TESTS: &str = "test";
 const WASM_ROOT: &str = "crates/quench-wasm-test/testsuite";
-const TEST262_RUNNER: &str = "run-test";
-const WASM_RUNNER: &str = "run";
 const TEST262_TIMEOUT_VARIABLE: &str = "TEST262_TEST_TIMEOUT_MS";
 const WASM_TIMEOUT_VARIABLE: &str = "WASM_FILE_TIMEOUT_MS";
-/// The deadline of one test262 test and of one Wasm file, in milliseconds.
-const TEST_TIMEOUT_MS: &str = "120000";
+/// The deadline of one test262 test and of one Wasm file under the whole suite's load.
+const TEST262_TIMEOUT_MS: &str = "10000";
+const WASM_TIMEOUT_MS: &str = "60000";
 const REPORT: &str = "--report";
 const REPORT_DIRECTORY: &str = "quench-gate";
-const COMMENT: &str = "#";
-const REPORTED_LINES: usize = 3;
+/// The prefix of a test262 failure's reason when the test ran past its deadline.
+const TIMED_OUT: &str = "timed_out";
+/// The Wasm runner's summary of a run with no failure.
+const WASM_CLEAN: &str = " 0 failed";
 
-/// The non-comment lines of a list.
-fn read_list(path: &Path) -> Result<Vec<String>, String> {
-    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    Ok(text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with(COMMENT)).map(str::to_owned).collect())
+fn report_path(config: &Config, name: &str) -> PathBuf {
+    config.target.join(REPORT_DIRECTORY).join(name)
 }
 
-/// Why a run failed, as the first lines of what it said.
-fn reason(finished: &process::Finished) -> String {
-    let text = format!("{}{}", finished.stderr, finished.stdout);
-    text.lines().take(REPORTED_LINES).collect::<Vec<_>>().join(" | ")
+/// The failures of a test262 report that remain after each timeout ran again alone, as paths.
+fn remaining(config: &Config, report: &PathBuf, mode: &[&str], root: &PathBuf) -> Result<Vec<String>, String> {
+    let text = std::fs::read_to_string(report).map_err(|error| format!("{}: {error}", report.display()))?;
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|error| format!("{}: {error}", report.display()))?;
+    let runner = config.binary(TEST262_RUNNER)?;
+    let failures = json["failures"].as_array().cloned().unwrap_or_default();
+    Ok(failures.iter().filter_map(|failure| {
+        let path = failure["path"].as_str()?.to_owned();
+        let timed_out = failure["reason"].as_str().is_some_and(|reason| reason.starts_with(TIMED_OUT));
+        let passes_alone = timed_out && process::run(config.command(&runner).args(mode).arg(root.join(TEST262_TESTS).join(&path))
+            .env(TEST262_ROOT_VARIABLE, root)).is_ok_and(|finished| finished.success);
+        (!passes_alone).then_some(path)
+    }).collect())
 }
 
-/// Whether the corpus under `root` lacks the list's first test: the submodule is not checked out.
-fn absent(root: &Path, list: &[String]) -> bool {
-    list.first().is_none_or(|first| !root.join(first).exists())
+/// All of test262 in `mode`: its summary line, or its failures.
+fn test262(config: &Config, mode: &[&str], name: &str) -> Result<String, String> {
+    let root = env::var_os(TEST262_ROOT_VARIABLE).map_or_else(|| config.root.join(TEST262_ROOT), PathBuf::from);
+    let report = report_path(config, &format!("test262.{name}.json"));
+    let run = process::run(config.command(config.binary(SUITE_RUNNER)?).args(mode).env(TEST262_ROOT_VARIABLE, &root)
+        .env(TEST262_REPORT_VARIABLE, &report).env(TEST262_RATCHET_VARIABLE, report_path(config, &format!("ratchet.{name}.json")))
+        .env(TEST262_TIMEOUT_VARIABLE, TEST262_TIMEOUT_MS))?;
+    let failures = remaining(config, &report, mode, &root)?;
+    let summary = run.stdout.lines().last().unwrap_or_default().to_owned();
+    if failures.is_empty() { Ok(summary) } else { Err(format!("test262 {name}: {}\n  {}", summary, failures.join("\n  "))) }
 }
 
-fn test262_root(config: &Config) -> PathBuf {
-    env::var_os(TEST262_ROOT_VARIABLE).map_or_else(|| config.root.join(TEST262_ROOT), PathBuf::from)
-}
-
-/// Runs one test262 test in `mode`; the failure, if it fails.
-fn test262_case(config: &Config, runner: &Path, root: &Path, mode: &str, test: &str) -> Option<String> {
-    let mut command = config.command(runner);
-    command.arg(mode).arg(root.join(test)).env(TEST262_ROOT_VARIABLE, root).env(TEST262_TIMEOUT_VARIABLE, TEST_TIMEOUT_MS);
-    match process::run(&mut command) {
-        Ok(finished) if finished.success => None,
-        Ok(finished) => Some(format!("test262 {mode} {test}: {}", reason(&finished))),
-        Err(error) => Some(error),
-    }
-}
-
-/// Runs the Wasm `files` in `mode`; the failure, if one fails.
-fn wasm_files(config: &Config, runner: &Path, mode: &str, files: &[PathBuf]) -> Option<String> {
-    let report = config.target.join(REPORT_DIRECTORY).join(format!("wasm{mode}.json"));
-    let mut command = config.command(runner);
-    command.arg(mode).arg(REPORT).arg(report).args(files).env(WASM_TIMEOUT_VARIABLE, TEST_TIMEOUT_MS);
-    match process::run(&mut command) {
-        Ok(finished) if finished.success => None,
-        Ok(finished) => Some(format!("wasm {mode}: {}", reason(&finished))),
-        Err(error) => Some(error),
-    }
+/// The WebAssembly spec suite in `mode`: its summary line, or why it failed.
+fn wasm(config: &Config, mode: &[&str], name: &str) -> Result<String, String> {
+    let run = process::run(config.command(config.binary(WASM_RUNNER)?).args(mode).arg(REPORT).arg(report_path(config, &format!("wasm.{name}.json")))
+        .arg(config.root.join(WASM_ROOT)).env(WASM_TIMEOUT_VARIABLE, WASM_TIMEOUT_MS))?;
+    let summary = run.stdout.lines().rev().find(|line| line.contains(" failed")).unwrap_or_default().to_owned();
+    if summary.contains(WASM_CLEAN) { Ok(summary) } else { Err(format!("wasm {name}: {summary}\n{}", run.excerpt())) }
 }
 
 pub fn run(config: &Config) -> Verdict {
-    let (test262, wasm) = (read_list(&config.root.join(TEST262_LIST))?, read_list(&config.root.join(WASM_LIST))?);
-    let (root, wasm_root) = (test262_root(config), config.root.join(WASM_ROOT));
-    if absent(&root, &test262) || absent(&wasm_root, &wasm) {
-        return Err(format!("the corpora are not checked out ({} and {WASM_ROOT}): git submodule update --init", root.display()));
+    let mut passed = Vec::new();
+    let mut failed = Vec::new();
+    for (name, flag) in tiers::TRUNK_MODES {
+        let mode: Vec<&str> = flag.into_iter().collect();
+        for result in [test262(config, &mode, name), wasm(config, &mode, name)] {
+            match result { Ok(summary) => passed.push(format!("{name}: {summary}")), Err(failure) => failed.push(failure) }
+        }
     }
-    let (runner, wasm_runner) = (config.binary(TEST262_RUNNER)?, config.binary(WASM_RUNNER)?);
-    let modes: Vec<String> = tiers::modes().collect();
-    let files: Vec<PathBuf> = wasm.iter().map(|name| wasm_root.join(name)).collect();
-    let cases: Vec<(&String, &String)> = modes.iter().flat_map(|mode| test262.iter().map(move |test| (mode, test))).collect();
-    let mut failures = pool::failures(config.jobs, &cases, |(mode, test)| test262_case(config, &runner, &root, mode, test));
-    failures.extend(pool::failures(config.jobs, &modes, |mode| wasm_files(config, &wasm_runner, mode, &files)));
-    if !failures.is_empty() {
-        return Err(failures.join("\n"));
-    }
-    Ok(format!("{} test262 tests and {} Wasm files pass in {} modes", test262.len(), wasm.len(), modes.len()))
+    if failed.is_empty() { Ok(format!("test262 and Wasm pass in {} modes\n{}", tiers::TRUNK_MODES.len(), passed.join("\n"))) } else { Err(failed.join("\n")) }
 }

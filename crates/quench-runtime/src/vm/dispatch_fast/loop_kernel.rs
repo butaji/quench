@@ -56,12 +56,19 @@ pub(super) struct LoopKernel {
     scratch: std::cell::UnsafeCell<Vec<f64>>,
 }
 
+/// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
+/// that interprets its recurrences per iteration is not under `--b-jit`: the loop's stencils run
+/// it faster (crc), while a fold or chain runs faster than they do (sum, dot).
+fn pass(shape: &Shape) -> Option<recur::Recurrence> {
+    recur::Recurrence::of(shape).filter(|recurrence| !(crate::jit_mode::base_only() && recurrence.interprets()))
+}
+
 impl LoopKernel {
     /// Whether the loop `header..=backedge` has a kernel: `--b-jit` leaves such a loop to it, as
     /// its stencils run it slower (`install_loop_sites`).
     pub(super) fn accepts(decoded: &[WideInstruction], constants: &[Value], function: &Function, header: usize, backedge: usize) -> bool {
         Shape::of(decoded, constants, usize::from(function.registers), header, backedge)
-            .is_some_and(|shape| recur::Recurrence::of(&shape).is_some())
+            .is_some_and(|shape| pass(&shape).is_some())
     }
 
     /// The registered kernel of the loop `header..=backedge`, if it has one.
@@ -80,7 +87,7 @@ impl LoopKernel {
             }
             return None;
         };
-        let recurrence = recur::Recurrence::of(&shape);
+        let recurrence = pass(&shape);
         if trace {
             eprintln!("loop-kernel: loop {header}..{backedge}: {}", if recurrence.is_some() { "kernel" } else { "no recurrence pass" });
         }

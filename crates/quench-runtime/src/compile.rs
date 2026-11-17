@@ -2971,12 +2971,6 @@ impl<'a> Compiler<'a> {
             .body
             .as_ref()
             .map_or(&[][..], |body| body.statements.as_slice());
-        let strict = context.inherited_strict
-            || function.body.as_ref().is_some_and(|body| {
-                body.directives
-                    .iter()
-                    .any(|directive| directive.directive == "use strict")
-            });
         let id = self.compile_function(
             None,
             &params,
@@ -2993,13 +2987,23 @@ impl<'a> Compiler<'a> {
                 prototype_unobservable: false,
                 super_home: true,
                 super_home_atom: Some(context.home_atom),
-                strict,
+                strict: Self::function_is_strict(context.inherited_strict, function),
                 ..FunctionOptions::default()
             },
         );
         context.scopes = context.scopes.into_memo();
         self.record_replay_call(id, entry, private_names, replay::ReplayCall::ObjectMethod(context));
         id
+    }
+
+    /// Whether `function` is strict: inherited strict, or its body opens with a `"use strict"` directive.
+    fn function_is_strict(inherited: bool, function: &oxc_ast::ast::Function<'_>) -> bool {
+        inherited
+            || function.body.as_ref().is_some_and(|body| {
+                body.directives
+                    .iter()
+                    .any(|directive| directive.directive == "use strict")
+            })
     }
 
     /// A class's method, getter or setter, compiled from its syntax and `context`.

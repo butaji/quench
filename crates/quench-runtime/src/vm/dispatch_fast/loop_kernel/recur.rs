@@ -161,6 +161,12 @@ impl Recurrence {
         })
     }
 
+    /// Whether the pass interprets its recurrences per iteration (`Machine`) rather than
+    /// running them as fused or chained loops.
+    pub(super) fn interprets(&self) -> bool {
+        matches!(self.pass, Pass::Machine(_))
+    }
+
     /// The pass of a single recurrence whose cycle is a chain (`cycle`), whose other nodes
     /// read columns only.
     fn single(shape: &Shape) -> Option<Self> {

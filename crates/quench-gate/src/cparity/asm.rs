@@ -17,7 +17,7 @@ const NOP_PREFIX: &str = "nop";
 /// Mnemonics after which execution does not continue with the next instruction.
 const NO_FALL_THROUGH: [&str; 4] = [UNCONDITIONAL_JUMP, "ret", "retq", "ud2"];
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Instruction {
     pub address: u64,
     pub text: String,

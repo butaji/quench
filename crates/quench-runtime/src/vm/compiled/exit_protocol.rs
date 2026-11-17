@@ -11,7 +11,7 @@
 //! The b-jit leave stubs (`base_region::link`) emit `LaneExit::Entry.word()` and so share the
 //! encoding; their per-stub tables are not built from an `ExitTable` (documented adapter).
 
-use super::{lane_unit, LaneExit, LoopOutcome, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, LANE_BODY_THREW, NATIVE_JS_STOPPED, TERMINATED_STATUS};
+use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, LANE_BODY_THREW, NATIVE_JS_STOPPED, TERMINATED_STATUS};
 use super::entry_cell::LANE_BODY_NOT_ENTERED;
 use crate::value::Value;
 
@@ -88,6 +88,12 @@ impl LaneExit {
         }
     }
 
+    /// Whether the run entered nothing: its entry contract failed or the cell held the stub, so
+    /// the registers are as the run found them.
+    pub(in crate::vm) fn entered_nothing(self) -> bool {
+        matches!(self, Self::Entry | Self::Stub)
+    }
+
     /// Whether a leave at a caller PC is one of `range`'s (a loop's PCs); other leaves are
     /// inside the loop unless they complete or terminate the run.
     pub(in crate::vm) fn inside(self, range: std::ops::RangeInclusive<u32>) -> bool {
@@ -99,24 +105,37 @@ impl LaneExit {
     }
 }
 
-impl LoopOutcome {
-    /// The outcome of a loop region's run that ended at `exit`. A leave outside the loop is
-    /// its normal continuation, which the lane resumes at that PC; a guard inside the loop is
-    /// an exit. The leave already names the caller's PC, and an inlining region's loop ends at
-    /// the caller's latch, not at the region's last instruction.
-    pub(super) fn of(exit: LaneExit, region: &LoopRegion) -> Self {
-        match exit {
-            LaneExit::At(pc) => {
-                let latch = region.inlining.as_ref().map_or(region.backedge, |inlining| inlining.latch);
-                if exit.inside(region.header..=latch) { Self::Exit(pc as u32) } else { Self::Resume(pc as u32) }
-            }
-            LaneExit::Entry | LaneExit::Stub => Self::NotEntered,
-            LaneExit::Terminated => Self::Terminated,
-            LaneExit::Callee => Self::Callee,
-            LaneExit::Inlined { frame, pc } => Self::Inlined { frame, pc },
-            LaneExit::Returned { pc, value } => Self::Returned { pc: pc as u32, value },
-            LaneExit::Threw { pc } => Self::Threw { pc: pc as u32 },
-        }
+/// How a loop region's run ended: its exit, in the one vocabulary every tier's leave word
+/// decodes to, and whether it ended inside the native frames a callee's entry pushed on the lane
+/// stack, where the lane reads and continues it (`dispatch_fast::lane_region_left`). Whether a
+/// leave at a caller PC is a guard inside the loop or the loop's normal continuation is a
+/// function of the region (`LoopRegion::holds_exit`), not a second exit vocabulary.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::vm) struct RegionRun {
+    pub(in crate::vm) exit: LaneExit,
+    pub(in crate::vm) nested: bool,
+}
+
+impl RegionRun {
+    /// A run that ended in the region's own activation.
+    pub(in crate::vm) const fn own(exit: LaneExit) -> Self {
+        Self { exit, nested: false }
+    }
+
+    /// Whether the run left the region before its loop was done: a guard inside the loop, a leave
+    /// in an inlined or entered callee, or a call that made its callee's activation.
+    pub(in crate::vm) fn left(&self, region: &LoopRegion) -> bool {
+        self.nested || matches!(self.exit, LaneExit::Inlined { .. } | LaneExit::Callee) || region.holds_exit(self.exit)
+    }
+}
+
+impl LoopRegion {
+    /// Whether `exit` is a leave at one of the loop's own PCs: a guard's exit, which the general
+    /// path executes, rather than the jump past the loop the lane resumes at. An inlining
+    /// region's loop ends at the caller's latch, not at the region's last instruction.
+    pub(in crate::vm) fn holds_exit(&self, exit: LaneExit) -> bool {
+        let latch = self.inlining.as_ref().map_or(self.backedge, |inlining| inlining.latch);
+        matches!(exit, LaneExit::At(_)) && exit.inside(self.header..=latch)
     }
 }
 

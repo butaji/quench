@@ -46,9 +46,13 @@ impl Lowering<'_, '_> {
     /// The exact shape of the own slot `instruction`'s field access reads or stores, where it has
     /// one native read or store of a direct object's own slot.
     fn access_shape(&self, instruction: WideInstruction) -> Option<u32> {
-        let site = match instruction.field_lookup() {
-            Some(FieldLookup::Atom { cache_site, .. }) if instruction.op().is_get_field() => cache_site,
-            _ if instruction.op().is_field_store() => instruction.cache_site_index(),
+        // A get names its site in its field lookup, a store in its cache site operand.
+        let site = match instruction.op() {
+            op if op.is_get_field() => match instruction.field_lookup() {
+                Some(FieldLookup::Atom { cache_site, .. }) => cache_site,
+                _ => return None,
+            },
+            op if op.is_field_store() => instruction.cache_site_index(),
             _ => return None,
         };
         let [load] = site_loads(self.fields, site)?.as_slice() else { return None };

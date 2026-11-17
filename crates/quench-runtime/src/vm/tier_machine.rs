@@ -97,15 +97,10 @@ pub(super) fn transition(from: TierState, event: TierEvent) -> Option<TierState>
     TRANSITIONS.iter().find(|(state, on, _)| *state == from && *on == event).map(|row| row.2)
 }
 
-/// The tier a published lane body runs at in this process.
-pub(super) fn published_tier() -> Tier {
-    if quick_only() { Tier::Quick } else { Tier::Ultra }
-}
-
 /// Publishes `method` to `cell` as the effect of `Publish` from `from`; the new state, or
 /// `None` (nothing published) where the machine does not take the transition.
 pub(super) fn publish(cell: &EntryCell, from: TierState, method: &PublishedLaneMethod) -> Option<TierState> {
-    let to = transition(from, Publish(published_tier()))?;
+    let to = transition(from, Publish(super::compiled::tier_policy::lane_body_tier()))?;
     cell.publish(method);
     Some(to)
 }

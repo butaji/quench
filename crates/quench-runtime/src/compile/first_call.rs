@@ -133,6 +133,9 @@ impl<'a> ChunkWindow<'a> {
     }
 }
 
+/// The length of the `({` a class method's chunk text is wrapped in, before its place.
+const METHOD_WRAPPER_PREFIX: u32 = 2;
+
 /// A stub's function text as its chunk compiles it, with where the function starts in the
 /// program's text. An arrow function, or an anonymous function expression, is no statement: it compiles
 /// parenthesized, one character before its place, so the function itself starts where it did.
@@ -147,7 +150,7 @@ impl<'a> ChunkText<'a> {
     pub(super) fn of(source: &'a crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, method: bool) -> Option<Self> {
         let snippet = source.text.get(span.start as usize..span.end as usize)?;
         if method {
-            let start = span.start.checked_sub(2)?;
+            let start = span.start.checked_sub(METHOD_WRAPPER_PREFIX)?;
             return Some(Self { text: std::borrow::Cow::Owned(format!("({{{snippet}}})")), start });
         }
         let anonymous = !snippet.starts_with("function")

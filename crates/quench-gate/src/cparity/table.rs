@@ -13,12 +13,26 @@ use super::classes::{FIELD_COUNT, Fields, field_names};
 const UNRECORDED: &str = "-";
 /// A row for a kernel whose tier compiles no loop at all.
 const LOOPLESS: &str = "none";
+/// A row for a kernel whose hot loop the interpreter's loop kernel runs: the tier compiles none.
+const KERNEL: &str = "kernel";
 const COMMENT: char = '#';
 
 #[derive(Debug, PartialEq, Eq)]
 enum Row {
     Loopless,
+    Kernel,
     Limits([Option<u32>; FIELD_COUNT]),
+}
+
+/// What a tier ran a kernel's hot loop as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Measured {
+    /// Compiled code, by what its hottest loop spends per iteration.
+    Code(Fields),
+    /// The interpreter's loop kernel.
+    Kernel,
+    /// Neither: the tier compiled no hot loop.
+    Nothing,
 }
 
 /// The rows by kernel and tier name.
@@ -73,8 +87,10 @@ fn settle_field(limit: &mut Option<u32>, value: u32, record: bool) -> Settled {
 
 impl Row {
     fn parse(fields: &[&str]) -> Result<Self, String> {
-        if fields == [LOOPLESS] {
-            return Ok(Self::Loopless);
+        match fields {
+            [LOOPLESS] => return Ok(Self::Loopless),
+            [KERNEL] => return Ok(Self::Kernel),
+            _ => {}
         }
         let limits: Vec<Option<u32>> = fields
             .iter()
@@ -86,20 +102,34 @@ impl Row {
     fn render(&self) -> String {
         match self {
             Self::Loopless => LOOPLESS.to_owned(),
+            Self::Kernel => KERNEL.to_owned(),
             Self::Limits(limits) => limits.iter().map(|limit| limit.map_or_else(|| UNRECORDED.to_owned(), |limit| limit.to_string())).collect::<Vec<_>>().join(" "),
         }
     }
 
     /// A row recording a first measurement.
-    fn first(measured: Option<Fields>) -> Self {
-        measured.map_or(Self::Loopless, |fields| Self::Limits(fields.map(Some)))
+    fn first(measured: Measured) -> Self {
+        match measured {
+            Measured::Code(fields) => Self::Limits(fields.map(Some)),
+            Measured::Kernel => Self::Kernel,
+            Measured::Nothing => Self::Loopless,
+        }
     }
 
-    fn settle(&mut self, what: &str, measured: Option<Fields>, record: bool, tally: &mut Tally) {
-        match (self, measured) {
-            (Self::Loopless, _) => {}
-            (Self::Limits(_), None) => tally.failures.push(format!("{what}: no hot loop was compiled, but its ceilings are recorded")),
-            (Self::Limits(limits), Some(fields)) => {
+    /// Settles a measurement against the row. A loop moving between compiled code and the
+    /// interpreter's kernel is a tier decision, written only when recording is asked.
+    fn settle(&mut self, what: &str, measured: Measured, record: bool, tally: &mut Tally) {
+        match (&mut *self, measured) {
+            (Self::Loopless, _) | (Self::Kernel, Measured::Kernel) => {}
+            (Self::Kernel, Measured::Code(_)) | (Self::Limits(_), Measured::Kernel) if record => {
+                *self = Self::first(measured);
+                tally.recorded += 1;
+            }
+            (Self::Kernel, Measured::Code(_)) => tally.failures.push(format!("{what}: its kernel's loop is compiled now; record its ceilings")),
+            (Self::Limits(_), Measured::Kernel) => tally.failures.push(format!("{what}: the interpreter's kernel runs its loop now; record that")),
+            (Self::Kernel, Measured::Nothing) => tally.failures.push(format!("{what}: no kernel and no compiled code ran its hot loop")),
+            (Self::Limits(_), Measured::Nothing) => tally.failures.push(format!("{what}: no hot loop was compiled, but its ceilings are recorded")),
+            (Self::Limits(limits), Measured::Code(fields)) => {
                 for ((limit, value), name) in limits.iter_mut().zip(fields).zip(field_names()) {
                     let settled = settle_field(limit, value, record);
                     tally.add(settled, &format!("{what} {name}"), value);
@@ -126,7 +156,7 @@ impl Table {
     pub fn render(&self) -> String {
         let names: Vec<&str> = field_names().collect();
         let mut text = format!(
-            "{COMMENT} kernel tier {}: ceilings of the hottest loop's machine code per iteration; `{UNRECORDED}` is not recorded yet, `{LOOPLESS}` has no loop; the gate only lowers them\n",
+            "{COMMENT} kernel tier {}: ceilings of the hottest loop's machine code per iteration; `{UNRECORDED}` is not recorded yet, `{LOOPLESS}` has no loop, `{KERNEL}` runs as the interpreter's loop kernel; the gate only lowers them\n",
             names.join(" ")
         );
         for ((kernel, tier), row) in &self.0 {
@@ -135,8 +165,8 @@ impl Table {
         text
     }
 
-    /// Settles a kernel's measurement on a tier (`None`: it compiled no hot loop) against its row.
-    pub fn settle(&mut self, kernel: &str, tier: &str, measured: Option<Fields>, record: bool, tally: &mut Tally) {
+    /// Settles a kernel's measurement on a tier against its row.
+    pub fn settle(&mut self, kernel: &str, tier: &str, measured: Measured, record: bool, tally: &mut Tally) {
         let what = format!("{kernel} {tier}");
         match self.0.entry((kernel.to_owned(), tier.to_owned())) {
             Entry::Occupied(mut row) => row.get_mut().settle(&what, measured, record, tally),
@@ -153,13 +183,13 @@ impl Table {
 mod tests {
     use super::*;
 
-    const TEXT: &str = "# header\nsum u-jit 7 - - - - - - -  # seeded\nfib u-jit none\n";
+    const TEXT: &str = "# header\nsum u-jit 7 - - - - - - -  # seeded\nfib u-jit none\ndot b-jit kernel\n";
 
     #[test]
     fn a_table_round_trips_and_keeps_unrecorded_fields() {
         let table = Table::parse(TEXT).expect("parses");
         let rendered = table.render();
-        assert!(rendered.contains("sum u-jit 7 - - - - - - -\n") && rendered.contains("fib u-jit none\n"));
+        assert!(rendered.contains("sum u-jit 7 - - - - - - -\n") && rendered.contains("fib u-jit none\n") && rendered.contains("dot b-jit kernel\n"));
         assert_eq!(Table::parse(&rendered).expect("parses").0, table.0);
     }
 
@@ -167,10 +197,10 @@ mod tests {
     fn growth_fails_improvement_lowers_and_new_fields_wait_for_a_record() {
         let mut table = Table::parse(TEXT).expect("parses");
         let mut tally = Tally::default();
-        table.settle("sum", "u-jit", Some([8, 0, 0, 0, 0, 0, 0, 0]), false, &mut tally);
+        table.settle("sum", "u-jit", Measured::Code([8, 0, 0, 0, 0, 0, 0, 0]), false, &mut tally);
         assert_eq!((tally.failures.len(), tally.unrecorded), (1, FIELD_COUNT - 1));
         let mut tally = Tally::default();
-        table.settle("sum", "u-jit", Some([5, 0, 0, 0, 0, 0, 0, 0]), true, &mut tally);
+        table.settle("sum", "u-jit", Measured::Code([5, 0, 0, 0, 0, 0, 0, 0]), true, &mut tally);
         assert_eq!((tally.failures.len(), tally.lowered, tally.recorded), (0, 1, FIELD_COUNT - 1));
         assert!(table.render().contains("sum u-jit 5 0 0 0 0 0 0 0\n"));
     }
@@ -179,9 +209,23 @@ mod tests {
     fn a_missing_loop_fails_only_where_ceilings_are_recorded() {
         let mut table = Table::parse(TEXT).expect("parses");
         let mut tally = Tally::default();
-        table.settle("sum", "u-jit", None, false, &mut tally);
-        table.settle("fib", "u-jit", None, false, &mut tally);
-        table.settle("dot", "u-jit", None, false, &mut tally);
+        table.settle("sum", "u-jit", Measured::Nothing, false, &mut tally);
+        table.settle("fib", "u-jit", Measured::Nothing, false, &mut tally);
+        table.settle("dot", "u-jit", Measured::Nothing, false, &mut tally);
         assert_eq!((tally.failures.len(), tally.unrecorded), (1, 1));
+    }
+
+    #[test]
+    fn a_kernel_row_holds_while_the_kernel_runs_and_moves_only_on_a_record() {
+        let mut table = Table::parse(TEXT).expect("parses");
+        let mut tally = Tally::default();
+        table.settle("dot", "b-jit", Measured::Kernel, false, &mut tally);
+        assert!(tally.failures.is_empty());
+        table.settle("dot", "b-jit", Measured::Nothing, false, &mut tally);
+        table.settle("dot", "b-jit", Measured::Code([9, 0, 0, 0, 0, 0, 0, 0]), false, &mut tally);
+        table.settle("sum", "u-jit", Measured::Kernel, false, &mut tally);
+        assert_eq!(tally.failures.len(), 3);
+        table.settle("dot", "b-jit", Measured::Code([9, 0, 0, 0, 0, 0, 0, 0]), true, &mut tally);
+        assert!(table.render().contains("dot b-jit 9 0 0 0 0 0 0 0\n"));
     }
 }

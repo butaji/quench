@@ -2,7 +2,7 @@
 //! generator's thread compiles, and the next look publishes the code.
 
 use super::{
-    compile_native_function, dump_native_bytes, dump_native_code, names_length, native_dump_directory, lane_unit, osr_loop,
+    compile_native_function, dump_native_bytes, dump_native_code, DumpSite, names_length, native_dump_directory, lane_unit, osr_loop,
     publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
@@ -335,7 +335,7 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let built = unsafe { build_region(region, &spec, views, &calls.callees, helpers) };
     let Ok(Body { code, bare, frames, records, stable, atoms, holders, layouts, slot_types, resumes, .. }) = built else { return base_only.then_some(None) };
     if let Some(directory) = native_dump_directory() {
-        dump_native_bytes(directory, region.header, &code, None, "");
+        dump_native_bytes(directory, DumpSite::Loop { header: region.header }, &code, None, "");
     }
     let calls = CallCode::of((frames, calls.callees.owned, records), registers, invalidation);
     let facts = OsrFacts { stable: StableFacts { globals: stable, holders, atoms, layouts, slots: slot_types, ..Default::default() },
@@ -434,7 +434,7 @@ impl PendingOsrRegion {
         let Some((memory, entry)) = publish_body(&code) else { return Ok(OsrCompile::Failed) };
         super::entry_cell::reserve_lane_scratch(calls.window());
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {
-            dump_native_code(directory, header, &memory, &clif);
+            dump_native_code(directory, DumpSite::Loop { header }, &memory, &clif);
         }
         Ok(OsrCompile::Done(CompiledOsrRegion { code: memory, entry, facts, crossing, resumes, calls }))
     }

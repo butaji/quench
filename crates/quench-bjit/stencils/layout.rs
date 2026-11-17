@@ -78,7 +78,7 @@ pub(crate) struct NativeFunctionLayout {
 }
 
 pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLayout {
-    record_size: 48,
+    record_size: 40,
     object_offset: 0,
 };
 

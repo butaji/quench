@@ -46,6 +46,7 @@ fn lane_dependencies_retire_at_holder_departures_only() {
         let dependencies = LaneDependencies {
             slots: vec![SlotDependency { shape: 1, slot: 0, ty: Type::INT32 }],
             departure_shapes: if holder { vec![1] } else { Vec::new() },
+            callees: Vec::new(),
         };
         let code: Rc<dyn DependentCode> = Rc::new(PublishedCode::new(()));
         assert!(dependencies.subscribe(&Default::default(), &code, &mut heap, &mut CodeReaders::default()));

@@ -223,10 +223,8 @@ fn an_inlined_math_imul_matches_the_interpreter_across_arguments_and_replacement
       for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
       print(total);
     "#;
-    let run = |mode, lane_methods| printed(source, "lane-body-imul.js", mode, lane_methods);
-    let interpreted = run(crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 1);
-    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed.len(), 1);
 }
 
 /// Each Math function a body runs inline (`native_calls::Inline`) gives the native's value
@@ -260,10 +258,8 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
       for (let call = 0; call < 300; call++) sweep();
       print(hash, Math.max(), Math.min(), Math.floor(), Math.max(1, 2, 3));
     "#;
-    let run = |mode, lane_methods| printed(source, "lane-body-math.js", mode, lane_methods);
-    let interpreted = run(crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 2);
-    assert_eq!(run(crate::ExecutionMode::Compiled, true), interpreted);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed.len(), 2);
 }
 
 /// A function entered a few times whose loop is hot, and leaves at its calls, gets its lane body
@@ -318,9 +314,8 @@ fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
       for (let repeat = 0; repeat < 700; repeat++) result += total("quench-lane", 24);
       print(result + " " + total({ length: 2, charCodeAt: (i) => i * 7 }, 9));
     "#;
-    let interpreted = printed(source, "lane-direct-natives.js", crate::ExecutionMode::Interpreted, false);
-    assert_eq!(interpreted.len(), 1);
-    assert_eq!(printed(source, "lane-direct-natives.js", crate::ExecutionMode::Compiled, true), interpreted);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    assert_eq!(run.outcome.printed.len(), 1);
 }
 
 /// A lane body whose activation holds an environment runs it natively: its own locals
@@ -429,17 +424,18 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
 
 /// A loop over a typed array runs as a b-jit region whose element and `length` rows read the typed view its entry
 /// recorded (`LoopEntry::push_array`), one row per element kind; the stores convert as the interpreter's do (the clamp,
-/// ToInt32, the binary32 rounding). The functions that index a typed parameter have no body (it would leave at its
-/// first element), so nothing leaves.
+/// ToInt32, the binary32 rounding). Each loop carries two recurrences, which the interpreter's kernel would interpret
+/// per iteration, so the loop is b-jit's and not the kernel's. The functions that index a typed parameter
+/// have no body (it would leave at its first element), so nothing leaves.
 #[test]
 fn a_loop_over_a_typed_array_runs_as_a_base_region_that_never_leaves() {
     for kind in ["Float64Array", "Int32Array", "Uint8ClampedArray", "Float32Array", "Int8Array"] {
         let source = format!(r#"(function () {{
-          function fill(a) {{ for (let i = 0; i < a.length; i++) a[i] = i * 0.25 - 3; }}
-          function sum(a) {{ let s = 0; for (let i = 0; i < a.length; i++) s = s + a[i]; return s; }}
+          function fill(a) {{ let c = 0, d = 0; for (let i = 0; i < a.length; i++) {{ a[i] = i * 0.25 - 3; c = c ^ i; d = d | i; }} return c + d; }}
+          function sum(a) {{ let s = 0, c = 0; for (let i = 0; i < a.length; i++) {{ s = s + a[i]; c = c ^ i; }} return s + c; }}
           const a = new {kind}(2000);
           let total = 0;
-          for (let round = 0; round < 12; round++) {{ fill(a); total = total + sum(a); }}
+          for (let round = 0; round < 12; round++) {{ total = total + fill(a) + sum(a); }}
           globalThis.answer = total;
         }})();"#);
         let run = assert_tier_agrees(&source, Tier::BJit, Expect { completed: 0, leaves: 0 });

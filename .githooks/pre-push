@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# A push to a protected branch carries only a commit whose tree has a full quench-gate pass
+# record (`refs/notes/gate`, written by the gate when every step passes on a clean tree). The
+# record lives in the clone that ran the gate (the git proxy takes no refs/notes pushes), so the
+# integrator gates the exact commit it pushes and mirrors the tree hash on the landing issue.
+# Install once per clone:
+#   git config core.hooksPath .githooks
+# Git feeds the hook "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+set -eu
+
+protected="refs/heads/v2-merged refs/heads/v2-jit"
+
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  case " $protected " in *" $remote_ref "*) ;; *) continue ;; esac
+  tree=$(git rev-parse "$local_sha^{tree}")
+  if ! git notes --ref=gate show "$local_sha" 2>/dev/null | grep -q "^gate pass tree=$tree "; then
+    echo "pre-push: $local_sha has no gate pass record for tree $tree; run quench-gate on it first" >&2
+    exit 1
+  fi
+done
+exit 0

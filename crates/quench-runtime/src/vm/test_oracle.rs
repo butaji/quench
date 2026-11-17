@@ -54,6 +54,13 @@ pub(super) struct Outcome {
     pub(super) answer: Option<u64>,
 }
 
+impl Outcome {
+    /// The `answer` global as a Number, whatever its representation (an int32 or a double).
+    pub(super) fn answer_number(&self) -> Option<f64> {
+        self.answer.map(Value::from_bits).and_then(Value::as_number)
+    }
+}
+
 /// A run's outcome and what its VM's tiers did.
 pub(super) struct Run {
     pub(super) outcome: Outcome,
@@ -90,15 +97,23 @@ pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, j
 /// Runs `source` after `scripts` in the interpreter and under `tier`, asserts that the outcomes
 /// agree and that the tier engaged as `expect` says; the tier's run.
 pub(super) fn assert_tier_agrees_after(scripts: &[(&str, &str)], source: &str, tier: Tier, expect: Expect) -> Run {
+    let compiled = assert_outcomes_agree_after(scripts, source, tier);
+    let events = &compiled.events;
+    assert!(events.count(Event::Entered) > 0 || compiled.regions() > 0, "{tier:?} did not engage: no body or region ran: {events:?}");
+    assert!(events.count(Event::Completed) >= expect.completed, "{tier:?}: {expect:?} not met: {events:?}");
+    assert!(events.leaves() <= expect.leaves, "{tier:?}: {expect:?} not met: {events:?}");
+    compiled
+}
+
+/// Runs `source` after `scripts` in the interpreter and under `tier`, and asserts that the
+/// outcomes agree, whatever the tier ran; the tier's run. A program whose point is its semantics,
+/// not a tier's engagement, is held to this alone.
+pub(super) fn assert_outcomes_agree_after(scripts: &[(&str, &str)], source: &str, tier: Tier) -> Run {
     let interpreted = run(source, scripts, ExecutionMode::Interpreted, JitMode::Full);
     forced_miss::arm(match tier { Tier::Forced(guard) => Some(guard), _ => None });
     let compiled = run(source, scripts, ExecutionMode::Compiled, tier.jit_mode());
     forced_miss::arm(None);
     assert_eq!(compiled.outcome, interpreted.outcome, "{tier:?} ended unlike the interpreter");
-    let events = &compiled.events;
-    assert!(events.count(Event::Entered) > 0 || compiled.regions() > 0, "{tier:?} did not engage: no body or region ran: {events:?}");
-    assert!(events.count(Event::Completed) >= expect.completed, "{tier:?}: {expect:?} not met: {events:?}");
-    assert!(events.leaves() <= expect.leaves, "{tier:?}: {expect:?} not met: {events:?}");
     compiled
 }
 

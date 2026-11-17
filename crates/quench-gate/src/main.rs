@@ -1,20 +1,25 @@
 //! `quench-gate`: the single definition of green. It runs the build check, the exact lint
-//! ratchets, the census, the oracle tests, the C-parity gate and the conformance smoke, in
+//! ratchets, the census, every library test (with and without debug assertions), the C-parity gate and the conformance suites, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
-//! usage: quench-gate [--quick] [--jobs N] [--record]
+//! usage: quench-gate [--quick] [--jobs N] [--record] [--passed]
 //! `--quick` runs only the lint, census and C-parity steps; `--record` writes the C-parity
-//! ceilings that have no value yet.
+//! ceilings that have no value yet. A full run that passes on a clean tree records the tree
+//! (`passed.rs`); `--passed` only answers whether the checked-out tree has that record.
 
 mod build;
 mod census;
 mod config;
 mod conformance;
 mod cparity;
+mod debug;
 mod lint;
+mod no_jit_ir;
 mod oracle;
-mod pool;
+mod owners;
+mod passed;
 mod process;
+mod ratchet;
 mod runtime_tests;
 mod step;
 mod tiers;
@@ -27,12 +32,14 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 6] = [
+const STEPS: [Step; 8] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
-    Step { name: "oracle", quick: false, blocking: false, run: oracle::run },
+    Step { name: "library", quick: false, blocking: false, run: oracle::run },
+    Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
+    Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
 ];
 
@@ -58,7 +65,27 @@ fn main() -> ExitCode {
             return ExitCode::from(USAGE_ERROR);
         }
     };
+    if config.passed {
+        return report(passed::check(&config));
+    }
     let outcomes = run(&config);
     step::print(&outcomes);
-    if outcomes.iter().all(|outcome| outcome.passed) { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    let all_passed = outcomes.iter().all(|outcome| outcome.passed);
+    let recorded = passed::record(&config, &outcomes);
+    println!("\npass record: {}", recorded.unwrap_or_else(|reason| reason));
+    if all_passed { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+}
+
+/// Prints where the pass record is, or why there is none, and exits accordingly.
+fn report(record: Result<String, String>) -> ExitCode {
+    match record {
+        Ok(note) => {
+            println!("passed: {note}");
+            ExitCode::SUCCESS
+        }
+        Err(reason) => {
+            eprintln!("quench-gate: {reason}");
+            ExitCode::FAILURE
+        }
+    }
 }

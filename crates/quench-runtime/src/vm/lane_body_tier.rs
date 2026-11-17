@@ -160,17 +160,23 @@ impl LaneView {
         u32::from(self.tiers.lane_body.warmup()) << self.tier().history.get().lifetimes.min(MAX_DOUBLINGS)
     }
 
-    /// The bytecodes one entry runs inside its loops: each loop's iteration span times the mean
-    /// trip count its region's runs took (loops without a native run count one iteration).
+    /// The bytecodes one entry runs in the interpreter inside its loops: each loop that runs in no
+    /// region, its iteration span times its mean trip count (one iteration without a native run).
     pub(in crate::vm) fn loop_work(&self) -> u64 {
-        self.loops.iter().map(|site| site.span() * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
+        self.loops.iter().filter(|site| !site.runs_region()).map(|site| site.span() * site.tier.borrow().mean_trip().unwrap_or(1)).sum()
+    }
+
+    /// The native runs of the function's loops that run in a region entered from the lane: each
+    /// crossed into native code, which the function's own body would run without a crossing.
+    pub(in crate::vm) fn region_runs(&self) -> u64 {
+        self.loops.iter().filter(|site| site.runs_region()).map(|site| site.tier.borrow().runs()).sum()
     }
 
     /// Whether a closed loop of the function runs in a region that has run natively and still
     /// enters it: its calls pay that region's entry, which the function's own body would not.
     /// A region that never ran (its compile was refused) makes none of the work native.
     pub(in crate::vm) fn enters_region(&self) -> bool {
-        self.loops.iter().any(|site| site.call_boundary_pcs.is_empty() && site.active_region().is_some() && site.enters() && site.native_region_runs.get() > 0)
+        self.loops.iter().any(super::LoopSite::runs_region)
     }
 
     /// Whether a function entered rarely, whose loops run no region that enters native code (its

@@ -439,7 +439,7 @@ impl LanePlan {
         let names_shapes = self.names_shapes();
         let memory = super::code_heap::publishing("u-jit-lane", self.function as usize, || CodeMemory::new(code))?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), self.lowered.clif.as_deref()) {
-            dump_native_code(directory, self.function, &memory, clif);
+            dump_native_code(directory, DumpSite::Body { function: self.function, scalar }, &memory, clif);
         }
         // SAFETY: the lane region lowers a body with the lane body ABI (`lane_body_signature`).
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
