@@ -27,6 +27,15 @@ const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
 const LINE_PREFIX: &str = "IRBUDGET ";
 /// A count within this many instructions per iteration of its ceiling is the same count.
 const SAME_COUNT: f64 = 0.5;
+/// Ceilings are kept to tenths of an instruction per iteration.
+const CEILING_STEPS_PER_INSTRUCTION: f64 = 10.0;
+/// The columns of a budget row after its op name.
+const C_COLUMN: usize = 1;
+const BUDGET_COLUMN: usize = 2;
+const CEILING_COLUMN: usize = 3;
+/// The marks bounding op(2n) among an op's marks.
+const DOUBLE_RUN_START: usize = 1;
+const DOUBLE_RUN_END: usize = 2;
 
 /// One op's row in the budget file.
 #[derive(Clone, Copy)]
@@ -40,7 +49,7 @@ fn parse(text: &str) -> BTreeMap<String, Row> {
     let rows = text.lines().filter(|line| !line.starts_with('#')).map(|line| line.split_whitespace().collect::<Vec<_>>());
     rows.filter_map(|fields| {
         let number = |index: usize| fields.get(index).and_then(|field| field.parse::<f64>().ok());
-        Some(((*fields.first()?).to_owned(), Row { c: number(1)?, budget: number(2)?, ceiling: number(3) }))
+        Some(((*fields.first()?).to_owned(), Row { c: number(C_COLUMN)?, budget: number(BUDGET_COLUMN)?, ceiling: number(CEILING_COLUMN) }))
     })
     .collect()
 }
@@ -94,7 +103,7 @@ fn measure(config: &Config, mode: &str, ops: &[String]) -> Result<Vec<(String, f
         return Err(format!("{} callgrind dumps for {} ops; expected {} marks each", totals.len(), names.len(), MARKS_PER_OP));
     }
     // Dump k holds the counts from mark k-1 to mark k: per op, op(n) then op(2n).
-    let per_iteration = |index: usize| (totals[index * MARKS_PER_OP + 2] as f64 - totals[index * MARKS_PER_OP + 1] as f64) / ITERATIONS as f64;
+    let per_iteration = |index: usize| (totals[index * MARKS_PER_OP + DOUBLE_RUN_END] as f64 - totals[index * MARKS_PER_OP + DOUBLE_RUN_START] as f64) / ITERATIONS as f64;
     Ok(names.into_iter().enumerate().map(|(index, name)| (name, per_iteration(index))).collect())
 }
 
@@ -116,7 +125,7 @@ fn ratchet(config: &Config, measured: &[(String, f64)], rows: &mut BTreeMap<Stri
     let mut grown = Vec::new();
     for (name, count) in measured {
         let Some(row) = rows.get_mut(name) else { grown.push(format!("{name}: no budget row in {BUDGETS}")); continue };
-        let floor = (count * 10.0).ceil() / 10.0;
+        let floor = (count * CEILING_STEPS_PER_INSTRUCTION).ceil() / CEILING_STEPS_PER_INSTRUCTION;
         match row.ceiling {
             Some(ceiling) if *count > ceiling + SAME_COUNT => grown.push(format!("{name}: {count:.1} Ir/iter, ceiling {ceiling}")),
             Some(ceiling) if *count + SAME_COUNT < ceiling => row.ceiling = Some(floor.max(row.budget.min(ceiling))),
