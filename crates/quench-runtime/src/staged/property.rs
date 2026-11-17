@@ -400,12 +400,34 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
+    if let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
+        && frame.proven_shape(stage, owner) != Some(*shape)
+        && frame.kept_layout(owner, *shape).is_none() {
+        return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
+    }
     guard_receiver_shape(stage, frame, (owner, direct), &at, *shape, miss)?;
     match rest {
         [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
         _ => ic::run(stage, rest, at, records, miss),
     }
+}
+
+/// The value at `slot` of `owner`'s object, which must have exact `shape` and keep its values in
+/// a plain wide arena run: one compare of the record's auxiliary word, whose storage-form bits
+/// (inline, extras, narrow) are all clear in that form, proves both, as the interpreter's formed
+/// read does (`object::formed_own_layout`); the frame keeps the shape and the run.
+fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
+    at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Rep, usize), miss: S::Miss) -> Option<S::Word> {
+    let word = super::object::header_u32(stage, super::region::Region::ShapeWord.mutable(), at.record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
+    let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
+    stage.guard(same, miss)?;
+    frame.prove_shape(stage, owner, shape, direct);
+    let payload = stage.load_u64(super::region::Region::Payload.mutable(), at.record, crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
+    let layout = Layout { slots: super::object::Slots::Flat(super::object::arena_run(stage, payload)), storage_len };
+    frame.keep_layout(owner, shape, layout);
+    Some(read_slot_value(stage, layout, slot, rep))
 }
 
 /// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
