@@ -168,7 +168,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             None => skim.function_from_head(form == LazyForm::Arrow)?,
         }
         skim.scopes.exit();
-        Some(Skimmed { free_names: std::mem::take(&mut skim.scopes.refs), names_exact, directives: skim.directives })
+        Some(Skimmed { free_names: skim.scopes.take_free_names(), names_exact, directives: skim.directives })
     }
 
     /// The names of `params` when each is a plain identifier: no pattern, default, rest or

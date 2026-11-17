@@ -1,4 +1,6 @@
 //! The scopes of a skimmed body: what each declares, and the references still to settle.
+//! A name is keyed once, where it is read (`NameKey`): settling it in each scope around it is
+//! then a lookup by integers, and its function's repeats are dropped by sorting integers.
 use super::Seen;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
@@ -43,10 +45,34 @@ pub(super) struct Scopes<'a> {
     frames: Vec<Frame>,
     /// Declarations by scope serial and name: serials are never reused, so a closed or
     /// abandoned scope's entries are never read again.
-    decls: FxHashMap<(u32, &'a str), Decl>,
-    /// References whose scope is still open, in reading order.
-    pub(super) refs: Vec<&'a str>,
+    decls: FxHashMap<(u32, NameKey), Decl>,
+    /// Ids of the names too long to pack (`NameKey::of`).
+    long: FxHashMap<&'a str, u64>,
+    /// The references whose scope is still open, in reading order.
+    refs: Vec<(NameKey, &'a str)>,
     serial: u32,
+}
+
+/// A name as an integer: one of up to seven bytes packed with its length, a longer one an id of
+/// its own. Minified code reads names of a byte or two, so most are keyed without hashing.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct NameKey(u64);
+
+impl NameKey {
+    const PACKED_BYTES: usize = 7;
+    const LENGTH_SHIFT: u32 = 56;
+    const LONG: u64 = 1 << 63;
+
+    fn of<'a>(name: &'a str, long: &mut FxHashMap<&'a str, u64>) -> Self {
+        let bytes = name.as_bytes();
+        if bytes.len() > Self::PACKED_BYTES {
+            let next = long.len() as u64;
+            return Self(Self::LONG | *long.entry(name).or_insert(next));
+        }
+        let mut word = [0u8; 8];
+        word[..bytes.len()].copy_from_slice(bytes);
+        Self(u64::from_le_bytes(word) | (bytes.len() as u64) << Self::LENGTH_SHIFT)
+    }
 }
 
 impl<'a> Scopes<'a> {
@@ -73,9 +99,9 @@ impl<'a> Scopes<'a> {
     fn retain_undeclared(&mut self, start: usize, serial: u32) -> usize {
         let mut kept = start;
         for read in start..self.refs.len() {
-            let name = self.refs[read];
-            if !self.decls.contains_key(&(serial, name)) {
-                self.refs[kept] = name;
+            let held = self.refs[read];
+            if !self.decls.contains_key(&(serial, held.0)) {
+                self.refs[kept] = held;
                 kept += 1;
             }
         }
@@ -84,10 +110,10 @@ impl<'a> Scopes<'a> {
 
     /// Sorts `refs[start..end]` and compacts its repeats: the new end.
     fn sort_unique(&mut self, start: usize, end: usize) -> usize {
-        self.refs[start..end].sort_unstable();
+        self.refs[start..end].sort_unstable_by_key(|held| held.0);
         let mut kept = start;
         for read in start..end {
-            if kept == start || self.refs[read] != self.refs[kept - 1] {
+            if kept == start || self.refs[read].0 != self.refs[kept - 1].0 {
                 self.refs[kept] = self.refs[read];
                 kept += 1;
             }
@@ -95,8 +121,27 @@ impl<'a> Scopes<'a> {
         kept
     }
 
+    fn key(&mut self, name: &'a str) -> NameKey {
+        NameKey::of(name, &mut self.long)
+    }
+
     pub(super) fn reference(&mut self, name: &'a str) {
-        self.refs.push(name);
+        let key = self.key(name);
+        self.refs.push((key, name));
+    }
+
+    /// The last reference read, taken back: it was a label or an arrow's parameter.
+    pub(super) fn take_reference(&mut self) -> Option<&'a str> {
+        self.refs.pop().map(|(_, name)| name)
+    }
+
+    /// The names still unsettled, sorted by name and without repeats: once every scope has
+    /// closed, the names the body reads from outside itself.
+    pub(super) fn take_free_names(&mut self) -> Vec<&'a str> {
+        let mut names: Vec<&'a str> = self.refs.drain(..).map(|(_, name)| name).collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     pub(super) fn mark(&self) -> Mark {
@@ -115,9 +160,10 @@ impl<'a> Scopes<'a> {
 
     /// `name` declared in the innermost scope, unless a declaration there conflicts.
     fn put(&mut self, name: &'a str, decl: Decl, conflicts: fn(Decl) -> bool) -> Seen {
+        let key = self.key(name);
         let frame = self.frames.last_mut()?;
         frame.declared = true;
-        match self.decls.entry((frame.serial, name)) {
+        match self.decls.entry((frame.serial, key)) {
             Entry::Occupied(mut held) if !conflicts(*held.get()) => {
                 held.insert(decl);
             }
@@ -132,8 +178,9 @@ impl<'a> Scopes<'a> {
     /// A `var` in a block or a function: it conflicts with a lexical binding of the name in
     /// any scope up to its function's.
     pub(super) fn declare_var(&mut self, name: &'a str) -> Seen {
+        let key = self.key(name);
         for frame in self.frames.iter_mut().rev() {
-            match self.decls.entry((frame.serial, name)) {
+            match self.decls.entry((frame.serial, key)) {
                 Entry::Occupied(held) if held.get().blocks_var() => return None,
                 Entry::Occupied(mut held) if *held.get() == Decl::Name => {
                     held.insert(Decl::Var);

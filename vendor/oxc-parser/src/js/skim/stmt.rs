@@ -79,7 +79,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
         let form = self.expression()?;
         if form == Form::Ident && self.kind() == Kind::Colon {
             let name = self.last_ident;
-            self.scopes.refs.pop();
+            self.scopes.take_reference();
             self.bump();
             return self.labelled(name, run);
         }
