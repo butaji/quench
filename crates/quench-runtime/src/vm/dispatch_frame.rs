@@ -634,7 +634,20 @@ impl<H: Host> Vm<H> {
         this: Value,
         context: CallContext,
     ) -> Result<Box<Frame>, JsError> {
-        self.activate_user_frame(p, id, parent, this, &[], context)?;
+        self.unstarted_frame_with(p, id, parent, this, &[], context)
+    }
+
+    /// `unstarted_frame` bound with the values `args` passed.
+    pub(super) fn unstarted_frame_with(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<Box<Frame>, JsError> {
+        self.activate_user_frame(p, id, parent, this, args, context)?;
         let mut frame = self.frames.pop().expect("the activation pushed a frame");
         frame.with_objects = self.with_stack.split_off(frame.with_base);
         Ok(frame)

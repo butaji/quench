@@ -163,6 +163,36 @@ impl<H: Host> Vm<H> {
         self.with_call_roots([state], |vm| vm.resume_await(p, state, false, Value::UNDEFINED)).map(drop)
     }
 
+    /// `call_user_maybe_async` of async function `id` of `p` that a lane run calls: its frame
+    /// starts as a job over its record, as an async root's does (`start_root_job`), so the run
+    /// stays in the lane, beside the caller's activations, and its first `await` suspends the
+    /// window in place (`Vm::run_job`). The call's promise.
+    pub(in crate::vm) fn start_async_call(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        env: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<Value, JsError> {
+        let promise = self.with_call_roots(
+            [env, this].into_iter().chain(args.iter().copied()).chain(context.callee()),
+            |vm| vm.promise_object(),
+        )?;
+        self.with_call_roots([promise], |vm| {
+            let frame = match vm.unstarted_frame_with(p, id, env, this, args, context) {
+                Ok(frame) => frame,
+                Err(error) => return vm.reject_settled_call(p, promise, error).map(|()| promise),
+            };
+            let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
+            let kind = AwaitKind::function(continuation);
+            let state = vm.heap.alloc_await_state(AwaitState::arm(kind, vm.realm.globals, promise));
+            vm.with_call_roots([state], |vm| vm.start_await_job(p, state))?;
+            Ok(promise)
+        })
+    }
+
     /// Rejects an async call's `promise` with the error its body completed with.
     pub(super) fn reject_settled_call(
         &mut self,

@@ -79,6 +79,7 @@ impl<H: Host> Vm<H> {
             native_roots: super::compiled::NativeRoots::new(),
             lane_stack: Default::default(),
             lane_roots: Vec::new(),
+            spare_lane_stacks: Vec::new(),
             execution_mode: ExecutionMode::default(),
             native_execution_rejections: 0,
             js_tier_pending: FxHashMap::default(),

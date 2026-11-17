@@ -996,6 +996,7 @@ impl<H: Host> Vm<H> {
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
         self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
+        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));
         self.realm.jobs.extend(
             finalization_jobs

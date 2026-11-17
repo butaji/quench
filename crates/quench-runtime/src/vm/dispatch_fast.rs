@@ -2183,7 +2183,7 @@ pub(super) struct LaneStack {
     construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
     /// every object the plan read keeps its values and layout.
-    construct_watches: [Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS],
+    construct_watches: Box<[Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS]>,
     /// The reads call sites answered (`ReadMemo`), each in the slot its record names
     /// (`CallOperand::memo`).
     read_memos: Vec<ReadMemo>,
@@ -2285,7 +2285,7 @@ impl Default for LaneStack {
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
-            construct_watches: [const { None }; CONSTRUCT_PLANS],
+            construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
             read_memos: Vec::new(),
             forwarders: Vec::new(),
             settling: Vec::new(),
@@ -20243,11 +20243,71 @@ script_handler! {
             script_calls && (!returns || lane_returning_call_admitted(cx))
         };
         let Some(target) = target.filter(admitted) else {
+            if let Some(resumed) = lane_start_async_call(cx, r, ip, i, callee) {
+                resume!(cx, resumed)
+            }
             requicken::<H>(ip, script_call_handler::<H>(i.imm()));
             return exit(ip);
         };
         resume!(cx, lane_push_frame_call(cx, r, ip, i, target, callee, r.get(i.c), FrameCallArguments::Window(0)))
     }
+}
+
+/// `lane_frame_call` of an async function the general loop would push as a settling call
+/// (`Vm::in_loop_settling_target`): the callee starts as a job (`Vm::start_async_call`) beside
+/// the caller's activations, as a native that runs beside them does (`lane_call_native_out`),
+/// so its first `await` suspends its window in place and the caller continues in the lane with
+/// the promise. `None` leaves the call to the general path: a call that completes its caller,
+/// or a callee of another program or not yet derived.
+#[inline(never)]
+fn lane_start_async_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, callee: Value) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    if !unsafe { (*cx).script_calls } || i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let (program, function, env) = vm.in_loop_settling_target(code, callee)?;
+    if program != unsafe { (*cx).program } || !vm.lane_call_may_derive(program, function) {
+        return None;
+    }
+    let window = usize::from(ImmediateLayout::call_window_base(i.imm()));
+    let argc = usize::from(ImmediateLayout::argument_count(i.imm()));
+    // SAFETY: the call's window is registers of the running function; the values are copied
+    // before any activation becomes a frame.
+    let arguments = super::call_arguments::CallArguments::from_slice(unsafe { std::slice::from_raw_parts(r.0.add(window), argc) });
+    let this = r.get(i.c);
+    // SAFETY: `ip` is a record of the active view, which is the running function's.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let beside = !vm.lane_stack.activations.is_empty();
+    if beside {
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+    } else {
+        let frame = unsafe { (*cx).frame() };
+        vm.frames[frame].pc = call_pc + 1;
+        vm.frames[frame].pc_is_resume = true;
+    }
+    let context = CallContext::user_function(function, callee);
+    let result = vm.start_async_call(code, function, env, this, arguments.as_slice(), context);
+    note_allocation(vm);
+    vm.lane_stack.refresh_activation_limit();
+    let unobserved = beside && vm.lane_deferred.take().is_some();
+    Some(match result {
+        Ok(promise) => {
+            // The activations may have become frames, whose registers the context now names.
+            let r = unsafe { (*cx).registers };
+            r.set(i.a, promise);
+            Resumed::At(r, following(ip), Carried::script(cx))
+        }
+        Err(error) => {
+            if unobserved {
+                vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+                vm.materialize_deferred_lane();
+            }
+            vm.lane_raised = Some(error);
+            Resumed::Exit(exit(ip))
+        }
+    })
 }
 
 /// The facts that keep function `function` of `program` out of a frameless activation, for

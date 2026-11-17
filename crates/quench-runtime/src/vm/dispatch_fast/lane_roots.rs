@@ -116,7 +116,7 @@ pub(in crate::vm) enum JobEnd {
 /// A lane stack a nested run parked (`Vm::nested_lane_run`) with the receiver and environment of
 /// its innermost activation, which the lane's context held.
 pub(in crate::vm) struct ParkedLane {
-    pub(in crate::vm) stack: LaneStack,
+    pub(in crate::vm) stack: Box<LaneStack>,
     innermost: [Value; 2],
 }
 
@@ -145,19 +145,27 @@ impl<H: Host> Vm<H> {
     /// Runs `run`, which starts lane runs, above the activations of the run that is live, which
     /// it must neither see nor disturb: that run's lane stack parks on the root stack
     /// (`Vm::lane_roots`) with the `innermost` receiver and environment of its context, its
-    /// deferred native call and the native it called, while `run` starts over a fresh one, so
+    /// deferred native call and the native it called, while `run` starts over an empty one (`Vm::spare_lane_stacks`), so
     /// every run's materialization takes its own activations alone. A collection `run` makes
     /// traces the parked stacks as the live one (`LaneStack::extend_roots`). The parked run's
     /// call targets name the objects of the generation it left, which a collection retires
     /// (`enter_generation`). A job run (`run_job`) and the code of a direct eval (`lane_eval`)
     /// start nested runs.
     pub(in crate::vm) fn nested_lane_run<T>(&mut self, innermost: [Value; 2], run: impl FnOnce(&mut Self) -> T) -> T {
-        let stack = std::mem::take(&mut self.lane_stack);
+        // The stacks swap in place, boxed, as a stack is large to move.
+        let mut stack = self.spare_lane_stacks.pop().unwrap_or_default();
+        // Its cached targets admit calls of the program that runs (`LaneStack::enter_program`).
+        stack.enter_program(self.active_program);
+        std::mem::swap(&mut self.lane_stack, &mut *stack);
         self.lane_roots.push(ParkedLane { stack, innermost });
         let (deferred, native, window) = (self.lane_deferred.take(), self.lane_native.take(), self.running_window.take());
         let result = run(self);
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
-        self.lane_stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
+        let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
+        std::mem::swap(&mut self.lane_stack, &mut *stack);
+        if stack.activations.is_empty() {
+            self.spare_lane_stacks.push(stack);
+        }
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         result
     }
