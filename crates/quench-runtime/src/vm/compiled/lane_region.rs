@@ -2476,6 +2476,7 @@ impl Lowering<'_, '_> {
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
+        if let Some(held) = self.loop_held_atom(atom) { return held; }
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }

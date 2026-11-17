@@ -244,6 +244,17 @@ impl Lowering<'_, '_> {
         Some(emit(&mut self.builder).all(specialized, held))
     }
 
+    /// Where offline code holds `atom` unnamed (`VmFacts::held_atoms`), the admission of its stores
+    /// in a run that makes no call: true. The code was compiled for a specialized run, a cache
+    /// naming the atom retires it before its next entry, and a run that calls nothing meets no
+    /// cache that could name it (`entry_store_atoms`); a run that calls tests the caches.
+    pub(super) fn loop_held_atom(&mut self, atom: Atom) -> Option<ir::Value> {
+        if self.vm.online.is_some() || self.native_calls || self.helpers.links() { return None; }
+        self.vm.held_atoms.filter(|names| !names.contains(atom as usize))?;
+        self.stable.atoms.insert(atom);
+        Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the
     /// proofs hoisted there: no start lies past its header (a start at it hoists on its entry
     /// edge), every edge from outside it is a forward edge to its header (`continue_at`, which

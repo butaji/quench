@@ -1326,20 +1326,24 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
     pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
+    /// The names method caches hold now, where offline code stores in place under a dependency on
+    /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
+    /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
+    pub(super) held_atoms: Option<&'a super::method_cache::AtomBits>,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None }
     }
 }
 

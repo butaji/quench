@@ -301,6 +301,8 @@ struct LoopPlanner<'a> {
     helpers: LaneHelpers,
     views: super::ElementViews,
     tiers: &'static Tiers,
+    /// The names method caches hold now, in a specialized run (`VmFacts::held_atoms`).
+    stores: Option<&'a crate::vm::method_cache::AtomBits>,
 }
 
 impl LoopPlanner<'_> {
@@ -315,7 +317,7 @@ impl LoopPlanner<'_> {
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, ..VmFacts::STATIC }, generic,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, ..VmFacts::STATIC }, generic,
             direct: &BTreeMap::new(), frame_captures: self.observation.frame_captures, isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
@@ -401,12 +403,13 @@ pub(in crate::vm) fn start_osr_region(
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
         return decided;
     }
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers };
+    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers, stores };
     let lowered = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
+    let stable = StableFacts { atoms: lowered.stable.atoms, ..StableFacts::default() };
+    let facts = OsrFacts { roots: lowered.stable.roots, stable, ..OsrFacts::observed(observation) };
     let code = super::super::jit_backend::run_in_background(move || {
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
