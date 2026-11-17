@@ -6667,6 +6667,49 @@ script_handler! {
     }
 }
 
+/// The `lane_typeof_test_jump` of the `typeof` test `operator`, `None` for another operator.
+fn typeof_test_jump_handler<H: Host>(operator: u32) -> Option<Handler> {
+    let (index, negated) = crate::bytecode::typeof_test(operator)?;
+    macro_rules! names {
+        ($($index:literal),*) => {
+            match (index, negated) {
+                $(($index, false) => lane_typeof_test_jump::<H, $index, false> as Handler,
+                  ($index, true) => lane_typeof_test_jump::<H, $index, true> as Handler,)*
+                _ => return None,
+            }
+        };
+    }
+    Some(names!(0, 1, 2, 3, 4, 5, 6, 7))
+}
+
+script_handler! {
+    /// `lane_typeof_test` whose result a forward `JumpFalse` record tests next (`if (typeof x
+    /// === "number")`): the test and the branch as one dispatch, the result register written
+    /// as the test writes it. An operand whose name the test alone does not decide runs
+    /// `lane_typeof_test_heap`, which continues at the jump record.
+    fn lane_typeof_test_jump<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        if value.is_heap() {
+            sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view))
+        }
+        let named = if INDEX == NUMBER_NAME_INDEX {
+            value.as_number().is_some()
+        } else {
+            match super::coercion::immediate_typeof_index(value) {
+                Some(name) => name == INDEX,
+                None => sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view)),
+            }
+        };
+        let holds = named != NEGATED;
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        let jump_ip = following(ip);
+        if !holds {
+            resume!(cx, lane_jump::<H>(r, jump_ip, false, Carried::script_in(cx, view), None));
+        }
+        next!(cx, r, following(jump_ip), Carried::script_in(cx, view))
+    }
+}
+
 script_handler! {
     /// `lane_typeof_test` of a heap operand: its kind's name (`Vm::typeof_test_value`).
     #[inline(never)]
@@ -23098,7 +23141,10 @@ fn specialize_register_operands<H: Host>(
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
     let unary = unary_handler::<H>() as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
+    let forward_false_jump = lane_jump_false::<H, false> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
+        // A forward `JumpFalse` of this record's result follows it (`lane_typeof_test_jump`).
+        let tested_next = records.get(pc + 1).is_some_and(|next| next.handler == forward_false_jump && next.a == records[pc].a);
         let record = &mut records[pc];
         if record.handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, record);
@@ -23107,6 +23153,8 @@ fn specialize_register_operands<H: Host>(
         if record.handler == unary {
             if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
                 record.handler = lane_typeof_index::<H> as Handler as *const ();
+            } else if tested_next && let Some(handler) = typeof_test_jump_handler::<H>(instruction.imm()) {
+                record.handler = handler as *const ();
             } else if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
                 record.handler = handler as *const ();
             }
