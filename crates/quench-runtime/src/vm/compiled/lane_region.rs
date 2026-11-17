@@ -2452,15 +2452,21 @@ impl Lowering<'_, '_> {
         admitted
     }
 
-    fn admit_slot_writes(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, exit: ir::Block) -> Type {
-        let (admitted, domain) = self.slot_writes_admitted(shape, slot, writes);
+    /// Admits at entry the writes `writes` to `slot` of `shape`, failing through `exit`; a slot whose
+    /// words are raw doubles where `raw_double`, which the unit's in-place arms store as such
+    /// (`Heap::admit_slot_writes_as`).
+    pub(super) fn admit_slot_writes_as(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, raw_double: bool, exit: ir::Block) {
+        let (admitted, _) = self.slot_writes_admitted_as(shape, slot, writes, raw_double);
         emit_js_guard(&mut self.builder, admitted, exit);
-        domain
     }
 
     fn slot_writes_admitted(&mut self, shape: ir::Value, slot: ir::Value, writes: Type) -> (ir::Value, Type) {
+        self.slot_writes_admitted_as(shape, slot, writes, false)
+    }
+
+    fn slot_writes_admitted_as(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, raw_double: bool) -> (ir::Value, Type) {
         let domain = crate::typed_ir::SlotType::from_type(writes);
-        let encoded = self.raw_const(Lane::I64, domain as i64);
+        let encoded = self.raw_const(Lane::I64, domain as i64 | if raw_double { RAW_DOUBLE_WRITES as i64 } else { 0 });
         let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         (self.raw_compare_imm(Relation::NotEqual, admitted, 0), domain.ty())
@@ -2787,7 +2793,14 @@ impl Lowering<'_, '_> {
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
             held: self.held_view.take(), arrays_fixed: self.arrays_fixed, site };
+        super::record_boxed_numbers();
         let step = crate::staged::step(&mut stage, &mut frame, operation);
+        // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
+        for (bits, number) in super::take_boxed_numbers() {
+            if state.proofs.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { break; }
+            let bits = self.builder.func.dfg.resolve_aliases(bits);
+            state.proofs.numbers.push((bits, number));
+        }
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         // A step that ends in a branch makes no environment: only a closure's allocation, a value step, does.
         if makes_environment && matches!(edges, frame::Edges::Value | frame::Edges::ValueGuarded { .. }) { self.reload_environment(); }
@@ -4051,7 +4064,8 @@ impl Lowering<'_, '_> {
         let own: Vec<&NativeFieldLoad> = site_loads(self.fields, site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         let arms = own.iter().filter(|load| load.valid())
-            .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)).collect();
+            .filter_map(|load| StoreArm::of_rep((load.shape, load.slot), load.ty, ty,
+                (load.raw_double, crate::staged::Form::of(load.storage, load.storage_len)))).collect();
         let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
             else if bound { StoreJoin::Bound } else { StoreJoin::Host };
         (arms, join)

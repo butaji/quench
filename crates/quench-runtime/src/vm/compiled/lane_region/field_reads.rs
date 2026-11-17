@@ -124,6 +124,14 @@ impl Lowering<'_, '_> {
             }
         }
         let destination = instruction.result_register();
+        // A raw double's read boxed its binary64 word (`compiled::take_boxed_numbers`): the
+        // register holds that word, and the box, which nothing else reads, folds away; an exit
+        // boxes the register on its own path.
+        let bits = self.builder.func.dfg.resolve_aliases(value);
+        if let Some(number) = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number) {
+            self.set_number(state, destination, number);
+            return;
+        }
         let described = if ty == Type::INT32 { Type::ANY } else { ty };
         self.define(state, destination, value, RegisterFact::definition(described, Representation::Tagged));
         // A slot that has held doubles, read only by Number operations: prove Number here,

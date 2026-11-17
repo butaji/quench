@@ -74,12 +74,15 @@ pub(crate) enum FieldPlan<'a> {
 /// `holds` is `None` where the value stored is of a type the slot's type holds. Otherwise it
 /// is the type the row tests the value for before it stores in place, so the slot's
 /// representation never widens under the raw write; a value of any other type stores through
-/// the VM, which joins the slot's type.
+/// the VM, which joins the slot's type. `raw_double` marks a slot whose arena word is a raw
+/// double (`Rep::Float64`): the store writes the value's binary64 word (`PropertyFrame::stored_number`),
+/// never its tagged one, so a Number keeps no integer canonical form on its way in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct StoreArm {
     pub(crate) shape: u32,
     pub(crate) slot: u16,
     pub(crate) holds: Option<Type>,
+    pub(crate) raw_double: bool,
 }
 
 impl StoreArm {
@@ -88,9 +91,20 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub(crate) fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds) })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false })
+    }
+
+    /// `StoreArm::of` for a slot whose arena words are raw doubles where `raw_double`: only a
+    /// value whose type the slot's holds, a Number, stores in place, as its binary64 word, and
+    /// only into a shape whose values its `form` proves an arena run (a packed slot holds narrow
+    /// values, whatever its owner's type).
+    pub(crate) fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
+        let arm = Self::of(at, slot_ty, fact)?;
+        if !raw_double { return Some(arm); }
+        (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form == super::Form::Arena)
+            .then_some(Self { raw_double: true, ..arm })
     }
 }
 
@@ -176,6 +190,11 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     /// int32) and tests the rest dynamically.
     #[inline(always)]
     fn value_fact(&self, _register: Register) -> Type { Type::ANY }
+
+    /// The binary64 word of `register`, a Number by its fact, which a raw-double slot stores
+    /// (`StoreArm::raw_double`); `None` where the frame keeps no such view, so the store leaves.
+    #[inline(always)]
+    fn stored_number(&mut self, _stage: &mut S, _register: Register, _miss: S::Miss) -> Option<S::Word> { None }
 
     /// The base of the object record table, which prototype reads and stores address.
     #[inline(always)]

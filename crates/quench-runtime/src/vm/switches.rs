@@ -1,6 +1,6 @@
 //! The boolean `QUENCH_*` A/B and diagnostic switches, each read from the environment once and
 //! named here, so a run's configuration is one list. A switch is on when its variable is set to
-//! anything but `0`; every one defaults to off. (`trace` owns the named diagnostic channels and
+//! anything but `0`; every one defaults to off, except `QUENCH_FLOAT_SLOTS` under UltraJIT. (`trace` owns the named diagnostic channels and
 //! development experiments, `QUENCH_TRACE` and `QUENCH_DEV`.)
 
 use std::sync::OnceLock;
@@ -29,9 +29,16 @@ pub(crate) fn float_slots() -> bool {
 
 static FLOAT_SLOTS: OnceLock<bool> = OnceLock::new();
 
+/// `QUENCH_FLOAT_SLOTS` where it is set; otherwise on where UltraJIT runs (the default mode,
+/// `--u-jit`, `--q-jit`), whose lowering stores and reads raw doubles in place
+/// (`staged::property::StoreArm::raw_double`), and off for the interpreter and BaseJIT alone, which
+/// decode a slot's owner on every read. A test build keeps the variable's reading alone, so
+/// a test that wants them says so (`with_float_slots`).
 #[cold]
 fn read_float_slots() -> bool {
-    named("QUENCH_FLOAT_SLOTS")
+    if cfg!(test) || std::env::var_os("QUENCH_FLOAT_SLOTS").is_some() { return named("QUENCH_FLOAT_SLOTS"); }
+    use crate::jit_mode::JitMode;
+    matches!(JitMode::process(), JitMode::Full | JitMode::UltraOnly | JitMode::QuickOnly)
 }
 
 /// Runs `body` with `float_slots` on for this thread.
