@@ -2235,12 +2235,15 @@ pub(crate) struct LoweringTables<'t> {
 /// a call entry to recognise by its shape (`capture_append::recognizes`).
 const RECOGNISED_LEAF_INSTRUCTIONS: usize = 16;
 
-/// Whether coalescing the copies frame-register promotion left repays its cost: a body that
-/// loops runs its instructions many times and its loops' tiers read the coalesced shape, and a
-/// small leaf's call entry recognises it. Any other body mostly runs once (octane-code-load:
-/// coalescing cost 4.7% of the run and saved no instruction on any V8-v7 or JetStream row).
+/// Whether coalescing the copies frame-register promotion left repays its cost: a small leaf,
+/// whose call entry recognises it by its shape, and, where a JavaScript tier may run, a body
+/// that loops, whose loop tiers read the coalesced shape. Interpreted alone, a looping body
+/// lowers at its first call, so coalescing charges every load of fresh code: under `--no-jit`
+/// skipping it took web-ssr -3.7%, navier-stokes -1.9%, Box2D -1.2%, delta-blue -0.9% and
+/// richards -0.6% (3 iterations; raytrace +0.2%).
 fn coalescing_repays(function: &BcFunction) -> bool {
-    function.code.len() <= RECOGNISED_LEAF_INSTRUCTIONS || function.loops()
+    function.code.len() <= RECOGNISED_LEAF_INSTRUCTIONS
+        || function.loops() && crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::ANY)
 }
 
 /// The lowering passes after a function's dispatch class is settled (`settle_dispatch`):
