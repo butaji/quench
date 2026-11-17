@@ -364,7 +364,8 @@ struct LaneFields<'a, const OP: u16>(&'a LaneInstruction);
 impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
     #[inline(always)]
     fn op(self) -> Op {
-        match Op::from_index(OP as usize) { Some(op) => op, None => unreachable!() }
+        // A constant of the instantiation, so the decode's match folds to the one arm.
+        const { match Op::from_index(OP as usize) { Some(op) => op, None => panic!("no such opcode") } }
     }
     #[inline(always)] fn result_register(self) -> u16 { self.0.a }
     #[inline(always)] fn register_a(self) -> u16 { self.0.a }
