@@ -122,10 +122,45 @@ fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner,
             if let (true, Some(number)) = (arm.raw_double, value.2) {
                 return raw_through_layout(stage, frame, (owner, &at), *arm, number, miss);
             }
+            if let Some(base) = kept_flat(frame, owner, *arm) {
+                return tagged_through_layout(stage, (base, object), *arm, value, miss);
+            }
             arm_store(stage, (at.record, object), *arm, value, miss)
         }
         arms => arm_switch(stage, (&at, object), arms, value, miss),
     }
+}
+
+/// The flat run a read of `owner`'s object of `arm`'s shape proved and the frame kept, where it
+/// holds `arm`'s slot: a store through it needs neither the storage form nor the run tested again.
+#[inline(always)]
+fn kept_flat<S: Stage, F: PropertyFrame<S>>(frame: &F, owner: Owner, arm: StoreArm) -> Option<S::Word> {
+    match frame.kept_layout(owner, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len)?.slots {
+        super::object::Slots::Flat(base) => Some(base),
+        _ => None,
+    }
+}
+
+/// The tagged store of `arm` into the kept flat run at `base` of `object`: the arm's type test
+/// where the slot's type may not hold the value, the barrier's gate for a reference, the word.
+#[inline(always)]
+fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::Word), arm: StoreArm,
+    (value, fact, _): Stored<S::Word>, miss: S::Miss) -> Option<()> {
+    let value = value?;
+    let fact = match arm.holds {
+        Some(holds) => {
+            let held = slot_holds(stage, value, holds);
+            stage.guard(held, miss)?;
+            holds
+        }
+        None => fact,
+    };
+    let id = stage.and_imm(object, u64::from(u32::MAX));
+    super::slot_store::gate_open(stage, id, (value, fact), miss)?;
+    let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
+    let address = stage.add_imm(base, offset);
+    super::slot_store::store_word(stage, address, value, super::object::Rep::Tagged);
+    Some(())
 }
 
 /// The binary64 word `number` into the raw-double slot of `arm` of `owner`'s record `at`, whose
