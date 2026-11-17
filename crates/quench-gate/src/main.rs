@@ -2,9 +2,9 @@
 //! ratchets, the census, every library test (with and without debug assertions), the C-parity gate and the conformance suites, in
 //! that order, prints a summary table and exits nonzero if any step failed.
 //!
-//! usage: quench-gate [--quick] [--jobs N] [--record] [--passed]
+//! usage: quench-gate [--quick] [--jobs N] [--record] [--passed] [--only STEP]
 //! `--quick` runs only the lint, census and C-parity steps; `--record` writes the C-parity
-//! ceilings that have no value yet. A full run that passes on a clean tree records the tree
+//! ceilings that have no value yet; `--only STEP` runs one step (e.g. `--only ir-budget`). A full run that passes on a clean tree records the tree
 //! (`passed.rs`); `--passed` only answers whether the checked-out tree has that record.
 
 mod build;
@@ -13,6 +13,7 @@ mod config;
 mod conformance;
 mod cparity;
 mod debug;
+mod ir_budget;
 mod lint;
 mod no_jit_ir;
 mod oracle;
@@ -32,7 +33,7 @@ use step::{Outcome, Step};
 /// The exit status of a run that was asked for something it cannot do.
 const USAGE_ERROR: u8 = 2;
 
-const STEPS: [Step; 8] = [
+const STEPS: [Step; 9] = [
     Step { name: "build", quick: false, blocking: true, run: build::run },
     Step { name: "lint", quick: true, blocking: false, run: lint::run },
     Step { name: "census", quick: true, blocking: false, run: census::run },
@@ -40,13 +41,15 @@ const STEPS: [Step; 8] = [
     Step { name: "debug", quick: false, blocking: false, run: debug::run },
     Step { name: "c-parity", quick: true, blocking: false, run: cparity::run },
     Step { name: "no-jit-ir", quick: false, blocking: false, run: no_jit_ir::run },
+    Step { name: "ir-budget", quick: true, blocking: false, run: ir_budget::run },
     Step { name: "conformance", quick: false, blocking: false, run: conformance::run },
 ];
 
 /// Runs the selected steps in order, stopping after a blocking step fails.
 fn run(config: &Config) -> Vec<Outcome> {
     let mut outcomes = Vec::new();
-    for step in STEPS.iter().filter(|step| step.quick || !config.quick) {
+    let selected = |step: &&Step| match &config.only { Some(only) => step.name == only, None => step.quick || !config.quick };
+    for step in STEPS.iter().filter(selected) {
         let outcome = step.execute(config);
         let stop = step.blocking && !outcome.passed;
         outcomes.push(outcome);
