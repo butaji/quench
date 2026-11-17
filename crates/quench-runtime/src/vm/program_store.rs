@@ -1957,6 +1957,7 @@ impl ProgramStore {
         self.js_jit_lane_methods_enabled
     }
 
+    #[inline]
     pub(super) fn tiers(&self) -> &'static Tiers { self.tiers }
 
     #[cfg(test)]

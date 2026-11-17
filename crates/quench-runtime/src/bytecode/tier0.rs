@@ -20,6 +20,7 @@ pub(crate) struct Tier0 {
 }
 
 impl Tier0 {
+    #[inline]
     pub(super) fn record(&self) -> &Function {
         &self.record
     }

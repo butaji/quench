@@ -531,6 +531,7 @@ impl Value {
         (tags & TAG_MASK == 0).then_some((left.0 as u32 as i32, right.0 as u32 as i32))
     }
 
+    #[inline]
     pub(crate) fn heap(index: u32) -> Self {
         Self(TAG_HEAP | u64::from(index))
     }

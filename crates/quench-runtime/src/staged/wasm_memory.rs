@@ -65,6 +65,7 @@ impl Access {
         signed: false,
     };
 
+    #[inline]
     pub(crate) fn of_store(store: MemoryStore) -> Self {
         Self {
             ty: store.value_type(),
