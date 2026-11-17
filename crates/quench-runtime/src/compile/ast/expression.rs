@@ -881,6 +881,15 @@ impl FunctionCompiler<'_, '_> {
             Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::LogicalNot => {
                 self.false_exits(&unary.argument)
             }
+            // A comparison's true edge is its fused test's fall-through, then a jump: the
+            // comparison is never made into a boolean that a second test reads again, so every
+            // tier decides it as the one compare-and-jump `false_exit` emits.
+            Expression::BinaryExpression(binary) if fuses_with_jump(binary.operator) => {
+                let skip = self.false_exit(value);
+                let taken = self.emit(Op::Jump, 0, 0, 0, 0);
+                self.patch(skip);
+                smallvec::smallvec![taken]
+            }
             _ => {
                 let test = self.expression(value);
                 smallvec::smallvec![self.emit(Op::JumpTrue, test, 0, 0, 0)]
@@ -897,7 +906,11 @@ impl FunctionCompiler<'_, '_> {
 
     /// The single jump a test that is no `&&`, `||` or `!` takes when `value` is falsy.
     fn false_exit(&mut self, value: &Expression<'_>) -> usize {
-        if let Expression::BinaryExpression(binary) = value {
+        // Only a comparison fuses with its jump: an arithmetic or bitwise result (`if (i & 3)`)
+        // is a Number every tier makes in its own row, whose truthiness `JumpFalse` tests.
+        if let Expression::BinaryExpression(binary) = value
+            && fuses_with_jump(binary.operator)
+        {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
@@ -930,6 +943,21 @@ impl FunctionCompiler<'_, '_> {
         }
         dst
     }
+}
+
+/// Whether a test of `operator`'s result is one compare-and-jump (`JumpBinaryFalse`): the
+/// relations, the equalities, `in` and `instanceof`, whose result is a boolean.
+fn fuses_with_jump(operator: oxc_ast::ast::BinaryOperator) -> bool {
+    use oxc_ast::ast::BinaryOperator as B;
+    matches!(operator, B::LessThan | B::LessEqualThan | B::GreaterThan | B::GreaterEqualThan | B::Equality | B::Inequality
+        | B::StrictEquality | B::StrictInequality | B::In | B::Instanceof)
+}
+
+/// `fuses_with_jump` of an operator's bytecode number.
+pub(crate) fn fuses_with_jump_operator(operator: u32) -> bool {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::LessThan, B::LessEqualThan, B::GreaterThan, B::GreaterEqualThan, B::Equality, B::Inequality,
+        B::StrictEquality, B::StrictInequality, B::In, B::Instanceof].into_iter().any(|candidate| candidate as u32 == operator)
 }
 
 /// A comparison of a constant with a register, `C < r`, as the mirrored comparison of the
