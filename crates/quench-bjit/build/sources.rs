@@ -44,6 +44,9 @@ fn members(path: &Path) -> Vec<PathBuf> {
     let base = path.parent().unwrap_or(Path::new("."));
     source
         .lines()
+        // A comment that quotes the attribute names no file: watching the path it names, which
+        // never exists, made every build rerun the stencil compile (270 s of a 296 s rebuild).
+        .filter(|line| !line.trim_start().starts_with("//"))
         .filter_map(|line| line.split_once(PATH_ATTRIBUTE))
         .filter_map(|(_, rest)| rest.split_once('"'))
         .map(|(named, _)| normalize(&base.join(named)))
