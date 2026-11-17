@@ -7370,7 +7370,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let Some((object, value)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| vm.primary_own_field_hit(code, object, i.c).map(|value| (object, value)))
+            .and_then(|object| own_entry_hit(vm, code, object, i.c).map(|value| (object, value)))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
@@ -7385,6 +7385,24 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
+}
+
+/// The value the primary own entry of site `site` reads in `object`, in whatever storage form
+/// the object keeps it: the site row (`primary_own_field_hit`) reads arena runs and packed
+/// values; an object whose values a collection narrowed (`NARROW_FORM`) is read through the
+/// entry formed to its word (`form_hint`), so its record settles on the narrow handler instead
+/// of missing on every read.
+#[inline(always)]
+fn own_entry_hit<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, object: Value, site: u16) -> Option<Value> {
+    if let Some(value) = vm.primary_own_field_hit(code, object, site) {
+        return Some(value);
+    }
+    let entry = vm.field_cache_entry(site);
+    let receiver = vm.heap.record_object_value(object)?;
+    if entry.holder != super::NO_FIELD_HOLDER || receiver.exact_shape() != entry.receiver {
+        return None;
+    }
+    vm.own_field_hint_hit::<HINTED_FORM>(vm.form_hint(entry, object), receiver)
 }
 
 /// The bound own-field read (`lane_get_field_own_bound`) for the storage form the hint word
