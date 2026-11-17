@@ -9955,6 +9955,14 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
     {
         return Some(matches!(operator, 1 | STRICT_INEQUALITY_OPERATOR));
     }
+    // An ordering operator (`<`, `<=`, `>`, `>=`) is decided by its operand pair alone: the
+    // membership, prototype and identity tests below never answer it.
+    if super::operations::NumberRelation::from_operator(operator).is_some() {
+        return vm.string_relation(operator, left, right)
+            .or_else(|| vm.bigint_relation(operator, left, right))
+            .or_else(|| vm.primitive_comparison(operator, left, right))
+            .or_else(|| vm.number_binary(operator, left, right)?.truthiness());
+    }
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.plain_in(operator, left, right))
         .or_else(|| vm.identity_equality(operator, left, right))

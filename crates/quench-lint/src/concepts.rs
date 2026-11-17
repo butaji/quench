@@ -35,6 +35,8 @@ struct Concept {
 
 /// The stencil sources, which compile without the runtime and so keep checked copies.
 const STENCILS: &str = "quench-bjit/stencils/";
+/// This lint's own sources, which spell every mark as data.
+const LINT_SOURCES: &str = "quench-lint/src/";
 
 const CONCEPTS: &[Concept] = &[
     Concept {
@@ -80,12 +82,12 @@ const CONCEPTS: &[Concept] = &[
 ];
 
 /// Analyses whose every production call recomputes a per-function fact.
-const ANALYSES: &[(&str, &str)] = &[
-    ("liveness-solve", "liveness::analyze("),
-    ("liveness-graph-solve", "analyze_graph("),
-    ("successor-table", "Successors::of_code("),
-    ("back-edge-scan", "has_backward_branch("),
-    ("lane-leaders", "leaders(program"),
+const ANALYSES: &[(&str, &[&str])] = &[
+    ("liveness-solve", &["liveness::analyze("]),
+    ("liveness-graph-solve", &["analyze_graph("]),
+    ("successor-table", &["Successors::of_code("]),
+    ("back-edge-scan", &["has_backward_branch("]),
+    ("lane-leaders", &["=leaders(", "::leaders("]),
 ];
 
 /// Records the concept measures of the production files among `files`.
@@ -93,7 +95,7 @@ pub fn scan(files: &[PathBuf], measures: &mut Measures) {
     let mut found = Found::default();
     for path in files {
         let file = path.display().to_string();
-        if crate::in_test_path(&file) {
+        if crate::in_test_path(&file) || file.contains(LINT_SOURCES) {
             continue;
         }
         let Some(syntax) = fs::read_to_string(path).ok().and_then(|source| syn::parse_file(&source).ok()) else { continue };
@@ -128,8 +130,8 @@ impl Found {
                 *twins += concept.marks.iter().map(|mark| items.count(mark)).sum::<usize>();
             }
         }
-        for ((_, call), runs) in ANALYSES.iter().zip(self.runs.iter_mut()) {
-            *runs += items.text.matches(call).count();
+        for ((_, calls), runs) in ANALYSES.iter().zip(self.runs.iter_mut()) {
+            *runs += calls.iter().map(|call| items.text.matches(call).count()).sum::<usize>();
         }
     }
 }
