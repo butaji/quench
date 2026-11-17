@@ -169,13 +169,3 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     stage.builder.switch_to_block(done);
     Some(())
 }
-
-/// A global-name `typeof` of the slot the row holds, whose observed type spells one name: that
-/// name, a constant of the string kind.
-pub(super) fn global_typeof(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, destination: Register) -> Option<()> {
-    let name = frame.call_out?.cell?.typeof_name?;
-    let bits = stage.constant(name.to_bits());
-    let fact = RegisterFact::definition(Type::language(crate::ValueType::String), Representation::Tagged);
-    <EmitFrame<'_> as crate::staged::Frame<Emit<'_, '_>>>::write(frame, stage, destination, bits, fact);
-    Some(())
-}

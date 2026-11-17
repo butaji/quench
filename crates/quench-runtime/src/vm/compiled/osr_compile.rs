@@ -3,7 +3,7 @@
 
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, DumpSite, names_length, native_dump_directory, lane_unit, osr_loop,
-    publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
+    publish_body, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use super::base_region::function::{build_region, Body, BodySpec};
@@ -213,12 +213,11 @@ fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane
 }
 
 /// Whether the read of `region`'s field `index` answers from the entry record: a static read
-/// of a field, not a register's `length`, which native code reads from the array's length
-/// word at the read (`Lowering::array_length`) as the loop's stores may change it.
+/// of a field, never a `length`, whatever its receiver (a register, `this`, a field or a
+/// capture): the loop's element stores may change an array's length word, so native code
+/// reads it at the read.
 fn entry_read(region: &LoopRegion, index: usize, program: &ResidualProgram) -> bool {
-    let field = &region.fields[index];
-    !region.is_dynamic_field(index)
-        && !(matches!(field.receiver, FieldReceiver::Register(_)) && names_length(program, field.atom))
+    !region.is_dynamic_field(index) && !names_length(program, region.fields[index].atom)
 }
 
 /// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered

@@ -211,6 +211,11 @@ fn unary<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
                     Step::Value(value)
                 }
                 NumberUnary::Negate => {
+                    // `-0` is no int32: a zero operand leaves, as `i32::MIN`'s overflow does.
+                    let zero_operand = stage.i32_is_zero(value);
+                    if stage.guard_false(zero_operand, miss).is_none() {
+                        return Step::Unresolved;
+                    }
                     let zero = stage.i32_constant(0);
                     int_arithmetic_result(stage, frame, destination, zero, value,
                         NumberArithmetic::Subtract, LEAVES, miss)

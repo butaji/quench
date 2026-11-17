@@ -230,6 +230,25 @@ fn an_array_length_condition_loop_runs() {
     assert_eq!(thrown, Some(crate::Value::integer(9_900_000)));
     assert!(runs > 0, "the length-bounded loop ran natively");
 }
+/// An append through `this.items[this.items.length]` reads the length its own stores grew,
+/// never the length at the loop's entry.
+#[test]
+fn a_this_field_array_append_reads_the_current_length() {
+    let (thrown, _) = thrown_with_native_runs(
+        "class Bag { constructor(){ this.items=[]; } fill(n){ for(let i=0;i<n;i++) this.items[this.items.length]=i; return this.items.length; } }
+         throw new Bag().fill(200000);", "fill");
+    assert_eq!(thrown, Some(crate::Value::integer(200_000)));
+}
+/// Negating a zero int32 gives `-0`, which no int32 holds: the loop leaves rather than
+/// produce `+0`.
+#[test]
+fn an_int32_negation_of_zero_keeps_negative_zero() {
+    let (thrown, runs) = thrown_with_native_runs(
+        "function count(n){ let s=0; for(let k=0;k<n;k++){ const z=-(k&0); if(1/z===-Infinity) s++; } return s; }
+         throw count(100000);", "count");
+    assert_eq!(thrown, Some(crate::Value::integer(100_000)));
+    assert!(runs > 0, "the negating loop ran natively");
+}
 /// A loop reading a captured binding carries the loop entry's capture view.
 #[test]
 fn a_capture_loop_keeps_its_capture_value() {
