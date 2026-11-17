@@ -1114,6 +1114,9 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         opcode if opcode.is_to_numeric() || opcode.is_get_index() || opcode.is_require_object_coercible() => !instruction.returns_from_frame(),
+        // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
+        opcode if opcode.is_unary() => instruction.result_flags() == 0 && !instruction.writes_current_this()
+            && crate::vm::operations::NumberUnary::from_js_instruction(opcode, instruction.unary_operator()).is_some(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     })
 }
