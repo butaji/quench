@@ -177,7 +177,13 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     debug_assert!(FORM == HINTED_FORM || named & forms == FORM, "a fixed form's matched hint names it");
     let formed = if FORM == HINTED_FORM { hint } else { stage.constant(u64::from(FORM)) };
     let layout = formed_own_layout(&mut stage, record, formed, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
-    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)))
+    let word = read_slot(&mut stage, layout, slot, Rep::Tagged);
+    // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
+    // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
+    if FORM == OBJECT.inline_form || FORM == OBJECT.narrow_form {
+        return Some(crate::Value::from_bits(word));
+    }
+    Some(crate::value_vec::decode_staged_word(word))
 }
 
 /// The own data value the field cache entry of the site `offset` bytes into `entries` (the

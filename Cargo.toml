@@ -104,6 +104,14 @@ incremental = true
 debug = 0
 strip = "none"
 
+# Targeted library tests in a short change-test cycle: `experiment` compiled with crate-local
+# ThinLTO and full optimization, where an edit to one test re-ran ThinLTO and LLVM passes over
+# most of quench-runtime's 256 units (time-passes: 330 s ThinLTO + 294 s passes of 725 s).
+[profile.test-cycle]
+inherits = "experiment"
+opt-level = 1
+lto = "off"
+
 # Native SDK consumers link optimized machine-code archive members directly.
 # This keeps whole-image LLVM optimization out of repeated SDK consumer links.
 [profile.native-support]

@@ -244,6 +244,23 @@ pub(super) fn integer_relation_i32(op: u32, left: i32, right: i32) -> Option<boo
     Some(number_comparison(op, left, right))
 }
 
+/// The truth a jump test of two int32 operands takes: a comparison's result, or whether a
+/// bitwise operator's int32 result is nonzero (`if (flags & MASK)`, the Number it would make
+/// is never made: its ToBoolean is its bits' test). `None` for any other operator.
+#[inline(always)]
+pub(super) fn integer_test_i32(op: u32, left: i32, right: i32) -> Option<bool> {
+    let bits = match op {
+        BITWISE_AND => left & right,
+        BITWISE_OR => left | right,
+        BITWISE_XOR => left ^ right,
+        SHIFT_LEFT => left.wrapping_shl(right as u32),
+        SHIFT_RIGHT => left.wrapping_shr(right as u32),
+        SHIFT_RIGHT_ZERO_FILL => ((left as u32).wrapping_shr(right as u32)) as i32,
+        _ => return integer_relation_i32(op, left, right),
+    };
+    Some(bits != 0)
+}
+
 /// A comparison operator on two int32 Values; `None` for any other operator or value.
 #[inline(always)]
 pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {

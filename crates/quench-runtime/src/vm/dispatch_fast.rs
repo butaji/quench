@@ -4076,6 +4076,12 @@ script_handler! {
     /// other value the general path.
     /// The view derives the direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
+        // A counter in [0, 2^31) by one compare (`integer_increment`), as the loop updates do; a
+        // decrement, often of a negative value, keeps the general update's single path.
+        if !DECREMENT && let Some(value) = integer_increment::<DECREMENT>(r.get(i.b)) {
+            r.set(i.a, Value::integer(value));
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
             sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
         };
@@ -4127,12 +4133,13 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_update_jumps` matched. Computed before the fuel test, so the test's
+        // branch reads the decrement's own flags.
+        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_update_jumps` matched.
-        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let test = unsafe { &*test_ip };
         // A test of the counter (`COUNTER`, `specialize_update_jumps`) reads the integer just
         // written, whose tag the update proved.
@@ -4159,12 +4166,13 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_update_jumps` matched. Computed before the fuel test, so the test's
+        // branch reads the decrement's own flags.
+        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_update_jumps` matched.
-        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let test = unsafe { &*test_ip };
         let right = lane_small_constant::<H, false>(cx, test);
         let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), right) else {
@@ -4189,12 +4197,13 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
+        // SAFETY: the view records the distance to a validated jump target, the load record
+        // `specialize_update_jumps` matched, whose branch record follows it. Computed before
+        // the fuel test, so its branch reads the decrement's own flags.
+        let load_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the load record
-        // `specialize_update_jumps` matched, whose branch record follows it.
-        let load_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let load = unsafe { &*load_ip };
         let branch_ip = following(load_ip);
         let branch = unsafe { &*branch_ip };
@@ -4358,7 +4367,8 @@ pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i
     // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
     let offset = value.int_key_offset();
     let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    if stepped < 1 << 31 {
+    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
+    if stepped < (1 << 31) - usize::from(DECREMENT) {
         return Some(stepped as i32);
     }
     let integer = value.as_int()?;
@@ -4562,6 +4572,23 @@ script_handler! {
         } else {
             r.set(i.a, value);
         }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `Binary` of a Number constant and a register (`1 / i`), as the view decoded it
+    /// (`constant_left_operator_handler`): two Numbers by their values
+    /// (`number_value_operator`); any other right operand takes `lane_binary_general`.
+    fn lane_operator_constant_left<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the view
+        // was derived with `b` a constant operand indexing a Number.
+        let left = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(crate::bytecode::Operand(i.b).payload())) };
+        let right = r.get(crate::bytecode::Operand(i.c).payload());
+        let Some(value) = super::operations::number_value_operator::<OP>(left, right) else {
+            sibling!(lane_binary_general::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -6016,12 +6043,36 @@ fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneIns
     unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
 }
 
+/// `lane_proved_store` of a heap value (`arr[i] = o`): through the proof where the write
+/// barrier admits the store unlogged (`Heap::array_store_unlogged`). Out of line, so the
+/// immediate store keeps its few registers.
+#[inline(always)]
+fn lane_proved_heap_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> bool {
+    let (base, value) = (r.get(i.b), r.get(i.a));
+    value.heap_index().is_some()
+        && unsafe { vm(cx) }.heap.array_store_unlogged(base, value)
+        && unsafe { (*cx).proofs.replace_admitted(i.b, base, proof_key(r.get(i.c)), value) }
+}
+
+script_handler! {
+    /// `lane_set_index_proved` whose immediate store its proof declined: a heap value the
+    /// barrier admits unlogged through the proof (`lane_proved_heap_store`), else
+    /// `lane_proof_miss`. Apart, so the immediate store keeps its code.
+    #[inline(never)]
+    fn lane_set_index_proved_miss<>(cx, r, ip, i, view) {
+        if !lane_proved_heap_store(cx, r, i) {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
 script_handler! {
     /// `lane_set_index` of a base its loop does not redefine: the replacement through the
     /// run's proof of the array's storage (`lane_proved_store`), else `lane_proof_miss`.
     fn lane_set_index_proved<>(cx, r, ip, i, view) {
         if lane_proved_store(cx, r, i).is_none() {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(lane_set_index_proved_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -6560,6 +6611,156 @@ script_handler! {
     }
 }
 
+/// The index of "number" in `bytecode::TYPEOF_NAMES`.
+const NUMBER_NAME_INDEX: usize = 3;
+
+/// The handler of a `Unary` record whose operator the view decides once
+/// (`specialize_register_operands`): a `typeof` test (`lane_typeof_test`), a Number operator
+/// (`lane_unary_number`) or logical not (`lane_logical_not`), so the record dispatches on no
+/// operator at run time; `None` keeps the general `lane_unary`.
+fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
+    use oxc_ast::ast::UnaryOperator as U;
+    if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+        macro_rules! names {
+            ($($index:literal),*) => {
+                match (index, negated) {
+                    $(($index, false) => lane_typeof_test::<H, $index, false> as Handler,
+                      ($index, true) => lane_typeof_test::<H, $index, true> as Handler,)*
+                    _ => return None,
+                }
+            };
+        }
+        return Some(names!(0, 1, 2, 3, 4, 5, 6, 7));
+    }
+    const NEGATION: u32 = U::UnaryNegation as u32;
+    const PLUS: u32 = U::UnaryPlus as u32;
+    match operator {
+        NEGATION => Some(lane_unary_number::<H, NEGATION> as Handler),
+        PLUS => Some(lane_unary_number::<H, PLUS> as Handler),
+        super::coercion::LOGICAL_NOT => Some(lane_logical_not::<H> as Handler),
+        _ => None,
+    }
+}
+
+script_handler! {
+    /// `Unary` of a `typeof` test of the name at `INDEX` (`typeof x === "number"`, negated for
+    /// `!==`), chosen when the view was derived: an immediate's name decided here; a heap
+    /// operand's name is the VM's (`Vm::typeof_test_value`).
+    fn lane_typeof_test<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        if value.is_heap() {
+            sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view))
+        }
+        // An immediate's name (`immediate_typeof_index`), which a test of "number" decides by
+        // the Number test alone.
+        let named = if INDEX == NUMBER_NAME_INDEX {
+            value.as_number().is_some()
+        } else {
+            match super::coercion::immediate_typeof_index(value) {
+                Some(name) => name == INDEX,
+                None => sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view)),
+            }
+        };
+        let holds = named != NEGATED;
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+/// The `lane_typeof_test_jump` of the `typeof` test `operator`, `None` for another operator.
+fn typeof_test_jump_handler<H: Host>(operator: u32) -> Option<Handler> {
+    let (index, negated) = crate::bytecode::typeof_test(operator)?;
+    macro_rules! names {
+        ($($index:literal),*) => {
+            match (index, negated) {
+                $(($index, false) => lane_typeof_test_jump::<H, $index, false> as Handler,
+                  ($index, true) => lane_typeof_test_jump::<H, $index, true> as Handler,)*
+                _ => return None,
+            }
+        };
+    }
+    Some(names!(0, 1, 2, 3, 4, 5, 6, 7))
+}
+
+script_handler! {
+    /// `lane_typeof_test` whose result a forward `JumpFalse` record tests next (`if (typeof x
+    /// === "number")`): the test and the branch as one dispatch, the result register written
+    /// as the test writes it. An operand whose name the test alone does not decide runs
+    /// `lane_typeof_test_heap`, which continues at the jump record.
+    fn lane_typeof_test_jump<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        if value.is_heap() {
+            sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view))
+        }
+        let named = if INDEX == NUMBER_NAME_INDEX {
+            value.as_number().is_some()
+        } else {
+            match super::coercion::immediate_typeof_index(value) {
+                Some(name) => name == INDEX,
+                None => sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view)),
+            }
+        };
+        let holds = named != NEGATED;
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        let jump_ip = following(ip);
+        if !holds {
+            resume!(cx, lane_jump::<H>(r, jump_ip, false, Carried::script_in(cx, view), None));
+        }
+        next!(cx, r, following(jump_ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_typeof_test` of a heap operand: its kind's name (`Vm::typeof_test_value`).
+    #[inline(never)]
+    fn lane_typeof_test_heap<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
+        r.set(i.a, unsafe { vm(cx) }.typeof_test_value(r.get(i.b), INDEX, NEGATED));
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `Unary` of the Number operator `OP` (`-x`, `+x`), chosen when the view was derived: a
+    /// Number operand's result made here (`number_unary_result`); any other operand takes the
+    /// general `lane_unary`.
+    fn lane_unary_number<OP: u32>(cx, r, ip, i, view) {
+        // An integer stays one: `+x` is itself, and `-x` of any but 0 (whose negation is -0)
+        // and the least int32 (whose negation is past int32).
+        if let Some(integer) = r.int(i.b) {
+            const NEGATION: u32 = oxc_ast::ast::UnaryOperator::UnaryNegation as u32;
+            if OP != NEGATION {
+                r.set(i.a, Value::integer(integer));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            if integer != 0 && integer != i32::MIN {
+                r.set(i.a, Value::integer(-integer));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+        }
+        let Some(number) = r.get(i.b).as_number() else {
+            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        let Some(result) = super::operations::number_unary_result(OP, number) else {
+            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, Value::number(result));
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `Unary` logical not, chosen when the view was derived: a value that decides its own
+    /// truthiness (`Value::truthiness`) here; a heap value whose cell decides it takes the
+    /// general `lane_unary`.
+    fn lane_logical_not<>(cx, r, ip, i, view) {
+        let Some(truthy) = r.get(i.b).truthiness() else {
+            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, if truthy { Value::FALSE } else { Value::TRUE });
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
 script_handler! {
     /// `Unary` of `UNARY_TYPEOF_INDEX`, chosen when the view was derived
     /// (`specialize_register_operands`): the index of `typeof`'s name, which runs no guest code.
@@ -7091,44 +7292,53 @@ script_handler! {
     }
 }
 
+/// The value the bound own-field read of record `i` answers (`lane_get_field_own_bound`), `None`
+/// where its hint misses.
+#[inline(always)]
+fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    // No closure: an `and_then` over one stays a call where its caller is not a handler.
+    let object = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })?;
+    {
+        let record = object.direct_object_index()?;
+        // SAFETY: binding preceded handler installation; the rooted direct Value names
+        // a live record of this range. Resumption binds an initially empty outer context.
+        #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
+        let (base, machine) = {
+            const {
+                assert!(std::mem::offset_of!(LaneContext<H>, vm)
+                    == std::mem::offset_of!(LaneContext<H>, binding)
+                        + std::mem::offset_of!(LaneBinding, object_base)
+                        + std::mem::size_of::<*const Object>());
+            }
+            let base: *const Object;
+            let machine: *const Vm<H>;
+            // SAFETY: the asserted adjacent pointer fields belong to this live context.
+            // Loading both together starts the independent heap lookup before the shape
+            // branch, instead of delaying the VM load until after that branch.
+            unsafe {
+                std::arch::asm!(
+                    "ldp {base}, {machine}, [{source}, #{offset}]",
+                    base = out(reg) base,
+                    machine = out(reg) machine,
+                    source = in(reg) std::ptr::addr_of!((*cx).binding),
+                    offset = const std::mem::offset_of!(LaneBinding, object_base),
+                    options(pure, readonly, nostack, preserves_flags),
+                );
+            }
+            (base, machine)
+        };
+        #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
+        let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
+        let receiver = unsafe { &*base.add(record as usize) };
+        unsafe { &*machine }.own_field_hint_hit::<FORM>(i.field_hint(), receiver)
+    }
+}
+
 script_handler! {
     /// The record range is fixed for the owning heap's lifetime; only this value's type
     /// and shape vary. Each resolved record borrow ends before the next instruction.
     fn lane_get_field_own_bound<THIS: bool, FORM: u32>(cx, r, ip, i, view) {
-        let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
-            let record = object.direct_object_index()?;
-            // SAFETY: binding preceded handler installation; the rooted direct Value names
-            // a live record of this range. Resumption binds an initially empty outer context.
-            #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
-            let (base, machine) = {
-                const {
-                    assert!(std::mem::offset_of!(LaneContext<H>, vm)
-                        == std::mem::offset_of!(LaneContext<H>, binding)
-                            + std::mem::offset_of!(LaneBinding, object_base)
-                            + std::mem::size_of::<*const Object>());
-                }
-                let base: *const Object;
-                let machine: *const Vm<H>;
-                // SAFETY: the asserted adjacent pointer fields belong to this live context.
-                // Loading both together starts the independent heap lookup before the shape
-                // branch, instead of delaying the VM load until after that branch.
-                unsafe {
-                    std::arch::asm!(
-                        "ldp {base}, {machine}, [{source}, #{offset}]",
-                        base = out(reg) base,
-                        machine = out(reg) machine,
-                        source = in(reg) std::ptr::addr_of!((*cx).binding),
-                        offset = const std::mem::offset_of!(LaneBinding, object_base),
-                        options(pure, readonly, nostack, preserves_flags),
-                    );
-                }
-                (base, machine)
-            };
-            #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
-            let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
-            let receiver = unsafe { &*base.add(record as usize) };
-            unsafe { &*machine }.own_field_hint_hit::<FORM>(i.field_hint(), receiver)
-        });
+        let value = own_bound_value::<H, THIS, FORM>(cx, r, i);
         let Some(value) = value else {
             sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
         };
@@ -7624,10 +7834,10 @@ script_handler! {
     /// `length` (`Vm::array_length_field`, which `lane_get_field` answers for an array
     /// after a probe that cannot hit) inline; any other receiver takes `lane_get_field`.
     fn lane_get_length<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).own_array_length(r.get(i.b)) else {
+        let Some(length) = (unsafe { vm(cx) }).array_length_value(r.get(i.b)) else {
             sibling!(lane_get_length_other::<H>, r, ip, Carried::script_in(cx, view))
         };
-        r.set(i.a, Value::length(length));
+        r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -7653,10 +7863,12 @@ script_handler! {
     /// a string's length here; any other receiver, an array's included, takes
     /// `lane_get_length` out of line, which keeps this one's registers to the string.
     fn lane_get_length_string<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+        // The staged row (`staged::string_length`), as compiled code reads it; a rope, a slice
+        // or a small string takes the units' count.
+        let Some(length) = (unsafe { vm(cx) }).string_length_value(r.get(i.b)) else {
             sibling!(lane_get_length::<H>, r, ip, Carried::script_in(cx, view))
         };
-        r.set(i.a, Value::length(length));
+        r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -9341,7 +9553,7 @@ script_handler! {
     /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
     fn lane_jump_binary_false_registers<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
         let Some(holds) = (match (r.int(i.b), r.int(i.c)) {
-            (Some(left), Some(right)) => super::operations::integer_relation_i32(relation_operator::<OP>(i), left, right),
+            (Some(left), Some(right)) => super::operations::integer_test_i32(relation_operator::<OP>(i), left, right),
             _ => None,
         }) else {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script_in(cx, view))
@@ -9485,11 +9697,12 @@ script_handler! {
     /// `lane_jump_binary_false` of a register and an integer constant small enough for the
     /// record's `c` field, both decoded when the view was derived
     /// (`specialize_register_operands`): integer comparison of an integer register
-    /// (`integer_relation_i32`); any other takes `lane_jump_binary_false_small_other`.
+    /// (`integer_test_i32`), which also decides a bitwise result's truth; any other takes
+    /// `lane_jump_binary_false_small_other`.
     fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32, TABLE: bool>(cx, r, ip, i, view) {
         let right = lane_small_constant::<H, TABLE>(cx, i);
         let Some(holds) = (match (r.int(i.b), right.as_int()) {
-            (Some(left), Some(right)) => super::operations::integer_relation_i32(relation_operator::<OP>(i), left, right),
+            (Some(left), Some(right)) => super::operations::integer_test_i32(relation_operator::<OP>(i), left, right),
             _ => None,
         }) else {
             sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, view)
@@ -9808,12 +10021,13 @@ script_handler! {
     /// of a list walk: the safepoint and the test as one dispatch. A heap value other than a
     /// record runs the test's own record.
     fn lane_jump_back_nullish<NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_nullish_back_edges` matched. Computed before the fuel test, so its
+        // branch reads the decrement's own flags.
+        let test_ip = unsafe { ip.byte_offset(i.jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_nullish_back_edges` matched.
-        let test_ip = unsafe { ip.byte_offset(i.jump()) };
         let value = r.get(unsafe { (*test_ip).b });
         let equal = match NULLISH {
             NULLISH_NULL => value == Value::NULL,
@@ -9840,12 +10054,13 @@ script_handler! {
     /// safepoint, the update, the copy and the test as one dispatch. An update other than an
     /// integer's runs the update's own record, a test of anything else the test's.
     fn lane_jump_back_update_small<DECREMENT: bool, MOVE: bool, OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the view records the distance to a validated jump target, the update record
+        // `specialize_update_back_edges` matched, which the copy and the test follow. Computed
+        // before the fuel test, so its branch reads the decrement's own flags.
+        let update_ip = unsafe { ip.byte_offset(i.jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the update record
-        // `specialize_update_back_edges` matched, which the copy and the test follow.
-        let update_ip = unsafe { ip.byte_offset(i.jump()) };
         let update = unsafe { &*update_ip };
         let Some(value) = super::dispatch::integer_increment(r.get(update.b), DECREMENT) else {
             next!(cx, r, update_ip, Carried::script_in(cx, view))
@@ -14629,7 +14844,11 @@ script_handler! {
         // callee back.
         if let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.heap.function(callee) {
             let native = *native;
-            requicken::<H>(ip, native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i)));
+            let handler = native_call_handler::<H>(native, i, || lane_call_result_dead(cx, ip, i));
+            requicken::<H>(ip, handler);
+            if handler as *const () != lane_native_call::<H> as *const () {
+                native_calls::install_math_field_call::<H>(cx, ip, native);
+            }
         }
         sibling!(lane_native_call::<H>, r, ip, Carried::script_in(cx, view))
     }
@@ -15636,7 +15855,7 @@ use i64_operators::i64_operator_handler;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
-use denoted::{denoted_handler, unary_handler};
+use denoted::{denoted_handler, lane_unary, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
@@ -15661,7 +15880,7 @@ pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_string_concat, lane_d
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
-use native_calls::{native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
+use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
 use wasm_gc::wasm_gc_handler;
 
@@ -15674,7 +15893,12 @@ impl<H: Host> Vm<H> {
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
-            Native::ArrayPush => self.array_push_dense(receiver, args),
+            // One value appended in the handler itself; other pushes take the dense path out
+            // of line.
+            Native::ArrayPush => match *args {
+                [value] => self.array_push_one(receiver, value).or_else(|| self.array_push_dense(receiver, args)),
+                _ => self.array_push_dense(receiver, args),
+            },
             Native::ArrayPop => self.array_pop_dense(receiver),
             Native::StringCharCodeAt => string_char_code_at(self, receiver, first?),
             Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
@@ -19427,6 +19651,7 @@ impl FieldHit {
         if handler == lane_get_field_own::<H, true> as *const ()
             || handler == lane_get_field_own::<H, false> as *const ()
             || own_bound_handlers::<H>().contains(&handler)
+            || math_field_call_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
         } else if handler == lane_get_field_holder::<H, true> as *const ()
@@ -22916,7 +23141,10 @@ fn specialize_register_operands<H: Host>(
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
     let unary = unary_handler::<H>() as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
+    let forward_false_jump = lane_jump_false::<H, false> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
+        // A forward `JumpFalse` of this record's result follows it (`lane_typeof_test_jump`).
+        let tested_next = records.get(pc + 1).is_some_and(|next| next.handler == forward_false_jump && next.a == records[pc].a);
         let record = &mut records[pc];
         if record.handler == returning_binary {
             specialize_returning_operator::<H>(instruction, constants, record);
@@ -22925,6 +23153,10 @@ fn specialize_register_operands<H: Host>(
         if record.handler == unary {
             if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
                 record.handler = lane_typeof_index::<H> as Handler as *const ();
+            } else if tested_next && let Some(handler) = typeof_test_jump_handler::<H>(instruction.imm()) {
+                record.handler = handler as *const ();
+            } else if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
+                record.handler = handler as *const ();
             }
             continue;
         }
@@ -22933,6 +23165,10 @@ fn specialize_register_operands<H: Host>(
         }
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
         use crate::bytecode::OperandKind::{Constant, Register};
+        if record.handler == binary && let Some(handler) = constant_left_operator_handler::<H>(instruction, constants) {
+            record.handler = handler as *const ();
+            continue;
+        }
         let (Some(Register), Some(right_kind)) = (left.kind(), right.kind()) else {
             continue;
         };
@@ -23947,6 +24183,9 @@ macro_rules! relation_operators {
         const LESS_EQUAL: u32 = B::LessEqualThan as u32;
         const GREATER_THAN: u32 = B::GreaterThan as u32;
         const GREATER_EQUAL: u32 = B::GreaterEqualThan as u32;
+        const BITWISE_AND: u32 = B::BitwiseAnd as u32;
+        const BITWISE_OR: u32 = B::BitwiseOR as u32;
+        const BITWISE_XOR: u32 = B::BitwiseXOR as u32;
         match $operator {
             EQUALITY => $pick!(EQUALITY),
             INEQUALITY => $pick!(INEQUALITY),
@@ -23956,6 +24195,10 @@ macro_rules! relation_operators {
             LESS_EQUAL => $pick!(LESS_EQUAL),
             GREATER_THAN => $pick!(GREATER_THAN),
             GREATER_EQUAL => $pick!(GREATER_EQUAL),
+            // The truth of an integer bitwise result (`integer_test_i32`).
+            BITWISE_AND => $pick!(BITWISE_AND),
+            BITWISE_OR => $pick!(BITWISE_OR),
+            BITWISE_XOR => $pick!(BITWISE_XOR),
             _ => $pick!(RECORD_RELATION),
         }
     }};
@@ -24148,6 +24391,24 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
         Some(constant) => record.operand = LaneOperand { constant },
         None => record.c = right.payload(),
     }
+}
+
+/// The handler of an arithmetic `Binary` of a Number constant and a register (`1 / i`,
+/// `k - x`), which keeps the record's encoded operands and immediate for the general case
+/// (`lane_operator_constant_left`); `None` for any other instruction.
+fn constant_left_operator_handler<H: Host>(instruction: WideInstruction, constants: &[Value]) -> Option<Handler> {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    let (left, right) = (instruction.operand_b(), instruction.operand_c());
+    if left.kind() != Some(Constant) || right.kind() != Some(Register) || instruction.numeric_local_target().is_some() {
+        return None;
+    }
+    constants.get(usize::from(left.payload()))?.as_number()?;
+    macro_rules! pick {
+        ($op:expr) => {
+            lane_operator_constant_left::<H, { $op }> as Handler
+        };
+    }
+    arithmetic_operators!(instruction.binary_operator(), pick)
 }
 
 fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {

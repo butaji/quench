@@ -27,20 +27,25 @@ pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
 /// ToUint32 (ToInt32 is its bits reinterpreted as `i32`).
 #[inline]
 pub fn number_to_u32(value: f64) -> u32 {
-    // A truncation that fits `i32` is ToInt32 itself: one `cvttsd2si` and a compare. Only
-    // `i32::MIN` (out of range, NaN, or exactly -2^31) takes the wide conversion.
+    // One 64-bit `cvttsd2si` and a compare: below 2^63 in magnitude the truncation is exact
+    // and its low 32 bits are the value modulo 2^32. Only `i64::MIN` (out of range, NaN, or
+    // exactly -2^63) takes the wide conversion, which answers each of those.
     #[cfg(target_arch = "x86_64")]
     {
-        let truncated = truncate_to_i32(value);
-        if truncated != i32::MIN {
-            return truncated as u32;
+        use std::arch::x86_64::{_mm_cvttsd_si64, _mm_set_sd};
+        // SAFETY: SSE2 is part of the x86-64 baseline.
+        #[allow(unused_unsafe)]
+        let truncated = unsafe { _mm_cvttsd_si64(_mm_set_sd(value)) };
+        if truncated != i64::MIN { truncated as u32 } else { number_to_u32_wide(value) }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        if value.abs() < EXACT_I64_TRUNCATION_LIMIT {
+            // NaN fails the comparison; -0 and small fractions truncate to 0.
+            return value as i64 as u32;
         }
+        number_to_u32_wide(value)
     }
-    if value.abs() < EXACT_I64_TRUNCATION_LIMIT {
-        // NaN fails the comparison; -0 and small fractions truncate to 0.
-        return value as i64 as u32;
-    }
-    number_to_u32_wide(value)
 }
 
 /// `number_to_u32` at or past 2^63 and of non-finite values, out of line.

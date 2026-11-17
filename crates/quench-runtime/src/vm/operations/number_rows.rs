@@ -369,5 +369,18 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.
 #[inline]
 pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+    // Integral operands inside i64 (the common `(a * k) % m` past int32) take the integer
+    // remainder, which is exact: a double remainder is always representable and has the
+    // dividend's sign, as `%` on i64 does. `fmod` costs ~170 instructions; this ~15. A zero
+    // remainder keeps the dividend's sign (`-0`). Everything else (fractions, magnitudes
+    // past 2^63, NaN, infinities, a zero divisor) is the float remainder.
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    if left.abs() < LIMIT && right.abs() < LIMIT {
+        let (dividend, divisor) = (left as i64, right as i64);
+        if dividend as f64 == left && divisor as f64 == right && divisor != 0 {
+            let remainder = dividend % divisor;
+            return if remainder == 0 { if left.is_sign_negative() { -0.0 } else { 0.0 } } else { remainder as f64 };
+        }
+    }
     left % right
 }

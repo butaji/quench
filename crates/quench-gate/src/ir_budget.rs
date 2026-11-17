@@ -25,7 +25,7 @@ const MARKS_PER_OP: usize = 3;
 const OPS_VARIABLE: &str = "QUENCH_IR_BUDGET_OPS";
 const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
 const LINE_PREFIX: &str = "IRBUDGET ";
-/// A count within this many instructions per iteration of its ceiling is the same count.
+/// A count within this many instructions per iteration of its ceiling is the same count...
 const SAME_COUNT: f64 = 0.5;
 /// Ceilings are kept to tenths of an instruction per iteration.
 const CEILING_STEPS_PER_INSTRUCTION: f64 = 10.0;
@@ -36,6 +36,14 @@ const CEILING_COLUMN: usize = 3;
 /// The marks bounding op(2n) among an op's marks.
 const DOUBLE_RUN_START: usize = 1;
 const DOUBLE_RUN_END: usize = 2;
+/// ...or within this fraction of it: ops that run library code (`parseInt`, string builders)
+/// drift by an instruction or so with code layout, which is not a regression.
+const SAME_FRACTION: f64 = 0.001;
+
+/// The count difference that still counts as the same at `ceiling`.
+fn tolerance(ceiling: f64) -> f64 {
+    SAME_COUNT.max(ceiling * SAME_FRACTION)
+}
 
 /// One op's row in the budget file.
 #[derive(Clone, Copy)]
@@ -127,7 +135,7 @@ fn ratchet(config: &Config, measured: &[(String, f64)], rows: &mut BTreeMap<Stri
         let Some(row) = rows.get_mut(name) else { grown.push(format!("{name}: no budget row in {BUDGETS}")); continue };
         let floor = (count * CEILING_STEPS_PER_INSTRUCTION).ceil() / CEILING_STEPS_PER_INSTRUCTION;
         match row.ceiling {
-            Some(ceiling) if *count > ceiling + SAME_COUNT => grown.push(format!("{name}: {count:.1} Ir/iter, ceiling {ceiling}")),
+            Some(ceiling) if *count > ceiling + tolerance(ceiling) => grown.push(format!("{name}: {count:.1} Ir/iter, ceiling {ceiling}")),
             Some(ceiling) if *count + SAME_COUNT < ceiling => row.ceiling = Some(floor.max(row.budget.min(ceiling))),
             Some(_) => {}
             None if config.record => row.ceiling = Some(floor.max(row.budget)),
