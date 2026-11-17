@@ -686,6 +686,18 @@ pub(crate) enum InlineGuard {
     AtRead,
     /// A depth-zero plain capture, checked by the VM at every native entry.
     Capture(u16),
+    /// A caller register the loop never writes, live at its header (`const f = …; for (…) f(…)`),
+    /// checked by the VM at every native entry.
+    Register(Register),
+}
+
+/// Where an inlined call's callee is read from: a cached field path, a depth-zero capture, or
+/// a caller register the loop never writes (`inline_region`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CalleeSource {
+    Path,
+    Capture(u16),
+    Register(Register),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -957,7 +969,7 @@ pub(super) fn inline_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
@@ -989,6 +1001,34 @@ pub(super) fn inline_region<'a>(
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let (function_register, mut receiver) = (instruction.register_b(), instruction.register_c());
+        if !defines(function_register) {
+            // A callee the loop never writes: the closure the register holds at entry, which the VM
+            // checks at every native entry. Leaving in the call's setup, the straight run of pure
+            // moves before it, resumes at the run's first instruction.
+            (function_register < caller_registers
+                && crate::compile::liveness::register_in(mask(header)?, usize::from(function_register))).then_some(())?;
+            let start = (0..offset).rev().take_while(|index| pure_setup(caller[*index].op())).last().unwrap_or(offset);
+            let resume = header + start as u32;
+            let run = &caller[start..offset];
+            setup_resumes(run, (resume, pc), mask(resume)?, &targets).then_some(())?;
+            let (callee, reached) = inlining::admitted_callee(resolve, None, CalleeSource::Register(function_register), argc, sites)?;
+            let bound = inlining::bound_parameters(run, resume, window, &callee, &reached, &defines, &mut dropped)?;
+            for setup_pc in resume..pc {
+                setup.insert(setup_pc, resume);
+            }
+            let base = Register::try_from(total).ok()?;
+            total += u32::from(callee.registers);
+            (total <= RegisterSet::BITS).then_some(())?;
+            calls.insert(pc, inlining::Site {
+                frame: InlineFrame {
+                    call: pc, callee: callee.callee, function: callee.function, callee_register: function_register,
+                    window, arguments: argc, result: instruction.result_register(),
+                    guard: InlineGuard::Register(function_register), receiver, base, registers: callee.registers, bound,
+                },
+                callee_path: None, resume, window, result: instruction.result_register(), reached, callee,
+            });
+            continue;
+        }
         // The callee's read: the last write of its register before the call, in a straight run.
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
@@ -1040,7 +1080,8 @@ pub(super) fn inline_region<'a>(
         let at_resume = mask(resume)?;
         let run = &caller[resume_offset + 1..offset];
         setup_resumes(run, (resume, pc), at_resume, &targets).then_some(())?;
-        let (callee, reached) = inlining::admitted_callee(resolve, callee_path.as_ref(), capture, argc, sites)?;
+        let source = capture.map_or(CalleeSource::Path, CalleeSource::Capture);
+        let (callee, reached) = inlining::admitted_callee(resolve, callee_path.as_ref(), source, argc, sites)?;
         let first = read + 1;
         let bound = inlining::bound_parameters(&caller[read_offset + 1..offset], first, window, &callee, &reached, &defines, &mut dropped)?;
         if !checked {
@@ -2215,6 +2256,10 @@ pub(crate) struct Observation<'a> {
     pub(crate) int_captures: &'a [u16],
     /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
+    /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its
+    /// callee's environment (`Vm::lane_callee_captures`): where the frame's own capture reads
+    /// load, its identity guard fixing the environment.
+    pub(crate) frame_captures: &'a [(usize, usize)],
 }
 
 

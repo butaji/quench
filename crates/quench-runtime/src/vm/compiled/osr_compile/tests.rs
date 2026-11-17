@@ -18,7 +18,7 @@ fn a_simple_loop_is_planned_by_the_region_specializer() {
     }).expect("the function has a loop");
     let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
         .expect("the loop is admitted");
-    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[], entry_bounds: true };
+    let observation = Observation { native_field_loads: &[], store_loads: &[], number_arrays: &[], abandoned: &[], int_entries: &[], typed_captures: &[], int_captures: &[], int_registers: &[], double_registers: &[], operand_kinds: &[], entry_bounds: true, frame_captures: &[] };
     let pending = start_osr_region(&region, super::super::ElementViews::Dense, &observation,
         (crate::MemoryPolicy::Throughput, super::super::tier_policy::STATIC_ROWS), &program, id,
         super::super::compiled::process_lane_helpers::<crate::test_host::TestHost>(), &mut |_, _| Default::default(), (&[], None), RegionCalls::default())
@@ -376,7 +376,7 @@ fn an_inlining_region_maps_onto_a_lane_unit() {
         .map(|constant| super::super::facts::immediate(constant).unwrap_or(crate::Value::UNDEFINED)).collect();
     let live = program.register_root_masks(caller_id).unwrap();
     let callee = program.function(callee_id as usize);
-    let mut resolve = |_chain: &[super::super::FieldUse], _capture: Option<u16>| {
+    let mut resolve = |_chain: &[super::super::FieldUse], _source: super::super::osr_loop::CalleeSource| {
         Some(super::super::osr_loop::InlineCallee {
             callee: crate::Value::UNDEFINED,
             function: callee_id,

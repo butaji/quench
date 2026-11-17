@@ -214,7 +214,7 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
+    FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
     MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
@@ -3151,7 +3151,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }

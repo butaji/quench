@@ -4,7 +4,7 @@
 
 use crate::bytecode::Class;
 use super::{
-    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
+    admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
     InlineFrame, InlineGuard, LoopRegion, Op, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
@@ -57,9 +57,9 @@ fn body<'s>(callee: &'s InlineCallee<'_>, reached: &'s BitSet) -> impl Iterator<
 /// The callee as the read finds it now, with the instructions its entry reaches, when the
 /// region can run it in place.
 pub(super) fn admitted_callee<'a>(
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
     path: Option<&FieldPath>,
-    capture: Option<u16>,
+    source: CalleeSource,
     argc: u16,
     sites: &[FieldSite],
 ) -> Option<(InlineCallee<'a>, BitSet)> {
@@ -67,7 +67,7 @@ pub(super) fn admitted_callee<'a>(
     if let Some(path) = path {
         intern_field(&mut chain, path, true);
     }
-    let callee = resolve(&chain, capture)?;
+    let callee = resolve(&chain, source)?;
     (callee.params == argc && usize::from(argc) <= MAX_INLINE_PARAMS).then_some(())?;
     let reached = crate::bytecode::reachable_from(&callee.instructions, [0]);
     body(&callee, &reached)
@@ -76,9 +76,9 @@ pub(super) fn admitted_callee<'a>(
                 && (instruction.result_flags() == 0 || inlined_returning(instruction) || inlined_set_this(instruction, sites).is_some())
         })
         .then_some(())?;
-    // A captured call may bind undefined to the global receiver. Keep this slice
-    // receiver-independent; recovery still performs the ordinary binding below.
-    if capture.is_some() {
+    // A captured or register-held callee's call may bind undefined to the global receiver. Keep
+    // this slice receiver-independent; recovery still performs the ordinary binding below.
+    if !matches!(source, CalleeSource::Path) {
         body(&callee, &reached)
             .all(|instruction| !instruction.op().is_get_field() || field_base(instruction, sites) != Some(FieldBase::THIS))
             .then_some(())?;

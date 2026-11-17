@@ -218,8 +218,10 @@ pub(super) fn lane_loop_compile<H: Host>(
     let (native_field_loads, store_loads) = (native_field_loads(machine, region), native_store_loads(machine, region));
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
+    let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
+        .map(|inlining| inlining.frames.iter().map(|frame| machine.lane_callee_captures(frame.callee)).collect()).unwrap_or_default();
     let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded };
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
     let calls = program.as_deref().filter(|_| crate::jit_mode::base_regions()).map(|program| region_calls(cx, machine, program, function)).unwrap_or_default();

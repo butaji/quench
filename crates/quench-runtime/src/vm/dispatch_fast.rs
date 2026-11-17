@@ -10576,7 +10576,7 @@ fn lane_loop_entry<H: Host>(
         // Leaving at an inlined instruction makes its callee's activation as the call would:
         // each call must still be one the lane activates in place (`lane_inlined_activation`).
         for frame in &inlining.frames {
-            lane_inlined_target(cx, lane_inlined_receiver(r, region, entry, frame), frame)?;
+            lane_inlined_target(cx, r, lane_inlined_receiver(r, region, entry, frame), frame)?;
         }
     }
     Some(views)
@@ -10622,11 +10622,14 @@ fn lane_region_field<H: Host>(
 /// activation of the running program with room on the lane stack.
 fn lane_inlined_target<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
-    if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
-        (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?;
+    match frame.guard {
+        super::compiled::InlineGuard::Capture(slot) => (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?,
+        super::compiled::InlineGuard::Register(register) => (r.get(register) == frame.callee).then_some(())?,
+        _ => {}
     }
     let vm = unsafe { vm(cx) };
     let target_pointer = vm.script_call_entry(frame.callee)?;
@@ -10638,7 +10641,7 @@ fn lane_inlined_target<H: Host>(
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
         && lane_call_this(vm, target, receiver).is_some_and(|bound| {
-            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_))
+            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_) | super::compiled::InlineGuard::Register(_))
         }))
     .then_some(target_pointer)
 }
@@ -10674,15 +10677,16 @@ fn lane_inlining_region<H: Host>(
     let live = code.register_root_masks(function_index)?;
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
-    let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
+    let mut resolve = |chain: &[super::compiled::FieldUse], source: super::compiled::CalleeSource| -> Option<super::compiled::InlineCallee<'_>> {
         let mut values = Vec::with_capacity(chain.len());
         for field in chain {
             let value = lane_region_field(cx, r, field, |index| values[index])?;
             values.push(value);
         }
-        let callee = match capture {
-            Some(slot) => lane_capture_value(cx, 0, slot)?,
-            None => *values.last()?,
+        let callee = match source {
+            super::compiled::CalleeSource::Capture(slot) => lane_capture_value(cx, 0, slot)?,
+            super::compiled::CalleeSource::Register(register) => r.get(register),
+            super::compiled::CalleeSource::Path => *values.last()?,
         };
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
@@ -10727,7 +10731,7 @@ fn lane_inlined_activation<H: Host>(
     callee_pc: u32,
 ) -> Ip {
     let receiver = lane_inlined_receiver(r, region, entry, &frame);
-    let target = lane_inlined_target(cx, receiver, &frame).expect("the entry checked the inlined call");
+    let target = lane_inlined_target(cx, r, receiver, &frame).expect("the entry checked the inlined call");
     // SAFETY: as `Vm::script_call_entry`; `call` is the call's record in the running view.
     let (target, arguments) =
         unsafe { (&*target, ImmediateLayout::call_window_base((*call).imm())) };

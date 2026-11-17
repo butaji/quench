@@ -194,6 +194,17 @@ fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let mut instructions = localized_jumps(region);
+    // A callee's own capture read names its slot in the callee's environment again: the unit's
+    // frame reads it from that environment's dense slots (`Observation::frame_captures`), as a
+    // lane body's inlined frame does, not from the entry's snapshot of it.
+    for (instruction, origin) in instructions.iter_mut().zip(&inlining.origins) {
+        if matches!(origin, osr_loop::Origin::Inlined { .. }) && instruction.op().is_load_capture()
+            && instruction.capture_depth() == 0 && instruction.capture_slot() & osr_loop::CALLEE_CAPTURE != 0
+            && let Some(&(_, slot)) = inlining.callee_captures.get(usize::from(instruction.capture_slot() & !osr_loop::CALLEE_CAPTURE)) {
+            *instruction = WideInstruction::new(crate::bytecode::Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(),
+                crate::bytecode::ImmediateLayout::capture_immediate(0, slot));
+        }
+    }
     let mut origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
         osr_loop::Origin::Caller(pc) => lane_unit::Origin::Caller(*pc),
         osr_loop::Origin::Inlined { frame, pc } => lane_unit::Origin::Inlined { frame: usize::from(*frame), pc: *pc },
@@ -305,7 +316,7 @@ impl LoopPlanner<'_> {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
             global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, ..VmFacts::STATIC }, generic,
-            direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
+            direct: &BTreeMap::new(), frame_captures: self.observation.frame_captures, isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
