@@ -2648,6 +2648,19 @@ impl ProgramStore {
                 && !entry.residual.runs_tier0(function as usize)
     }
 
+    /// Whether `function` of program `id` loops, scanned once and kept beside its deferred runs.
+    pub(super) fn function_loops(&self, id: ProgramId, function: u32) -> bool {
+        let Some(entry) = self.lane_entry(id) else { return false };
+        let Some(cell) = entry.lane_deferred.get(function as usize) else { return false };
+        let held = cell.get();
+        if held & LOOP_KNOWN != 0 {
+            return held & LOOPS != 0;
+        }
+        let loops = entry.residual.function_get(function as usize).is_some_and(crate::bytecode::Function::loops);
+        cell.set(held | LOOP_KNOWN | if loops { LOOPS } else { 0 });
+        loops
+    }
+
     pub(super) fn lane_view<'s>(
         &'s self,
         id: ProgramId,
@@ -2866,13 +2879,20 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
 /// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
 const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
 
+/// The bits of a function's `lane_deferred` cell that count its view-less runs; the others
+/// keep whether it loops (`ProgramStore::function_loops`).
+const DEFERRED_RUNS: u8 = 0x3f;
+/// Set once whether the function loops is known, and with it `LOOPS` where it does.
+const LOOP_KNOWN: u8 = 0x80;
+const LOOPS: u8 = 0x40;
+
 /// Count one view-less run of a function; true once its deferred runs are complete.
 fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
-    let done = runs.get();
-    if done >= LANE_VIEW_DEFERRED_RUNS {
+    let held = runs.get();
+    if held & DEFERRED_RUNS >= LANE_VIEW_DEFERRED_RUNS {
         return true;
     }
-    runs.set(done + 1);
+    runs.set(held + 1);
     false
 }
 
