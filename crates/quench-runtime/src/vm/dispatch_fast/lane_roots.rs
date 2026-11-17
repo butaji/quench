@@ -182,7 +182,7 @@ impl<H: Host> Vm<H> {
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
         LaneContext {
-            binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding::<H> },
+            binding: LaneBinding { object_base: self.heap.object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding::<H>, retire: retire_lane_binding::<H> },
             vm: self,
             code,
             program,
@@ -228,6 +228,7 @@ impl<H: Host> Vm<H> {
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        let epoch = self.heap.collection_epoch();
         let cx: *mut LaneContext<H> = context;
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
         // SAFETY: `cx` outlives the run, which restores the outer fuel before it ends.
@@ -239,6 +240,12 @@ impl<H: Host> Vm<H> {
         self.record_lane_exit(cx, ip);
         self.materialize_lane_exit(cx);
         LANE_FUEL.with(|current| current.set(outer_fuel));
+        // A collection this run made ran under its own context, not the outer one, which
+        // resumes now: it drops what it resolved before (`retire_lane_binding`).
+        if !outer.is_null() && self.heap.collection_epoch() != epoch {
+            // SAFETY: every active context has the repr(C) prefix, whose callback owns its Host.
+            unsafe { (outer.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(outer) };
+        }
         self.leave_lane(outer, entered);
         ip
     }
