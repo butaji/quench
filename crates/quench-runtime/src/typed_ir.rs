@@ -65,6 +65,9 @@ impl Type {
         Self(TypeKind::Language(1 << kind as u16))
     }
 
+    // Inlined so a stage's constant fact (`Type::ANY` in the interpreter's own store,
+    // `staged::store::own_store`) folds its gate tests away instead of calling here per store.
+    #[inline(always)]
     const fn kinds(self) -> u16 {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
@@ -197,7 +200,7 @@ impl Type {
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
         self == Self::NEVER || self == expected
             || matches!((self.0, expected.0), (TypeKind::Int(known), TypeKind::Int(allowed)) if allowed.contains(known))

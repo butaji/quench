@@ -403,8 +403,11 @@ impl<H: Host> Vm<H> {
     /// decides every falsy heap value, "", 0n and the IsHTMLDDA object.
     #[inline(never)]
     pub(super) fn heap_cell_truthy(&self, v: Value) -> bool {
+        // A string's length from its record in place (`string_length_value`), not its units.
+        if let Some(length) = self.string_length_value(v) {
+            return length != Value::integer(0);
+        }
         match self.heap.get(v) {
-            _ if let Some(text) = self.heap.string(v)  => !text.units().is_empty(),
             Some(Cell::BigInt(value)) => !value.is_zero(),
             _ => !self.is_html_dda(v),
         }
