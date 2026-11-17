@@ -75,7 +75,7 @@ fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         ic::run(&mut stage, &ops, at, Some(records), ())
     } else {
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Arena, storage_len: 1 }];
+        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Arena, storage_len: 1, rep: Rep::Tagged }];
         ic::run(&mut stage, &ops, at, None, ())
     }
 }

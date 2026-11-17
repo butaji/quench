@@ -209,6 +209,9 @@ impl Stage for Emit<'_, '_> {
     fn load_f64(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
         self.raw_load(Lane::F64, regions::flags(at), base, offset)
     }
+    fn box_number(&mut self, number: ir::Value) -> ir::Value {
+        super::super::emit_js_box_number(self.builder, number)
+    }
     fn store_u8(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
         self.raw_store(Lane::I8, regions::flags(at), (value, false), base, offset);
     }

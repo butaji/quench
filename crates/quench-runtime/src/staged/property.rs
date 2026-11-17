@@ -10,7 +10,7 @@
 //! the proof of is not emitted twice.
 
 use super::ic::{self, IcOp, Reached};
-use super::object::{object_record_at, read_slot, Form, Layout, Rep};
+use super::object::{object_record_at, read_slot_value, Form, Layout, Rep};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::typed_ir::Type;
@@ -383,8 +383,8 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     guard_receiver_shape(stage, frame, (owner, direct), &at, *shape, miss)?;
     match rest {
-        [IcOp::LoadSlot { slot, form, storage_len }] =>
-            kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len), miss),
+        [IcOp::LoadSlot { slot, form, storage_len, rep }] =>
+            kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
         _ => ic::run(stage, rest, at, records, miss),
     }
 }
@@ -392,7 +392,7 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
 /// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
 /// where it covers the slot, else the one this read proves and keeps.
 fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32),
-    at: &Reached<S::Word, S::Cond>, (slot, form, storage_len): (u16, Form, usize), miss: S::Miss) -> Option<S::Word> {
+    at: &Reached<S::Word, S::Cond>, (slot, form, storage_len, rep): (u16, Form, usize, Rep), miss: S::Miss) -> Option<S::Word> {
     let layout = match frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
         Some(layout) => layout,
         None => {
@@ -401,7 +401,7 @@ fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
             layout
         }
     };
-    Some(read_slot(stage, layout, slot, Rep::Tagged))
+    Some(read_slot_value(stage, layout, slot, rep))
 }
 
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is

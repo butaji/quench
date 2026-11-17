@@ -115,7 +115,7 @@ fn ops(list: Vec<IcOp<'static>>) -> &'static [IcOp<'static>] { Box::leak(list.in
 /// An own read of `slot` of an object of `shape` that keeps `len` values.
 fn own(shape: u32, slot: u16, len: usize) -> FieldPlan<'static> {
     FieldPlan::Ops(ops(vec![IcOp::GuardShape(shape),
-        IcOp::LoadSlot { slot, form: Form::Either, storage_len: len }]))
+        IcOp::LoadSlot { slot, form: Form::Either, storage_len: len, rep: super::object::Rep::Tagged }]))
 }
 
 const NO_STORE: StorePlan<'static> = StorePlan::Host;
@@ -165,8 +165,8 @@ fn a_polymorphic_plan_reads_through_the_arm_that_holds_the_shape() {
     let (second, second_shape) = object_of(&mut heap, &[Value::integer(20), Value::integer(31)]);
     let (third, _) = object_of(&mut heap, &[]);
     let arms: &'static [Arm<'static>] = Box::leak(Box::new([
-        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }]), holds: None },
-        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2 }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: super::object::Rep::Tagged }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: super::object::Rep::Tagged }]), holds: None },
     ]));
     let plan = FieldPlan::Arms(arms);
     assert_eq!(read(&heap, plan, first), Some(Value::integer(10)));

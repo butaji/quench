@@ -113,6 +113,27 @@ impl Lowering<'_, '_> {
         reads
     }
 
+    /// The entering ranges (`entering`) the loop keeps: those still narrower than int32 at the
+    /// entry `entry` once its backedges join in. An entry sample is one value; where the loop
+    /// writes the register out of the range (a hash, say), the header's fact is the whole int32
+    /// range and the guard proves nothing, yet it leaves every later entry the sample misses.
+    pub(super) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
+        leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
+        if self.entering.is_empty() { return Vec::new(); }
+        let dense = |pc: usize| self.hoisted_access(pc);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let reads = self.element_reads(instructions);
+        let signless = self.signless_products(instructions);
+        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
+            signless: &signless };
+        let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
+            native_calls: self.native_calls };
+        let facts = facts::analyze_text(&text, initial, seeds);
+        let Some(header) = facts.at(entry) else { return self.entering.clone() };
+        self.entering.iter().copied().filter(|&(register, _)| header.get(usize::from(register))
+            .and_then(|ty| ty.int_range()).is_some_and(|range| range != IntRange::FULL)).collect()
+    }
+
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
     pub(super) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &CompoundBitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {

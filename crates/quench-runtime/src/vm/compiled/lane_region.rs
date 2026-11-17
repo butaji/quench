@@ -123,6 +123,9 @@ const INLINE_ARRAY_VIEWS: usize = 4;
 const INLINE_LOOP_INPUTS: usize = 4;
 /// A jump's step proves a fact of one tested register, along one or both of its edges.
 const INLINE_EDGE_REFINEMENTS: usize = 2;
+/// The sums of int32 constants a truncated chain passes through (`Lowering::truncated_through_sums`):
+/// from a product under 2^52, each adds under 2^31 and the doubles stay under 2^53.
+const TRUNCATION_CHAIN: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The machine bytes an inlined instruction of a lane body costs at most, with its guards and
@@ -1745,6 +1748,7 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
@@ -1923,13 +1927,76 @@ impl Lowering<'_, '_> {
         let Some(next) = self.unit.instructions.get(at).copied() else { return false };
         if !next.op().is_binary() || next.returns_from_frame() || next.writes_current_this() { return false; }
         let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(register)).count();
-        if reads == 0 || !(next.result_register() == register || !self.is_live(at + 1, register)) { return false; }
+        if reads == 0 || !(next.result_register() == register || self.dead_after(at, register)) { return false; }
         let operator = next.binary_operator();
         if super::operations::NumberBitwise::from_js_instruction(next.op(), operator)
             .is_some_and(|bitwise| bitwise != super::operations::NumberBitwise::ShiftRightUnsigned) {
             return true;
         }
         false
+    }
+
+    /// Whether only the ToInt32 of the int32 result written to `register` at `pc` is read: through
+    /// at most `TRUNCATION_CHAIN` sums or differences with an int32 constant, into a bitwise
+    /// operator (`truncated`). Each sum adds less than 2^31 to an exact integer, so a chain from a
+    /// value under 2^52 keeps every double exact, and ToInt32 of an exact integer is its low 32
+    /// bits: the wrapping int32 steps compute it. Only int32 constants join the chain: a
+    /// non-integer would not commute with ToInt32 (`truncated`).
+    pub(super) fn truncated_through_sums(&self, pc: usize, register: Register) -> bool {
+        let (mut pc, mut register) = (pc, register);
+        for _ in 0..=TRUNCATION_CHAIN {
+            if self.truncated(pc, register) { return true; }
+            let Some(next) = self.int32_constant_sum(pc, register) else { return false };
+            (pc, register) = next;
+        }
+        false
+    }
+
+    /// The sum or difference that next reads `register`, written at `pc`, with an int32 constant
+    /// as its other operand and `register` dead past it: its PC and result register.
+    fn int32_constant_sum(&self, pc: usize, register: Register) -> Option<(usize, Register)> {
+        let (at, register) = self.reader(pc + 1, register);
+        let next = self.unit.instructions.get(at).copied()?;
+        if !next.op().is_binary() || next.returns_from_frame() || next.writes_current_this() || next.result_flags() != 0 { return None; }
+        let operation = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator())?;
+        if !operation.int32_projection_is_wrapping() { return None; }
+        let operands = [next.operand_b(), next.operand_c()];
+        let int32_constant = |operand: Operand| operand.kind() == Some(OperandKind::Constant)
+            && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate).is_some_and(super::facts::is_int32);
+        let [first, second] = operands;
+        let paired = (first.register_index() == Some(register) && int32_constant(second))
+            || (second.register_index() == Some(register) && int32_constant(first));
+        (paired && (next.result_register() == register || self.dead_after(at, register))).then(|| (at, next.result_register()))
+    }
+
+    /// Whether `register` is dead past the instruction at `at`. An inlined callee's returning
+    /// instruction is followed by its completion (`lane_unit`): moves and a jump out of the
+    /// callee that share its origin, whose liveness row is the returning instruction's own. Past
+    /// that completion the callee's frame is gone, so its registers are dead unless a completion
+    /// move reads them.
+    fn dead_after(&self, at: usize, register: Register) -> bool {
+        use super::lane_unit::Origin;
+        let origin = self.unit.origins.get(at).copied();
+        if let Some(Origin::Inlined { frame, .. }) = origin
+            && self.unit.origins.get(at + 1).copied() == origin {
+            let inlined = self.unit.frames[frame];
+            let own = (inlined.base..inlined.base + inlined.registers).contains(&register);
+            let mut pc = at + 1;
+            while own && self.unit.origins.get(pc).copied() == origin {
+                let Some(instruction) = self.unit.instructions.get(pc).copied() else { return false };
+                if instruction.op().copies_register() {
+                    if instruction.register_b() == register { return false; }
+                } else if instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Jump {
+                    let target = instruction.jump_target() as usize;
+                    let leaves = !matches!(self.unit.origins.get(target).copied(), Some(Origin::Inlined { frame: to, .. }) if to == frame);
+                    return leaves;
+                } else {
+                    return false;
+                }
+                pc += 1;
+            }
+        }
+        !self.is_live(at + 1, register)
     }
 
     /// Where `register` at `at` is next read, past an inlined completion's move and jump (`lane_unit`).
