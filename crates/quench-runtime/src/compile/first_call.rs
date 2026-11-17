@@ -15,6 +15,8 @@ use oxc_ast_visit::Visit;
 use replay::{ReplayViews, ShiftSpans};
 mod append;
 mod room;
+mod template;
+pub(in crate::compile) use template::StubOwn;
 pub(crate) mod nested;
 pub(crate) use nested::{FirstCallScopes, FirstCallStubs};
 pub(in crate::compile) use nested::{FreeNameCheck, FreeNames, alone_body_end, alone_start, free_names, skimmed_free_names};
@@ -312,6 +314,8 @@ pub(super) struct Stubs<'a> {
     pub(super) nested: Vec<(u32, std::rc::Rc<FirstCallScopes>)>,
     /// In a chunk, where its own function starts: compiled now, never a stub again.
     pub(super) chunk_function: Option<u32>,
+    /// The stub records later stubs copy (`template`).
+    pub(super) templates: template::StubTemplates,
     /// In a chunk, its stub's function start and the scopes it compiles against.
     pub(super) outer: Option<(u32, std::rc::Rc<FirstCallScopes>)>,
     /// The room the stubs' chunks may append to the program in.
@@ -385,20 +389,23 @@ impl Compiler<'_> {
             .body
             .as_ref()
             .is_some_and(|body| body.directives.iter().any(|directive| directive.directive == "use strict"));
-        let id = self.compile_function(
-            function.id.as_ref().map(|id| id.name.as_str()),
+        let name = function.id.as_ref().map(|id| id.name.as_str());
+        let source_span = self.source_span(function.span);
+        let own = StubOwn { body: ImplicitBody::FirstCallStub, strict, name, parent: Some(context.parent), source_span, constructible: true };
+        let id = self.templated_stub(own, |compiler| compiler.compile_function(
+            name,
             &[STUB_ARGUMENTS.to_owned()],
             FunctionBody::Statements(&[]),
             &context.scopes,
             Some(context.parent),
             FunctionOptions {
-                source_span: self.source_span(function.span),
+                source_span,
                 rest_override: true,
                 implicit_body: Some(ImplicitBody::FirstCallStub),
                 strict,
                 ..FunctionOptions::default()
             },
-        );
+        ));
         if let Some(stub) = self.functions.get_mut(id) {
             stub.length = Self::formal_length(&function.params) as u16;
         }
@@ -413,20 +420,22 @@ impl Compiler<'_> {
         self.first_call.room.add_stub(arrow.span.end - arrow.span.start);
         let strict = context.inherited_strict
             || matches!(&arrow.body, oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) if body.directives.iter().any(|directive| directive.directive == "use strict"));
-        let id = self.compile_function(
+        let source_span = self.source_span(arrow.span);
+        let own = StubOwn { body: ImplicitBody::FirstCallArrowStub, strict, name: None, parent: context.parent, source_span, constructible: true };
+        let id = self.templated_stub(own, |compiler| compiler.compile_function(
             None,
             &[STUB_ARGUMENTS.to_owned()],
             FunctionBody::Statements(&[]),
             &context.scopes,
             context.parent,
             FunctionOptions {
-                source_span: self.source_span(arrow.span),
+                source_span,
                 rest_override: true,
                 implicit_body: Some(ImplicitBody::FirstCallArrowStub),
                 strict,
                 ..FunctionOptions::default()
             },
-        );
+        ));
         if let Some(stub) = self.functions.get_mut(id) {
             stub.length = Self::formal_length(&arrow.params) as u16;
             stub.is_arrow = true;

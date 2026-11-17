@@ -78,21 +78,23 @@ impl Compiler<'_> {
     fn compile_first_call_method_stub(&mut self, method: &MethodDefinition<'_>, span: Span, place: &MethodPlace<'_>) -> u32 {
         self.first_call.room.add_stub(span.end - span.start);
         let name = class::class_method_function_name(method);
-        let id = self.compile_function(
+        let source_span = self.source_span(span);
+        let own = first_call::StubOwn { body: first_call::ImplicitBody::FirstCallArrowStub, strict: true, name: name.as_deref(), parent: place.parent, source_span, constructible: false };
+        let id = self.templated_stub(own, |compiler| compiler.compile_function(
             name.as_deref(),
             &[first_call::STUB_ARGUMENTS.to_owned()],
             crate::compile::FunctionBody::Statements(&[]),
             place.scopes,
             place.parent,
             crate::compile::FunctionOptions {
-                source_span: self.source_span(span),
+                source_span,
                 rest_override: true,
                 implicit_body: Some(first_call::ImplicitBody::FirstCallArrowStub),
                 non_constructible: true,
                 strict: true,
                 ..Default::default()
             },
-        );
+        ));
         if let Some(stub) = self.functions.get_mut(id) {
             stub.length = Self::formal_length(&method.value.params) as u16;
         }
