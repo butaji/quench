@@ -1070,27 +1070,17 @@ impl Compiler<'_> {
         home_atom: Atom,
         with_depth: u16,
     ) -> u32 {
+        if lazy_bodies::is_released_method(method) {
+            let place = lazy_bodies::MethodPlace { source_span, scopes, parent, home_atom, with_depth };
+            return self.compile_released_method(method, place);
+        }
         let params = FunctionCompiler::params_from_formals(&method.value.params, self);
         let body = method
             .value
             .body
             .as_ref()
             .map_or(&[][..], |body| body.statements.as_slice());
-        let name = if method.kind == MethodDefinitionKind::Constructor {
-            None
-        } else {
-            let name = match &method.key {
-                PropertyKey::PrivateIdentifier(identifier) => {
-                    Some(format!("#{}", identifier.name.as_str()))
-                }
-                _ => class_method_name(&method.key),
-            };
-            match (method.kind, name) {
-                (MethodDefinitionKind::Get, Some(name)) => Some(format!("get {name}")),
-                (MethodDefinitionKind::Set, Some(name)) => Some(format!("set {name}")),
-                (_, name) => name,
-            }
-        };
+        let name = class_method_function_name(method);
         self.compile_function(
             name.as_deref(),
             &params,
@@ -1166,7 +1156,24 @@ impl Compiler<'_> {
     }
 }
 
-fn class_method_source_span(mut text: &str, span: Span, key_start: u32) -> Option<Span> {
+/// The name of the function a class element's method, getter or setter makes: its key's,
+/// `get ` or `set ` before an accessor's; none for a constructor.
+pub(super) fn class_method_function_name(method: &MethodDefinition<'_>) -> Option<String> {
+    if method.kind == MethodDefinitionKind::Constructor {
+        return None;
+    }
+    let name = match &method.key {
+        PropertyKey::PrivateIdentifier(identifier) => Some(format!("#{}", identifier.name.as_str())),
+        _ => class_method_name(&method.key),
+    };
+    match (method.kind, name) {
+        (MethodDefinitionKind::Get, Some(name)) => Some(format!("get {name}")),
+        (MethodDefinitionKind::Set, Some(name)) => Some(format!("set {name}")),
+        (_, name) => name,
+    }
+}
+
+pub(super) fn class_method_source_span(mut text: &str, span: Span, key_start: u32) -> Option<Span> {
     let mut start = span.start as usize;
     let key_start = key_start as usize;
     if start > key_start || key_start > text.len() {

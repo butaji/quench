@@ -329,6 +329,14 @@ pub struct ParseOptions {
     /// Default: `false`
     pub lazy_nested_bodies: bool,
 
+    /// With `lazy_body_skim`, the body of a class's plain method, getter or setter that no
+    /// lazily parsed body encloses, named by a key that is neither computed nor private, is
+    /// skimmed as well: released when the skim decides it and takes it, else parsed whole.
+    /// The skim decides no `super`, so a method that names it stays whole.
+    ///
+    /// Default: `false`
+    pub lazy_class_methods: bool,
+
     /// The program inherits strict mode (eval code in strict code) without a directive of its
     /// own: lazily parsed bodies are checked as strict code (`lazy_body_check`).
     ///
@@ -492,6 +500,7 @@ impl Default for ParseOptions {
             lazy_body_check: None,
             lazy_body_skim: None,
             lazy_nested_bodies: false,
+            lazy_class_methods: false,
             inherited_strict: false,
             lazy_recognize: false,
             lazy_recognize_verify: false,
@@ -918,6 +927,9 @@ struct ParserImpl<'a, C: ParserConfig> {
     /// The starts of the method bodies released inside lazily parsed bodies, until the body
     /// around them is released too.
     lazy_methods: Vec<u32>,
+    /// The class method about to parse may be skimmed (`ParseOptions::lazy_class_methods`):
+    /// its key is neither computed nor private.
+    skim_method: bool,
 
     /// Whether the current position is strict mode code, as far as a lazily parsed body's
     /// check needs it: the module goal, a `"use strict"` directive or a class.
@@ -997,6 +1009,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             lazy_depth: 0,
             lazy_function_bodies: Vec::new(),
             lazy_methods: Vec::new(),
+            skim_method: false,
             strict: source_type.is_module() || options.inherited_strict,
             regexp_literals: Vec::new(),
             call_assignment_targets: 0,

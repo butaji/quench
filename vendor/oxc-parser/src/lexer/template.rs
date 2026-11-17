@@ -409,7 +409,7 @@ impl<'a, C: Config> Lexer<'a, C> {
     }
 
     pub(crate) fn get_template_string(&self, start: u32) -> Option<&'a str> {
-        self.escaped_templates[&start]
+        self.escaped_templates.get(start)
     }
 }
 
@@ -469,7 +469,7 @@ mod test {
                     Kind::TemplateHead
                 }
             );
-            let escaped = lexer.escaped_templates[&token.start()];
+            let escaped = lexer.escaped_templates.get(token.start());
             assert_eq!(escaped, Some(expected_escaped.as_str()));
         }
 

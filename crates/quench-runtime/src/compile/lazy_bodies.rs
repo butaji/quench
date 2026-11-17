@@ -13,6 +13,8 @@ mod facts;
 pub(super) use facts::{BodyFacts, parse_collecting, parse_free_names};
 mod arrow;
 pub(super) use arrow::is_released_arrow;
+mod method;
+pub(super) use method::{MethodPlace, is_released_method};
 mod reparse;
 pub(super) use reparse::{Nesting, ReparseFailure, parse_chunk, reparse};
 use oxc_allocator::Allocator;

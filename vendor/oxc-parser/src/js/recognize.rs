@@ -78,10 +78,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // would read as lying after every body released before them (`escaped_after`).
         let from = self.cur_start();
         if self.lexer.escaped_strings.len() != escaped.0 {
-            self.lexer.escaped_strings.retain(|start, _| *start <= from);
+            self.lexer.escaped_strings.truncate_before(from + 1);
         }
         if self.lexer.escaped_templates.len() != escaped.1 {
-            self.lexer.escaped_templates.retain(|start, _| *start <= from);
+            self.lexer.escaped_templates.truncate_before(from + 1);
         }
         self.ctx = ctx;
         self.strict = strict;

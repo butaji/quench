@@ -77,12 +77,11 @@ impl<'a> StatementStream<'a> {
         statements.iter_mut().for_each(&mut *prepare);
         read(&statements, &parser.lexer.trivia_builder.comments);
         drop(statements);
-        let escaped_after = parser.lexer.escaped_strings.keys().any(|key| *key >= end)
-            || parser.lexer.escaped_templates.keys().any(|key| *key >= end);
+        let escaped_after = parser.lexer.escaped_strings.any_from(end)
+            || parser.lexer.escaped_templates.any_from(end);
         if !escaped_after && LazyBodyCheckpoint::of(parser) == checkpoint {
-            let inside = |key: &u32| (start..end).contains(key);
-            parser.lexer.escaped_strings.retain(|key, _| !inside(key));
-            parser.lexer.escaped_templates.retain(|key, _| !inside(key));
+            parser.lexer.escaped_strings.remove_range(start..end);
+            parser.lexer.escaped_templates.remove_range(start..end);
             // SAFETY: the arena has the chunk it had at `marker` (its capacity is unchanged) and
             // its alignment is one byte. Nothing allocated after the marker is referenced: the
             // statements are dropped and `read` held them only while it ran, the parser state

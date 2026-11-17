@@ -38,7 +38,8 @@ pub(super) enum ImplicitBody {
     Super,
     /// A first-call stub's.
     FirstCallStub,
-    /// An arrow function's first-call stub's: it has no `new.target` of its own.
+    /// The first-call stub's of a function with no `new.target` of its own: an arrow
+    /// function's, or a class method's.
     FirstCallArrowStub,
 }
 
@@ -48,6 +49,8 @@ pub(super) enum ImplicitBody {
 pub(super) struct ChunkWindow<'a> {
     source: &'a crate::bytecode::ProgramSource,
     start: u32,
+    /// Where the stub's function starts in the program's text.
+    function: u32,
     /// A nested stub's function start and the scopes it compiles against.
     outer: Option<(u32, &'a std::rc::Rc<FirstCallScopes>)>,
     line_starts: &'a [usize],
@@ -64,6 +67,17 @@ impl<'a> ChunkWindow<'a> {
 
     pub(super) fn start(&self) -> u32 {
         self.start
+    }
+
+    /// Whether the chunk compiles a run of a streamed body.
+    pub(super) fn streamed(&self) -> bool {
+        self.run.is_some()
+    }
+
+    /// Where in the chunk's text lazily parsed bodies begin: past the function's own start,
+    /// whose body the chunk compiles now, or from the start in a streamed body's chunk.
+    pub(super) fn lazy_from(&self) -> u32 {
+        if self.streamed() { 0 } else { self.function - self.start + 1 }
     }
 
     /// Moves the positions of `program`, the function's text parsed alone, and of the facts
@@ -111,6 +125,7 @@ impl<'a> ChunkWindow<'a> {
         );
         compiler.first_call.kept_source = Some(self.source);
         compiler.first_call.outer = self.outer.map(|(start, scopes)| (start, scopes.clone()));
+        compiler.first_call.chunk_function = Some(self.function);
         compiler.stream_run = self.run;
         compiler
     }
@@ -125,8 +140,14 @@ pub(super) struct ChunkText<'a> {
 }
 
 impl<'a> ChunkText<'a> {
-    pub(super) fn of(source: &'a crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan) -> Option<Self> {
+    /// The chunk text of the stub at `span`; a class method's (`method`) compiles as an object
+    /// literal's one method, two characters before its place.
+    pub(super) fn of(source: &'a crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, method: bool) -> Option<Self> {
         let snippet = source.text.get(span.start as usize..span.end as usize)?;
+        if method {
+            let start = span.start.checked_sub(2)?;
+            return Some(Self { text: std::borrow::Cow::Owned(format!("({{{snippet}}})")), start });
+        }
         let anonymous = !snippet.starts_with("function")
             || !snippet["function".len()..].trim_start().starts_with(|c: char| c == '_' || c == '$' || c.is_alphanumeric() || !c.is_ascii());
         Some(if anonymous && span.start > 0 {
@@ -149,28 +170,35 @@ impl Engine {
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let name = program.source_name.as_str();
         let source = program.source.as_ref().filter(|source| source.base == 0);
-        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&super::statement_stream::StreamRun>) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
+        fn chunk_text<'s>(source: &'s crate::bytecode::ProgramSource, span: crate::bytecode::SourceSpan, run: Option<&super::statement_stream::StreamRun>, method: bool) -> Option<ChunkText<'s>> { match run.and_then(|run| run.from) {
             // A later run's chunk holds the function's header alone, its body from the run on.
             Some((_, body)) => source
                 .text
                 .get(span.start as usize..body.open as usize)
                 .map(|header| ChunkText { text: std::borrow::Cow::Owned(format!("{header}{{}}")), start: span.start }),
-            None => ChunkText::of(source, span),
+            None => ChunkText::of(source, span, method),
         } }
-        let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run)?))) else {
+        let method = program.functions.get(function as usize).is_some_and(|stub| stub_is_method(&stub.header()));
+        let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run, method)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
         let views = ReplayViews::default();
         let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, outer, line_starts, utf16_excess, run };
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run };
         Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
     }
 }
 
+/// Whether a stub's function is a class method's: the only stub neither an arrow nor
+/// constructible (`compile_first_call_method_stub`).
+pub(super) fn stub_is_method(header: &crate::bytecode::FunctionHeader) -> bool {
+    !header.is_arrow && !header.constructible
+}
+
 /// The rest parameter that holds a stub's arguments.
-const STUB_ARGUMENTS: &str = "\0quench:first-call-args";
+pub(in crate::compile) const STUB_ARGUMENTS: &str = "\0quench:first-call-args";
 
 /// Functions by their starts in the program's text: sparse offsets, so a set hashes them.
 type Starts = FxHashSet<u32>;
@@ -282,6 +310,8 @@ pub(super) struct Stubs<'a> {
     pub(super) free_names: FreeNames,
     /// The nested stubs by id, in order, with the scopes their chunks compile against.
     pub(super) nested: Vec<(u32, std::rc::Rc<FirstCallScopes>)>,
+    /// In a chunk, where its own function starts: compiled now, never a stub again.
+    pub(super) chunk_function: Option<u32>,
     /// In a chunk, its stub's function start and the scopes it compiles against.
     pub(super) outer: Option<(u32, std::rc::Rc<FirstCallScopes>)>,
     /// The room the stubs' chunks may append to the program in.

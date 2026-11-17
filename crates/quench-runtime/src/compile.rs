@@ -1129,7 +1129,7 @@ impl Engine {
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
         #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy, &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
         let data_literal = match &located {
@@ -1374,6 +1374,8 @@ impl Engine {
             let delta = window.start();
             compiler.streamed = compiler.streamed.iter().map(|start| start + delta).collect();
             compiler.stream_candidates = compiler.stream_candidates.iter().map(|start| start + delta).collect();
+            compiler.first_call.free_names = std::mem::take(&mut compiler.first_call.free_names).shifted(delta);
+            compiler.first_call.call_only_found.iter_mut().for_each(|(start, end)| (*start, *end) = (*start + delta, *end + delta));
         }
         compiler.load_encoding =
             (compiler.replayable_source && released == ReleasedRecords::Encoded).then(Default::default);
@@ -2957,6 +2959,8 @@ impl<'a> Compiler<'a> {
         function: &oxc_ast::ast::Function<'_>,
         mut context: replay::ObjectMethodContext,
     ) -> u32 {
+        // A class method's chunk compiles it as an object literal's (`ChunkText::of`).
+        self.take_outer(context.property_span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }

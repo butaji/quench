@@ -569,6 +569,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         decorators: ArenaVec<'a, Decorator<'a>>,
     ) -> ClassElement<'a> {
         let (name, computed) = self.parse_class_element_name(modifiers);
+        self.skim_method = !computed && !matches!(name, PropertyKey::PrivateIdentifier(_));
         let value = self.parse_method(
             modifiers.contains(ModifierKind::Async),
             None,
@@ -784,6 +785,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         modifiers: &Modifiers,
         decorators: ArenaVec<'a, Decorator<'a>>,
     ) -> ClassElement<'a> {
+        self.skim_method = !computed && !matches!(name, PropertyKey::PrivateIdentifier(_));
         let value = self.parse_method(
             modifiers.contains(ModifierKind::Async),
             generator,

@@ -272,24 +272,24 @@ impl<'a> oxc_ast_visit::Visit<'a> for ReleasedInside<'_> {
     }
 }
 
-/// `source` parsed as a compilation parses it, the bodies of its functions released when
-/// `lazy`. Where a direct eval's functions and arrows compile on first call (`arrows`), each
+/// `source` parsed as a compilation parses it, the bodies of its functions starting at or
+/// after `lazy` released when set. Where a direct eval's functions and arrows compile on first call (`arrows`), each
 /// body is skimmed into `facts` and one the skim declines parses whole; otherwise each is
 /// checked, recognized without its tree where it can be (`recognize`).
 pub(in crate::compile) fn parse_collecting<'a>(
     allocator: &'a Allocator,
     source: &'a str,
     source_type: SourceType,
-    lazy: bool,
+    lazy: Option<u32>,
     facts: &RefCell<BodyFacts>,
     inherited_strict: bool,
     recognize: crate::compile::annex_b_targets::Recognize,
     #[cfg(feature = "aot")] global_script_calls: &[(String, String)],
 ) -> oxc_parser::ParserReturn<'a> {
-    let direct = lazy && facts.borrow().arrows;
+    let direct = lazy.is_some() && facts.borrow().arrows;
     let mut check = |body: oxc_parser::LazyBody<'_, '_>| facts.borrow_mut().check(body, #[cfg(feature = "aot")] global_script_calls);
     let mut skim = |body: oxc_parser::SkimmedBody<'_>| facts.borrow_mut().skim(body, source);
     // SAFETY: `check` and `skim` live through the parse, which alone calls them.
-    let (check, skim) = unsafe { ((lazy && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), direct.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
-    super::parse(allocator, source, source_type, lazy.then_some(0), check, skim, inherited_strict, true, recognize, None)
+    let (check, skim) = unsafe { ((lazy.is_some() && !direct).then(|| oxc_parser::LazyBodyCheck::new(&mut check)), direct.then(|| oxc_parser::LazyBodySkim::new(&mut skim))) };
+    super::parse(allocator, source, source_type, lazy, check, skim, inherited_strict, true, recognize, None)
 }
