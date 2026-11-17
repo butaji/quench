@@ -157,6 +157,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return None;
         }
         self.bump_any();
+        // The skipped text was not lexed: a `#` in it counts as a private name it may hold.
+        if memchr::memchr(b'#', &bytes[start as usize..end as usize]).is_some() {
+            self.lexer.private_names += 1;
+        }
         self.early.end_body();
         self.release_inside(Span::new(start, end), function.method);
         Some(FunctionBody::boxed(Span::new(start, end), ArenaVec::new_in(self), ArenaVec::new_in(self), self))
@@ -184,7 +188,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if flat {
             self.rc_flat_from = Some(functions_before);
         }
+        let private_names = self.lexer.private_names;
         let body = self.parse_function_body();
+        let names_private = self.lexer.private_names != private_names;
         if flat {
             self.rc_flat_from = None;
         }
@@ -207,7 +213,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
         let after = LazyBodyCheckpoint::of(self);
         // A private member name checks only inside its class, which a body alone lacks.
-        let private = nested && self.source_text[span.start as usize..span.end as usize].contains('#');
+        let private = nested && names_private;
         let fine = !private
             && self.fatal_error.is_none()
             && LazyBodyCheckpoint { arena_capacity: before.arena_capacity, ..after } == before

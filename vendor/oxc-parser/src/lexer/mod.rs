@@ -109,6 +109,11 @@ pub struct Lexer<'a, C: Config> {
     /// `None` is saved when the string contains an invalid escape sequence.
     pub escaped_templates: FxHashMap<u32, Option<&'a str>>,
 
+    /// The `#` tokens lexed so far: a private name, or the error a stray `#` is. A body
+    /// names a private member exactly when this grows while it is read, which the lazy body
+    /// recognizer asks instead of searching the body's text.
+    pub(crate) private_names: u32,
+
     /// `memchr` Finder for end of multi-line comments. Created lazily when first used.
     multi_line_comment_end_finder: Option<memchr::memmem::Finder<'static>>,
 
@@ -162,6 +167,7 @@ impl<'a, C: Config> Lexer<'a, C> {
             trivia_builder: TriviaBuilder::new_in(allocator),
             escaped_strings: FxHashMap::default(),
             escaped_templates: FxHashMap::default(),
+            private_names: 0,
             multi_line_comment_end_finder: None,
             tokens,
             config,

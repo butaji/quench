@@ -221,6 +221,7 @@ ascii_byte_handler!(QOS(lexer) {
 
 // #
 ascii_byte_handler!(HAS(lexer) {
+    lexer.private_names += 1;
     lexer.consume_char();
     lexer.private_identifier()
 });
