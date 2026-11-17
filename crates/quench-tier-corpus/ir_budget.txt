@@ -44,7 +44,7 @@ k_nbody_pair 21.1 70 1479.1
 k_regexp 40.2 127 1371.3
 k_str_build 14.1 49 1371.9
 k_struct_sum 8 30 179.1
-math_abs 8 30 172.1
+math_abs 8 30 164
 math_floor 22 72 192.2
 math_imul 7 27 147.1
 math_minmax 15 51 286.1

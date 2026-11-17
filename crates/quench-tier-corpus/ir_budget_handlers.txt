@@ -328,8 +328,8 @@ k_str_build 1.7 Vm::collect_inner
 k_str_build 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_str_build 0.8 JsString::units
 k_str_build 0.7 Vm::string_length_general
-k_str_build 0.6 Vec::spec_extend
 k_str_build 0.5 RecordSpace::prepare_minor
+k_str_build 0.5 Vec::spec_extend
 k_str_build 0.5 lane_get_length_string
 k_struct_sum 60.0 lane_get_field_own_bound<false, 536870912>
 k_struct_sum 42.0 lane_operator_pair<10, 8, true, false>
@@ -338,7 +338,7 @@ k_struct_sum 21.0 lane_get_index_proved
 k_struct_sum 12.0 lane_operator_integer_constant<17>
 k_struct_sum 12.0 lane_operator_integer_constant<19>
 k_struct_sum 7.0 lane_move<0>
-math_abs 52.0 lane_call_math_native<1>
+math_abs 44.0 lane_call_math_native<1>
 math_abs 32.0 lane_get_field_own_bound<false, 0>
 math_abs 28.0 lane_load_name_bound<0, 2>
 math_abs 25.0 lane_inc_dec_loop<false, 4, true>
@@ -393,7 +393,7 @@ num_to_str 35.0 u32::fmt
 num_to_str 34.0 Vm::intern_dynamic_concat
 num_to_str 31.0 JsString::from_ascii_bytes
 num_to_str 28.0 Vm::primitive_concatenation
-num_to_str 26.4 Vm::memoize_concat
+num_to_str 26.3 Vm::memoize_concat
 num_to_str 25.0 lane_inc_dec_loop<false, 4, true>
 num_to_str 23.0 short_hash
 num_to_str 22.0 Buffer::format<i32>
@@ -518,7 +518,7 @@ str_concat_acc 10.0 stored_length
 str_concat_acc 7.0 ShortAscii::as_str
 str_concat_acc 3.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 str_concat_acc 1.7 Vm::collect_inner
-str_concat_acc 1.1 RecordSpace::load_free_word
+str_concat_acc 1.0 RecordSpace::load_free_word
 str_concat_acc 0.9 RecordSpace::claim_slow
 str_concat_acc 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 str_concat_acc 0.6 Vec::spec_extend
