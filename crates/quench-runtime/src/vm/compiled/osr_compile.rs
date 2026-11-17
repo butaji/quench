@@ -201,7 +201,7 @@ fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane
         if matches!(origin, osr_loop::Origin::Inlined { .. }) && instruction.op().is_load_capture()
             && instruction.capture_depth() == 0 && instruction.capture_slot() & osr_loop::CALLEE_CAPTURE != 0
             && let Some(&(_, slot)) = inlining.callee_captures.get(usize::from(instruction.capture_slot() & !osr_loop::CALLEE_CAPTURE)) {
-            *instruction = WideInstruction::new(crate::bytecode::Op::LoadCapture, instruction.a(), instruction.b(), instruction.c(),
+            *instruction = WideInstruction::new(instruction.op(), instruction.a(), instruction.b(), instruction.c(),
                 crate::bytecode::ImmediateLayout::capture_immediate(0, slot));
         }
     }
