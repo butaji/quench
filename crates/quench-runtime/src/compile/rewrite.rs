@@ -91,6 +91,9 @@ fusion_recipes! {
     BinaryJumpFalse: [Binary, JumpFalse] =>
         |first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
+            // Only a comparison fuses (`ast::fuses_with_jump`): an arithmetic or bitwise
+            // result stays a Number row whose truthiness the jump tests.
+            if !super::ast::fuses_with_jump_operator(first.binary_operator()) { return None; }
             Some(Instr::new(
                 Op::JumpBinaryFalse,
                 first.binary_operator() as u16,
