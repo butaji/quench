@@ -2516,7 +2516,7 @@ function-lines crates/quench-runtime/src/compile/call_only.rs::prototype_unobser
 function-lines crates/quench-runtime/src/compile/capture_layout.rs::apply_function 46
 function-lines crates/quench-runtime/src/compile/capture_profile.rs::report 64
 function-lines crates/quench-runtime/src/compile/class.rs::Compiler<'_>::compile_auto_accessor_methods 70
-function-lines crates/quench-runtime/src/compile/class.rs::Compiler<'_>::compile_class_method 67
+function-lines crates/quench-runtime/src/compile/class.rs::Compiler<'_>::compile_class_method 57
 function-lines crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::emit_instance_fields 92
 function-lines crates/quench-runtime/src/compile/class.rs::FunctionCompiler<'_,'_>::lower_class 632
 function-lines crates/quench-runtime/src/compile/early.rs::ParameterEarlyErrors::validate_function 41

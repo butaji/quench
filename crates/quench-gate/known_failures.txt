@@ -20,7 +20,6 @@ vm::compiled::lane_region::lowering_tests::a_number_store_emits_no_barrier_and_a
 vm::generator::eval_tests::a_generator_step_run_by_eval_code_is_a_nested_job_run_in_the_lane
 vm::generator::eval_tests::a_generator_using_eval_across_yields_makes_no_frame
 vm::generator::iteration_environment_tests::per_iteration_environment_copies_across_suspensions_make_no_frame
-vm::generator::job_shape_tests::an_annex_b_block_function_stores_to_its_var_binding_in_the_window
 vm::generator::job_shape_tests::promoted_registers_beside_a_closure_ride_a_window
 vm::generator::root_tests::a_module_awaiting_at_its_first_statement_suspends_a_window_never_a_frame
 vm::generator::root_tests::a_module_with_top_level_await_resumes_in_the_lane_without_frames
