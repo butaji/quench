@@ -243,7 +243,9 @@ pub(super) fn lane_loop_compile<H: Host>(
         int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
-    let calls = program.as_deref().filter(|_| crate::jit_mode::base_regions()).map(|program| region_calls(cx, machine, program, function)).unwrap_or_default();
+    // A Cranelift region calls the callees its sites reached by their entries.
+    let calls = program.as_deref().map(|program| if crate::jit_mode::base_regions() { region_calls(cx, machine, program, function) }
+        else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
@@ -265,6 +267,19 @@ fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: 
     let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
     let candidates = lane_direct_callees(machine, own, function, body);
     machine.region_calls(program, function, own, &candidates)
+}
+
+/// The calls of `function` a Cranelift region of it calls by their entries: the callees its call
+/// sites reached, whose bodies are then in demand (`bind_callees`), as a lane body's are.
+fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
+    let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
+    // A callee with no published body yet is called through its entry cell, which holds its body
+    // once that publishes: the region compiled before its callees still calls them natively.
+    let candidates = lane_direct_callees(machine, own, function, body);
+    for callees in &candidates { super::super::compiled::bind_region_callees(callees, own); }
+    super::super::compiled::RegionCalls::direct(candidates)
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
