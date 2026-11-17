@@ -995,6 +995,11 @@ impl<H: Host> Vm<H> {
         self.prune_first_chunks();
         let heap = &self.heap;
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        // A lane run this collection interrupts continues under the new epoch: what its
+        // stack resolved before names cells the sweep freed (`LaneStack::retire_after_collection`).
+        let generation_key = (self.heap.collection_epoch(), self.realm.globals);
+        self.lane_stack.retire_after_collection(generation_key);
+        super::dispatch_fast::retire_running_lane_context();
         self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
         self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));

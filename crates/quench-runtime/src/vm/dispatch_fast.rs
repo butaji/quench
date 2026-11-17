@@ -2448,6 +2448,17 @@ impl LaneStack {
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
+    /// Retires everything this stack resolved before the collection that ended under `key`
+    /// (the new epoch and the realm): call targets, function targets and read memos name
+    /// callees, environments and storages the collection may have swept, whose heap indices
+    /// the next allocations reuse. The collector calls it, so a lane run that continues past
+    /// any call out that collected (a native such as `gc()`, a host callback, an allocation
+    /// that made a collection due) never admits a target of a swept closure whose index a
+    /// new closure took: its depth-0 captures would read the dead closure's storage.
+    pub(super) fn retire_after_collection(&mut self, key: (u64, Value)) {
+        self.enter_generation(key);
+    }
+
     fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation = self.generation.wrapping_add(1);
@@ -2532,7 +2543,41 @@ pub(super) struct LaneNativeCall {
 #[repr(C)]
 struct LaneBinding {
     resume: unsafe fn(*mut ()),
+    /// Drops what the context resolved under the collection epoch before
+    /// (`retire_lane_binding`), for its owning Host.
+    retire: unsafe fn(*mut ()),
     object_base: *const Object,
+}
+
+/// Drops the storage pointers a lane context resolved before a collection, as
+/// `lane_after_nested_collection` does after an in-place operation collected: the run's
+/// capture storage (whose `CAPTURE_STORES` tag let stores skip the barrier until the next
+/// collection), its last outer capture walk, a frame's captured-locals storage and a Wasm
+/// instance's slots. Each is found again by the path that found it first. The context's
+/// stack is retired by the collector itself (`LaneStack::retire_after_collection`).
+unsafe fn retire_lane_binding<H: Host>(context: *mut ()) {
+    let cx = context.cast::<LaneContext<H>>();
+    // SAFETY: the prefix's callback was installed for this context's Host; the context is
+    // live while it is the thread's running or a suspended outer one.
+    unsafe {
+        (*cx).registers.set_capture(std::ptr::null());
+        (*cx).outer = NO_OUTER_WALK;
+        (*cx).frame_storage = NO_FRAME_STORAGE;
+        (*cx).instance_slots = (Value::DELETED, std::ptr::null());
+    }
+}
+
+/// Retires the thread's running lane context after a collection ran under it: a native call
+/// out of the lane (`gc()`, a host callback) or an allocation that made one due. The run
+/// continues past the call with nothing it resolved under the epoch before.
+pub(super) fn retire_running_lane_context() {
+    let cx = tls_lane_context();
+    if cx.is_null() {
+        return;
+    }
+    // SAFETY: every active context has the repr(C) `LaneBinding` prefix, whose callback
+    // owns its actual Host type.
+    unsafe { (cx.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(cx) };
 }
 
 unsafe fn resume_lane_binding<H: Host>(context: *mut ()) {
@@ -4063,12 +4108,8 @@ fn lane_in_place<H: Host, T>(
 fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
     vm.lane_stack.enter_generation((vm.heap.collection_epoch(), vm.realm.globals));
-    unsafe {
-        (*cx).registers.set_capture(std::ptr::null());
-        (*cx).outer = NO_OUTER_WALK;
-        (*cx).frame_storage = NO_FRAME_STORAGE;
-        (*cx).instance_slots = (Value::DELETED, std::ptr::null());
-    }
+    // SAFETY: `cx` is the running context, of this Host.
+    unsafe { retire_lane_binding::<H>(cx.cast()) };
 }
 
 script_handler! {
