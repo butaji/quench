@@ -724,11 +724,16 @@ impl Value {
         if self.0 & !(Self::TRUE.0 ^ Self::FALSE.0) == Self::FALSE.0 {
             return Some(self == Self::TRUE);
         }
-        if let Some(number) = self.as_number() {
-            return Some(crate::vm::number_is_truthy(number));
+        // An integer's truth is its bits' (`if (i & 3)`), without the double conversion.
+        if let Some(integer) = self.as_int() {
+            return Some(integer != 0);
         }
+        // An object or array record before the double decode (`if (o)`).
         if self.is_heap() {
             return self.is_record().then_some(true);
+        }
+        if let Some(number) = self.as_number() {
+            return Some(crate::vm::number_is_truthy(number));
         }
         Some(!(self.is_null() || self.is_undefined() || self.is_deleted() || self == Self::FALSE))
     }

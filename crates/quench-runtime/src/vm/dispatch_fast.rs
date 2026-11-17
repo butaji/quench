@@ -4076,6 +4076,12 @@ script_handler! {
     /// other value the general path.
     /// The view derives the direction from the record (`specialize_updates`).
     fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
+        // A counter in [0, 2^31) by one compare (`integer_increment`), as the loop updates do; a
+        // decrement, often of a negative value, keeps the general update's single path.
+        if !DECREMENT && let Some(value) = integer_increment::<DECREMENT>(r.get(i.b)) {
+            r.set(i.a, Value::integer(value));
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
             sibling!(lane_inc_dec_bigint::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
         };
@@ -4358,7 +4364,8 @@ pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i
     // As `dispatch::integer_increment`: a non-negative step by one word-range compare.
     let offset = value.int_key_offset();
     let stepped = if DECREMENT { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    if stepped < 1 << 31 {
+    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
+    if stepped < (1 << 31) - usize::from(DECREMENT) {
         return Some(stepped as i32);
     }
     let integer = value.as_int()?;
@@ -4562,6 +4569,23 @@ script_handler! {
         } else {
             r.set(i.a, value);
         }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `Binary` of a Number constant and a register (`1 / i`), as the view decoded it
+    /// (`constant_left_operator_handler`): two Numbers by their values
+    /// (`number_value_operator`); any other right operand takes `lane_binary_general`.
+    fn lane_operator_constant_left<OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the view
+        // was derived with `b` a constant operand indexing a Number.
+        let left = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(crate::bytecode::Operand(i.b).payload())) };
+        let right = r.get(crate::bytecode::Operand(i.c).payload());
+        let Some(value) = super::operations::number_value_operator::<OP>(left, right) else {
+            sibling!(lane_binary_general::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -6016,12 +6040,36 @@ fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneIns
     unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
 }
 
+/// `lane_proved_store` of a heap value (`arr[i] = o`): through the proof where the write
+/// barrier admits the store unlogged (`Heap::array_store_unlogged`). Out of line, so the
+/// immediate store keeps its few registers.
+#[inline(always)]
+fn lane_proved_heap_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> bool {
+    let (base, value) = (r.get(i.b), r.get(i.a));
+    value.heap_index().is_some()
+        && unsafe { vm(cx) }.heap.array_store_unlogged(base, value)
+        && unsafe { (*cx).proofs.replace_admitted(i.b, base, proof_key(r.get(i.c)), value) }
+}
+
+script_handler! {
+    /// `lane_set_index_proved` whose immediate store its proof declined: a heap value the
+    /// barrier admits unlogged through the proof (`lane_proved_heap_store`), else
+    /// `lane_proof_miss`. Apart, so the immediate store keeps its code.
+    #[inline(never)]
+    fn lane_set_index_proved_miss<>(cx, r, ip, i, view) {
+        if !lane_proved_heap_store(cx, r, i) {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
 script_handler! {
     /// `lane_set_index` of a base its loop does not redefine: the replacement through the
     /// run's proof of the array's storage (`lane_proved_store`), else `lane_proof_miss`.
     fn lane_set_index_proved<>(cx, r, ip, i, view) {
         if lane_proved_store(cx, r, i).is_none() {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(lane_set_index_proved_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -6557,6 +6605,113 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
+    }
+}
+
+/// The index of "number" in `bytecode::TYPEOF_NAMES`.
+const NUMBER_NAME_INDEX: usize = 3;
+
+/// The handler of a `Unary` record whose operator the view decides once
+/// (`specialize_register_operands`): a `typeof` test (`lane_typeof_test`), a Number operator
+/// (`lane_unary_number`) or logical not (`lane_logical_not`), so the record dispatches on no
+/// operator at run time; `None` keeps the general `lane_unary`.
+fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
+    use oxc_ast::ast::UnaryOperator as U;
+    if let Some((index, negated)) = crate::bytecode::typeof_test(operator) {
+        macro_rules! names {
+            ($($index:literal),*) => {
+                match (index, negated) {
+                    $(($index, false) => lane_typeof_test::<H, $index, false> as Handler,
+                      ($index, true) => lane_typeof_test::<H, $index, true> as Handler,)*
+                    _ => return None,
+                }
+            };
+        }
+        return Some(names!(0, 1, 2, 3, 4, 5, 6, 7));
+    }
+    const NEGATION: u32 = U::UnaryNegation as u32;
+    const PLUS: u32 = U::UnaryPlus as u32;
+    match operator {
+        NEGATION => Some(lane_unary_number::<H, NEGATION> as Handler),
+        PLUS => Some(lane_unary_number::<H, PLUS> as Handler),
+        super::coercion::LOGICAL_NOT => Some(lane_logical_not::<H> as Handler),
+        _ => None,
+    }
+}
+
+script_handler! {
+    /// `Unary` of a `typeof` test of the name at `INDEX` (`typeof x === "number"`, negated for
+    /// `!==`), chosen when the view was derived: an immediate's name decided here; a heap
+    /// operand's name is the VM's (`Vm::typeof_test_value`).
+    fn lane_typeof_test<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        if value.is_heap() {
+            sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view))
+        }
+        // An immediate's name (`immediate_typeof_index`), which a test of "number" decides by
+        // the Number test alone.
+        let named = if INDEX == NUMBER_NAME_INDEX {
+            value.as_number().is_some()
+        } else {
+            match super::coercion::immediate_typeof_index(value) {
+                Some(name) => name == INDEX,
+                None => sibling!(lane_typeof_test_heap::<H, INDEX, NEGATED>, r, ip, Carried::script_in(cx, view)),
+            }
+        };
+        let holds = named != NEGATED;
+        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_typeof_test` of a heap operand: its kind's name (`Vm::typeof_test_value`).
+    #[inline(never)]
+    fn lane_typeof_test_heap<INDEX: usize, NEGATED: bool>(cx, r, ip, i, view) {
+        r.set(i.a, unsafe { vm(cx) }.typeof_test_value(r.get(i.b), INDEX, NEGATED));
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `Unary` of the Number operator `OP` (`-x`, `+x`), chosen when the view was derived: a
+    /// Number operand's result made here (`number_unary_result`); any other operand takes the
+    /// general `lane_unary`.
+    fn lane_unary_number<OP: u32>(cx, r, ip, i, view) {
+        // An integer stays one: `+x` is itself, and `-x` of any but 0 (whose negation is -0)
+        // and the least int32 (whose negation is past int32).
+        if let Some(integer) = r.int(i.b) {
+            const NEGATION: u32 = oxc_ast::ast::UnaryOperator::UnaryNegation as u32;
+            if OP != NEGATION {
+                r.set(i.a, Value::integer(integer));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            if integer != 0 && integer != i32::MIN {
+                r.set(i.a, Value::integer(-integer));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+        }
+        let Some(number) = r.get(i.b).as_number() else {
+            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        let Some(result) = super::operations::number_unary_result(OP, number) else {
+            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, Value::number(result));
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `Unary` logical not, chosen when the view was derived: a value that decides its own
+    /// truthiness (`Value::truthiness`) here; a heap value whose cell decides it takes the
+    /// general `lane_unary`.
+    fn lane_logical_not<>(cx, r, ip, i, view) {
+        let Some(truthy) = r.get(i.b).truthiness() else {
+            sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, if truthy { Value::FALSE } else { Value::TRUE });
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 
@@ -9341,7 +9496,7 @@ script_handler! {
     /// (`integer_relation`); any other pair takes `lane_jump_binary_false_registers_other`.
     fn lane_jump_binary_false_registers<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
         let Some(holds) = (match (r.int(i.b), r.int(i.c)) {
-            (Some(left), Some(right)) => super::operations::integer_relation_i32(relation_operator::<OP>(i), left, right),
+            (Some(left), Some(right)) => super::operations::integer_test_i32(relation_operator::<OP>(i), left, right),
             _ => None,
         }) else {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script_in(cx, view))
@@ -9485,11 +9640,12 @@ script_handler! {
     /// `lane_jump_binary_false` of a register and an integer constant small enough for the
     /// record's `c` field, both decoded when the view was derived
     /// (`specialize_register_operands`): integer comparison of an integer register
-    /// (`integer_relation_i32`); any other takes `lane_jump_binary_false_small_other`.
+    /// (`integer_test_i32`), which also decides a bitwise result's truth; any other takes
+    /// `lane_jump_binary_false_small_other`.
     fn lane_jump_binary_false_small<BACKWARD: bool, OP: u32, TABLE: bool>(cx, r, ip, i, view) {
         let right = lane_small_constant::<H, TABLE>(cx, i);
         let Some(holds) = (match (r.int(i.b), right.as_int()) {
-            (Some(left), Some(right)) => super::operations::integer_relation_i32(relation_operator::<OP>(i), left, right),
+            (Some(left), Some(right)) => super::operations::integer_test_i32(relation_operator::<OP>(i), left, right),
             _ => None,
         }) else {
             sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, view)
@@ -15636,7 +15792,7 @@ use i64_operators::i64_operator_handler;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
-use denoted::{denoted_handler, unary_handler};
+use denoted::{denoted_handler, lane_unary, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
@@ -22925,6 +23081,8 @@ fn specialize_register_operands<H: Host>(
         if record.handler == unary {
             if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
                 record.handler = lane_typeof_index::<H> as Handler as *const ();
+            } else if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
+                record.handler = handler as *const ();
             }
             continue;
         }
@@ -22933,6 +23091,10 @@ fn specialize_register_operands<H: Host>(
         }
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
         use crate::bytecode::OperandKind::{Constant, Register};
+        if record.handler == binary && let Some(handler) = constant_left_operator_handler::<H>(instruction, constants) {
+            record.handler = handler as *const ();
+            continue;
+        }
         let (Some(Register), Some(right_kind)) = (left.kind(), right.kind()) else {
             continue;
         };
@@ -23947,6 +24109,9 @@ macro_rules! relation_operators {
         const LESS_EQUAL: u32 = B::LessEqualThan as u32;
         const GREATER_THAN: u32 = B::GreaterThan as u32;
         const GREATER_EQUAL: u32 = B::GreaterEqualThan as u32;
+        const BITWISE_AND: u32 = B::BitwiseAnd as u32;
+        const BITWISE_OR: u32 = B::BitwiseOR as u32;
+        const BITWISE_XOR: u32 = B::BitwiseXOR as u32;
         match $operator {
             EQUALITY => $pick!(EQUALITY),
             INEQUALITY => $pick!(INEQUALITY),
@@ -23956,6 +24121,10 @@ macro_rules! relation_operators {
             LESS_EQUAL => $pick!(LESS_EQUAL),
             GREATER_THAN => $pick!(GREATER_THAN),
             GREATER_EQUAL => $pick!(GREATER_EQUAL),
+            // The truth of an integer bitwise result (`integer_test_i32`).
+            BITWISE_AND => $pick!(BITWISE_AND),
+            BITWISE_OR => $pick!(BITWISE_OR),
+            BITWISE_XOR => $pick!(BITWISE_XOR),
             _ => $pick!(RECORD_RELATION),
         }
     }};
@@ -24148,6 +24317,24 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
         Some(constant) => record.operand = LaneOperand { constant },
         None => record.c = right.payload(),
     }
+}
+
+/// The handler of an arithmetic `Binary` of a Number constant and a register (`1 / i`,
+/// `k - x`), which keeps the record's encoded operands and immediate for the general case
+/// (`lane_operator_constant_left`); `None` for any other instruction.
+fn constant_left_operator_handler<H: Host>(instruction: WideInstruction, constants: &[Value]) -> Option<Handler> {
+    use crate::bytecode::OperandKind::{Constant, Register};
+    let (left, right) = (instruction.operand_b(), instruction.operand_c());
+    if left.kind() != Some(Constant) || right.kind() != Some(Register) || instruction.numeric_local_target().is_some() {
+        return None;
+    }
+    constants.get(usize::from(left.payload()))?.as_number()?;
+    macro_rules! pick {
+        ($op:expr) => {
+            lane_operator_constant_left::<H, { $op }> as Handler
+        };
+    }
+    arithmetic_operators!(instruction.binary_operator(), pick)
 }
 
 fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {

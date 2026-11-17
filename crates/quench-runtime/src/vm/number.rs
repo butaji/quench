@@ -617,6 +617,7 @@ pub(super) const MATH_INLINE_ARGUMENTS: usize = 4;
 /// (`Math.max`, `Math.min`, `Math.pow`, `Math.atan2`, `Math.imul`), a missing argument being
 /// NaN as `undefined` converts; `None` for any other native. Each runs no guest code once its
 /// arguments are Numbers.
+#[inline(always)]
 pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
     let argument = |index: usize| values.get(index).copied().unwrap_or(f64::NAN);
     Some(match native {
@@ -676,12 +677,14 @@ pub(super) fn math_unary_call(native: Native, args: &[Value]) -> Option<Value> {
 }
 
 /// The shared numeric operation after argument conversion or a Number-only guard.
+#[inline(always)]
 pub(super) fn math_unary(native: Native, value: f64) -> Option<f64> {
     math_unary_operation(native).map(|operation| operation(value))
 }
 
 /// Select the numeric operation before entering its implementation, so rejection
 /// and simple operations do not pay the stack setup of more complex operations.
+#[inline(always)]
 fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
     Some(match native {
         Native::MathFloor => |value| crate::staged::math::float_unary(FloatUnary::Floor, value),

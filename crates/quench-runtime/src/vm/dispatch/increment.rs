@@ -43,7 +43,8 @@ pub(in crate::vm) fn integer_increment(input: Value, is_decrement: bool) -> Opti
     // overflow test. Negative counters and the step below zero take the checked form.
     let offset = input.int_key_offset();
     let stepped = if is_decrement { offset.wrapping_sub(1) } else { offset.wrapping_add(1) };
-    if stepped < 1 << 31 {
+    // A decrement of the least int32 (offset 2^31) would land at 2^31 - 1: its bound is one less.
+    if stepped < (1 << 31) - usize::from(is_decrement) {
         return Some(Value::integer(stepped as i32));
     }
     let integer = input.as_int()?;

@@ -46,6 +46,46 @@ builtin_rows!(
     12 => JsonStringify,
 );
 
+/// The Math functions whose call a site makes under its own handler, one instantiation of
+/// `lane_call_math_native` per row: the native is a constant, so the site tests the callee's
+/// identity and runs the operation inline (`number::math_inline_call` folds to it) with no
+/// dispatch on the native. Every other inline Math native keeps `lane_call_math`.
+macro_rules! math_rows {
+    ($($row:literal => $native:ident),* $(,)?) => {
+        const fn math_row_native(row: u8) -> Native {
+            match row { $($row => Native::$native,)* _ => unreachable!() }
+        }
+        fn math_handler<H: Host>(native: Native) -> Option<Handler> {
+            match native { $(Native::$native => Some(lane_call_math_native::<H, $row>),)* _ => None }
+        }
+    };
+}
+math_rows!(
+    0 => MathSqrt, 1 => MathAbs, 2 => MathFloor, 3 => MathCeil, 4 => MathRound, 5 => MathTrunc,
+    6 => MathMin, 7 => MathMax, 8 => MathImul, 9 => MathFround, 10 => MathSign,
+);
+
+script_handler! {
+    /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): its
+    /// value of Number arguments in place (`number::math_inline_call`). Any other callee or
+    /// argument takes `lane_call_math`.
+    fn lane_call_math_native<ROW: u8>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let native = const { math_row_native(ROW) };
+        let value = if callee_is_native(vm, r.get(i.b), native) {
+            // SAFETY: the call's window is registers of the running function.
+            super::number::math_inline_call(native, unsafe { lane_call_window(r, i) })
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            sibling!(lane_call_math::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
 script_handler! {
     /// A `Call` site whose callee was the native of builtin row `ROW` (`native_call_handler`): that
     /// call in its steady case (`Vm::steady_native_value`). Any other callee or case takes
@@ -82,6 +122,7 @@ pub(super) fn native_call_handler<H: Host>(native: Native, i: &LaneInstruction, 
     }
     match native {
         native if let Some(row) = builtin_row(native) => builtin_handler::<H>(row),
+        native if let Some(handler) = math_handler::<H>(native) => handler,
         native if super::number::math_numbers_inline(native) => lane_call_math::<H>,
         native if native.is_array_callback() && result_dead() => lane_call_array_callback::<H, true>,
         native if native.is_array_callback() => lane_call_array_callback::<H, false>,
