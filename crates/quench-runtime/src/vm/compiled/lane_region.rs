@@ -4007,8 +4007,13 @@ impl Lowering<'_, '_> {
         // which changes the object's shape and may move the property arena: every proof of
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
+        // The site's own shapes still store in place first: a body that left here once (before
+        // the site cached a shape, say) keeps its arms, and only their miss adds.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            self.store_step(state, operation, (StorePlan::Add, HeldRead::default()), exit)?;
+            let (arms, _) = self.site_store_plan(instruction.cache_site_index(), ty);
+            let admitted = (!arms.is_empty()).then(|| self.store_atom_admitted(state, instruction.atom_index(), exit));
+            state.proofs.write_field(instruction.atom_index());
+            self.store_step(state, operation, (StorePlan::of(&arms, StoreJoin::Add), HeldRead { admitted, ..HeldRead::default() }), exit)?;
             self.after_store(state, StoreJoin::Add);
             return Some(true);
         }

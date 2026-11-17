@@ -296,12 +296,17 @@ fn native_field_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled:
         .collect()
 }
 
-/// The descriptors of the stores of `region` whose receiver it redefines, by cache site: native
+/// The descriptors of the stores of `region`, by cache site: native
 /// code stores in place through the arms they give (`site_store_plan`), as a read does.
 fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled::LoopRegion)
     -> Vec<(u16, Vec<super::super::compiled::NativeFieldLoad>)> {
     let available = machine.heap.object_record_base().is_some() && region.inlining.is_none();
-    region.dynamic_store_sites().filter(|_| available)
+    // A receiver the region keeps stores through the same arms: a store with no read of its
+    // field carries no projected slot (`Lowering::loop_stores`), and with no arm it would leave.
+    let mut sites: Vec<u16> = region.dynamic_store_sites().chain(region.field_store_sites.iter().map(|store| store.cache_site)).collect();
+    sites.sort_unstable();
+    sites.dedup();
+    sites.into_iter().filter(|_| available)
         .map(|site| (site, machine.native_field_load_descriptors(site))).collect()
 }
 
