@@ -36,7 +36,7 @@ int_div 7 27 115.8
 int_mod 16 54 66.9
 int_mod_var 7 27 74.9
 int_mul 5 21 121.9
-int_mul_ovf 18 60 284.7
+int_mul_ovf 18 60 141.5
 int_sub 4 18 47
 math_abs 8 30 172.1
 math_floor 22 72 203.9
@@ -57,10 +57,10 @@ str_concat_acc 7 27 464.4
 str_index 9.07 34 382
 str_length 4 18 84.1
 str_to_num 496 1494 1494
-to_uint32 20 66 249.1
+to_uint32 20 66 238.6
 truthy_int 5.75 24 45.6
 truthy_obj 4 18 62.1
-truthy_str 4 18 144.1
+truthy_str 4 18 117.1
 typed_load 5 21 83.1
 typed_store_f64 8 30 99.6
 typeof_op 4 18 76.1
