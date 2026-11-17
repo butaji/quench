@@ -1,0 +1,363 @@
+# Each op's Ir/iter split by handler (callgrind self cost), recorded by a passing `quench-gate --only ir-budget`.
+# op share handler; the gate names the handlers that grew against these. Not edited by hand.
+arr_length 32.0 lane_get_length
+arr_length 25.0 lane_inc_dec_loop<false, 4, true>
+arr_length 19.0 lane_operator<8>
+arr_load_dbl 34.5 lane_operator_numbers<8>
+arr_load_dbl 25.0 lane_inc_dec_loop<false, 4, true>
+arr_load_dbl 21.0 lane_get_index_proved
+arr_load_dbl 12.0 lane_operator_integer_constant<19>
+arr_load_int 25.0 lane_inc_dec_loop<false, 4, true>
+arr_load_int 21.0 lane_get_index_proved
+arr_load_int 15.0 lane_operator_int32<8, false>
+arr_load_int 12.0 lane_operator_integer_constant<19>
+arr_load_obj 30.0 lane_get_field_own_bound<false, 536870912>
+arr_load_obj 25.0 lane_inc_dec_loop<false, 4, true>
+arr_load_obj 21.0 lane_get_index_proved
+arr_load_obj 15.0 lane_operator_int32<8, false>
+arr_load_obj 12.0 lane_operator_integer_constant<19>
+arr_push 154.0 lane_call_builtin<10>
+arr_push 41.0 lane_get_field_holder_cell_register
+arr_push 25.0 lane_inc_dec_loop<false, 4, true>
+arr_push 14.0 lane_move<0>
+arr_store_dbl 36.0 lane_set_index_proved
+arr_store_dbl 25.0 lane_operator_double_constant<10>
+arr_store_dbl 25.0 lane_inc_dec_loop<false, 4, true>
+arr_store_dbl 12.0 lane_operator_integer_constant<19>
+arr_store_int 36.0 lane_set_index_proved
+arr_store_int 25.0 lane_inc_dec_loop<false, 4, true>
+arr_store_int 12.0 lane_operator_integer_constant<19>
+arr_store_int 7.0 lane_move<0>
+arr_store_obj 48.0 lane_set_index_proved_miss
+arr_store_obj 25.0 lane_inc_dec_loop<false, 4, true>
+arr_store_obj 12.0 lane_operator_integer_constant<19>
+arr_store_obj 11.0 lane_set_index_proved
+arr_store_obj 7.0 lane_move<0>
+bitwise 25.0 lane_inc_dec_loop<false, 4, true>
+bitwise 24.0 lane_operator_integer_constant<19>
+bitwise 15.0 lane_operator<17>
+bitwise 12.0 lane_operator_integer_constant<18>
+call_closure 77.0 lane_script_call_leaf<2, 1>
+call_closure 39.0 lane_returning_operator<17, true, 2>
+call_closure 23.0 lane_inc_dec_jump<false, true>
+call_closure 20.0 lane_load_window_local<false>
+call_closure 19.0 lane_load_capture
+call_closure 19.0 lane_operator<8>
+call_closure 15.0 lane_operator_int32<8, false>
+call_closure 12.0 lane_jump_binary_false_registers<false, 4>
+call_closure 7.0 lane_move<0>
+call_direct 73.0 lane_script_call_leaf<1, 1>
+call_direct 47.0 lane_load_root_binding
+call_direct 39.0 lane_returning_operator<17, true, 1>
+call_direct 25.0 lane_inc_dec_loop<false, 4, true>
+call_direct 16.0 lane_operator_integer_constant<8>
+call_direct 15.0 lane_operator_int32<8, false>
+call_direct 7.0 lane_move<0>
+call_method 76.0 lane_script_call_leaf<4, 1>
+call_method 39.0 lane_returning_operator<17, true, 4>
+call_method 32.0 lane_get_field_own_bound<false, 536870912>
+call_method 29.0 lane_get_field_own_bound<true, 536870912>
+call_method 23.0 lane_inc_dec_jump<false, true>
+call_method 20.0 lane_load_window_local<false>
+call_method 19.0 lane_operator<8>
+call_method 15.0 lane_operator_int32<8, false>
+call_method 14.0 lane_move<0>
+call_method 12.0 lane_jump_binary_false_registers<false, 4>
+cmp_dbl 25.0 lane_inc_dec_loop<false, 4, true>
+cmp_dbl 24.0 lane_jump_binary_false_numbers<false, 4, true, true>
+cmp_dbl 19.0 lane_operator_double_constant<8>
+cmp_dbl 15.0 lane_inc_dec<false>
+cmp_dbl 7.0 lane_move<0>
+cmp_int 26.0 lane_relation_value_jump<true, false, true>
+cmp_int 25.0 lane_inc_dec_loop<false, 4, true>
+cmp_int 12.0 lane_operator_integer_constant<19>
+cmp_int 9.5 lane_jump_binary_false_small<false, 6, false>
+cmp_int 7.5 lane_inc_dec<false>
+dbl_add 25.0 lane_inc_dec_loop<false, 4, true>
+dbl_add 21.2 lane_operator_double_constant<8>
+dbl_div 44.0 lane_operator_constant_left<11>
+dbl_div 30.0 lane_operator_numbers<8>
+dbl_div 25.0 lane_inc_dec_loop<false, 4, true>
+dbl_mul 25.0 lane_inc_dec_loop<false, 4, true>
+dbl_mul 19.0 lane_operator_double_constant<10>
+empty 25.0 lane_inc_dec_loop<false, 4, true>
+empty 7.0 lane_move<0>
+eq_int 25.0 lane_inc_dec_loop<false, 4, true>
+eq_int 12.0 lane_operator_integer_constant<19>
+eq_int 9.9 lane_jump_binary_false_small<false, 2, false>
+eq_int 1.9 lane_inc_dec<false>
+eq_str 72.0 lane_jump_strict_equal_cells<false, false>
+eq_str 45.0 lane_jump_strict_equal_false<false, false>
+eq_str 25.0 lane_inc_dec_loop<false, 4, true>
+eq_str 15.0 lane_inc_dec<false>
+eq_str 14.0 lane_move<0>
+eq_undef_null 30.0 lane_inc_dec<false>
+eq_undef_null 25.0 lane_inc_dec_loop<false, 4, true>
+eq_undef_null 17.0 lane_jump_strict_equal_false<false, false>
+eq_undef_null 14.0 lane_jump_nullish_false<false, false, 2>
+eq_undef_null 6.0 lane_load_name_bound<0, 1>
+field_read 30.0 lane_get_field_own_bound<false, 536870912>
+field_read 25.0 lane_inc_dec_loop<false, 4, true>
+field_read 15.0 lane_operator_int32<8, false>
+field_store 54.0 lane_set_object_field_own<false>
+field_store 25.0 lane_inc_dec_loop<false, 4, true>
+field_store 7.0 lane_move<0>
+inc_local 25.0 lane_inc_dec_loop<false, 4, true>
+inc_local 17.0 lane_inc_dec<true>
+inc_local 15.0 lane_inc_dec<false>
+int_add 25.0 lane_inc_dec_loop<false, 4, true>
+int_add 15.0 lane_operator_int32<8, false>
+int_add 7.0 lane_move<0>
+int_add_noor 25.0 lane_inc_dec_loop<false, 4, true>
+int_add_noor 19.0 lane_operator<8>
+int_add_noor 12.0 lane_operator_integer_constant<19>
+int_div 44.0 lane_operator_constant_left<11>
+int_div 35.0 lane_operator_integer_constant_numbers<17>
+int_div 25.0 lane_inc_dec_loop<false, 4, true>
+int_div 15.0 lane_operator_int32<8, false>
+int_div -0.6 __memset_avx2_unaligned_erms
+int_mod 27.0 lane_operator_integer_constant<12>
+int_mod 25.0 lane_inc_dec_loop<false, 4, true>
+int_mod 15.0 lane_operator_int32<8, false>
+int_mod_var 28.0 lane_operator<12>
+int_mod_var 25.0 lane_inc_dec_loop<false, 4, true>
+int_mod_var 15.0 lane_operator_int32<8, false>
+int_mod_var 7.0 lane_move<0>
+int_mul 36.6 lane_operator_numbers<8>
+int_mul 33.0 lane_operator_integer_constant_numbers<17>
+int_mul 25.0 lane_inc_dec_loop<false, 4, true>
+int_mul 18.7 lane_operator_integer_constant<10>
+int_mul_ovf 89.4 lane_operator_integer_constant_numbers<12>
+int_mul_ovf 25.0 lane_inc_dec_loop<false, 4, true>
+int_mul_ovf 17.2 lane_operator_integer_constant<10>
+int_mul_ovf 9.0 NumberBitwise::from_operator
+int_sub 25.0 lane_inc_dec_loop<false, 4, true>
+int_sub 15.0 lane_operator_int32<9, false>
+int_sub 7.0 lane_move<0>
+math_abs 52.0 lane_call_math_native<1>
+math_abs 32.0 lane_get_field_own_bound<false, 0>
+math_abs 28.0 lane_load_name_bound<0, 2>
+math_abs 25.0 lane_inc_dec_loop<false, 4, true>
+math_abs 19.0 lane_operator<8>
+math_abs 16.0 lane_operator_integer_constant<9>
+math_floor 66.0 lane_call_math_native<2>
+math_floor 32.0 lane_get_field_own_bound<false, 0>
+math_floor 28.0 lane_load_name_bound<0, 2>
+math_floor 25.0 lane_inc_dec_loop<false, 4, true>
+math_floor 22.1 lane_operator_double_constant<10>
+math_floor 19.0 lane_operator<8>
+math_imul 79.0 lane_get_field_math_call2<8, true>
+math_imul 28.0 lane_load_name_bound<0, 2>
+math_imul 25.0 lane_inc_dec_loop<false, 4, true>
+math_imul 15.0 lane_operator_int32<8, false>
+math_minmax 78.0 lane_get_field_math_call2<6, true>
+math_minmax 78.0 lane_get_field_math_call2<7, true>
+math_minmax 56.0 lane_load_name_bound<0, 2>
+math_minmax 42.0 lane_operator_pair<8, 8, true, false>
+math_minmax 25.0 lane_inc_dec_loop<false, 4, true>
+math_minmax 7.0 lane_move<0>
+math_round 86.5 lane_call_math_native<4>
+math_round 32.0 lane_get_field_own_bound<false, 0>
+math_round 28.0 lane_load_name_bound<0, 2>
+math_round 25.0 lane_inc_dec_loop<false, 4, true>
+math_round 22.1 lane_operator_double_constant<10>
+math_round 19.0 lane_operator<8>
+math_sqrt 77.0 lane_get_field_math_call<0>
+math_sqrt 30.0 lane_operator_numbers<8>
+math_sqrt 28.0 lane_load_name_bound<0, 2>
+math_sqrt 25.0 lane_inc_dec_loop<false, 4, true>
+mixed_int_dbl 47.0 lane_operator_constant_pair<10, 8, true>
+mixed_int_dbl 25.0 lane_inc_dec_loop<false, 4, true>
+neg_op 46.0 lane_operator_numbers<8>
+neg_op 25.0 lane_inc_dec_loop<false, 4, true>
+neg_op 14.0 lane_unary_number<1>
+neg_op 12.0 lane_operator_integer_constant<17>
+not_op 25.0 lane_inc_dec_loop<false, 4, true>
+not_op 21.0 lane_jump_true<false>
+not_op 12.0 lane_operator_integer_constant<19>
+not_op 7.5 lane_inc_dec<false>
+num_to_str 196.0 Vm::concatenate
+num_to_str 87.8 Heap::alloc_string_record
+num_to_str 77.0 lane_binary
+num_to_str 53.9 HashTable::find<<quench_runtime::vm::Vm>::find_atom<<quench_runtime::vm::Vm>::short_ascii_concat::{closure#0}>::{closure#0}>
+num_to_str 44.0 Short::try_extend
+num_to_str 43.0 __memcpy_avx_unaligned_erms
+num_to_str 40.0 lane_get_length_string
+num_to_str 36.0 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::FlatUnits>::ascii::{closure#0}>
+num_to_str 35.0 u32::fmt
+num_to_str 34.0 Vm::intern_dynamic_concat
+num_to_str 31.0 JsString::from_ascii_bytes
+num_to_str 28.0 Vm::primitive_concatenation
+num_to_str 26.1 Vm::memoize_concat
+num_to_str 25.0 lane_inc_dec_loop<false, 4, true>
+num_to_str 23.0 short_hash
+num_to_str 22.0 Buffer::format<i32>
+num_to_str 19.0 lane_operator<8>
+num_to_str 18.0 Short::deref
+num_to_str 15.0 ShortAscii::as_str
+num_to_str 15.0 lane_concatenation
+num_to_str 6.0 Short::new
+num_to_str 5.1 Vm::atom_units_equal_str
+num_to_str 5.0 table_hash
+num_to_str 3.3 JsString::units
+num_to_str 2.8 AtomSequence::appended
+num_to_str 2.7 AtomTable::len
+num_to_str 1.1 RecordSpace::load_free_word
+num_to_str 0.9 RecordSpace::claim_slow
+parse_int 123.0 parse_integer
+parse_int 107.0 primitive_leaf_value
+parse_int 101.0 integer_digits_value
+parse_int 82.0 Vm::call_primitive_native
+parse_int 63.0 lane_native_call
+parse_int 57.0 Vm::to_string
+parse_int 54.0 Vm::in_place_native_value
+parse_int 50.0 str::trim_start_matches<quench_runtime::vm::primitives::whitespace::is_ecma_whitespace_character>
+parse_int 48.0 lane_native_value
+parse_int 42.0 lane_load_name_bound<1, 2>
+parse_int 41.0 __rust_dealloc
+parse_int 38.0 JsString::to_host_owned
+parse_int 36.0 QuenchAlloc::alloc_enabled
+parse_int 29.0 Vm::to_number
+parse_int 28.0 immediate_to_string
+parse_int 25.0 lane_inc_dec_loop<false, 4, true>
+parse_int 21.0 JsString::host_string
+parse_int 19.0 Type::immediate
+parse_int 15.0 __memcpy_avx_unaligned_erms
+parse_int 15.0 lane_operator_int32<8, false>
+parse_int 13.0 Vm::primitive_to_number
+parse_int 8.0 __rust_alloc
+parse_int 7.0 lane_move<0>
+parse_int 7.0 string_leaf
+parse_int 6.0 lane_load_const
+parse_int 1.0 __rust_no_alloc_shim_is_unstable_v2
+shl_shr 30.0 lane_operator<18>
+shl_shr 25.0 lane_inc_dec_loop<false, 4, true>
+shl_shr 13.0 lane_operator_integer_constant<14>
+shl_shr 13.0 lane_operator_integer_constant<15>
+shl_shr 12.0 lane_operator_integer_constant<17>
+str_charcodeat 97.0 lane_call_builtin<9>
+str_charcodeat 28.0 lane_operator<12>
+str_charcodeat 27.0 lane_get_field_string_register
+str_charcodeat 25.0 lane_inc_dec_loop<false, 4, true>
+str_charcodeat 15.0 lane_operator_int32<8, false>
+str_charcodeat 14.0 lane_move<0>
+str_charcodeat 5.0 shared_units_offset
+str_charcodeat 3.0 UnitWidth::bytes
+str_compare 134.0 lane_jump_binary_false_registers_other<false, 4>
+str_compare 68.0 Vm::string_relation
+str_compare 44.0 JsString::units
+str_compare 40.0 lane_relation_other
+str_compare 26.0 Vm::plain_in
+str_compare 25.0 Units::cmp
+str_compare 25.0 lane_inc_dec_loop<false, 4, true>
+str_compare 22.0 __memcmp_avx2_movbe
+str_compare 15.0 lane_inc_dec<false>
+str_compare 14.0 ShortAscii::as_str
+str_compare 8.0 NumberRelation::of_ordering
+str_compare 7.0 lane_move<0>
+str_compare 6.0 lane_jump_binary_false_registers<false, 4>
+str_concat 196.0 Vm::concatenate
+str_concat 87.7 Heap::alloc_string_record
+str_concat 77.0 lane_binary
+str_concat 51.7 __memcpy_avx_unaligned_erms
+str_concat 48.6 HashTable::find<<quench_runtime::vm::Vm>::find_atom<<quench_runtime::vm::Vm>::short_ascii_concat::{closure#0}>::{closure#0}>
+str_concat 44.0 Short::try_extend
+str_concat 40.0 lane_get_length_string
+str_concat 36.0 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::FlatUnits>::ascii::{closure#0}>
+str_concat 34.0 Vm::intern_dynamic_concat
+str_concat 33.1 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+str_concat 31.0 JsString::from_ascii_bytes
+str_concat 28.2 Vm::memoize_concat
+str_concat 28.0 Vm::primitive_concatenation
+str_concat 25.0 lane_inc_dec_loop<false, 4, true>
+str_concat 23.0 short_hash
+str_concat 22.0 Buffer::format<i32>
+str_concat 19.0 lane_operator<8>
+str_concat 18.0 Short::deref
+str_concat 17.4 u32::fmt
+str_concat 15.0 lane_concatenation
+str_concat 14.4 ShortAscii::as_str
+str_concat 12.0 lane_operator_integer_constant<19>
+str_concat 6.0 Short::new
+str_concat 5.0 table_hash
+str_concat 4.1 drop_glue<quench_runtime::vm::wtf16::FlatUnits>
+str_concat 2.1 Vm::atom_units_equal_str
+str_concat 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+str_concat 1.4 JsString::units
+str_concat 1.2 AtomSequence::appended
+str_concat 1.2 RecordSpace::load_free_word
+str_concat 1.1 AtomTable::len
+str_concat 1.0 RecordSpace::claim_slow
+str_concat 0.8 Vm::collect_inner
+str_concat_acc 113.0 Vm::intern_dynamic_concat
+str_concat_acc 101.0 lane_operator_constant_other<8>
+str_concat_acc 89.8 Heap::alloc_string_record
+str_concat_acc 38.0 Vm::concatenate
+str_concat_acc 25.0 lane_inc_dec_loop<false, 4, true>
+str_concat_acc 24.0 Vm::primitive_concatenation
+str_concat_acc 20.0 lane_operator_constant_numbers<8>
+str_concat_acc 17.2 AppendBuffer::made_of<core::iter::adapters::copied::Copied<core::slice::iter::Iter<u8>>, core::iter::adapters::copied::Copied<core::slice::iter::Iter<u8>>>
+str_concat_acc 15.0 lane_concatenation
+str_concat_acc 10.0 stored_length
+str_concat_acc 7.0 ShortAscii::as_str
+str_concat_acc 1.9 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+str_concat_acc 1.1 RecordSpace::load_free_word
+str_concat_acc 0.9 RecordSpace::claim_slow
+str_index 81.5 lane_jump_strict_constant_contents<false>
+str_index 81.0 Vm::string_element
+str_index 80.4 lane_jump_strict_constant_false<false>
+str_index 28.0 lane_operator<12>
+str_index 27.0 Comparison::of_operator
+str_index 25.0 lane_inc_dec_loop<false, 4, true>
+str_index 18.0 lane_get_index_string
+str_index 12.0 FlatUnits::shared_ascii
+str_index 11.0 lane_string_element
+str_index 10.0 Comparison::by_vm
+str_index 7.0 lane_move<0>
+str_index 1.1 lane_inc_dec<false>
+str_length 40.0 lane_get_length_string
+str_length 25.0 lane_inc_dec_loop<false, 4, true>
+str_length 19.0 lane_operator<8>
+str_to_num 95.0 parse_number
+str_to_num 93.0 str::trim_matches<quench_runtime::vm::primitives::whitespace::is_ecma_whitespace_character>
+str_to_num 81.0 lane_unary
+str_to_num 71.0 Vm::unary
+str_to_num 63.0 f64::from_str
+str_to_num 58.0 Vm::primitive_to_number
+str_to_num 37.0 parse_number_string
+str_to_num 29.0 Vm::to_number
+str_to_num 25.0 lane_inc_dec_loop<false, 4, true>
+str_to_num 21.0 JsString::host_string
+str_to_num 15.0 lane_operator_int32<8, false>
+str_to_num 14.0 lane_unary_number<0>
+to_uint32 91.7 lane_operator_constant_numbers<12>
+to_uint32 41.0 lane_operator_integer_constant_numbers<16>
+to_uint32 35.3 lane_operator_numbers<8>
+to_uint32 25.0 lane_inc_dec_loop<false, 4, true>
+to_uint32 22.0 lane_operator_double_constant<10>
+to_uint32 9.0 NumberBitwise::from_operator
+truthy_int 25.0 lane_inc_dec_loop<false, 4, true>
+truthy_int 11.2 lane_inc_dec<false>
+truthy_int 9.2 lane_jump_binary_false_small<false, 19, false>
+truthy_obj 25.0 lane_inc_dec_loop<false, 4, true>
+truthy_obj 22.0 lane_jump_false<false>
+truthy_obj 15.0 lane_inc_dec<false>
+truthy_str 41.0 Vm::heap_cell_truthy
+truthy_str 25.0 lane_inc_dec_loop<false, 4, true>
+truthy_str 22.0 lane_jump_false<false>
+truthy_str 15.0 lane_inc_dec<false>
+truthy_str 14.0 lane_jump_test_cell<false, false>
+typed_load 31.0 lane_get_index_typed_kind<6>
+typed_load 25.0 lane_inc_dec_loop<false, 4, true>
+typed_load 15.0 lane_operator_int32<8, false>
+typed_load 12.0 lane_operator_integer_constant<19>
+typed_store_f64 37.5 lane_set_index_typed_kind<11>
+typed_store_f64 25.0 lane_operator_double_constant<10>
+typed_store_f64 25.0 lane_inc_dec_loop<false, 4, true>
+typed_store_f64 12.0 lane_operator_integer_constant<19>
+typeof_op 25.0 lane_inc_dec_loop<false, 4, true>
+typeof_op 17.0 lane_typeof_test_jump<3, false>
+typeof_op 15.0 lane_inc_dec<false>
+ushr 25.0 lane_inc_dec_loop<false, 4, true>
+ushr 16.0 lane_operator_integer_constant<16>
+ushr 15.0 lane_operator_int32<8, false>
