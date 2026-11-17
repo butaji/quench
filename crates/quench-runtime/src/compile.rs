@@ -74,7 +74,7 @@ mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
-pub(crate) mod regexp; mod regexp_memo;
+pub(crate) mod regexp; mod regexp_memo; mod source_text;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
@@ -3540,7 +3540,7 @@ impl<'a> Compiler<'a> {
             module_link_plan,
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
-                text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                text: source_text::kept(self.text, self.eval_context.is_some()),
                 typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,

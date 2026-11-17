@@ -263,7 +263,7 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         let source_name = format!("<Eval:{}>", self.programs.len());
-        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, eval_source::shared_text(&source_text, text))
+        self.eval_global_script_with_cache(p, text, inherited_strict, &source_name, cache_source, false, eval_source::shared_text(source, &source_text, text))
     }
 
     pub(super) fn eval_global_script(
@@ -303,9 +303,9 @@ impl<H: Host> Vm<H> {
         source: &str,
         strict: bool,
         source_name: &str,
-        cache_source: Option<eval_source::EvalSource>,
+        mut cache_source: Option<eval_source::EvalSource>,
         host_script: bool,
-        shared_text: Option<crate::bytecode::SourceText>,
+        shared_text: Option<eval_source::SharedText>,
     ) -> Result<Value, JsError> {
         let host_script = host_script && !self.direct_eval;
         let mode = self.specialization_part();
@@ -369,7 +369,7 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(p, &message)
                 .expect_err("dynamic eval syntax errors must throw")
         })?;
-        eval_source::keep_shared_text(&mut residual, shared_text);
+        self.keep_eval_text(&mut residual, shared_text, facts.key.as_mut(), cache_source.as_mut());
         let cacheable = eval_source::is_cacheable(&residual, source);
         let strict_code_key = facts.key.as_ref().filter(|_| eval_source::is_strict_code_cacheable(&residual)).cloned();
         let cache_source = cache_source.filter(|_| cacheable && facts.key.is_none());
