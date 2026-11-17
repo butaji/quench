@@ -35,12 +35,12 @@ int_add_noor 8 30 56
 int_div 7 27 115.8
 int_mod 16 54 66.9
 int_mod_var 7 27 74.9
-int_mul 5 21 121.9
-int_mul_ovf 18 60 141.5
+int_mul 5 21 113.3
+int_mul_ovf 18 60 140.5
 int_sub 4 18 47
 math_abs 8 30 172.1
 math_floor 22 72 203.9
-math_imul 7 27 221.1
+math_imul 7 27 166.1
 math_minmax 15 51 324.1
 math_round 23 75 231.6
 math_sqrt 9 33 160.1
@@ -48,7 +48,7 @@ mixed_int_dbl 7 27 72.1
 neg_op 6 24 97.1
 not_op 5.5 23 65.6
 num_to_str 569 1713 1713
-parse_int 196 594 1037.1
+parse_int 196 594 1036.1
 shl_shr 7 27 93
 str_charcodeat 9 33 214.1
 str_compare 4 18 434.1
@@ -57,7 +57,7 @@ str_concat_acc 7 27 464.4
 str_index 9.07 34 382
 str_length 4 18 84.1
 str_to_num 496 1494 1494
-to_uint32 20 66 238.6
+to_uint32 20 66 224.1
 truthy_int 5.75 24 45.6
 truthy_obj 4 18 62.1
 truthy_str 4 18 117.1
