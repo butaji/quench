@@ -3524,8 +3524,6 @@ impl<'a> Compiler<'a> {
         method_sites.shrink_to_fit();
         method_arguments.shrink_to_fit();
         let field_sites = self.field_sites.into_vec();
-        let stub_kinds = std::mem::take(&mut self.first_call.templates).into_kinds();
-        let mut shared_stubs = Default::default();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
             // Eval code is code compiled for an eval; a host script that only captures its
@@ -3559,7 +3557,7 @@ impl<'a> Compiler<'a> {
                 slots.extend(functions.into_iter().enumerate().map(|(id, function)| {
                     match function {
                         Some(function) if lowered_here(id) => FunctionSlot::compiled(function),
-                        Some(function) => first_call::unlowered_slot(id, function, &stub_kinds, &mut shared_stubs),
+                        Some(function) => self.first_call.templates.unlowered(id, function),
                         None => FunctionSlot::released(released[&id].header),
                     }
                 }));

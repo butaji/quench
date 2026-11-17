@@ -20279,20 +20279,20 @@ fn lane_start_async_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     let this = r.get(i.c);
     // SAFETY: `ip` is a record of the active view, which is the running function's.
     let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    let beside = !vm.lane_stack.activations.is_empty();
-    if beside {
-        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
-    } else {
-        let frame = unsafe { (*cx).frame() };
-        vm.frames[frame].pc = call_pc + 1;
-        vm.frames[frame].pc_is_resume = true;
-    }
+    let beside = lane_park_async_caller(vm, cx, call_pc);
     let context = CallContext::user_function(function, callee);
     let result = vm.start_async_call(code, function, env, this, arguments.as_slice(), context);
     note_allocation(vm);
     vm.lane_stack.refresh_activation_limit();
+    Some(lane_async_call_resumed(vm, cx, ip, i, call_pc, beside, result))
+}
+
+/// Where the lane goes once `lane_start_async_call`'s job has run its first step: on with the
+/// promise in the call's register, or out with the error, materializing the deferred caller
+/// the job left unobserved so the error has a frame to unwind.
+fn lane_async_call_resumed<H: Host>(vm: &mut Vm<H>, cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, call_pc: usize, beside: bool, result: Result<Value, JsError>) -> Resumed {
     let unobserved = beside && vm.lane_deferred.take().is_some();
-    Some(match result {
+    match result {
         Ok(promise) => {
             // The activations may have become frames, whose registers the context now names.
             let r = unsafe { (*cx).registers };
@@ -20307,7 +20307,23 @@ fn lane_start_async_call<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
             vm.lane_raised = Some(error);
             Resumed::Exit(exit(ip))
         }
-    })
+    }
+}
+
+/// Where `lane_start_async_call`'s caller resumes once the callee's job settles its first
+/// step: beside other activations, a deferred lane call the job materializes only if it
+/// observes the caller (true); otherwise the caller's own frame, resuming past the call.
+fn lane_park_async_caller<H: Host>(vm: &mut Vm<H>, cx: *mut LaneContext<H>, call_pc: usize) -> bool {
+    let beside = !vm.lane_stack.activations.is_empty();
+    if beside {
+        vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
+    } else {
+        // SAFETY: the context outlives the lane run.
+        let frame = unsafe { (*cx).frame() };
+        vm.frames[frame].pc = call_pc + 1;
+        vm.frames[frame].pc_is_resume = true;
+    }
+    beside
 }
 
 /// The facts that keep function `function` of `program` out of a frameless activation, for
