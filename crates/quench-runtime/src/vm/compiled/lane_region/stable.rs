@@ -262,14 +262,46 @@ impl Lowering<'_, '_> {
         if self.vm.online.is_some() || self.helpers.links() { return None; }
         let held = self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
         self.stable.atoms.insert(atom);
-        if !state.proofs.stable {
-            let address = emit(&mut self.builder).raw_const(Lane::I64, held.invalidation as i64);
-            let invalidated = emit(&mut self.builder).load_u64(Region::Invalidation.mutable(), address, 0);
-            let unchanged = self.raw_compare_imm(Relation::Equal, invalidated, 0);
-            emit_js_guard(&mut self.builder, unchanged, exit);
-            state.proofs.stable = true;
-        }
+        self.read_region_invalidation(state, held, exit);
         Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// Reads offline code's invalidation word (`HeldAtoms::invalidation`) once per block after
+    /// its last call (`State::proofs.stable`), leaving through `exit` where it is set.
+    fn read_region_invalidation(&mut self, state: &mut State, held: super::super::HeldAtoms<'_>, exit: ir::Block) {
+        if state.proofs.stable { return; }
+        let address = emit(&mut self.builder).raw_const(Lane::I64, held.invalidation as i64);
+        let invalidated = emit(&mut self.builder).load_u64(Region::Invalidation.mutable(), address, 0);
+        let unchanged = self.raw_compare_imm(Relation::Equal, invalidated, 0);
+        emit_js_guard(&mut self.builder, unchanged, exit);
+        state.proofs.stable = true;
+    }
+
+    /// Whether offline code holds Stable facts under its own code dependencies 
+    /// (`VmFacts::held_atoms`: an OSR region, whose publication subscribes them and sets its
+    /// invalidation word when one changes), as online code does under its plan's.
+    pub(super) fn region_holds_stable(&self) -> bool {
+        self.vm.online.is_none() && !self.helpers.links() && self.vm.held_atoms.is_some()
+    }
+
+    /// `hold_holder` for offline code that holds Stable facts (`region_holds_stable`): the
+    /// prototype's values are a dependency of its publication, read through its invalidation word.
+    pub(super) fn region_hold_holder(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
+        let held = self.vm.held_atoms.expect("a region that holds Stable facts");
+        self.stable.holders.insert_growing(holder as usize);
+        self.read_region_invalidation(state, held, exit);
+    }
+
+    /// Holds prototype `holder`'s values by whichever dependency the code takes (`hold_holder`,
+    /// `region_hold_holder`); false where it takes none.
+    pub(super) fn holds_holders(&self) -> bool {
+        self.division().folds(BindingTime::Stable) || self.region_holds_stable()
+    }
+
+    /// `hold_holder` or `region_hold_holder`, as the code's division allows (`holds_holders`).
+    pub(super) fn hold_holder_any(&mut self, state: &mut State, exit: ir::Block, holder: u32) {
+        if self.division().folds(BindingTime::Stable) { self.hold_holder(state, exit, holder); }
+        else { self.region_hold_holder(state, exit, holder); }
     }
 
     /// Whether a run enters loop `header..=end` only at its header, by edges that each make the

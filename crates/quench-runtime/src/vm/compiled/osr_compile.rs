@@ -409,7 +409,7 @@ pub(in crate::vm) fn start_osr_region(
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let stable = StableFacts { atoms: lowered.stable.atoms, ..StableFacts::default() };
+    let stable = StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, ..StableFacts::default() };
     let facts = OsrFacts { roots: lowered.stable.roots, stable, ..OsrFacts::observed(observation) };
     let code = super::super::jit_backend::run_in_background(move || {
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))

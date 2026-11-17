@@ -111,9 +111,9 @@ impl Lowering<'_, '_> {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
         // The callee's identity is held by its holder, a dependency that retires this code
         // before the function can die and its id be reused.
-        if !self.division().folds(BindingTime::Stable) { return false; }
+        if !self.holds_holders() { return false; }
         let exit = self.guard_exit(state, pc as u32);
-        self.hold_holder(state, exit, holder);
+        self.hold_holder_any(state, exit, holder);
         let held = self.tagged(state, instruction.register_b());
         let same = self.is_identity(held, callee);
         emit_js_guard(&mut self.builder, same, exit);
