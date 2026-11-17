@@ -49,6 +49,12 @@ pub(in crate::vm) struct CallCode {
 }
 
 impl CallCode {
+    /// The calls of a region that inlines and enters none, whose code reads `invalidation`
+    /// (`VmFacts::held_atoms`), which its publication sets when a fact it holds changes.
+    pub(super) fn holding(invalidation: Invalidation) -> Self {
+        Self { invalidation, ..Self::default() }
+    }
+
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
     pub(super) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {

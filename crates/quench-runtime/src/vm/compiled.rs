@@ -1329,7 +1329,16 @@ pub(super) struct VmFacts<'a> {
     /// The names method caches hold now, where offline code stores in place under a dependency on
     /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
     /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
-    pub(super) held_atoms: Option<&'a super::method_cache::AtomBits>,
+    pub(super) held_atoms: Option<HeldAtoms<'a>>,
+}
+
+/// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
+/// hold now, and the word its publication sets when a cache names one it stores
+/// (`code_dependencies::Invalidation`), which a run that calls reads after each call.
+#[derive(Clone, Copy)]
+pub(super) struct HeldAtoms<'a> {
+    pub(super) names: &'a super::method_cache::AtomBits,
+    pub(super) invalidation: usize,
 }
 
 impl VmFacts<'static> {

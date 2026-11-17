@@ -28,6 +28,9 @@ pub(super) struct LoopTier {
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
+    /// The field stores the code left at often enough once, which the next compilation planned
+    /// again from their sites' caches (`left_store`), sorted.
+    refed: Vec<usize>,
     /// Entries the published code's guards declined in a row, and whether the next compilation
     /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
     /// bound misses every versioned entry.
@@ -99,6 +102,22 @@ impl LoopTier {
         let list = if widened { &mut self.abandoned } else { &mut self.widened };
         list.push(pc);
         list.sort_unstable();
+        if let Some(code) = self.code.take() { code.retire(); }
+    }
+
+    /// Counts a run that left at the field store at `pc`, whose in-place arms missed
+    /// (`Lowering::store_leaves`). The first time it has left `widen_after_leaves` times the code
+    /// goes and the next compilation plans the store again from what its cache learned since
+    /// (a store the loop had not run yet had no plan); after that it widens as `left_at` does.
+    pub(super) fn left_store(&mut self, tiers: &Tiers, pc: usize) {
+        if self.refed.binary_search(&pc).is_ok() { return self.left_at(tiers, pc, false); }
+        if self.compilations >= tiers.loops.max_compilations { return; }
+        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
+        self.leaves[at].1 += 1;
+        if self.leaves[at].1 < tiers.loops.widen_after_leaves { return; }
+        self.leaves.swap_remove(at);
+        self.refed.push(pc);
+        self.refed.sort_unstable();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 

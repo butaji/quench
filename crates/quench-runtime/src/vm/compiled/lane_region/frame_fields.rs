@@ -45,6 +45,9 @@ pub(super) struct HeldRead {
     /// The test that no method cache names the atom a store writes: the entry's where the run
     /// calls nothing, made at the store where it does.
     pub(super) admitted: Option<ir::Value>,
+    /// Whether a store the in-place arms miss leaves instead of calling the VM's store
+    /// (`Lowering::store_leaves`).
+    pub(super) leaves: bool,
 }
 
 /// The Stable facts a lowering takes, and where it takes them.
@@ -218,6 +221,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
 
     fn field_store_host(&mut self, stage: &mut Emit<'b, 'c>, object: ir::Value, atom: u32, site: u16,
         value: ir::Value, miss: ir::Block) -> Option<()> {
+        if self.fields.as_ref().is_some_and(|fields| fields.held.leaves) {
+            let never = stage.ult(value, value);
+            return stage.guard(never, miss);
+        }
         calls::field_store_miss(self, stage, object, atom, site, value, EmitProof::FieldStoreMiss { miss })
     }
 

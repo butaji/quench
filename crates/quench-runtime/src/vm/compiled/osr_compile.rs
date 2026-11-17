@@ -302,7 +302,7 @@ struct LoopPlanner<'a> {
     views: super::ElementViews,
     tiers: &'static Tiers,
     /// The names method caches hold now, in a specialized run (`VmFacts::held_atoms`).
-    stores: Option<&'a crate::vm::method_cache::AtomBits>,
+    stores: Option<super::HeldAtoms<'a>>,
 }
 
 impl LoopPlanner<'_> {
@@ -400,10 +400,11 @@ pub(in crate::vm) fn start_osr_region(
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
     let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
     let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
-    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
+    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone())) {
         return decided;
     }
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers, stores };
+    let held = stores.map(|names| super::HeldAtoms { names, invalidation: invalidation.address() });
+    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers, stores: held };
     let lowered = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
@@ -414,7 +415,7 @@ pub(in crate::vm) fn start_osr_region(
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), calls: CallCode::default() })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), calls: CallCode::holding(invalidation) })
 }
 
 impl PendingOsrRegion {

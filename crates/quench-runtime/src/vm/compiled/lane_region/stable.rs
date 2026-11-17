@@ -250,8 +250,25 @@ impl Lowering<'_, '_> {
     /// cache that could name it (`entry_store_atoms`); a run that calls tests the caches.
     pub(super) fn loop_held_atom(&mut self, atom: Atom) -> Option<ir::Value> {
         if self.vm.online.is_some() || self.native_calls || self.helpers.links() { return None; }
-        self.vm.held_atoms.filter(|names| !names.contains(atom as usize))?;
+        self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
         self.stable.atoms.insert(atom);
+        Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
+    /// `loop_held_atom` in a run that calls: a call may have named the atom, which sets the
+    /// code's invalidation word, so the block reads the word once after its last call
+    /// (`State::proofs.stable`) and leaves through `exit` where it is set.
+    pub(super) fn called_held_atom(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
+        if self.vm.online.is_some() || self.helpers.links() { return None; }
+        let held = self.vm.held_atoms.filter(|held| !held.names.contains(atom as usize))?;
+        self.stable.atoms.insert(atom);
+        if !state.proofs.stable {
+            let address = emit(&mut self.builder).raw_const(Lane::I64, held.invalidation as i64);
+            let invalidated = emit(&mut self.builder).load_u64(Region::Invalidation.mutable(), address, 0);
+            let unchanged = self.raw_compare_imm(Relation::Equal, invalidated, 0);
+            emit_js_guard(&mut self.builder, unchanged, exit);
+            state.proofs.stable = true;
+        }
         Some(self.builder.ins().iconst(types::I8, 1))
     }
 

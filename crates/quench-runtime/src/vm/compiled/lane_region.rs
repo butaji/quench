@@ -475,6 +475,8 @@ struct Lowering<'a, 'f> {
     /// The view of the loop's hoisted dense array the next element row reads or writes through, which
     /// its entering edge proved once (`EmitFrame::held`).
     held_view: Option<frame_elements::Held>,
+    /// Whether the held view's read leaves at a hole (`EmitFrame::hole_leaves`).
+    hole_leaves: bool,
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
@@ -1628,7 +1630,7 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
-        proving_entry: false, left_here: false, held_view: None, entry_exit: None,
+        proving_entry: false, left_here: false, held_view: None, hole_leaves: false, entry_exit: None,
         direct,
         frame_captures,
         context,
@@ -2796,7 +2798,7 @@ impl Lowering<'_, '_> {
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
-            held: self.held_view.take(), arrays_fixed: self.arrays_fixed, site };
+            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site };
         super::record_boxed_numbers();
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
@@ -3568,7 +3570,7 @@ impl Lowering<'_, '_> {
                     let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
                         &mut self.builder, self.payload, site, exit, None));
                     self.admit_field_writes(&mut binding, Type::INT32, exit);
-                    let allowed = self.store_atom_admitted(instruction.atom_index());
+                    let allowed = self.store_atom_admitted(state, instruction.atom_index(), exit);
                     emit_js_guard(&mut self.builder, allowed, exit);
                     let packed = self.builder.create_block();
                     let packed_address = self.builder.append_block_param(packed, types::I64);
@@ -4040,9 +4042,11 @@ impl Lowering<'_, '_> {
         (atom, site, ty): (Atom, u16, Type), exit: ir::Block) -> Option<()> {
         let (arms, join) = self.site_store_plan(site, ty);
         let plan = StorePlan::of(&arms, join);
-        let admitted = (!arms.is_empty() || join == StoreJoin::Bound).then(|| self.store_atom_admitted(atom));
+        let admitted = (!arms.is_empty() || join == StoreJoin::Bound).then(|| self.store_atom_admitted(state, atom, exit));
+        let leaves = join == StoreJoin::Host && self.store_leaves();
         state.proofs.write_field(atom);
-        self.store_step(state, operation, (plan, HeldRead { admitted, ..HeldRead::default() }), exit)?;
+        self.store_step(state, operation, (plan, HeldRead { admitted, leaves, ..HeldRead::default() }), exit)?;
+        if leaves { return Some(()); }
         self.after_store(state, join);
         Some(())
     }
@@ -4073,6 +4077,14 @@ impl Lowering<'_, '_> {
         let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
             else if bound { StoreJoin::Bound } else { StoreJoin::Host };
         (arms, join)
+    }
+
+    /// Whether a store of a loop region that its in-place arms miss leaves at its PC rather than
+    /// calling the VM's store: the call would spill every value live across the loop and keep the
+    /// loop's poll (a reentry). A store left at often enough is widened (`LoopTier::left_at`), and
+    /// the recompile takes the VM's store there.
+    fn store_leaves(&self) -> bool {
+        matches!(self.coverage, Coverage::Loop { .. }) && !self.generic.contains(&self.at)
     }
 
     /// What a store the VM may have completed changes: an adding entry reshapes any object, so
@@ -4126,8 +4138,9 @@ impl Lowering<'_, '_> {
     /// Whether the run admits a direct store of `atom`. A run that calls may meet a method
     /// cache that names the atom only after a call; one that does not tests it once, at
     /// entry (`Lowering::entry_facts`).
-    fn store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
+    fn store_atom_admitted(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> ir::Value {
         if self.native_calls {
+            if let Some(held) = self.called_held_atom(state, atom, exit) { return held; }
             self.emit_store_atom_admitted(atom)
         } else {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])

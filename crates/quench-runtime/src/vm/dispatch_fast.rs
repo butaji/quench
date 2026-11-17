@@ -10050,7 +10050,8 @@ fn lane_loop_native<H: Host>(
 
 /// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
 /// speculation a compilation can drop, an element read, whose observed type it can drop, an
-/// element store, whose append helper it can compile, or a capture read, whose root-held binding
+/// element store, whose append helper it can compile, a field store, whose VM store it can call
+/// (`Lowering::store_leaves`), or a capture read, whose root-held binding
 /// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
 fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
@@ -10063,10 +10064,14 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
             let op = decoded_instruction(body, *packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
+                || op.is_field_store() || matches!(op.class(), Class::LoadCapture)).then(|| (op.is_get_index(), op.is_field_store()))
         })
     });
-    if let Some(read) = counted { site.tier.borrow_mut().left_at(site.tiers, pc as usize, read); }
+    match counted {
+        Some((_, true)) => site.tier.borrow_mut().left_store(site.tiers, pc as usize),
+        Some((read, false)) => site.tier.borrow_mut().left_at(site.tiers, pc as usize, read),
+        None => {}
+    }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
