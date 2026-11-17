@@ -175,5 +175,9 @@ setting! {
         /// Lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`):
         /// `=off` builds them, `=verify` builds them as well and prints where the verdicts differ.
         Recognize = "recognize",
+        /// `process.__irMark()` exists and calls `quench_ir_mark`, where callgrind splits its
+        /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
+        /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
+        IrMark = "ir-mark",
     }
 }
