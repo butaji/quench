@@ -234,6 +234,9 @@ struct LocalProofs {
     stable: bool,
     /// Whether this block proved the realm its global reads were compiled against active (`Lowering::hold_global`).
     realm: bool,
+    /// Whether this block proved the run's stores specialized (`JsStepDispatch::stores_specialized`, a
+    /// constant of the run), so a store of an unnamed atom tests only the invalidation word (`Lowering::online_store_held`).
+    specialized: bool,
     /// Registers whose lane-frame slot holds their current tagged value (`Lowering::home_written`): a
     /// definition retires one, so a call writes back only what changed since the last write-back.
     homed: CompoundBitSet,
@@ -261,7 +264,7 @@ impl State {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false,
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
@@ -905,6 +908,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
+        state.proofs.specialized = first.specialized && rest.iter().all(|other| other.specialized);
         // A block a rotated latch also enters has an edge `rest` does not hold: only a sealable block keeps the homes.
         if self.sealable.contains(pc) {
             state.proofs.homed.clone_from(&first.homed);
@@ -4141,6 +4145,7 @@ impl Lowering<'_, '_> {
     fn store_atom_admitted(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> ir::Value {
         if self.native_calls {
             if let Some(held) = self.called_held_atom(state, atom, exit) { return held; }
+            if let Some(held) = self.online_store_held(state, atom, exit) { return held; }
             self.emit_store_atom_admitted(atom)
         } else {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])

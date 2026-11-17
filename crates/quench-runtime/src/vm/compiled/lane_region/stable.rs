@@ -244,6 +244,23 @@ impl Lowering<'_, '_> {
         Some(emit(&mut self.builder).all(specialized, held))
     }
 
+    /// `store_held_unnamed` in a block: the run's stores proved specialized once per block (a
+    /// constant of the run) and the invalidation word read once since the last call or once at
+    /// the entry of a loop that keeps Stable facts (`hold_stable`), each leaving through `exit`
+    /// where it fails, rather than each store testing both and joining the VM's store.
+    pub(super) fn online_store_held(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> Option<ir::Value> {
+        self.vm.online.filter(|online| !online.names(atom))?;
+        if !state.proofs.specialized {
+            let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
+            let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
+            emit_js_guard(&mut self.builder, specialized, exit);
+            state.proofs.specialized = true;
+        }
+        self.hold_stable(state, exit);
+        self.stable.atoms.insert(atom);
+        Some(self.builder.ins().iconst(types::I8, 1))
+    }
+
     /// Where offline code holds `atom` unnamed (`VmFacts::held_atoms`), the admission of its stores
     /// in a run that makes no call: true. The code was compiled for a specialized run, a cache
     /// naming the atom retires it before its next entry, and a run that calls nothing meets no
