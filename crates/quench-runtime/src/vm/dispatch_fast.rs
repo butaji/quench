@@ -4197,12 +4197,13 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
+        // SAFETY: the view records the distance to a validated jump target, the load record
+        // `specialize_update_jumps` matched, whose branch record follows it. Computed before
+        // the fuel test, so its branch reads the decrement's own flags.
+        let load_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the load record
-        // `specialize_update_jumps` matched, whose branch record follows it.
-        let load_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let load = unsafe { &*load_ip };
         let branch_ip = following(load_ip);
         let branch = unsafe { &*branch_ip };
@@ -9966,12 +9967,13 @@ script_handler! {
     /// of a list walk: the safepoint and the test as one dispatch. A heap value other than a
     /// record runs the test's own record.
     fn lane_jump_back_nullish<NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_nullish_back_edges` matched. Computed before the fuel test, so its
+        // branch reads the decrement's own flags.
+        let test_ip = unsafe { ip.byte_offset(i.jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_nullish_back_edges` matched.
-        let test_ip = unsafe { ip.byte_offset(i.jump()) };
         let value = r.get(unsafe { (*test_ip).b });
         let equal = match NULLISH {
             NULLISH_NULL => value == Value::NULL,
@@ -9998,12 +10000,13 @@ script_handler! {
     /// safepoint, the update, the copy and the test as one dispatch. An update other than an
     /// integer's runs the update's own record, a test of anything else the test's.
     fn lane_jump_back_update_small<DECREMENT: bool, MOVE: bool, OP: u32>(cx, r, ip, i, view) {
+        // SAFETY: the view records the distance to a validated jump target, the update record
+        // `specialize_update_back_edges` matched, which the copy and the test follow. Computed
+        // before the fuel test, so its branch reads the decrement's own flags.
+        let update_ip = unsafe { ip.byte_offset(i.jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the update record
-        // `specialize_update_back_edges` matched, which the copy and the test follow.
-        let update_ip = unsafe { ip.byte_offset(i.jump()) };
         let update = unsafe { &*update_ip };
         let Some(value) = super::dispatch::integer_increment(r.get(update.b), DECREMENT) else {
             next!(cx, r, update_ip, Carried::script_in(cx, view))
