@@ -74,7 +74,7 @@ mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
-pub(crate) mod regexp;
+pub(crate) mod regexp; mod regexp_memo;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
