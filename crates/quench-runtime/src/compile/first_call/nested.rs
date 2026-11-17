@@ -40,6 +40,14 @@ impl FreeNames {
         self.names.iter()
     }
 
+    /// The names with every position `delta` further on: a chunk's, found in its text alone.
+    pub(in crate::compile) fn shifted(self, delta: u32) -> Self {
+        Self {
+            names: self.names.into_iter().map(|(start, names)| (start + delta, names)).collect(),
+            ends: self.ends.into_iter().map(|(start, end)| (start + delta, end + delta)).collect(),
+        }
+    }
+
     /// The functions starting in `range` whose free names are known, with their bodies' ends.
     pub(in crate::compile) fn ends_in(&self, range: std::ops::Range<u32>) -> impl Iterator<Item = (u32, u32)> + '_ {
         self.ends.range(range).map(|(start, end)| (*start, *end))
@@ -281,11 +289,23 @@ impl Compiler<'_> {
         plain.then(|| self.stub_captures(arrow.span.start, &context.scopes, context.with_depth, context.inherited_strict)).flatten()
     }
 
+    /// The stub of `method`, a class's method whose body was parsed lazily: a plain method,
+    /// getter or setter named by a key neither computed nor private (the parser skims no
+    /// other), strict as its class is.
+    pub(in crate::compile) fn nested_method_stub_captures(&self, method: &oxc_ast::ast::MethodDefinition<'_>, place: &lazy_bodies::MethodPlace<'_>) -> Option<NestedStub> {
+        let plain = !method.value.r#async
+            && !method.value.generator
+            && !method.computed
+            && method.kind != oxc_ast::ast::MethodDefinitionKind::Constructor
+            && !matches!(method.key, oxc_ast::ast::PropertyKey::PrivateIdentifier(_));
+        plain.then(|| self.stub_captures(method.value.span.start, place.scopes, place.with_depth, true)).flatten()
+    }
+
     /// The captures of the function at `start`, from its free names resolved through `scopes`,
     /// and the bindings its chunk reads: those names', and the capture markers of them
     /// (`captured_binding_kind`).
     fn stub_captures(&self, start: u32, scopes: &capture_scope::ScopeChain, with_depth: u16, strict: bool) -> Option<NestedStub> {
-        if !self.nested_stub_place(scopes, with_depth) {
+        if !self.nested_stub_place(scopes, with_depth) || self.first_call.chunk_function == Some(start) {
             return None;
         }
         let names = self.first_call.free_names.get(&start)?;

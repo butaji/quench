@@ -40,10 +40,29 @@ impl ParsedProgramShape<'_> {
     /// costs more than the function's compile at load (its text is parsed and checked again),
     /// so only a source that mostly goes uncalled gains: a large bundle, as engines' lazy
     /// parsing assumes of a script.
+    ///
+    /// A first-call chunk's functions and arrows compile on their own first calls too, against
+    /// the chunk's scopes: a chunk that compiled them eagerly compiled a stubbed root's whole
+    /// subtree at its first call, so a bundle's module wrapper, which runs once, compiled every
+    /// function of its module (babylonjs-startup: about 9,000 that never run).
     pub(super) fn stubbing(self, replayable: bool, source_bytes: usize) -> Stubbing {
+        if matches!(self, Self::FirstCallChunk(_)) {
+            return Stubbing { functions: true, arrows: true };
+        }
         let eval = matches!(self, Self::Eval(..));
         let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
         Stubbing { functions: eval && replayable || direct, arrows: direct }
+    }
+
+    /// Where in the source lazily parsed bodies begin (`lazy_bodies::parse`): past a chunk's
+    /// own function, inside the method an eval in a method's context is wrapped in (whose body
+    /// is the eval's code), else from the start.
+    pub(super) fn lazy_from(self) -> u32 {
+        match self {
+            Self::FirstCallChunk(window) => window.lazy_from(),
+            Self::Eval(_, Some(body)) => body.start,
+            _ => 0,
+        }
     }
 
     /// Whether function bodies of a source of this shape parse lazily (`lazy_bodies`): each

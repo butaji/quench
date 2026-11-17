@@ -80,12 +80,14 @@ pub(crate) enum LazyForm {
     /// An arrow function, which uses the `this`, `arguments`, `new.target` and `super` of the code
     /// around it.
     Arrow,
+    /// A class's method, getter or setter: a plain function whose `super` is not decided.
+    Method,
 }
 
 impl LazyForm {
     fn ctx(self) -> FnCtx {
         match self {
-            Self::Plain => FnCtx::PLAIN,
+            Self::Plain | Self::Method => FnCtx::PLAIN,
             Self::Arrow => FnCtx::ARROW,
         }
     }

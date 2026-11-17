@@ -58,6 +58,26 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             && self.lazy_start(start)
     }
 
+    /// Whether the body of a class method starting at `start`, whose key is neither computed
+    /// nor private, is skimmed (`ParseOptions::lazy_class_methods`): a plain method, getter or
+    /// setter where a plain function's body would parse lazily, outside every lazy body.
+    fn skims_class_method(&self, start: u32, func_kind: FunctionKind, async_or_generator: bool) -> bool {
+        func_kind == FunctionKind::ClassMethod
+            && !async_or_generator
+            && self.options.lazy_class_methods
+            && self.options.lazy_body_skim.is_some()
+            && self.lazy_depth == 0
+            && self.lazy_start(start)
+    }
+
+    /// The body of the class method starting at `start` skimmed and released, or `None` with
+    /// the parser back at its opening brace. The method's own scope stays open in the
+    /// early-error tracker, which the caller closes.
+    fn skim_class_method_body(&mut self, start: u32, params: &ArenaBox<'a, FormalParameters<'a>>, head: Option<ParserCheckpoint<'a>>) -> Option<ArenaBox<'a, FunctionBody<'a>>> {
+        let method = LazyFunction { start, id: None, params, r#async: false, generator: false, expression: false, form: LazyForm::Method, method: false };
+        self.skim_lazy_function_body(&method, head)
+    }
+
     /// Whether a function starting at `start` may parse lazily where it lies (outside every
     /// lazily parsed body, or inside one where nested bodies are) and, by the text before it,
     /// is not about to be called where it is made.
@@ -209,8 +229,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 && in_source(directive.expression.value.as_str())
                 && directive.expression.raw.is_none_or(|raw| in_source(raw.as_str()))
         });
-        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
-            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        let escaped_after = self.lexer.escaped_strings.any_from(span.end)
+            || self.lexer.escaped_templates.any_from(span.end);
         let after = LazyBodyCheckpoint::of(self);
         // A private member name checks only inside its class, which a body alone lacks.
         let private = nested && names_private;
@@ -243,7 +263,6 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.release_recognition(marker, &before);
             return None;
         }
-        let inside = |start: &u32| (span.start..span.end).contains(start);
         // The arena still has the chunk it had at `marker`: nothing allocated past the marker
         // is referenced (the parser state that can hold arena data is as it was before the
         // body, `fine` above), so it is released as `parse_lazy_function_body_whole` does.
@@ -251,8 +270,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             // SAFETY: each directive's strings lie in the source text (`directives_in_source`).
             let directives: Vec<Directive<'a>> =
                 body.directives.iter().map(|directive| unsafe { std::ptr::read(directive) }).collect();
-            self.lexer.escaped_strings.retain(|start, _| !inside(start));
-            self.lexer.escaped_templates.retain(|start, _| !inside(start));
+            self.lexer.escaped_strings.remove_range(span.start..span.end);
+            self.lexer.escaped_templates.remove_range(span.start..span.end);
             // SAFETY: as in `parse_lazy_function_body_whole`.
             unsafe { allocator.set_cursor_ptr(marker) };
             let directives = ArenaVec::from_iter_in(directives, &self.ast);
@@ -272,8 +291,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return;
         }
         let start = self.cur_token().start();
-        self.lexer.escaped_strings.retain(|key, _| *key < start);
-        self.lexer.escaped_templates.retain(|key, _| *key < start);
+        self.lexer.escaped_strings.truncate_before(start);
+        self.lexer.escaped_templates.truncate_before(start);
         // SAFETY: the arena has the chunk it had at `marker` (its capacity is unchanged) and its
         // alignment is one byte. Nothing allocated after the marker is referenced: the parser is
         // rewound to the opening brace, its state that can hold arena data is as it was before
@@ -341,8 +360,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 && in_source(directive.expression.value.as_str())
                 && directive.expression.raw.is_none_or(|raw| in_source(raw.as_str()))
         });
-        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
-            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        let escaped_after = self.lexer.escaped_strings.any_from(span.end)
+            || self.lexer.escaped_templates.any_from(span.end);
         if checkpoint != LazyBodyCheckpoint::of(self)
             || self.fatal_error.is_some()
             || escaped_after
@@ -363,9 +382,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // bitwise copy holds nothing in the arena region released below.
         let directives: Vec<Directive<'a>> =
             body.directives.iter().map(|directive| unsafe { std::ptr::read(directive) }).collect();
-        let inside = |start: &u32| (span.start..span.end).contains(start);
-        self.lexer.escaped_strings.retain(|start, _| !inside(start));
-        self.lexer.escaped_templates.retain(|start, _| !inside(start));
+        self.lexer.escaped_strings.remove_range(span.start..span.end);
+        self.lexer.escaped_templates.remove_range(span.start..span.end);
         // SAFETY: the arena has the same chunk as at `marker` (its capacity is unchanged), the
         // marker lies in it and the arena's alignment is one byte. Nothing allocated after the
         // marker is referenced any more: the body is dropped, the parser state that can hold
@@ -404,7 +422,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 id: function.id.map(|id| id.name.as_str()),
                 free_names: &skimmed.free_names,
                 names_exact: skimmed.names_exact,
-                in_function: self.ctx.has_return(),
+                // A method is a function whatever lies around its class.
+                in_function: self.ctx.has_return() || function.form == LazyForm::Method,
                 arrow: function.form == LazyForm::Arrow,
             };
             // SAFETY: `ParseOptions::lazy_body_skim` outlives the parse.
@@ -436,14 +455,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// The arena the skim used is released, with the escaped strings and templates it decoded
     /// inside `span`, unless one past it shares the arena region.
     fn release_skimmed_strings(&mut self, span: Span, marker: std::ptr::NonNull<u8>, capacity: usize) {
-        let escaped_after = self.lexer.escaped_strings.keys().any(|start| *start >= span.end)
-            || self.lexer.escaped_templates.keys().any(|start| *start >= span.end);
+        let escaped_after = self.lexer.escaped_strings.any_from(span.end)
+            || self.lexer.escaped_templates.any_from(span.end);
         if escaped_after {
             return;
         }
-        let inside = |start: &u32| (span.start..span.end).contains(start);
-        self.lexer.escaped_strings.retain(|start, _| !inside(start));
-        self.lexer.escaped_templates.retain(|start, _| !inside(start));
+        self.lexer.escaped_strings.remove_range(span.start..span.end);
+        self.lexer.escaped_templates.remove_range(span.start..span.end);
         if self.allocator().capacity() == capacity {
             // SAFETY: as in `parse_lazy_function_body`: the arena has the chunk of `marker`, and
             // nothing allocated after it is referenced any more.
@@ -758,6 +776,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) -> ArenaBox<'a, Function<'a>> {
         let ctx = self.ctx;
         let lazy = self.lazy_body_candidate(start, func_kind);
+        let skim_method = std::mem::take(&mut self.skim_method)
+            && self.skims_class_method(start, func_kind, r#async || generator.is_some());
         if let Some(id) = &id
             && matches!(func_kind, FunctionKind::Declaration | FunctionKind::DefaultExport)
         {
@@ -787,7 +807,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             .and_yield(generator.is_some())
             .and_new_target(true);
         let type_parameters = self.parse_ts_type_parameters();
-        let head = lazy.then(|| self.checkpoint());
+        let head = (lazy || skim_method).then(|| self.checkpoint());
         let (this_param, params) = self.parse_formal_parameters(func_kind, param_kind);
         let return_type = if self.is_ts {
             self.parse_ts_return_type_annotation()
@@ -808,7 +828,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     method: matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::ObjectMethod),
                 }, head)
             } else {
-                let body = self.parse_function_body();
+                let skimmed = skim_method.then(|| self.skim_class_method_body(start, &params, head)).flatten();
+                let body = skimmed.unwrap_or_else(|| self.parse_function_body());
                 self.early.exit_function();
                 body
             })

@@ -42,6 +42,11 @@ const CASES: &[(&str, &str)] = &[
     ("function bad() { let a; let a; } 1", "SyntaxError"),
     ("const bad = () => { return 1 +; }; 1", "SyntaxError"),
     ("function x() { return function eval() {}; } 1", "SyntaxError"),
+    ("class C { constructor() { this.v = 1; } m(a) { return a + this.v; } get g() { return 2; } static s() { return 's'; } } const c = new C(); c.m(1) + c.g + C.s() + C.prototype.m.name + C.prototype.m.length", "4sm1"),
+    ("class D { m() { return typeof D + (new.target === undefined); } } let r; try { new (new D().m)(); } catch (e) { r = e.name; } new D().m() + r", "functiontrueTypeError"),
+    ("let base = 5; class E { add(x) { return base + x; } } base = 6; new E().add(1)", "7"),
+    ("class F { 'k k'(a) { return a; } set v(x) { this.x = x; } } Object.getOwnPropertyDescriptor(F.prototype, 'v').set.name + F.prototype['k k'].toString()", "set v'k k'(a) { return a; }"),
+    ("class G extends Object { m() { return super.constructor === Object; } } new G().m()", "true"),
 ];
 
 /// Each case gives the same result stubbed as eager, and the one it names.

@@ -7,7 +7,6 @@
 
 use std::{mem, num::NonZeroU32};
 
-use rustc_hash::FxHashMap;
 
 use oxc_allocator::{Allocator, ArenaVec};
 use oxc_ast::ast::RegExpFlags;
@@ -21,6 +20,8 @@ use crate::{
 
 mod byte_handlers;
 mod comment;
+mod escaped;
+pub use escaped::Escaped;
 mod identifier;
 mod jsx;
 mod kind;
@@ -103,11 +104,11 @@ pub struct Lexer<'a, C: Config> {
     pub(crate) trivia_builder: TriviaBuilder<'a>,
 
     /// Data store for escaped strings, indexed by [Token::start] when [Token::escaped] is true
-    pub escaped_strings: FxHashMap<u32, &'a str>,
+    pub escaped_strings: Escaped<&'a str>,
 
     /// Data store for escaped templates, indexed by [Token::start] when [Token::escaped] is true
     /// `None` is saved when the string contains an invalid escape sequence.
-    pub escaped_templates: FxHashMap<u32, Option<&'a str>>,
+    pub escaped_templates: Escaped<Option<&'a str>>,
 
     /// The `#` tokens lexed so far: a private name, or the error a stray `#` is. A body
     /// names a private member exactly when this grows while it is read, which the lazy body
@@ -165,8 +166,8 @@ impl<'a, C: Config> Lexer<'a, C> {
             errors: vec![],
             deferred_module_errors: vec![],
             trivia_builder: TriviaBuilder::new_in(allocator),
-            escaped_strings: FxHashMap::default(),
-            escaped_templates: FxHashMap::default(),
+            escaped_strings: Escaped::default(),
+            escaped_templates: Escaped::default(),
             private_names: 0,
             multi_line_comment_end_finder: None,
             tokens,

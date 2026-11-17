@@ -52,6 +52,7 @@ pub(super) fn parse_program_with<'a>(
             lazy_function_bodies: lazy_from,
             lazy_nested_bodies: nested && lazy_body_check.is_some(),
             lazy_body_check,
+            lazy_class_methods: lazy_body_skim.is_some(),
             lazy_body_skim,
             inherited_strict,
             lazy_recognize: recognize,
