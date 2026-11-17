@@ -671,7 +671,7 @@ pub(super) use body_calls::{lane_body_call, lane_body_construct};
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_bigint_kinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, note_widened, Records};
+use operand_feedback::{has_operand_feedback, note_kind, OperandKinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, note_widened, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -5280,7 +5280,7 @@ script_handler! {
             && let Some(value) = lane_bigint_value(cx, OP, left, right)
         {
             // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_bigint_kinds(cx, ip) };
+            unsafe { note_kind(cx, ip, OperandKinds::BIGINT) };
             r.set(i.a, value);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -9626,8 +9626,25 @@ script_handler! {
     /// path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn lane_jump_binary_false_registers_other<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        // Two string records under an ordering operator: their code-unit order decides, the
+        // first answer `lane_relation_other` gives the pair, and the pair is no Number one
+        // for `requicken_number_relation` to move.
+        if left.direct_string_index().is_some()
+            && right.direct_string_index().is_some()
+            && let operator = relation_operator::<OP>(i)
+            && super::operations::NumberRelation::from_operator(operator).is_some()
+            && let Some(holds) = unsafe { vm(cx) }.string_relation(operator, left, right)
+        {
+            // SAFETY: the record is a comparison record of the running view.
+            unsafe { note_kind(cx, ip, OperandKinds::STRING) };
+            if !holds {
+                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            }
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         // SAFETY: the record is a comparison record of the running view.
-        unsafe { note_operands(cx, ip, r.get(i.b), r.get(i.c)) };
+        unsafe { note_operands(cx, ip, left, right) };
         // SAFETY: as above.
         unsafe { requicken_number_relation::<H, BACKWARD, OP, false, false>(cx, ip, r.get(i.b), r.get(i.c)) };
         let Some(holds) = lane_relation::<H>(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
@@ -9954,6 +9971,14 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
             || (right.is_null() || right.is_undefined()) && left.as_number().is_some())
     {
         return Some(matches!(operator, 1 | STRICT_INEQUALITY_OPERATOR));
+    }
+    // An ordering operator (`<`, `<=`, `>`, `>=`) is decided by its operand pair alone: the
+    // membership, prototype and identity tests below never answer it.
+    if super::operations::NumberRelation::from_operator(operator).is_some() {
+        return vm.string_relation(operator, left, right)
+            .or_else(|| vm.bigint_relation(operator, left, right))
+            .or_else(|| vm.primitive_comparison(operator, left, right))
+            .or_else(|| vm.number_binary(operator, left, right)?.truthiness());
     }
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.plain_in(operator, left, right))

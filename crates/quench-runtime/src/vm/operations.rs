@@ -1940,7 +1940,7 @@ impl<H: Host> Vm<H> {
     /// code units, which runs no guest code.
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
-        let ordering = left.units().cmp(&right.units());
+        let ordering = left.order(right);
         NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 

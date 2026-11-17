@@ -140,8 +140,8 @@ k_json 305.9 __memcpy_avx_unaligned_erms
 k_json 268.0 lane_field_value
 k_json 174.8 Heap::alloc_object_with_properties
 k_json 162.0 lane_get_field_miss
-k_json 160.2 __rust_dealloc
-k_json 158.2 QuenchAlloc::alloc_enabled
+k_json 160.3 __rust_dealloc
+k_json 158.3 QuenchAlloc::alloc_enabled
 k_json 133.8 lane_call_native
 k_json 120.0 Vm::json_parse
 k_json 119.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
@@ -172,8 +172,8 @@ k_json 38.0 Rc::new_uninit_slice
 k_json 36.0 JsString::units
 k_json 36.0 lane_get_field_own_bound<false, 4294967295>
 k_json 36.0 local_field_handler
+k_json 35.3 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_json 35.2 ValueArena::release_held
-k_json 35.2 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_json 35.0 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::FlatUnits>::ascii::{closure#0}>
 k_json 35.0 write_json_integer
 k_json 34.0 rc_inner_layout_for_value_layout
@@ -199,7 +199,7 @@ k_json 13.0 Vm::string_method_receiver
 k_json 12.0 Object::drop
 k_json 12.0 Object::is_raw_json
 k_json 12.0 lane_operator_integer_constant<19>
-k_json 11.4 Vec::spec_extend
+k_json 11.5 Vec::spec_extend
 k_json 11.0 Native::runs_from_lane
 k_json 9.8 Rc::drop_slow
 k_json 8.1 __rust_alloc
@@ -328,8 +328,8 @@ k_str_build 1.7 Vm::collect_inner
 k_str_build 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_str_build 0.8 JsString::units
 k_str_build 0.7 Vm::string_length_general
+k_str_build 0.6 Vec::spec_extend
 k_str_build 0.5 RecordSpace::prepare_minor
-k_str_build 0.5 Vec::spec_extend
 k_str_build 0.5 lane_get_length_string
 k_struct_sum 60.0 lane_get_field_own_bound<false, 536870912>
 k_struct_sum 42.0 lane_operator_pair<10, 8, true, false>
@@ -393,7 +393,7 @@ num_to_str 35.0 u32::fmt
 num_to_str 34.0 Vm::intern_dynamic_concat
 num_to_str 31.0 JsString::from_ascii_bytes
 num_to_str 28.0 Vm::primitive_concatenation
-num_to_str 26.3 Vm::memoize_concat
+num_to_str 26.4 Vm::memoize_concat
 num_to_str 25.0 lane_inc_dec_loop<false, 4, true>
 num_to_str 23.0 short_hash
 num_to_str 22.0 Buffer::format<i32>
@@ -407,10 +407,10 @@ num_to_str 5.0 table_hash
 num_to_str 3.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 num_to_str 2.0 Vm::atom_units_equal_str
 num_to_str 1.7 Vm::collect_inner
-num_to_str 1.3 JsString::units
+num_to_str 1.4 JsString::units
 num_to_str 1.2 RecordSpace::load_free_word
 num_to_str 1.1 AtomSequence::appended
-num_to_str 1.0 AtomTable::len
+num_to_str 1.1 AtomTable::len
 num_to_str 1.0 RecordSpace::claim_slow
 num_to_str 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 num_to_str 0.6 Vec::spec_extend
@@ -454,22 +454,16 @@ str_charcodeat 15.0 lane_operator_int32<8, false>
 str_charcodeat 7.0 lane_move<0>
 str_charcodeat 5.0 shared_units_offset
 str_charcodeat 3.0 UnitWidth::bytes
-str_compare 134.0 lane_jump_binary_false_registers_other<false, 4>
 str_compare 68.0 Vm::string_relation
-str_compare 44.0 JsString::units
-str_compare 40.0 lane_relation_other
-str_compare 26.0 Vm::plain_in
-str_compare 25.0 Units::cmp
+str_compare 54.0 lane_jump_binary_false_registers_other<false, 4>
 str_compare 25.0 lane_inc_dec_loop<false, 4, true>
-str_compare 22.0 __memcmp_avx2_movbe
 str_compare 15.0 lane_inc_dec<false>
-str_compare 14.0 ShortAscii::as_str
 str_compare 8.0 NumberRelation::of_ordering
 str_compare 6.0 lane_jump_binary_false_registers<false, 4>
 str_concat 196.0 Vm::concatenate
-str_concat 87.7 Heap::alloc_string_record
+str_concat 87.8 Heap::alloc_string_record
 str_concat 77.0 lane_binary
-str_concat 51.3 __memcpy_avx_unaligned_erms
+str_concat 51.4 __memcpy_avx_unaligned_erms
 str_concat 44.0 Short::try_extend
 str_concat 43.0 HashTable::find<<quench_runtime::vm::Vm>::find_atom<<quench_runtime::vm::Vm>::short_ascii_concat::{closure#0}>::{closure#0}>
 str_concat 40.0 lane_get_length_string
@@ -501,8 +495,8 @@ str_concat -1.1 Heap::prune_weak_entries
 str_concat -1.3 RecordSpace::sweep<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#7}::{closure#2}>
 str_concat -1.4 Heap::sweep_serial
 str_concat -2.9 Vm::collect_inner
-str_concat -10.6 Vec::spec_extend
-str_concat -29.2 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+str_concat -10.5 Vec::spec_extend
+str_concat -29.3 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 str_concat_acc 113.0 Vm::intern_dynamic_concat
 str_concat_acc 101.0 lane_operator_constant_other<8>
 str_concat_acc 89.8 Heap::alloc_string_record
@@ -521,7 +515,7 @@ str_concat_acc 1.7 Vm::collect_inner
 str_concat_acc 1.0 RecordSpace::load_free_word
 str_concat_acc 0.9 RecordSpace::claim_slow
 str_concat_acc 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
-str_concat_acc 0.6 Vec::spec_extend
+str_concat_acc 0.5 Vec::spec_extend
 str_concat_acc 0.5 RecordSpace::prepare_minor
 str_index 81.5 lane_jump_strict_constant_contents<false>
 str_index 81.0 Vm::string_element
