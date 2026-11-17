@@ -4,7 +4,7 @@ use super::numeric::NumericStage;
 
 /// The `f64` rounding and root operations as machine primitives: the standard library's methods in the
 /// runtime, `core`'s float math in the stencil build, which has no standard library.
-#[cfg(not(stencil_build))]
+#[cfg(all(not(stencil_build), not(target_arch = "x86_64")))]
 mod machine {
     #[inline(always)]
     pub(super) fn floor(value: f64) -> f64 { value.floor() }
@@ -12,6 +12,43 @@ mod machine {
     pub(super) fn ceil(value: f64) -> f64 { value.ceil() }
     #[inline(always)]
     pub(super) fn trunc(value: f64) -> f64 { value.trunc() }
+    #[inline(always)]
+    pub(super) fn sqrt(value: f64) -> f64 { value.sqrt() }
+}
+/// Baseline x86-64 has no `roundsd` (SSE4.1), so the standard library's rounding is a libm
+/// call (~23 instructions for `floor`). Below 2^52 in magnitude a value truncates exactly
+/// with one `cvttsd2si`, and floor and ceil step that by one; the sign is the operand's, so
+/// `-0` and negatives that round to zero stay `-0`. At or past 2^52 every double is an
+/// integer (or NaN, or an infinity), its own rounding.
+#[cfg(all(not(stencil_build), target_arch = "x86_64"))]
+mod machine {
+    const INTEGRAL: f64 = 4_503_599_627_370_496.0;
+    /// `value` truncated toward zero, without the sign; `value` below 2^52 in magnitude.
+    #[inline(always)]
+    fn truncated(value: f64) -> f64 {
+        use std::arch::x86_64::{_mm_cvttsd_si64, _mm_set_sd};
+        // SAFETY: SSE2 is part of the x86-64 baseline.
+        #[allow(unused_unsafe)]
+        let integer = unsafe { _mm_cvttsd_si64(_mm_set_sd(value)) };
+        integer as f64
+    }
+    #[inline(always)]
+    pub(super) fn floor(value: f64) -> f64 {
+        if !(value.abs() < INTEGRAL) { return value; }
+        let truncated = truncated(value);
+        (if truncated > value { truncated - 1.0 } else { truncated }).copysign(value)
+    }
+    #[inline(always)]
+    pub(super) fn ceil(value: f64) -> f64 {
+        if !(value.abs() < INTEGRAL) { return value; }
+        let truncated = truncated(value);
+        (if truncated < value { truncated + 1.0 } else { truncated }).copysign(value)
+    }
+    #[inline(always)]
+    pub(super) fn trunc(value: f64) -> f64 {
+        if !(value.abs() < INTEGRAL) { return value; }
+        truncated(value).copysign(value)
+    }
     #[inline(always)]
     pub(super) fn sqrt(value: f64) -> f64 { value.sqrt() }
 }

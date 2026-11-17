@@ -57,4 +57,36 @@ ops.arr_length = function (n) { const arr = [1, 2, 3, 4, 5]; let a = 0; for (let
 ops.arr_push = function (n) { let arr = []; for (let i = 0; i < n; i++) { arr.push(i); } return arr.length; };
 ops.typed_load = function (n) { const t = new Int32Array(256); for (let i = 0; i < 256; i++) t[i] = i; let a = 0; for (let i = 0; i < n; i++) { a = (a + t[i & 255]) | 0; } return a; };
 ops.typed_store_f64 = function (n) { const t = new Float64Array(256); for (let i = 0; i < n; i++) { t[i & 255] = i * 0.5; } return t[7]; };
+function addOne(x) { return (x + 1) | 0; }
+// The object arrives as a parameter, so the front end cannot fold `o.y` to a constant.
+function fieldRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.y) | 0; } return a; }
+ops.field_read = function (n) { return fieldRead(n, { x: 3, y: 4 }); };
+ops.field_store = function (n) { const o = { x: 0, y: 0 }; for (let i = 0; i < n; i++) { o.y = i; } return o.y; };
+ops.call_direct = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + addOne(i)) | 0; } return a; };
+ops.call_closure = function (n) { const k = 5, f = (x) => (x + k) | 0; let a = 0; for (let i = 0; i < n; i++) { a = (a + f(i)) | 0; } return a; };
+ops.call_method = function (n) { const o = { k: 1, m(x) { return (x + this.k) | 0; } }; let a = 0; for (let i = 0; i < n; i++) { a = (a + o.m(i)) | 0; } return a; };
+// Kernels: one inner iteration of a benchmark-shaped loop (n-body pair step, struct array,
+// polymorphic dispatch, JSON round trip, regexp test, string building), budgeted per
+// iteration against C twins as the primitives are; a kernel's split names the primitive
+// handlers it is made of.
+function Body(x, y, z, vx, vy, vz, mass) { this.x = x; this.y = y; this.z = z; this.vx = vx; this.vy = vy; this.vz = vz; this.mass = mass; }
+ops.k_nbody_pair = function (n) {
+  const a = new Body(0, 0, 0, 0, 0, 0, 39.47), b = new Body(4.84, -1.16, -0.1, 0.6, 2.81, -0.02, 0.037);
+  for (let i = 0; i < n; i++) {
+    const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    const mag = 0.01 / (d2 * Math.sqrt(d2));
+    const bm = b.mass * mag, am = a.mass * mag;
+    a.vx -= dx * bm; a.vy -= dy * bm; a.vz -= dz * bm;
+    b.vx += dx * am; b.vy += dy * am; b.vz += dz * am;
+  }
+  return a.vx + b.vz;
+};
+ops.k_struct_sum = function (n) { const pts = []; for (let i = 0; i < 64; i++) pts.push({ x: i, y: i + 1 }); let s = 0; for (let i = 0; i < n; i++) { const p = pts[i & 63]; s = (s + p.x * p.y) | 0; } return s; };
+class KernelTaskA { constructor(k) { this.k = k; } run(x) { return (x + this.k) | 0; } }
+class KernelTaskB { constructor(k) { this.k = k; this.j = 1; } run(x) { return (x ^ this.k) | 0; } }
+ops.k_dispatch = function (n) { const tasks = [new KernelTaskA(3), new KernelTaskB(5), new KernelTaskA(7), new KernelTaskB(9)]; let a = 0; for (let i = 0; i < n; i++) { a = tasks[i & 3].run(a + i); } return a; };
+ops.k_json = function (n) { const o = { id: 0, name: "ab", ok: true }; let a = 0; for (let i = 0; i < n; i++) { o.id = i & 1023; const t = JSON.stringify(o); a = (a + JSON.parse(t).id + t.length) | 0; } return a; };
+ops.k_regexp = function (n) { const r = /o+x/, words = ["foox", "bar", "ox", "zoooox"]; let a = 0; for (let i = 0; i < n; i++) { if (r.test(words[i & 3])) a++; } return a; };
+ops.k_str_build = function (n) { let a = 0, s = ""; for (let i = 0; i < n; i++) { s += "k" + (i & 7); if ((i & 63) === 63) { a += s.length; s = ""; } } return a + s.length; };
 globalThis.PRIMITIVE_OPS = ops;

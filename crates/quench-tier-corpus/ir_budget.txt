@@ -1,0 +1,73 @@
+# Per-primitive instruction budget (quench-gate step `ir-budget`; alone: `quench-gate --only ir-budget`).
+# One row per op of quench-bench/primitives/ops.js: op, C, budget, ceiling, in instructions per loop
+# iteration under --no-jit (callgrind, exact to 0.1).
+# C: the twin in ops.c (cc -O2 -fno-tree-vectorize -fno-unroll-loops), loop step included.
+# budget: the target, 3 x C + 6 (three instructions of handler per instruction of C, plus one
+#   dispatch allowance per iteration for the loop's backward jump).
+# ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
+#   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
+arr_length 4 18 76.1
+arr_load_dbl 5 21 92.6
+arr_load_int 5 21 73.1
+arr_load_obj 6 24 103.1
+arr_push 8 30 234.1
+arr_store_dbl 8 30 98.1
+arr_store_int 5 21 73.1
+arr_store_obj 3 15 89.1
+bitwise 8 30 76.1
+call_closure 11 39 231.1
+call_direct 8 30 222.1
+call_method 11 39 279.1
+cmp_dbl 6 24 90.1
+cmp_int 7.5 29 80.1
+dbl_add 4 18 46.3
+dbl_div 8 30 99.1
+dbl_mul 4 18 44.1
+empty 3 15 31.2
+eq_int 7.13 28 48.8
+eq_str 67 207 207
+eq_undef_null 5 21 92.1
+field_read 3 15 70.1
+field_store 3 15 79.1
+inc_local 5 21 57.1
+int_add 4 18 39.2
+int_add_noor 8 30 55.2
+int_div 7 27 119
+int_mod 16 54 66.9
+int_mod_var 7 27 68.1
+int_mul 5 21 112.6
+int_mul_ovf 18 60 140.5
+int_sub 4 18 39.2
+k_dispatch 14 48 354.6
+k_json 812 2442 5702.5
+k_nbody_pair 21.1 70 1479.1
+k_regexp 40.2 127 1371.3
+k_str_build 14.1 49 1371.9
+k_struct_sum 8 30 179.1
+math_abs 8 30 172.1
+math_floor 22 72 192.2
+math_imul 7 27 147.1
+math_minmax 15 51 286.1
+math_round 23 75 212.7
+math_sqrt 9 33 160.1
+mixed_int_dbl 7 27 72.1
+neg_op 6 24 97.1
+not_op 5.5 23 65.6
+num_to_str 569 1713 1713
+parse_int 196 594 1036.1
+shl_shr 7 27 93
+str_charcodeat 9 33 207.1
+str_compare 4 18 427.1
+str_concat 531.56 1601 1601
+str_concat_acc 7 27 559.1
+str_index 9.07 34 375
+str_length 4 18 84.1
+str_to_num 496 1494 1494
+to_uint32 20 66 224.1
+truthy_int 5.75 24 45.6
+truthy_obj 4 18 62.1
+truthy_str 4 18 117.1
+typed_load 5 21 83.1
+typed_store_f64 8 30 99.6
+typeof_op 4 18 57.1
+ushr 5 21 56.1

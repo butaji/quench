@@ -22,7 +22,7 @@ fn clean_tree(config: &Config) -> Result<String, String> {
 
 /// Adds the record of a full run in which every step passed; says why when it adds none.
 pub fn record(config: &Config, outcomes: &[Outcome]) -> Result<String, String> {
-    if config.quick || !outcomes.iter().all(|outcome| outcome.passed) {
+    if config.quick || config.only.is_some() || !outcomes.iter().all(|outcome| outcome.passed) {
         return Err("only a full run with every step passing is recorded".into());
     }
     let tree = clean_tree(config)?;

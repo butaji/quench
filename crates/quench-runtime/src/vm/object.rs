@@ -1426,14 +1426,36 @@ impl<H: Host> Vm<H> {
             .or_else(|| self.own_array_length(object).map(Value::length))
     }
 
+    /// The `length` of an array, from the staged row (`staged::elements::array_length`) over a
+    /// direct array without extras; any other array is `own_array_length`'s.
+    #[inline(always)]
+    pub(super) fn array_length_value(&self, object: Value) -> Option<Value> {
+        // The row inline, the other forms out of line, so the hit is a straight line.
+        if let Some(length) = self.heap.array_record_base().and_then(|records| crate::staged::elements::concrete_array_length(records, object)) {
+            return Some(length);
+        }
+        self.array_length_general(object)
+    }
+
+    #[inline(never)]
+    fn array_length_general(&self, object: Value) -> Option<Value> {
+        self.own_array_length(object).map(Value::length)
+    }
+
     /// The `length` of a direct string, from the staged row over its record (`staged::strings`);
     /// the rows' other forms (a rope, a slice, a length past int32) are read through the string.
     #[inline(always)]
     pub(super) fn string_length_value(&self, object: Value) -> Option<Value> {
-        self.heap
-            .string_record_base()
-            .and_then(|records| crate::staged::string_length::concrete_string_length(records, object))
-            .or_else(|| self.heap.string(object).map(|text| Value::length(text.len())))
+        // The row inline, the other forms out of line, so the hit is a straight line.
+        if let Some(length) = self.heap.string_record_base().and_then(|records| crate::staged::string_length::concrete_string_length(records, object)) {
+            return Some(length);
+        }
+        self.string_length_general(object)
+    }
+
+    #[inline(never)]
+    fn string_length_general(&self, object: Value) -> Option<Value> {
+        self.heap.string(object).map(|text| Value::length(text.len()))
     }
 
     /// The `length` of a direct array or string, from the one staged row over both record

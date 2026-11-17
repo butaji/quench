@@ -3,8 +3,6 @@
 //! anything but `0`; every one defaults to off. (`trace` owns the named diagnostic channels and
 //! development experiments, `QUENCH_TRACE` and `QUENCH_DEV`.)
 
-use std::sync::OnceLock;
-
 /// Whether the environment variable `name` switches something on: set, and not `0`.
 fn named(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|value| value != "0")
@@ -24,14 +22,25 @@ thread_local! {
 pub(crate) fn float_slots() -> bool {
     #[cfg(test)]
     if FLOAT_SLOTS_FOR_TEST.get() { return true; }
-    *FLOAT_SLOTS.get_or_init(read_float_slots)
+    // One byte compared, not a `OnceLock`'s state and value: every field read decodes through
+    // here (`value_vec::read_type`), so the off case is a compare and a branch.
+    let state = FLOAT_SLOTS.load(std::sync::atomic::Ordering::Relaxed);
+    if state == SWITCH_OFF { return false; }
+    state == SWITCH_ON || read_float_slots()
 }
 
-static FLOAT_SLOTS: OnceLock<bool> = OnceLock::new();
+/// `float_slots`'s state: `SWITCH_UNREAD` until the environment is read, then off or on.
+static FLOAT_SLOTS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(SWITCH_UNREAD);
+const SWITCH_UNREAD: u8 = 0;
+const SWITCH_OFF: u8 = 1;
+const SWITCH_ON: u8 = 2;
 
 #[cold]
+#[inline(never)]
 fn read_float_slots() -> bool {
-    named("QUENCH_FLOAT_SLOTS")
+    let on = named("QUENCH_FLOAT_SLOTS");
+    FLOAT_SLOTS.store(if on { SWITCH_ON } else { SWITCH_OFF }, std::sync::atomic::Ordering::Relaxed);
+    on
 }
 
 /// Runs `body` with `float_slots` on for this thread.
