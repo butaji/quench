@@ -43,6 +43,9 @@ pub(in super::super) struct CallOutSite {
 pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operation: CallOut, result: Option<Register>)
     -> Option<(ir::Value, RegisterFact)> {
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
+    if let Some((operands, operator)) = operation.word_decision() {
+        return Some(decide_words(frame, stage, operands, operator, miss));
+    }
     let site = match (frame.call_out, operation) {
         (Some(site), _) => site,
         (None, CallOut::Decide { left, right, operator }) => return Some(decide_words(frame, stage, [left, right], operator, miss)),
