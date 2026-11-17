@@ -4212,6 +4212,33 @@ impl<H: Host> Vm<H> {
         unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
     }
 
+    /// Whether a loop region's native stores of `writes` to the own data slot `site` caches on
+    /// `object` are admitted, and the slot's address for its entry record where its words are
+    /// tagged (null where they are raw doubles, which the region's staged store writes as raw
+    /// doubles, `StoreArm::raw_double`, and which no raw tagged writer may take).
+    pub(super) fn cached_field_store_admission(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+        writes: crate::typed_ir::Type,
+    ) -> Option<*mut Value> {
+        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        let shape = self.heap.object(object)?.shape();
+        // A Number store's own row admits the domain of the value it stores
+        // (`Lowering::admit_slot_writes_as`): the entry keeps a Number slot's narrower type
+        // rather than widening it to every Number, which would make an int32 slot hold raw
+        // doubles and decline the code its compile planned on that slot.
+        let current = self.heap.slot_type(shape, slot);
+        let writes = if writes == crate::typed_ir::Type::NUMBER && current.is_subtype(writes) { current } else { writes };
+        if self.heap.slot_holds_raw_doubles(shape, slot) {
+            return self.heap.admit_slot_writes_as(shape, slot, writes, true).then(std::ptr::null_mut);
+        }
+        // SAFETY: the address goes to the entry record alone; the region writes it as its admission says.
+        unsafe { self.cached_field_store_pointer(p, object, atom, site, writes) }
+    }
+
     /// Admit an own data slot once for a no-reentry operation. Its physical
     /// encoding is independent of the shape/descriptor permission to write it.
     fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
