@@ -15850,7 +15850,12 @@ impl<H: Host> Vm<H> {
     fn steady_native_value(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let first = args.first().copied();
         match native {
-            Native::ArrayPush => self.array_push_dense(receiver, args),
+            // One value appended in the handler itself; other pushes take the dense path out
+            // of line.
+            Native::ArrayPush => match *args {
+                [value] => self.array_push_one(receiver, value).or_else(|| self.array_push_dense(receiver, args)),
+                _ => self.array_push_dense(receiver, args),
+            },
             Native::ArrayPop => self.array_pop_dense(receiver),
             Native::StringCharCodeAt => string_char_code_at(self, receiver, first?),
             Native::StringCharAt => string_char_at_ascii(self, receiver, first?),
