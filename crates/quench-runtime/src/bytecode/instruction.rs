@@ -232,6 +232,7 @@ macro_rules! layout_accessors {
             // Each result-flag predicate tests its bit first: the bit is clear on almost every
             // dispatch, and only a set bit needs the op's layout to tell the flag from other
             // field-A data.
+            #[inline]
             pub(crate) fn returns_from_frame(self) -> bool {
                 self.result_flags() & RETURN_REGISTER != 0
                     && self.op().result_layout().allows_return()
@@ -675,6 +676,7 @@ macro_rules! layout_accessors {
                 self.imm() as usize
             }
 
+            #[inline]
             pub(crate) fn local_slot(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::LocalSlot);
                 self.imm() as usize

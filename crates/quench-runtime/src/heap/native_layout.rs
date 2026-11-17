@@ -25,6 +25,7 @@ impl Heap {
     /// read a string's form in place (`vm::wtf16::native_string`) from a current live, rooted
     /// direct-string Value, and finish before any safepoint (a parts string is written out
     /// there, and its form is none a row reads).
+    #[inline]
     pub(crate) fn string_record_base(&self) -> Option<*const JsString> {
         self.string_records.base_ptr()
     }

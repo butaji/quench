@@ -25,6 +25,7 @@ pub(super) enum LaneRoot {
 impl LaneRoot {
     /// The VM frame the run continues, if it has one: a job's has none until its activations
     /// become frames.
+    #[inline]
     pub(super) fn frame(self) -> Option<usize> {
         match self {
             Self::Frame(frame) => Some(frame),

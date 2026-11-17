@@ -24,6 +24,7 @@ impl Width {
         }
     }
 
+    #[inline]
     pub(crate) const fn of(ty: WasmType) -> Option<Self> {
         match ty {
             WasmType::I32 => Some(Self::I32),
@@ -40,6 +41,7 @@ impl Width {
     }
 
     /// The most negative value of the width, sign-extended to 64 bits.
+    #[inline]
     pub(crate) const fn minimum(self) -> i64 {
         i64::MIN >> (i64::BITS - self.bits())
     }
@@ -85,6 +87,7 @@ pub(crate) const fn unary_result(operator: Unary, width: Width) -> Width {
     }
 }
 
+#[inline]
 const fn divides(operator: Binary) -> bool {
     matches!(
         operator,

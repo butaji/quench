@@ -287,6 +287,7 @@ impl ValueVec {
         self.auxiliary & DICTIONARY_STORAGE != 0
     }
 
+    #[inline]
     fn dictionary_id(self) -> u32 {
         debug_assert!(self.is_dictionary());
         self.start & START_MASK
@@ -662,6 +663,7 @@ impl ValueArena {
     }
 
     /// The slots `shape`'s objects store.
+    #[inline]
     pub(crate) fn shape_length(&self, shape: u32) -> usize {
         self.shape_lengths.get(shape as usize).map_or(0, |length| *length as usize)
     }
@@ -1589,6 +1591,7 @@ impl ValueArena {
         self.values.as_ptr()
     }
 
+    #[inline]
     pub(crate) fn len(&self, vector: ValueVec) -> usize {
         self.shape_lengths[vector.auxiliary() as usize] as usize
     }

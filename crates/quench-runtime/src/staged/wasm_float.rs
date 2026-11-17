@@ -32,6 +32,7 @@ impl Float {
     }
 
     /// The IEEE bits of the NaN every float operation produces from an unordered pair.
+    #[inline]
     pub(crate) const fn canonical_nan(self) -> u64 {
         match self {
             Self::F32 => canonical_nan_bits(f32::MANTISSA_DIGITS, f32::INFINITY.to_bits() as u64),
@@ -49,6 +50,7 @@ pub(crate) struct Truncation {
 }
 
 /// Whether `operator` compares: its result is an `I32` flag at either float width.
+#[inline]
 pub(crate) const fn is_float_comparison(operator: FloatBinary) -> bool {
     matches!(
         operator,

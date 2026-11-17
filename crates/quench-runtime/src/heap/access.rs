@@ -733,6 +733,7 @@ impl Heap {
     ///
     /// A native reader may combine this with an ID from a current live, rooted direct-object
     /// Value. It must end before any safepoint and must not retain a record pointer afterward.
+    #[inline]
     pub(crate) fn object_record_base(&self) -> Option<*const Object> {
         self.object_records.base_ptr()
     }
@@ -771,6 +772,7 @@ impl Heap {
     /// answers by shape alone (a promise's internal slots change no object operation). A
     /// function's restricted properties (`AtomClass`) need its kind, so a function record,
     /// like a slot, takes the cell-aware path.
+    #[inline]
     pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
         match reference {
             HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),
