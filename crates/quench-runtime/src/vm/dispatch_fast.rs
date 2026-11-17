@@ -7782,10 +7782,10 @@ script_handler! {
     /// `length` (`Vm::array_length_field`, which `lane_get_field` answers for an array
     /// after a probe that cannot hit) inline; any other receiver takes `lane_get_field`.
     fn lane_get_length<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).own_array_length(r.get(i.b)) else {
+        let Some(length) = (unsafe { vm(cx) }).array_length_value(r.get(i.b)) else {
             sibling!(lane_get_length_other::<H>, r, ip, Carried::script_in(cx, view))
         };
-        r.set(i.a, Value::length(length));
+        r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -7811,10 +7811,12 @@ script_handler! {
     /// a string's length here; any other receiver, an array's included, takes
     /// `lane_get_length` out of line, which keeps this one's registers to the string.
     fn lane_get_length_string<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+        // The staged row (`staged::string_length`), as compiled code reads it; a rope, a slice
+        // or a small string takes the units' count.
+        let Some(length) = (unsafe { vm(cx) }).string_length_value(r.get(i.b)) else {
             sibling!(lane_get_length::<H>, r, ip, Carried::script_in(cx, view))
         };
-        r.set(i.a, Value::length(length));
+        r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
