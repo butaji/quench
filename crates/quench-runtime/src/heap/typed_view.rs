@@ -64,6 +64,7 @@ impl NativeView {
     }
 
     /// The kind of a typed array's view; a DataView's has none.
+    #[inline]
     pub(crate) fn kind(&self) -> TypedArrayKind {
         TYPED_ARRAYS[usize::from(self.kind)].kind
     }

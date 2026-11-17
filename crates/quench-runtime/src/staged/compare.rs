@@ -25,11 +25,13 @@ impl Nullish {
         [Self::Null, Self::Undefined].into_iter().find(|nullish| nullish.value() == value)
     }
 
+    #[inline]
     fn value(self) -> Value {
         match self { Self::Null => Value::NULL, Self::Undefined => Value::UNDEFINED }
     }
 
     /// The semantic type of the one value.
+    #[inline]
     fn ty(self) -> Type {
         Type::language(match self { Self::Null => ValueType::Null, Self::Undefined => ValueType::Undefined })
     }

@@ -291,6 +291,7 @@ macro_rules! i32_direct_operators {
                 match self { $(Self::$name => crate::bytecode::Op::$immediate,)+ }
             }
             /// The i64 operator of the same name: the i64 selectors extend the i32 ones.
+            #[inline]
             pub(crate) const fn widen(self) -> I64BinaryOperator {
                 match self { $(Self::$name => I64BinaryOperator::$name,)+ }
             }

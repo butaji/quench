@@ -649,6 +649,7 @@ impl ImmediateLayout {
         ((depth as u32) << Self::PAIR_SECOND_SHIFT) | slot as u32
     }
 
+    #[inline]
     pub(crate) const fn register_pair(imm: u32) -> (Register, Register) {
         (
             (imm & Self::PAIR_FIELD_MASK) as Register,
@@ -3416,6 +3417,7 @@ impl Operand {
         Self(((OperandKind::Local as u16) << Self::TAG_SHIFT) | slot)
     }
 
+    #[inline]
     pub(crate) fn tag(self) -> u16 {
         self.0 >> Self::TAG_SHIFT
     }

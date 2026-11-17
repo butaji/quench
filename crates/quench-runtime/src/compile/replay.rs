@@ -624,7 +624,7 @@ fn parenthesized<'s, 'a>(
     }
 }
 
-fn single_expression<'s, 'a>(
+pub(super) fn single_expression<'s, 'a>(
     statements: &'s [oxc_ast::ast::Statement<'a>],
 ) -> Option<&'s oxc_ast::ast::Expression<'a>> {
     match statements {

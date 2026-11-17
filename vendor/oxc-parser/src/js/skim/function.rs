@@ -221,7 +221,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
     /// `name => body`, `name` having been read as a reference.
     pub(super) fn identifier_arrow(&mut self) -> Seen<Form> {
         let name = self.last_ident;
-        if is_restricted(name) || self.scopes.refs.pop() != Some(name) {
+        if is_restricted(name) || self.scopes.take_reference() != Some(name) {
             return None;
         }
         self.scopes.enter(true);

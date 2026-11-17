@@ -143,6 +143,7 @@ float_width!(operate_f32, operate_unary_f32, f32, u32);
 float_width!(operate_f64, operate_unary_f64, f64, u64);
 
 /// The float a word holds, exactly, as an f64.
+#[inline]
 fn float_value(float: Float, word: u64) -> f64 {
     match float {
         Float::F32 => f64::from(f32::from_bits(word as u32)),

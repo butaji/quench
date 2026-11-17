@@ -163,6 +163,7 @@ macro_rules! number_bitwise_operators {
                 }
             }
 
+            #[inline]
             pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {

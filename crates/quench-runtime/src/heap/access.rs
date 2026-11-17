@@ -776,6 +776,7 @@ impl Heap {
     /// answers by shape alone (a promise's internal slots change no object operation). A
     /// function's restricted properties (`AtomClass`) need its kind, so a function record,
     /// like a slot, takes the cell-aware path.
+    #[inline]
     pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
         match reference {
             HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),

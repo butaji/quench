@@ -18,6 +18,7 @@ impl<T> NumericResult<T> {
 
 impl WasmValue {
     /// The word `from_bits` reads back: a 32-bit scalar's payload, zero-extended.
+    #[inline]
     pub(crate) fn word(self) -> u64 {
         match self.bits() {
             Some(ScalarBits::Bits32(bits)) => u64::from(bits),

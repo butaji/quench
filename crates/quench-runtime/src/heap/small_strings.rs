@@ -370,6 +370,7 @@ impl SmallViews {
         self.0.get_mut().clear();
     }
 
+    #[inline]
     fn get(&self) -> &SmallViewChunks {
         // SAFETY: the views change only through `push_shared`, which forms no lasting reference.
         unsafe { &*self.0.get() }
