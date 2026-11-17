@@ -6063,6 +6063,20 @@ script_handler! {
         if !lane_proved_heap_store(cx, r, i) {
             sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
+        // A site that stores a heap value stores heap values: it tries that store first from now.
+        requicken::<H>(ip, lane_set_index_proved_heap::<H>);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_set_index_proved` of a site whose stores are heap values (`arr[i] = o`), as
+    /// `lane_set_index_proved_miss` found: the admitted heap store first, then the immediate
+    /// one, else `lane_proof_miss`. One record, not the immediate store's miss and this.
+    fn lane_set_index_proved_heap<>(cx, r, ip, i, view) {
+        if !lane_proved_heap_store(cx, r, i) && lane_proved_store(cx, r, i).is_none() {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
+        }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -23703,6 +23717,7 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
         (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
         (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
         (lane_set_index::<H> as Handler, lane_set_index_proved::<H> as Handler, 0),
+        (lane_set_index::<H> as Handler, lane_set_index_proved_heap::<H> as Handler, 0),
         (lane_set_index_move::<H> as Handler, lane_set_index_move_proved::<H> as Handler, 0),
     ]
     .into_iter()

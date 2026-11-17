@@ -13,7 +13,7 @@ arr_load_obj 6 24 103.1
 arr_push 8 30 234.1
 arr_store_dbl 8 30 98.1
 arr_store_int 5 21 80.1
-arr_store_obj 3 15 103.1
+arr_store_obj 3 15 96.1
 bitwise 8 30 76.1
 call_closure 11 39 231.1
 call_direct 8 30 222.1
