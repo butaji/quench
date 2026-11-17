@@ -7,24 +7,23 @@ const COMMENT: &str = "//";
 const MARKERS: [char; 2] = ['#', '@'];
 
 /// The value of the last `//# name=value` directive in `source` that begins its line, after
-/// whitespace. The search jumps between comment openers from the end, so a script of many
-/// lines and few comments costs what its comments do, not a pass over every line.
+/// whitespace. A source that never names the directive is rejected by one substring search;
+/// any other is read line by line from the end, each byte once: only a line's first comment
+/// opener can begin it, so a long line of many `//` (URLs in a minified bundle) costs one pass,
+/// not a search back to its start per opener (json-stringify-inspector: 94% of its run).
 pub(super) fn value<'s>(source: &'s str, name: &str) -> Option<&'s str> {
-    source
-        .rmatch_indices(COMMENT)
-        .find_map(|(at, _)| directive(source, at, name))
-}
-
-/// The directive value of the comment opening at `at`, when only whitespace precedes it on
-/// its line and its text is `#name=value` with a value of no whitespace.
-fn directive<'s>(source: &'s str, at: usize, name: &str) -> Option<&'s str> {
-    let line_start = source[..at].rfind('\n').map_or(0, |newline| newline + 1);
-    if !source[line_start..at].trim_start().is_empty() {
+    if !source.contains(name) {
         return None;
     }
-    let rest = &source[at + COMMENT.len()..];
-    let comment = &rest[..rest.find('\n').unwrap_or(rest.len())];
-    let value = comment
+    source.rsplit('\n').find_map(|line| directive(line, name))
+}
+
+/// The directive value of `line` when it is, after whitespace, a comment whose text is
+/// `#name=value` with a value of no whitespace.
+fn directive<'s>(line: &'s str, name: &str) -> Option<&'s str> {
+    let value = line
+        .trim_start()
+        .strip_prefix(COMMENT)?
         .strip_prefix(MARKERS)?
         .trim_start()
         .strip_prefix(name)?

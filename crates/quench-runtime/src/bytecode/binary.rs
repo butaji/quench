@@ -880,6 +880,11 @@ pub(crate) fn pack_unlowered(function: &Function) -> Box<PackedUnlowered> {
     Box::new(PackedUnlowered { bytes: out.bytes.into_boxed_slice(), name_bindings: function.name_bindings.clone() })
 }
 
+/// Whether `a` and `b` pack to the same bytes: a debug check that two records agree.
+pub(crate) fn packs_alike(a: &Function, b: &Function) -> bool {
+    pack_unlowered(a).bytes == pack_unlowered(b).bytes
+}
+
 /// `pack_unlowered`'s record.
 pub(crate) fn unpack_unlowered(packed: &PackedUnlowered) -> Function {
     let mut input = BinaryReader::new(&packed.bytes);

@@ -1483,6 +1483,20 @@ impl FunctionHeader {
             inherited_with_scope: function.inherited_with_scope,
         }
     }
+
+    /// `template`, a stub record its program's stubs of one kind share, as this header's own:
+    /// those stubs differ in nothing else (`compile::first_call::template`).
+    fn own(self, mut template: Function, name_bindings: NameBindings) -> Function {
+        template.name_bindings = name_bindings;
+        template.parent = self.parent;
+        template.name = self.name;
+        template.inferred_name = self.inferred_name;
+        template.source_span = self.source_span;
+        template.length = self.length;
+        template.is_arrow = self.is_arrow;
+        template.constructible = self.constructible;
+        template
+    }
 }
 
 /// A slot's `FunctionHeader` in 24 bytes, not 48: each optional word is stored with
@@ -1603,20 +1617,26 @@ pub struct FunctionSlot {
 enum Unlowered {
     Record(std::rc::Rc<Function>),
     Packed(Box<binary::PackedUnlowered>),
+    /// A first-call stub's: the record its program's stubs of one kind share, which the
+    /// slot's header and the stub's own name bindings, which share its scopes, make its own
+    /// (`FunctionHeader::own`).
+    Template(Box<(std::rc::Rc<Function>, NameBindings)>),
 }
 
 impl Unlowered {
-    fn function(&self) -> Function {
+    fn function(&self, header: FunctionHeader) -> Function {
         match self {
             Self::Record(function) => Function::clone(function),
             Self::Packed(packed) => binary::unpack_unlowered(packed),
+            Self::Template(template) => header.own(Function::clone(&template.0), template.1.clone()),
         }
     }
 
-    fn into_function(self) -> Function {
+    fn into_function(self, header: FunctionHeader) -> Function {
         match self {
             Self::Record(function) => std::rc::Rc::unwrap_or_clone(function),
             Self::Packed(packed) => binary::unpack_unlowered(&packed),
+            Self::Template(template) => header.own(Function::clone(&template.0), template.1),
         }
     }
 }
@@ -1645,6 +1665,16 @@ impl FunctionSlot {
     /// An unlowered function its load leaves unread: its record kept packed until its first read.
     pub(crate) fn unlowered_packed(function: Function) -> Self {
         Self::new(FunctionHeader::of(&function), None, Some(Unlowered::Packed(binary::pack_unlowered(&function))))
+    }
+
+    /// A first-call stub's slot: `function`'s header over `template`, the record of its kind,
+    /// unlowered and shared with its program's other stubs of that kind.
+    pub(crate) fn unlowered_template(function: &Function, template: std::rc::Rc<Function>) -> Self {
+        debug_assert!(
+            binary::packs_alike(&FunctionHeader::of(function).own(Function::clone(&template), function.name_bindings.clone()), function),
+            "a stub's record is its template's under its own header",
+        );
+        Self::new(FunctionHeader::of(function), None, Some(Unlowered::Template(Box::new((template, function.name_bindings.clone())))))
     }
 
     /// Whether the slot holds no record, compiled or unlowered: its first read compiles
@@ -3973,10 +4003,11 @@ impl ResidualProgram {
 
     fn build_record(&self, index: usize, purpose: RecordUse) -> Function {
         let unlowered = {
+            let header = self.functions[index].header();
             let mut unlowered = self.functions[index].unlowered.borrow_mut();
             match purpose {
-                RecordUse::Kept => unlowered.take().map(Unlowered::into_function),
-                RecordUse::Transient => unlowered.as_ref().map(Unlowered::function),
+                RecordUse::Kept => unlowered.take().map(|unlowered| unlowered.into_function(header)),
+                RecordUse::Transient => unlowered.as_ref().map(|unlowered| unlowered.function(header)),
             }
         };
         if let Some(unlowered) = unlowered {

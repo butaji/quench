@@ -7,9 +7,35 @@ use super::ImplicitBody;
 use crate::bytecode::{Function as BcFunction, SourceSpan};
 use crate::compile::Compiler;
 
-/// The stub records a compilation copies, by implicit body and strictness.
+/// The stub records a compilation copies, by implicit body and strictness, and the kind of
+/// each stub made from one, its template's own included, which the finished program's
+/// slots share one record for (`StubKinds`).
 #[derive(Default)]
-pub(in crate::compile) struct StubTemplates([Option<BcFunction>; 4]);
+pub(in crate::compile) struct StubTemplates {
+    records: [Option<BcFunction>; 4],
+    kinds: StubKinds,
+}
+
+/// The kind of each templated stub, by id: its template's slot.
+pub(in crate::compile) type StubKinds = rustc_hash::FxHashMap<u32, u8>;
+
+impl StubTemplates {
+    /// The kinds of the stubs the compilation made from templates.
+    pub(in crate::compile) fn into_kinds(self) -> StubKinds {
+        self.kinds
+    }
+}
+
+/// The finished program's slot of function `id`, unlowered: a stub of a kind in `kinds` shares
+/// the first such record of `shared`, which its header makes its own on first read
+/// (`FunctionSlot::unlowered_template`); any other function is packed.
+pub(in crate::compile) fn unlowered_slot(id: usize, function: BcFunction, kinds: &StubKinds, shared: &mut [Option<std::rc::Rc<BcFunction>>; 4]) -> crate::bytecode::FunctionSlot {
+    let Some(&kind) = u32::try_from(id).ok().and_then(|id| kinds.get(&id)) else {
+        return crate::bytecode::FunctionSlot::unlowered_packed(function);
+    };
+    let template = shared[usize::from(kind)].get_or_insert_with(|| std::rc::Rc::new(function.clone())).clone();
+    crate::bytecode::FunctionSlot::unlowered_template(&function, template)
+}
 
 /// What a stub's record holds of its own: everything else is its template's.
 pub(in crate::compile) struct StubOwn<'n> {
@@ -38,7 +64,7 @@ impl Compiler<'_> {
         let strict = self.root_strict || own.strict;
         let slot = slot(own.body, strict).filter(|_| self.stub_copies_apply(own.parent, own.source_span));
         let Some(slot) = slot else { return compile(self) };
-        if let Some(template) = &self.first_call.templates.0[slot] {
+        if let Some(template) = &self.first_call.templates.records[slot] {
             let mut function = template.clone();
             function.parent = own.parent;
             function.name = own.name.map(|name| self.atom(name));
@@ -47,11 +73,15 @@ impl Compiler<'_> {
             let id = self.functions.reserve();
             self.functions.set(id, function);
             self.record_function_exit(id);
+            self.first_call.templates.kinds.insert(id, slot as u8);
             return id;
         }
         let id = compile(self);
         let template = self.functions.get(id).filter(|function| function.source_positions.last().is_none() && function.strict == strict);
-        self.first_call.templates.0[slot] = template.cloned();
+        self.first_call.templates.records[slot] = template.cloned();
+        if template.is_some() {
+            self.first_call.templates.kinds.insert(id, slot as u8);
+        }
         id
     }
 
