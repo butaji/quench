@@ -942,6 +942,7 @@ impl Native {
                 | Self::SetKeys
                 | Self::SetEntries
                 | Self::IteratorSelf
+                | Self::AsyncGeneratorNext
                 | Self::ArrayConcat
                 | Self::ArrayFrom
                 | Self::ObjectIsExtensible

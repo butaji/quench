@@ -11,20 +11,34 @@ script_handler! {
     /// the frame suspends in place and the caller continues with the step's result
     /// (`lane_yield_in_window`). The root of a native `next`'s run (`LaneRoot::Job` of a sync
     /// generator) suspends into its record and ends the run with the yielded value
-    /// (`Vm::suspend_job_window`). Any other `yield` takes the general path.
+    /// (`Vm::suspend_job_window`); an async generator's root parks likewise, its record awaiting
+    /// the value before the request settles (`Vm::suspend_async_generator_yield`). Any other
+    /// `yield` takes the general path.
     #[inline(never)]
     fn lane_yield<>(cx, r, ip, i, view) {
         if running_generator(unsafe { vm(cx) }) {
             resume!(cx, lane_yield_in_window(cx, r, ip, i))
         }
         if let LaneRoot::Job(job) = unsafe { (*cx).root }
-            && job.kind == SuspendKind::Generator
+            && matches!(job.kind, SuspendKind::Generator | SuspendKind::AsyncGenerator)
         {
             let vm = unsafe { vm(cx) };
-            let value = r.get(i.b);
+            let mut value = r.get(i.b);
             // SAFETY: the record lies in the running view.
             let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-            vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
+            let destination = i.a & crate::bytecode::REGISTER_MASK;
+            if job.kind == SuspendKind::AsyncGenerator {
+                // The yield awaits its value, converted as an `await`'s source is.
+                // SAFETY: the context's program outlives the lane run.
+                let Some(source) = vm.lane_await_source(unsafe { &*(*cx).code }, value) else {
+                    return exit(ip);
+                };
+                value = source;
+                note_allocation(vm);
+                vm.suspend_async_generator_yield(job, pc + 1, destination, value);
+            } else {
+                vm.suspend_job_window(job, pc + 1, destination, value, 0);
+            }
             vm.lane_stack.pop_activation();
             vm.lane_suspended = Some(value);
         }
