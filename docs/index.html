@@ -881,7 +881,7 @@
                     <div class="card-body swap" id="card-body" aria-live="polite">
                         <p class="feature-description" id="feature-description">One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.</p>
                         <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench-node app.ts</span></p>
-                        <p class="feature-detail" id="feature-detail">TypeScript runs directly. Types are stripped.</p>
+                        <p class="feature-detail" id="feature-detail">Types are kept, and they make it fast.</p>
                     </div>
                 </div>
             </div>
@@ -970,6 +970,7 @@
                 <ul>
                     <li><b>One semantics.</b> Each tier is the interpreter specialized to what is known (Futamura projections).</li>
                     <li><b>Check once.</b> A fact about a value is proved once, then trusted.</li>
+                    <li><b>Types are kept.</b> TypeScript types are not erased. They feed the specializer, so typed code can start out specialized.</li>
                     <li><b>Measured against C.</b> Instruction budgets for every operation, with the equivalent C as the reference.</li>
                     <li><b>Conformance.</b> test262 runs in interpreter and JIT modes before changes merge.</li>
                 </ul>
@@ -992,7 +993,7 @@
                     </details>
                     <details>
                         <summary>Does Quench run TypeScript?</summary>
-                        <p>Yes. Quench runs TypeScript files directly by stripping the types, the same model Node uses. OXC parses both TypeScript and JavaScript.</p>
+                        <p>Yes, and it does not throw the types away. Quench parses TypeScript natively and keeps the type information, so the engine can use it: a declared type lets the compiler pick specialized code up front, checked once where a value enters, instead of waiting to observe types at run time. Using types for speed this way is the design and is being built out now.</p>
                     </details>
                     <details>
                         <summary>Does Quench support WebAssembly?</summary>
@@ -1092,7 +1093,7 @@
         "name": "Does Quench run TypeScript?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. Quench runs TypeScript files directly by stripping the types, the same model Node uses. OXC parses both TypeScript and JavaScript."
+          "text": "Yes, and it does not throw the types away. Quench parses TypeScript natively and keeps the type information, so the engine can use it: a declared type lets the compiler pick specialized code up front, checked once where a value enters, instead of waiting to observe types at run time. Using types for speed this way is the design and is being built out now."
         }
       },
       {
@@ -1157,7 +1158,7 @@
                         "vertical2": "RUNTIME IN RUST",
                         "description": "One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.",
                         "cmd": "quench-node app.ts",
-                        "detail": "TypeScript runs directly. Types are stripped."
+                        "detail": "Types are kept, and they make it fast."
             },
             {
                         "name": "AOT Compile",
