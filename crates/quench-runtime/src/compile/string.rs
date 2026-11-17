@@ -6,6 +6,12 @@ const OCTAL_ESCAPE_DIGITS_FOR_ZERO_TO_THREE: usize = 3;
 const OCTAL_ESCAPE_DIGITS_FOR_FOUR_TO_SEVEN: usize = 2;
 
 pub(super) fn constant(value: &StringLiteral<'_>) -> Constant {
+    // The parser's value is the literal's, escapes decoded, unless it holds a lone surrogate,
+    // which the parser spells lossily: only that one decodes the raw text again, unit by unit
+    // (babylonjs-startup's shader sources made this 2.4% of its instructions).
+    if is_well_formed(value) {
+        return Constant::String(value.value.as_str().into());
+    }
     from_raw(
         value.raw.as_ref().map(|raw| raw.as_str()),
         value.value.as_str(),

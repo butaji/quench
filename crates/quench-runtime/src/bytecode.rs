@@ -2290,10 +2290,9 @@ impl Function {
             let arguments_used = self.local_atoms.iter().enumerate().any(|(slot, &atom)| {
                 usize::try_from(atom).is_ok_and(|atom| tables.atom_name(atom) == Some("arguments"))
                     && (self.local_slot_captured(slot)
-                        || self.instructions().any(|instruction| {
-                            instruction.op().immediate_role() == ImmediateRole::LocalSlot
-                                && instruction.local_slot() == slot
-                        }))
+                        || self
+                            .instructions_of(|op| op.immediate_role() == ImmediateRole::LocalSlot)
+                            .any(|instruction| instruction.local_slot() == slot))
             });
             self.arguments_slot.is_none()
                 && !arguments_used
@@ -3027,7 +3026,10 @@ impl Function {
     fn derive_dynamic_scope_access(&self) -> bool {
         self.inherited_with_scope
             || !self.binding_sites.is_empty()
-            || self.instructions().any(WideInstruction::resolves_dynamic_scope)
+            // Only these ops resolve a dynamic scope: the scan decodes no other.
+            || self
+                .instructions_of(|op| op == Op::ResolveName || op.is_call_with_eval_flags())
+                .any(WideInstruction::resolves_dynamic_scope)
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote

@@ -1379,7 +1379,7 @@ impl<H: Host> Vm<H> {
     fn finish_generator_step(&mut self, generator: Value, end: JobEnd) -> Result<GeneratorStep, JsError> {
         match end {
             JobEnd::Returned(value) => Ok(GeneratorStep::Done(value)),
-            JobEnd::Suspended(value) => Ok(GeneratorStep::Yielded(value)),
+            JobEnd::Suspended(value) | JobEnd::Yielded(value) => Ok(GeneratorStep::Yielded(value)),
             JobEnd::Threw(error) => Err(error),
             JobEnd::Frames(result) => self.finish_generator_frame(generator, result),
         }

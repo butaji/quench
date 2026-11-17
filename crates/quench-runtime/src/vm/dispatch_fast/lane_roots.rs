@@ -104,6 +104,9 @@ pub(in crate::vm) enum JobEnd {
     /// await's reactions the job's to attach, or a sync generator's root yielded it, its record
     /// suspended.
     Suspended(Value),
+    /// An async generator's root yielded the value in the lane: its frame parked in its record,
+    /// the yield awaits the value before it settles the request (`Vm::async_generator_yield`).
+    Yielded(Value),
     /// The activation raised an exception no handler of it covers, which ended it in its owner
     /// (`raised_windows`): the promise or request the job settles rejects with the error.
     Threw(JsError),
@@ -382,6 +385,9 @@ impl<H: Host> Vm<H> {
             return JobEnd::Returned(value);
         }
         if let Some(value) = self.lane_suspended.take() {
+            if self.yielded_async_generator(job) {
+                return JobEnd::Yielded(value);
+            }
             return JobEnd::Suspended(value);
         }
         // A raise the lane settled left the job's root in place: no activation became a frame.
