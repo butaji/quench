@@ -15,6 +15,9 @@ use super::*;
 use crate::bytecode::{ChunkDelta, TableLengths};
 use replay::{ConstantIndex, FunctionRecords, FunctionTable, constant_hashes, wrapped_arrow_function, wrapped_function};
 
+/// The home binding of a class method's chunk, which reads no `super` through it.
+const OBJECT_HOME: &str = "\0quench:object-home:chunk";
+
 impl Engine {
     /// The chunk of stub `function` of `program`, compiled to follow `program`'s tables, or
     /// `None` when it compiles as a program of its own.
@@ -37,7 +40,8 @@ impl Engine {
         let nested = replay.direct_stubs;
         let mut parsed = parse_text(&allocator, &window, &chunk, span.start, nested.then_some(&mut free_names));
         let name = program.source_name.as_str();
-        let mut prototype_unobservable = chunk_analysis(&parsed, name, nested.then_some((&chunk.text, usize::from(!header.is_arrow))))?;
+        let method = super::stub_is_method(&header);
+        let mut prototype_unobservable = chunk_analysis(&parsed, name, nested.then_some((&chunk.text, usize::from(!header.is_arrow && !method))))?;
         let mut compiler = window.compiler(name, SpecializationMode::of(atom_prefix), atom_prefix, &mut parsed.program, Default::default(), &mut Default::default(), &mut prototype_unobservable);
         compiler.prototype_unobservable = prototype_unobservable;
         compiler.source_comments = parsed.program.comments.iter().map(|comment| comment.span).collect();
@@ -47,15 +51,22 @@ impl Engine {
         compiler.first_call.direct = nested;
         compiler.follow(program, replay);
         let base = program.table_lengths();
-        let target = if header.is_arrow {
-            compiler.compile_chunk_arrow(wrapped_arrow_function(&parsed.program)?, header.parent?)
-        } else {
-            compiler.compile_chunk_function(wrapped_function(&parsed.program)?, header.parent?)
-        };
-        (target == base.functions as u32).then_some(())?;
+        (compiler.compile_chunk(&parsed.program, &header, method)? == base.functions as u32).then_some(())?;
         compiler.finish_chunk(base)
     }
 }
+
+/// The method, getter or setter a class method's first-call chunk text is, as the one
+/// property of an object literal (`first_call::ChunkText::of`): its span and function.
+fn chunk_object_method<'s, 'a>(
+    program: &'s oxc_ast::ast::Program<'a>,
+) -> Option<(oxc_span::Span, &'s oxc_ast::ast::Function<'a>)> {
+    let oxc_ast::ast::Expression::ObjectExpression(object) = replay::single_expression(program.body.as_slice())? else { return None };
+    let [oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property)] = object.properties.as_slice() else { return None };
+    let oxc_ast::ast::Expression::FunctionExpression(function) = &property.value else { return None };
+    (property.method || property.kind != oxc_ast::ast::PropertyKind::Init).then_some((property.span, function))
+}
+
 
 /// The chunk's `text`, a function's source at `function_start` in the program's, parsed: whole,
 /// or with the bodies inside the function skimmed where they may compile on first call too
@@ -138,6 +149,28 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: expression && self.prototype_unobservable.contains(&node.span.start),
         };
         self.compile_plain_function(node, context)
+    }
+
+    /// The chunk's function, `program` alone, compiled as its stub's (`header`): an arrow's, a
+    /// class `method`'s or a plain function's.
+    fn compile_chunk(&mut self, program: &oxc_ast::ast::Program<'_>, header: &crate::bytecode::FunctionHeader, method: bool) -> Option<u32> {
+        let parent = header.parent?;
+        Some(if header.is_arrow {
+            self.compile_chunk_arrow(wrapped_arrow_function(program)?, parent)
+        } else if method {
+            self.compile_chunk_method(chunk_object_method(program)?, parent)
+        } else {
+            self.compile_chunk_function(wrapped_function(program)?, parent)
+        })
+    }
+
+    /// `property`, the one method of the object literal a class method's chunk text wraps it in
+    /// (`ChunkText::of`), compiled as its stub's: as the chunk compiled as a program of its own
+    /// compiles it, a method whose body reads no `super` (the skim takes no other).
+    fn compile_chunk_method(&mut self, (span, function): (oxc_span::Span, &oxc_ast::ast::Function<'_>), parent: u32) -> u32 {
+        let home_atom = self.atom(OBJECT_HOME);
+        let context = replay::ObjectMethodContext { property_span: span, home_atom, scopes: capture_scope::ScopeChain::new(Vec::new()), parent, with_depth: 0, inherited_strict: false };
+        self.compile_replayable_object_method(function, context)
     }
 
     /// The chunk compiled, as the tables it adds after `base`: its functions finish unlowered,
