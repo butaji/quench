@@ -243,6 +243,13 @@ struct LocalProofs {
 }
 
 impl LocalProofs {
+    /// Notes that tagged `bits` read as the double `number`: the most recent views win a full
+    /// list (a loop body that proves many Numbers keeps the ones its next reads name).
+    pub(super) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
+        if self.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { self.numbers.remove(0); }
+        self.numbers.push((bits, number));
+    }
+
     fn set_readable(&mut self, owner: usize, readable: bool) {
         if readable { self.readable.insert(owner); } else { self.readable.remove(owner); }
     }
@@ -2807,9 +2814,8 @@ impl Lowering<'_, '_> {
         let step = crate::staged::step(&mut stage, &mut frame, operation);
         // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
         for (bits, number) in super::take_boxed_numbers() {
-            if state.proofs.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { break; }
             let bits = self.builder.func.dfg.resolve_aliases(bits);
-            state.proofs.numbers.push((bits, number));
+            state.proofs.note_number(bits, number);
         }
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         // A step that ends in a branch makes no environment: only a closure's allocation, a value step, does.
