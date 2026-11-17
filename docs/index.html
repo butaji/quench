@@ -4,26 +4,27 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quench — a JavaScript engine in Rust where every tier is the interpreter, specialized</title>
-    <meta name="description"
-        content="Quench is a JavaScript engine written in Rust. One interpreter holds the semantics; the copy-and-patch JIT, the Cranelift JIT and AOT are derived from it by specialization, and every level is measured in instructions against C." />
-    <meta name="keywords"
-        content="JavaScript engine, Rust, interpreter, JIT, copy-and-patch, Cranelift, AOT, Futamura projections, partial evaluation, JetStream 3, test262, Node compatible, low memory" />
+    <title>Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust</title>
+    <meta name="description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta name="keywords" content="TypeScript runtime, JavaScript runtime, WebAssembly runtime, AOT compiler, ahead-of-time compilation, compile TypeScript to native binary, Node.js alternative, Bun alternative, Rust JavaScript engine, JIT, Cranelift, copy-and-patch, low memory" />
     <meta name="author" content="Quench" />
-    <meta name="robots" content="index, follow" />
-    <link rel="canonical" href="https://quench.run" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#EF5102" />
+    <link rel="canonical" href="https://quench.run/" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://quench.run" />
-    <meta property="og:title" content="Quench — a JavaScript engine in Rust where every tier is the interpreter, specialized" />
-    <meta property="og:description"
-        content="Quench is a JavaScript engine written in Rust. One interpreter holds the semantics; the copy-and-patch JIT, the Cranelift JIT and AOT are derived from it by specialization, and every level is measured in instructions against C." />
-    <meta property="og:image" content="https://quench.run/rust-logo.png" />
-    <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:url" content="https://quench.run" />
-    <meta property="twitter:title" content="Quench — a JavaScript engine in Rust where every tier is the interpreter, specialized" />
-    <meta property="twitter:description"
-        content="Quench is a JavaScript engine written in Rust. One interpreter holds the semantics; the copy-and-patch JIT, the Cranelift JIT and AOT are derived from it by specialization, and every level is measured in instructions against C." />
-    <meta property="twitter:image" content="https://quench.run/rust-logo.png" />
+    <meta property="og:site_name" content="Quench" />
+    <meta property="og:url" content="https://quench.run/" />
+    <meta property="og:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
+    <meta property="og:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta property="og:image" content="https://quench.run/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Quench: TypeScript, JavaScript and WebAssembly runtime with AOT, written in Rust" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust" />
+    <meta name="twitter:description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
+    <meta name="twitter:image" content="https://quench.run/og.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
     <link
@@ -38,15 +39,16 @@
 
         html,
         body {
-            width: 100vw;
-            height: 100vh;
-            overflow: hidden;
+            background: #E8E8E8;
             font-family: 'Inter', sans-serif;
         }
 
         .page {
             width: 100%;
-            height: 100%;
+            height: 100vh;
+            height: 100svh;
+            min-height: 520px;
+            overflow: hidden;
             background: #E8E8E8;
             display: flex;
             align-items: center;
@@ -251,6 +253,11 @@
             font-size: 1.1rem;
             color: #1C1C1E;
             cursor: pointer;
+            background: none;
+            border: 0;
+            padding: 6px 10px;
+            margin: -6px -10px;
+            border-radius: 8px;
             font-family: 'Inter', sans-serif;
             font-weight: 400;
             transition: color 0.2s;
@@ -405,10 +412,16 @@
             }
         }
 
-        .github-link {
-            position: fixed;
+        .top-links {
+            position: absolute;
             top: 24px;
             right: 24px;
+            display: flex;
+            gap: 10px;
+            z-index: 10;
+        }
+
+        .github-link {
             display: flex;
             align-items: center;
             justify-content: center;
@@ -567,13 +580,275 @@
         @keyframes fadeIn {
             to { opacity: 1; }
         }
+    
+        /* ─── Carousel UX ─── */
+        .nav-arrow:focus-visible,
+        .github-link:focus-visible,
+        .dot:focus-visible,
+        .faq summary:focus-visible,
+        .scroll-hint:focus-visible {
+            outline: 2px solid #EF5102;
+            outline-offset: 2px;
+        }
+
+        .content-panel { touch-action: pan-y; }
+
+        .swap {
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .swap.out {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+
+        .vertical-text.swap.out { transform: rotate(180deg); }
+
+        .dots {
+            display: flex;
+            gap: 6px;
+            margin-top: 1rem;
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards;
+            animation-delay: 1.05s;
+        }
+
+        .dot {
+            flex: 1;
+            height: 4px;
+            border: 0;
+            padding: 0;
+            border-radius: 2px;
+            background: #D4D4D4;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .dot:hover { background: #A9A9A9; }
+        .dot[aria-current="true"] { background: #EF5102; }
+
+        .tui-header { overflow-wrap: anywhere; }
+
+        .scroll-hint {
+            position: absolute;
+            bottom: 18px;
+            left: 50%;
+            translate: -50% 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: #6B7280;
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            z-index: 10;
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards;
+            animation-delay: 1.4s;
+        }
+
+        .scroll-hint:hover { color: #EF5102; }
+        .scroll-hint span { display: inline-block; animation: nudge 1.8s ease-in-out infinite; }
+
+        @keyframes nudge {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(3px); }
+        }
+
+        @media (max-height: 600px) { .scroll-hint { display: none; } }
+
+        /* ─── Below the card: same panels, readable text ─── */
+        .more {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 24px 16px 72px;
+        }
+
+        .frame {
+            background: #111716;
+            border: 4px solid #111716;
+            border-radius: 16px;
+            display: grid;
+            gap: 4px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.10), 0 6px 12px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+        }
+
+        .frame.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .frame.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+        .tile {
+            background: #F0F0F0;
+            border-radius: 12px;
+            padding: 1.75rem 2rem;
+            min-width: 0;
+        }
+
+        .tile.wide { grid-column: 1 / -1; }
+        .tile.orange { background: #EF5102; }
+
+        .tile h1 {
+            font-weight: 700;
+            font-size: clamp(1.75rem, 5vw, 2.5rem);
+            line-height: 1.12;
+            letter-spacing: -0.02em;
+            color: #020202;
+            text-wrap: balance;
+        }
+
+        .tile h2 {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #1C1C1E;
+            margin-bottom: 0.75rem;
+        }
+
+        .tile h2::before { content: '› '; color: #EF5102; }
+        .tile.orange h2::before { color: #1C1C1E; }
+
+        .tile p,
+        .tile li {
+            font-size: 1rem;
+            line-height: 1.6;
+            color: #4B5563;
+        }
+
+        .tile p + p { margin-top: 0.75rem; }
+        .tile .lead { font-size: 1.125rem; margin-top: 1rem; color: #3C3C3C; }
+        .tile ul { list-style: none; }
+        .tile li { padding: 0.5rem 0; border-top: 1px solid #DCDCDC; }
+        .tile li:first-child { border-top: 0; padding-top: 0; }
+        .tile li b, .tile p b { color: #1C1C1E; font-weight: 600; }
+        .tile code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875em;
+            color: #1C1C1E;
+        }
+
+        .tile pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8125rem;
+            line-height: 1.7;
+            color: #1C1C1E;
+            background: #E8E8E8;
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .tile pre .c { color: #6B7280; }
+        .tile pre .p { color: #EF5102; }
+
+        .stat-num {
+            font-weight: 300;
+            font-size: clamp(2.5rem, 9vw, 4rem);
+            line-height: 0.95;
+            letter-spacing: -0.04em;
+            color: #1C1C1E;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .stat-num small { font-size: 0.35em; font-weight: 500; letter-spacing: 0; }
+
+        .stat-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #1C1C1E;
+            margin: 0.75rem 0 0.25rem;
+        }
+
+        .tile .stat-note { font-size: 0.875rem; line-height: 1.45; color: #6B7280; }
+        .tile.orange .stat-note { color: #1C1C1E; }
+        .tile .fine { font-size: 0.8125rem; color: #6B7280; }
+
+        .faq details { border-top: 1px solid #DCDCDC; }
+        .faq details:first-of-type { border-top: 0; }
+
+        .faq summary {
+            cursor: pointer;
+            list-style: none;
+            font-weight: 600;
+            font-size: 1rem;
+            color: #1C1C1E;
+            padding: 0.9rem 1.5rem 0.9rem 0;
+            position: relative;
+            border-radius: 6px;
+        }
+
+        .faq summary::-webkit-details-marker { display: none; }
+
+        .faq summary::after {
+            content: '+';
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            translate: 0 -50%;
+            font-family: 'JetBrains Mono', monospace;
+            color: #EF5102;
+            font-size: 1.1rem;
+        }
+
+        .faq details[open] summary::after { content: '−'; }
+        .faq details p { padding-bottom: 1rem; }
+
+        .cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 1.25rem;
+            padding: 12px 24px;
+            border-radius: 12px;
+            background: #111716;
+            color: #EDEDED;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-decoration: none;
+            transition: background 0.25s ease, color 0.25s ease;
+        }
+
+        .cta:hover { background: #EF5102; color: #111716; }
+        .cta svg { width: 20px; height: 20px; fill: currentColor; }
+
+        .foot {
+            text-align: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: #6B7280;
+        }
+
+        .foot a { color: #3C3C3C; }
+
+        @media (max-width: 640px) {
+            .frame.cols-3, .frame.cols-2 { grid-template-columns: 1fr; }
+            .tile { padding: 1.5rem; }
+            .top-links { top: 16px; right: 16px; }
+            .github-link { padding: 10px 18px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-delay: 0s !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+            html { scroll-behavior: auto; }
+        }
+
+        html { scroll-behavior: smooth; }
     </style>
 </head>
 
 <body>
-    <div class="page">
-        <canvas class="bg-canvas" id="bg-canvas" width="520" height="641"></canvas>
-        <div class="card">
+    <header class="page">
+        <canvas class="bg-canvas" id="bg-canvas" width="520" height="641" aria-hidden="true"></canvas>
+        <div class="card" role="region" aria-roledescription="carousel" aria-label="What Quench is">
             <div class="top-row">
                 <div class="brand-panel">
                     <span class="brand-text">
@@ -587,29 +862,37 @@
                 <div class="orange-panel">
                     <div class="stripes"></div>
                     <div class="metric-area">
-                        <div class="vertical-text">
-                            <span class="ts-line">JAVASCRIPT ENGINE</span>
-                            <span class="rust-line">ONE SEMANTICS</span>
+                        <div class="vertical-text swap" id="vertical-text">
+                            <span class="ts-line" id="vertical-1">TS / JS / WASM</span>
+                            <span class="rust-line" id="vertical-2">RUNTIME IN RUST</span>
                         </div>
                     </div>
                 </div>
-                <div class="content-panel">
+                <div class="content-panel" id="content-panel">
                     <div class="nav-row">
-                        <span class="nav-arrow" id="prev-arrow">←</span>
-                        <span class="nav-label">
-                            <span id="feature-label">capability: </span>
-                            <span id="feature-name">Futamura Design</span>
+                        <button class="nav-arrow" id="prev-arrow" type="button" aria-label="Previous">←</button>
+                        <span class="nav-label swap" id="nav-label">
+                            <span id="feature-label">runtime: </span>
+                            <span id="feature-name">TS JS WASM</span>
                         </span>
-                        <span class="nav-arrow" id="next-arrow">→</span>
+                        <button class="nav-arrow" id="next-arrow" type="button" aria-label="Next">→</button>
                     </div>
-                    <div class="card-body">
-                        <p class="feature-description" id="feature-description">Every native tier is the interpreter, specialized to what it knows. Make the interpreter better and the JITs get better with it.</p>
-                        <p class="tui-header"><span class="tui-prompt">quench</span> <span id="feature-name-display">Futamura Design</span></p>
-                        <p class="feature-detail" id="feature-detail">One semantics. Every tier derived from it.</p>
+                    <div class="dots" id="dots"></div>
+                    <div class="card-body swap" id="card-body" aria-live="polite">
+                        <p class="feature-description" id="feature-description">One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.</p>
+                        <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench-node app.ts</span></p>
+                        <p class="feature-detail" id="feature-detail">TypeScript runs directly. Types are stripped.</p>
                     </div>
                 </div>
             </div>
         </div>
+        <nav class="top-links" aria-label="Links">
+        <a class="github-link" href="/blog/">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z" />
+            </svg>
+            Blog
+        </a>
         <a class="github-link" href="https://github.com/butaji/quench" target="_blank" rel="noopener">
             <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path
@@ -617,178 +900,403 @@
             </svg>
             GitHub
         </a>
-    </div>
+        </nav>
+        <a class="scroll-hint" href="#about">what is quench <span>↓</span></a>
+    </header>
+
+    <main class="more" id="about">
+        <section class="frame">
+            <div class="tile wide">
+                <h1>A TypeScript, JavaScript and WebAssembly runtime with AOT compilation, written in Rust.</h1>
+                <p class="lead">Quench runs your code through an interpreter, two JIT tiers, or compiles it ahead of time into a native binary. All of them come from one definition of what JavaScript means, so they agree with each other.</p>
+            </div>
+        </section>
+
+        <section class="frame cols-2" aria-label="Usage">
+            <div class="tile">
+                <h2>Run</h2>
+                <pre><span class="c"># TypeScript, JavaScript, WebAssembly</span>
+<span class="p">$</span> quench-node app.ts
+<span class="p">$</span> quench-node server.mjs</pre>
+            </div>
+            <div class="tile">
+                <h2>Compile ahead of time</h2>
+                <pre><span class="c"># one native executable</span>
+<span class="p">$</span> quench-node --build-aot app.ts -o app
+<span class="p">$</span> ./app</pre>
+            </div>
+            <div class="tile wide">
+                <h2>Build from source</h2>
+                <pre><span class="p">$</span> git clone https://github.com/butaji/quench
+<span class="p">$</span> cd quench
+<span class="p">$</span> cargo build --release -p quench-node <span class="c"># add --features aot for the AOT compiler</span></pre>
+                <p class="fine" style="margin-top:0.75rem">Quench is early and has no packaged releases yet.</p>
+            </div>
+        </section>
+
+        <section class="frame cols-3" aria-label="JetStream 3 results with JIT off">
+            <div class="tile orange">
+                <div class="stat-num">34.3</div>
+                <div class="stat-label">JetStream 3 score</div>
+                <p class="stat-note">Node --jitless 39.7 · Bun 32.2</p>
+            </div>
+            <div class="tile">
+                <div class="stat-num">28.5<small> MB</small></div>
+                <div class="stat-label">Peak memory</div>
+                <p class="stat-note">Node 110.1 MB · Bun 47.7 MB</p>
+            </div>
+            <div class="tile">
+                <div class="stat-num">56</div>
+                <div class="stat-label">Tests compared</div>
+                <p class="stat-note">Only those all three engines finish</p>
+            </div>
+            <div class="tile wide">
+                <p class="fine">Interpreter only, JIT off in every engine (Node <code>--jitless</code>, Bun <code>BUN_JSC_useJIT=0</code>). Geometric means, measured 17 November 2026 on a 4-core Linux box. Higher score is better, lower memory is better.</p>
+            </div>
+        </section>
+
+        <section class="frame cols-2">
+            <div class="tile">
+                <h2>How it runs code</h2>
+                <ul>
+                    <li><b>Interpreter.</b> Register bytecode, one 64-bit word per value.</li>
+                    <li><b>b-jit.</b> Copy-and-patch: prebuilt machine-code stencils, stitched together fast.</li>
+                    <li><b>u-jit.</b> An optimizing tier that generates code with Cranelift.</li>
+                    <li><b>AOT.</b> The whole program compiled to a native executable before it runs.</li>
+                </ul>
+            </div>
+            <div class="tile">
+                <h2>How it is built</h2>
+                <ul>
+                    <li><b>One semantics.</b> Each tier is the interpreter specialized to what is known (Futamura projections).</li>
+                    <li><b>Check once.</b> A fact about a value is proved once, then trusted.</li>
+                    <li><b>Measured against C.</b> Instruction budgets for every operation, with the equivalent C as the reference.</li>
+                    <li><b>Conformance.</b> test262 runs in interpreter and JIT modes before changes merge.</li>
+                </ul>
+            </div>
+            <div class="tile wide">
+                <h2>Where it is going</h2>
+                <ul>
+                    <li><b>Interpreter:</b> 1.5x the score of the best of Node and Bun with JIT off, at half their memory.</li>
+                    <li><b>Native tiers:</b> each tier faster than the one below it, with u-jit within 5x of the equivalent C.</li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="frame" aria-labelledby="faq-title">
+            <div class="tile wide faq">
+                <h2 id="faq-title">Questions</h2>
+                    <details open>
+                        <summary>What is Quench?</summary>
+                        <p>Quench is a runtime for TypeScript, JavaScript and WebAssembly, written in Rust. It implements JavaScript semantics and Node-compatible APIs, and runs code through an interpreter, two JIT tiers, or ahead-of-time compilation to a native binary.</p>
+                    </details>
+                    <details>
+                        <summary>Does Quench run TypeScript?</summary>
+                        <p>Yes. Quench runs TypeScript files directly by stripping the types, the same model Node uses. OXC parses both TypeScript and JavaScript.</p>
+                    </details>
+                    <details>
+                        <summary>Does Quench support WebAssembly?</summary>
+                        <p>Yes. WebAssembly modules run through the standard WebAssembly JavaScript API, and the WebAssembly workloads in JetStream 3 are part of what Quench is measured on.</p>
+                    </details>
+                    <details>
+                        <summary>What does AOT compilation mean in Quench?</summary>
+                        <p>Quench can compile an entry file and the modules it imports into a single native executable ahead of time. The AOT compiler is derived from the interpreter by specialization, so a compiled program follows the same semantics as an interpreted one.</p>
+                    </details>
+                    <details>
+                        <summary>How does Quench compare to Node.js and Bun?</summary>
+                        <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal.</p>
+                    </details>
+                    <details>
+                        <summary>Is Quench compatible with Node.js?</summary>
+                        <p>Quench implements Node-compatible APIs in a separate host crate and checks changed behavior against Node itself: values, errors, ordering and exit status. Compatibility is being built out, so expect gaps.</p>
+                    </details>
+                    <details>
+                        <summary>Is Quench ready for production?</summary>
+                        <p>Not yet. Quench is early, under heavy development, and has no packaged releases. You build it from source with Cargo.</p>
+                    </details>
+                    <details>
+                        <summary>What license is Quench under?</summary>
+                        <p>MIT.</p>
+                    </details>
+                <a class="cta" href="https://github.com/butaji/quench" target="_blank" rel="noopener">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+            </svg>
+                    Read the code on GitHub
+                </a>
+            </div>
+        </section>
+
+        <p class="foot">Quench · MIT licensed · <a href="/blog/">blog</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></p>
+    </main>
 
     <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "Quench",
-      "alternateName": "Quench JavaScript Engine",
-      "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "Linux",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "license": "https://opensource.org/licenses/MIT",
-      "programmingLanguage": ["Rust"],
-      "description": "Quench is a JavaScript engine written in Rust. One interpreter holds the semantics; the copy-and-patch JIT, the Cranelift JIT and AOT are derived from it by specialization, and every level is measured in instructions against C.",
-      "featureList": [
-        "JavaScript and WebAssembly engine written in Rust",
-        "Register-bytecode interpreter as the single semantic source",
-        "b-jit: copy-and-patch stencils derived from the interpreter",
-        "u-jit: optimizing tier on Cranelift",
-        "AOT compilation",
-        "Node-compatible host APIs",
-        "Instruction budgets per operation, measured against C",
-        "MIT licensed"
-      ],
-      "applicationSubCategory": "JavaScript Engine",
-      "keywords": "JavaScript engine, Rust, interpreter, JIT, Cranelift, copy-and-patch, AOT, Futamura projections, JetStream 3",
-      "codeRepository": "https://github.com/butaji/quench",
-      "isAccessibleForFree": true,
-      "inLanguage": "en"
-    }
+[
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Quench",
+    "alternateName": [
+      "Quench runtime",
+      "Quench JavaScript engine"
+    ],
+    "url": "https://quench.run",
+    "applicationCategory": "DeveloperApplication",
+    "applicationSubCategory": "JavaScript, TypeScript and WebAssembly runtime",
+    "operatingSystem": "Linux",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "license": "https://opensource.org/licenses/MIT",
+    "programmingLanguage": [
+      "Rust"
+    ],
+    "description": "Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary.",
+    "featureList": [
+      "Runs TypeScript, JavaScript and WebAssembly",
+      "Ahead-of-time (AOT) compilation to a native executable",
+      "Register-bytecode interpreter",
+      "b-jit: copy-and-patch JIT",
+      "u-jit: optimizing JIT on Cranelift",
+      "Node-compatible APIs",
+      "Low memory use",
+      "MIT licensed"
+    ],
+    "codeRepository": "https://github.com/butaji/quench",
+    "isAccessibleForFree": true,
+    "inLanguage": "en"
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Quench",
+    "url": "https://quench.run"
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Quench?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Quench is a runtime for TypeScript, JavaScript and WebAssembly, written in Rust. It implements JavaScript semantics and Node-compatible APIs, and runs code through an interpreter, two JIT tiers, or ahead-of-time compilation to a native binary."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Quench run TypeScript?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Quench runs TypeScript files directly by stripping the types, the same model Node uses. OXC parses both TypeScript and JavaScript."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Quench support WebAssembly?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. WebAssembly modules run through the standard WebAssembly JavaScript API, and the WebAssembly workloads in JetStream 3 are part of what Quench is measured on."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What does AOT compilation mean in Quench?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Quench can compile an entry file and the modules it imports into a single native executable ahead of time. The AOT compiler is derived from the interpreter by specialization, so a compiled program follows the same semantics as an interpreted one."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does Quench compare to Node.js and Bun?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. The JIT tiers are still being brought up to their goal."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Quench compatible with Node.js?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Quench implements Node-compatible APIs in a separate host crate and checks changed behavior against Node itself: values, errors, ordering and exit status. Compatibility is being built out, so expect gaps."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Quench ready for production?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Not yet. Quench is early, under heavy development, and has no packaged releases. You build it from source with Cargo."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What license is Quench under?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "MIT."
+        }
+      }
+    ]
+  }
+]
     </script>
-
-    <div aria-hidden="true"
-        style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">
-        <h1>Quench — a JavaScript engine in Rust where every tier is the interpreter, specialized</h1>
-        <p>Quench is a JavaScript engine written in Rust. One interpreter holds the semantics; the copy-and-patch JIT, the Cranelift JIT and AOT are derived from it by specialization, and every level is measured in instructions against C.</p>
-        <h2>What Quench Is</h2>
-        <p>Quench runs JavaScript and WebAssembly with Node-compatible APIs. OXC parses the source once, a compiler turns it into register bytecode, and an interpreter runs it. Hot loops and functions move to native tiers: b-jit, which copies and patches machine-code stencils, and u-jit, which generates code with Cranelift. Native code leaves through a status word and the interpreter resumes at the exact bytecode position. MIT licensed.</p>
-        <h2>Futamura Projections as the Design</h2>
-        <ul>
-            <li>Each operation's meaning is written once, generic over a stage: run concretely it computes, run on the emitter it writes Cranelift IR, run at build time it becomes b-jit stencils.</li>
-            <li>Check once: a dynamic fact is proved at most once per lifetime of the value or region that carries it.</li>
-            <li>Reactive, not guarded: rarely changing facts such as shapes and callee identity are dependencies that invalidate what relied on them.</li>
-            <li>O(1) per operation on hot paths.</li>
-            <li>C-level residuals: generated code is judged against the C a programmer would write for the same program.</li>
-        </ul>
-        <h2>Measured Against C</h2>
-        <p>Every level has a C reference and a shrink-only ceiling: per-operation instruction budgets, primitives per tier, kernels against C twins, and whole JetStream 3 benchmarks. Instruction counts from callgrind are the unit, because wall time on shared machines drifts. test262 runs in interpreter and JIT modes before changes merge.</p>
-        <h2>Where It Stands</h2>
-        <p>JetStream 3 without JIT, on the 56 tests that Quench, Node --jitless and Bun with JIT off all finish (17 November 2026): Quench scores 34.3 (geomean) against Node 39.7 and Bun 32.2, at 28.5 MB peak memory against 110.1 MB and 47.7 MB.</p>
-        <h2>Goals</h2>
-        <ul>
-            <li>Interpreter: 1.5x the score of the best of Node and Bun without JIT, at half their memory.</li>
-            <li>Tiers: no-jit &lt; b-jit &lt; u-jit at every level, with u-jit within 5x of the equivalent C.</li>
-        </ul>
-    </div>
 
     <script>
         const features = [
             {
-                name: 'Futamura Design',
-                label: 'principle: ',
-                vertical1: 'ONE',
-                vertical2: 'SEMANTICS',
-                description: 'Every native tier is the interpreter, specialized to what it knows. Make the interpreter better and the JITs get better with it.',
-                detail: 'One semantics. Every tier derived from it.'
+                        "name": "TS JS WASM",
+                        "label": "runtime: ",
+                        "vertical1": "TS / JS / WASM",
+                        "vertical2": "RUNTIME IN RUST",
+                        "description": "One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.",
+                        "cmd": "quench-node app.ts",
+                        "detail": "TypeScript runs directly. Types are stripped."
             },
             {
-                name: 'Three Tiers',
-                label: 'capability: ',
-                vertical1: 'NO-JIT',
-                vertical2: 'B-JIT U-JIT',
-                description: 'Register-bytecode interpreter, b-jit copy-and-patch stencils, u-jit on Cranelift, plus AOT. Native code exits to the exact bytecode.',
-                detail: 'no-jit < b-jit < u-jit, at every level.'
+                        "name": "AOT Compile",
+                        "label": "capability: ",
+                        "vertical1": "AHEAD OF TIME",
+                        "vertical2": "NATIVE BINARY",
+                        "description": "Compile an entry file and everything it imports into one native executable. Same semantics as the interpreter, decided ahead of time.",
+                        "cmd": "quench-node --build-aot app.ts -o app",
+                        "detail": "One file in. One binary out."
             },
             {
-                name: 'No-JIT Speed',
-                label: 'jetstream 3: ',
-                vertical1: '34.3',
-                vertical2: 'GEOMEAN',
-                description: 'Without JIT, Quench scores 34.3 against Node --jitless at 39.7 and Bun at 32.2, on the 56 tests all three finish.',
-                detail: 'Goal: 1.5x the best of them.'
+                        "name": "Three Tiers",
+                        "label": "capability: ",
+                        "vertical1": "NO-JIT  B-JIT",
+                        "vertical2": "U-JIT  AOT",
+                        "description": "A register-bytecode interpreter, b-jit copy-and-patch stencils and u-jit on Cranelift. Native code exits to the exact bytecode.",
+                        "cmd": "quench-node --no-jit | --b-jit | --u-jit",
+                        "detail": "Pick a tier, or let the counters decide."
             },
             {
-                name: 'Small Memory',
-                label: 'jetstream 3: ',
-                vertical1: '28.5',
-                vertical2: 'MB PEAK',
-                description: 'Peak memory 28.5 MB geomean on the same tests: about a quarter of Node and 60% of Bun.',
-                detail: 'Goal: half of the best.'
+                        "name": "No-JIT Speed",
+                        "label": "jetstream 3: ",
+                        "vertical1": "34.3 SCORE",
+                        "vertical2": "JIT TURNED OFF",
+                        "description": "With JIT off, Quench scores 34.3 against Node --jitless at 39.7 and Bun at 32.2, on the 56 tests all three finish.",
+                        "cmd": "quench-node --no-jit jetstream",
+                        "detail": "Goal: 1.5x the best of them."
             },
             {
-                name: 'Measured vs C',
-                label: 'method: ',
-                vertical1: 'IR',
-                vertical2: 'BUDGETS',
-                description: 'Every op, primitive, kernel and benchmark has a C twin and an instruction budget. Callgrind instructions, not wall time.',
-                detail: 'Budgets only shrink.'
+                        "name": "Small Memory",
+                        "label": "jetstream 3: ",
+                        "vertical1": "28.5 MB PEAK",
+                        "vertical2": "GEOMEAN RSS",
+                        "description": "Peak memory of 28.5 MB on the same tests. That is about a quarter of Node and 60% of Bun.",
+                        "cmd": "quench-node --no-jit jetstream",
+                        "detail": "Goal: half of the best."
             },
             {
-                name: 'Check Once',
-                label: 'principle: ',
-                vertical1: 'PROVE',
-                vertical2: 'ONCE',
-                description: 'A fact is proved once per value or region. Shapes and callees are dependencies that invalidate code, not guards paid on every use.',
-                detail: 'Re-checking a known fact is a bug.'
+                        "name": "One Semantics",
+                        "label": "design: ",
+                        "vertical1": "FUTAMURA",
+                        "vertical2": "PROJECTIONS",
+                        "description": "Every native tier is the interpreter, specialized to what it knows. Make the interpreter better and JIT and AOT get better with it.",
+                        "cmd": "interpreter → b-jit → u-jit → aot",
+                        "detail": "One meaning per operation. Tiers derive it."
             },
             {
-                name: 'Rust Native',
-                label: 'capability: ',
-                vertical1: 'MIT',
-                vertical2: 'LICENSE',
-                description: 'Rust from parser to codegen. OXC owns syntax, Cranelift emits code, Node-compatible APIs live in their own crate.',
-                detail: 'JavaScript and WebAssembly. MIT licensed.'
+                        "name": "Measured vs C",
+                        "label": "method: ",
+                        "vertical1": "INSTRUCTIONS",
+                        "vertical2": "COUNTED VS C",
+                        "description": "Every op, primitive, kernel and benchmark has a C twin and an instruction budget. Counted instructions, not wall time.",
+                        "cmd": "quench-gate",
+                        "detail": "Budgets only shrink."
+            },
+            {
+                        "name": "Open Source",
+                        "label": "license: ",
+                        "vertical1": "MIT LICENSE",
+                        "vertical2": "BUILD FROM SOURCE",
+                        "description": "Rust from parser to codegen, MIT licensed. Early and moving fast: build it from source and read how it works.",
+                        "cmd": "cargo build --release -p quench-node",
+                        "detail": "Fork it. Measure it. Break it."
             }
-        ];
+];
 
         let currentIndex = 0;
+        const $ = (id) => document.getElementById(id);
+        const swaps = ['vertical-text', 'nav-label', 'card-body'].map($);
+        const slugify = (str) => str.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-        function slugify(str) {
-            return str.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const dots = features.map((feature, i) => {
+            const dot = document.createElement('button');
+            dot.type = 'button';
+            dot.className = 'dot';
+            dot.setAttribute('aria-label', feature.name);
+            dot.addEventListener('click', () => show(i, true));
+            $('dots').appendChild(dot);
+            return dot;
+        });
+
+        function render() {
+            const feature = features[currentIndex];
+            $('feature-name').textContent = feature.name;
+            $('feature-label').textContent = feature.label;
+            $('feature-description').textContent = feature.description;
+            $('feature-cmd').textContent = feature.cmd;
+            $('feature-detail').textContent = feature.detail;
+            $('vertical-1').textContent = feature.vertical1;
+            $('vertical-2').textContent = feature.vertical2;
+            dots.forEach((dot, i) => dot.setAttribute('aria-current', i === currentIndex ? 'true' : 'false'));
         }
 
-        function updateFeature() {
-            const feature = features[currentIndex];
-            document.getElementById('feature-name').textContent = feature.name;
-            document.getElementById('feature-label').textContent = feature.label;
-            document.getElementById('feature-description').textContent = feature.description;
-            document.getElementById('feature-name-display').textContent = feature.name;
-            document.getElementById('feature-detail').textContent = feature.detail;
-            location.hash = slugify(feature.name);
+        let pending = 0;
+        function show(index, setHash) {
+            currentIndex = (index + features.length) % features.length;
+            if (setHash) history.replaceState(null, '', '#' + slugify(features[currentIndex].name));
+            swaps.forEach((el) => el.classList.add('out'));
+            clearTimeout(pending);
+            pending = setTimeout(() => {
+                render();
+                swaps.forEach((el) => el.classList.remove('out'));
+            }, 180);
         }
 
         function fromHash() {
             const hash = location.hash.replace('#', '');
-            if (!hash) return 0;
-            const idx = features.findIndex(e => slugify(e.name) === hash);
-            return idx >= 0 ? idx : 0;
+            return features.findIndex((e) => slugify(e.name) === hash);
         }
 
-        document.getElementById('prev-arrow').addEventListener('click', () => {
-            currentIndex = (currentIndex - 1 + features.length) % features.length;
-            updateFeature();
-        });
-
-        document.getElementById('next-arrow').addEventListener('click', () => {
-            currentIndex = (currentIndex + 1) % features.length;
-            updateFeature();
-        });
+        $('prev-arrow').addEventListener('click', () => show(currentIndex - 1, true));
+        $('next-arrow').addEventListener('click', () => show(currentIndex + 1, true));
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowLeft') {
-                currentIndex = (currentIndex - 1 + features.length) % features.length;
-                updateFeature();
-            } else if (e.key === 'ArrowRight') {
-                currentIndex = (currentIndex + 1) % features.length;
-                updateFeature();
-            }
+            if (window.scrollY > window.innerHeight * 0.6) return;
+            if (e.key === 'ArrowLeft') show(currentIndex - 1, true);
+            else if (e.key === 'ArrowRight') show(currentIndex + 1, true);
         });
+
+        let touchX = null, touchY = null;
+        const panel = $('content-panel');
+        panel.addEventListener('touchstart', (e) => {
+            touchX = e.touches[0].clientX; touchY = e.touches[0].clientY;
+        }, { passive: true });
+        panel.addEventListener('touchend', (e) => {
+            if (touchX === null) return;
+            const dx = e.changedTouches[0].clientX - touchX;
+            const dy = e.changedTouches[0].clientY - touchY;
+            touchX = null;
+            if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) show(currentIndex + (dx < 0 ? 1 : -1), true);
+        }, { passive: true });
 
         window.addEventListener('hashchange', () => {
-            currentIndex = fromHash();
-            const feature = features[currentIndex];
-            document.getElementById('feature-name').textContent = feature.name;
-            document.getElementById('feature-label').textContent = feature.label;
-            document.getElementById('feature-description').textContent = feature.description;
-            document.getElementById('feature-name-display').textContent = feature.name;
-            document.getElementById('feature-detail').textContent = feature.detail;
+            const idx = fromHash();
+            if (idx >= 0) show(idx, false);
         });
 
-        currentIndex = fromHash();
-        updateFeature();
+        currentIndex = Math.max(fromHash(), 0);
+        render();
     </script>
 
     <script>
