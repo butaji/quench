@@ -7,7 +7,7 @@ a { color: inherit; }
 
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 .brand { font-weight: 700; font-size: 2rem; letter-spacing: -0.085em; color: #3C3C3C; text-decoration: none; line-height: 1; }
-.brand span { color: #EF5102; margin-left: 0.02em; }
+.brand span { color: #EF5102; margin-left: -0.045em; }
 .badges { display: flex; gap: 10px; }
 .badge, .btn {
   display: inline-flex; align-items: center; gap: 10px; padding: 12px 22px; border-radius: 12px;
