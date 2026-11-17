@@ -86,6 +86,16 @@ impl<'a> EmitFrame<'a> {
         }
     }
 
+    /// The other registers that hold `register`'s tagged value, which is one SSA value: copies a
+    /// `Move` made (`register_copy`), not yet redefined. Receivers keep their own proofs.
+    fn copies(&self, register: Register) -> Vec<Register> {
+        let TaggedView::Value(value) = self.state.values[usize::from(register)].tagged else { return Vec::new() };
+        (0..self.state.values.len()).filter(|&other| other != usize::from(register)
+            && self.state.values[other].tagged == TaggedView::Value(value))
+            .filter_map(|other| Register::try_from(other).ok())
+            .filter(|&other| !self.is_receiver(Owner::Register(other))).collect()
+    }
+
     /// The proofs of the probed fast path do not dominate the probe's join: past it only what
     /// held before the read does.
     fn retire_fast_proofs(&mut self, owner: Owner, before: &State) {
@@ -153,11 +163,15 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let Some(key) = self.proof_key(owner) else { return };
         headers::note_header_shape(stage.builder, self.state, key, shape);
         // A read that proves the receiver a direct object of its shape proves it for the block,
-        // a receiver alias's too.
+        // for each copy of its value too (`copies`).
         if let (true, Owner::Register(register)) = (direct, owner) {
-            self.state.values[usize::from(register)] = RegisterFact::definition(Type::direct_object(shape), Representation::Tagged);
+            for proved in std::iter::once(register).chain(self.copies(register)) {
+                let fact = &mut self.state.values[usize::from(proved)];
+                *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
+            }
         }
     }
+
 
     fn kept_layout(&self, owner: Owner, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
         let key = self.proof_key(owner)?;
@@ -165,8 +179,10 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     }
 
     fn keep_layout(&mut self, owner: Owner, shape: u32, layout: Layout<ir::Value, ir::Value>) {
-        if let Some(key) = self.proof_key(owner) {
-            self.state.proofs.layouts.insert((key, shape), CheckedObject::of(layout));
+        let Some(key) = self.proof_key(owner) else { return };
+        let copies = match owner { Owner::Register(register) if key.is_some() => self.copies(register), _ => Vec::new() };
+        for kept in std::iter::once(key).chain(copies.into_iter().map(Some)) {
+            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout));
         }
     }
 
