@@ -620,6 +620,114 @@ static double NOINL op_call_method(long n) {
   return a;
 }
 
+/* ---------------- kernels ---------------- */
+
+struct body { double x, y, z, vx, vy, vz, mass; };
+
+static double NOINL op_k_nbody_pair(long n) {
+  int32_t N = (int32_t)n;
+  struct body A = {0, 0, 0, 0, 0, 0, 39.47}, B = {4.84, -1.16, -0.1, 0.6, 2.81, -0.02, 0.037};
+  struct body *a = &A, *b = &B;
+  OPAQUE_P(a); OPAQUE_P(b);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double dx = a->x - b->x, dy = a->y - b->y, dz = a->z - b->z;
+    double d2 = dx * dx + dy * dy + dz * dz;
+    double mag = 0.01 / (d2 * sqrt(d2));
+    double bm = b->mass * mag, am = a->mass * mag;
+    a->vx -= dx * bm; a->vy -= dy * bm; a->vz -= dz * bm;
+    b->vx += dx * am; b->vy += dy * am; b->vz += dz * am;
+  }
+  return a->vx + b->vz;
+}
+
+struct point { int32_t x, y; };
+
+static double NOINL op_k_struct_sum(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct point *pts = malloc(64 * sizeof *pts);
+  for (int32_t i = 0; i < 64; i++) { pts[i].x = i; pts[i].y = i + 1; }
+  ESCAPE(pts);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct point *p = &pts[i & 63];
+    s = (int32_t)((uint32_t)s + (uint32_t)p->x * (uint32_t)p->y);
+  }
+  free(pts);
+  return s;
+}
+
+struct task { int32_t (*run)(const struct task *, int32_t); int32_t k; };
+static int32_t NOINL task_a(const struct task *t, int32_t x) { return (int32_t)((uint32_t)x + (uint32_t)t->k); }
+static int32_t NOINL task_b(const struct task *t, int32_t x) { return x ^ t->k; }
+
+static double NOINL op_k_dispatch(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  struct task tasks[4] = {{task_a, 3}, {task_b, 5}, {task_a, 7}, {task_b, 9}};
+  struct task *t = tasks;
+  ESCAPE(t);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct task *k = &t[i & 3];
+    a = k->run(k, (int32_t)((uint32_t)a + (uint32_t)i));
+  }
+  return a;
+}
+
+static double NOINL op_k_json(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  char buf[64];
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int len = snprintf(buf, sizeof buf, "{\"id\":%d,\"name\":\"ab\",\"ok\":true}", i & 1023);
+    ESCAPE(buf);
+    const char *id = strstr(buf, "\"id\":");
+    int32_t v = (int32_t)strtol(id + 5, NULL, 10);
+    a = (int32_t)((uint32_t)a + (uint32_t)v + (uint32_t)len);
+  }
+  return a;
+}
+
+/* /o+x/ searched as a compiled matcher would: an 'o', more 'o's, then 'x'. */
+static int NOINL match_o_plus_x(const char *s, size_t len) {
+  for (size_t start = 0; start < len; start++) {
+    if (s[start] != 'o') continue;
+    size_t k = start + 1;
+    while (k < len && s[k] == 'o') k++;
+    if (k < len && s[k] == 'x') return 1;
+  }
+  return 0;
+}
+
+static double NOINL op_k_regexp(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  static const char *words[4] = {"foox", "bar", "ox", "zoooox"};
+  static const size_t lens[4] = {4, 3, 2, 6};
+  const char *const *w = words;
+  OPAQUE_P(w);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    if (match_o_plus_x(w[i & 3], lens[i & 3])) a++;
+  }
+  return a;
+}
+
+static double NOINL op_k_str_build(long n) {
+  int32_t N = (int32_t)n;
+  double a = 0;
+  char *s = malloc(256);
+  size_t len = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    s[len++] = 'k';
+    s[len++] = (char)('0' + (i & 7));
+    ESCAPE(s);
+    if ((i & 63) == 63) { a += (double)len; len = 0; }
+  }
+  free(s);
+  return a + (double)len;
+}
+
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
@@ -645,6 +753,8 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"arr_load_obj", op_arr_load_obj}, {"arr_store_obj", op_arr_store_obj},
   {"arr_length", op_arr_length}, {"arr_push", op_arr_push},
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
+  {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
+  {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
 };
 
 int main(int argc, char **argv) {
