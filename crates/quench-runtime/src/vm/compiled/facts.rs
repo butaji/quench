@@ -367,7 +367,7 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
     written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>) -> Flow {
     let flow = unary_transfer(types, instruction)
         .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
-    if let Some(ty) = observed.filter(|_| instruction.op().class().eq(Class::GetIndex)) {
+    if let Some(ty) = observed.filter(|_| instruction.op().class().eq(Class::GetIndex) || instruction.op().is_get_field()) {
         for register in written(instruction) { set(types, register, ty); }
     }
     flow

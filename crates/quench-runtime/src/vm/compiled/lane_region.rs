@@ -3838,7 +3838,15 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, pc as u32);
             let held = HeldRead { entry_word: Some(word), ..HeldRead::default() };
             let bits = self.field_value(state, (base, lookup), &[], held, exit)?;
-            self.set_tagged(state, destination, bits);
+            // A register's `length` read is an int32 to the facts (`osr_compile::observed_reads`).
+            if register.is_some() && super::reads_length(self.program, instruction) {
+                let integer = is_int_tagged(&mut self.builder, bits);
+                emit_js_guard(&mut self.builder, integer, exit);
+                let int = self.raw_unary(Unary::Narrow(Lane::I32), bits);
+                self.set_int(state, destination, int);
+            } else {
+                self.set_tagged(state, destination, bits);
+            }
             return Some(true);
         }
         let exit = self.guard_exit(state, pc as u32);

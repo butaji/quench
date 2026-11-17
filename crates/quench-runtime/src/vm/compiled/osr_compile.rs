@@ -274,9 +274,9 @@ impl OsrFacts {
 /// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
 /// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
 /// that is not one. A lane body's observation is its entry activation's array parameters.
-pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
+pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
-    unit.instructions.iter().enumerate()
+    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
         .filter(|(pc, instruction)| instruction.op().is_get_index() && !abandoned.contains(pc))
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
@@ -286,7 +286,15 @@ pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::by
             // once: an int32 observation it outgrew widens to Numbers before it is dropped.
             let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { crate::typed_ir::Type::NUMBER };
             Some(super::facts::ObservedRead { pc, ty })
-        }).collect()
+        }).collect();
+    // A register's `length` read defines an int32: the region reads it as one
+    // (`Lowering::array_length`), leaving where it is not.
+    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
+        && instruction.result_flags() == 0
+        && matches!(instruction.field_lookup(), Some(crate::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
+        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: crate::typed_ir::Type::INT32 }));
+    reads.sort_by_key(|read| read.pc);
+    reads
 }
 
 /// What lowers a loop's unit: the region specializer, the same plan a lane body and a static
@@ -313,7 +321,7 @@ impl LoopPlanner<'_> {
     fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
         unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, (header, backedge): (usize, usize),
         generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
-        let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
+        let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
