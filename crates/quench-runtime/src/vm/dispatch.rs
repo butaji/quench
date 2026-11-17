@@ -250,6 +250,15 @@ impl<H: Host> Vm<H> {
             .map(|target| (target.program, target.function, target.env))
     }
 
+    /// The program, function and environment of `callee` when the loop pushes it as a settling
+    /// call (`InLoopPush::Settles`): an async body, which the lane starts as a job
+    /// (`Vm::start_async_call`).
+    pub(super) fn in_loop_settling_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(ProgramId, u32, Value)> {
+        self.in_loop_call_entry(p, callee)
+            .filter(|target| target.push == super::InLoopPush::Settles)
+            .map(|target| (target.program, target.function, target.env))
+    }
+
     /// The cached in-loop push of `callee`, of either kind (`InLoopPush`).
     #[inline(always)]
     fn in_loop_call_entry(&mut self, p: &ResidualProgram, callee: Value) -> Option<super::InLoopCallTarget> {

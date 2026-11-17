@@ -1884,6 +1884,10 @@ pub(crate) struct Vm<H> {
     lane_stack: dispatch_fast::LaneStack,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
     lane_roots: Vec<dispatch_fast::ParkedLane>,
+    /// Empty lane stacks a nested run returned, which the next one starts over
+    /// (`Vm::nested_lane_run`): a fresh stack reserves its whole value and activation room and
+    /// starts with no call target resolved.
+    spare_lane_stacks: Vec<Box<dispatch_fast::LaneStack>>,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     native_execution_rejections: u64,

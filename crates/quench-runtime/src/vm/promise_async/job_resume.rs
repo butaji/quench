@@ -35,6 +35,17 @@ impl<H: Host> Vm<H> {
         settled.map(|()| Value::UNDEFINED)
     }
 
+    /// The first run of the async function `state` holds unstarted (`Vm::start_async_call`), in
+    /// the realm and program that call it, with no collection first: the caller's lane run is live.
+    pub(in crate::vm) fn start_await_job(&mut self, p: &ResidualProgram, state: Value) -> Result<(), JsError> {
+        let Some((role, _, promise)) = self.heap.await_state(state).and_then(AwaitState::pending) else {
+            return Err(JsError("stale async continuation".into()));
+        };
+        let resume = AwaitResume { state: Some(state), promise, role, rejected: false };
+        let end = self.run_job(p, role.job(state), JobResume::Sends(Value::UNDEFINED));
+        self.settle_job_end(p, resume, end)
+    }
+
     /// The activation of `resume`, whose await `state` its reaction runs, resumes with `value`
     /// or its rejection. A fulfilled await of a `yield`'s value resumes no frame: it settles the
     /// request with the value, the frame parked in the generator's record.

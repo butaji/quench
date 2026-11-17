@@ -80,6 +80,7 @@ impl<H: Host> Vm<H> {
             native_roots: _,
             lane_stack: _,
             lane_roots: _,
+            spare_lane_stacks: _,
             execution_mode: _,
             native_execution_rejections: _,
             js_tier_pending: _,
