@@ -150,6 +150,13 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
 pub(crate) const HINTED_FORM: u32 = u32::MAX;
 
+/// A fixed form's flag (`concrete_hinted_own_field_hit`): every slot word of the process is a
+/// tagged `Value` (`switches::float_slots` off, a per-process decision), so the read decodes
+/// nothing. The handler is chosen with the flag when its hint is installed, so the switch is
+/// read once per installation, not per read. Below every storage-form bit.
+pub(crate) const TAGGED_SLOTS: u32 = 1 << 26;
+const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0);
+
 /// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a whole
 /// auxiliary word (`Object::hint_shape`): one compare proves the exact shape and the storage
 /// form, which the hint's form bits, equal to the record's, then tell.
@@ -170,17 +177,19 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     // A fixed form's hint names it (the caller's contract), so equality proves that form
     // and its layout is read without testing the bits; no narrow run's word matches it.
     let forms = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
+    let tagged = FORM != HINTED_FORM && FORM & TAGGED_SLOTS != 0;
+    let form = if FORM == HINTED_FORM { FORM } else { FORM & !TAGGED_SLOTS };
     let named = hint;
     let hint = stage.site(u64::from(hint));
     let same = stage.eq_imm(word, hint);
     stage.guard(same, ())?;
-    debug_assert!(FORM == HINTED_FORM || named & forms == FORM, "a fixed form's matched hint names it");
-    let formed = if FORM == HINTED_FORM { hint } else { stage.constant(u64::from(FORM)) };
+    debug_assert!(form == HINTED_FORM || named & forms == form, "a fixed form's matched hint names it");
+    let formed = if form == HINTED_FORM { hint } else { stage.constant(u64::from(form)) };
     let layout = formed_own_layout(&mut stage, record, formed, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
     let word = read_slot(&mut stage, layout, slot, Rep::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
-    if FORM == OBJECT.inline_form || FORM == OBJECT.narrow_form {
+    if tagged || form == OBJECT.inline_form || form == OBJECT.narrow_form {
         return Some(crate::Value::from_bits(word));
     }
     Some(crate::value_vec::decode_staged_word(word))

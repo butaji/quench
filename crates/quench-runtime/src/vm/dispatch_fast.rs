@@ -7391,17 +7391,23 @@ script_handler! {
 /// `hint`'s bits name: an arena run, extras or packed inline values, whose layout it then
 /// reads untested.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
+    use crate::staged::TAGGED_SLOTS;
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     // A narrow run's hint names neither inline values nor extras: those tests fold away and
-    // the read takes the run's halves.
+    // the read takes the run's halves. Packed and narrow slots never hold a raw double; the
+    // other forms skip the decode where float slots are off for the process.
     if hint & NARROW_FORM != 0 {
         return lane_get_field_own_bound::<H, THIS, NARROW_FORM>;
     }
-    match hint & (INLINE_FORM | EXTRAS_FORM) {
-        0 => lane_get_field_own_bound::<H, THIS, 0>,
-        EXTRAS_FORM => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
-        INLINE_FORM => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
-        _ => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
+    let tagged = !crate::vm::switches::float_slots();
+    match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
+        (0, true) => lane_get_field_own_bound::<H, THIS, TAGGED_SLOTS>,
+        (0, false) => lane_get_field_own_bound::<H, THIS, 0>,
+        (EXTRAS_FORM, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | TAGGED_SLOTS }>,
+        (EXTRAS_FORM, false) => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
+        (INLINE_FORM, _) => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
+        (_, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS }>,
+        (_, false) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
     }
 }
 
@@ -19649,14 +19655,16 @@ enum FieldHit {
 }
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
-fn own_bound_handlers<H: Host>() -> [*const (); 12] {
+fn own_bound_handlers<H: Host>() -> [*const (); 18] {
+    use crate::staged::TAGGED_SLOTS;
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     macro_rules! forms {
         ($($form:expr),*) => {
             [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
         };
     }
-    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM)
+    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
+        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS)
 }
 
 impl FieldHit {
