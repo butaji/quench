@@ -4133,12 +4133,13 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_update_jumps` matched. Computed before the fuel test, so the test's
+        // branch reads the decrement's own flags.
+        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_update_jumps` matched.
-        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let test = unsafe { &*test_ip };
         // A test of the counter (`COUNTER`, `specialize_update_jumps`) reads the integer just
         // written, whose tag the update proved.
@@ -4165,12 +4166,13 @@ script_handler! {
         };
         r.set(i.a, value);
         let jump_ip = following(ip);
+        // SAFETY: the view records the distance to a validated jump target, the test record
+        // `specialize_update_jumps` matched. Computed before the fuel test, so the test's
+        // branch reads the decrement's own flags.
+        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         if script_fuel_out(cx) {
             resume!(cx, lane_jump_safepoint::<H>(jump_ip, Carried::script_in(cx, view)))
         }
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_update_jumps` matched.
-        let test_ip = unsafe { jump_ip.byte_offset((*jump_ip).jump()) };
         let test = unsafe { &*test_ip };
         let right = lane_small_constant::<H, false>(cx, test);
         let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), right) else {
