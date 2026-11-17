@@ -29,10 +29,7 @@ fn a_retired_loop_site_fuses_its_update_as_the_interpreter_does() {
     let (sites, retired) = after_run(JitMode::Full);
     assert!(no_sites == 0 && sites > 0, "only a jit run installs loop sites: {no_sites} and {sites}");
     assert!(!interpreted.is_empty(), "the loop has an update");
-    // The two runs lower `f` apart (`coalescing_repays` coalesces a looping body's copies only where a
-    // tier may run), so the update's records compare by kind: fused, as the loader fuses the interpreter's.
-    let fused = |handlers: &[*const ()]| handlers.iter().all(|&handler| update_direction::<TestHost>(handler).is_none());
-    assert!(retired.len() == interpreted.len() && fused(&interpreted) && fused(&retired), "the retired loop's update is fused as the interpreter's is");
+    assert_eq!(retired, interpreted, "the retired loop's update runs the records the interpreter's does");
 }
 
 /// The fusion of an update, a jump and the integer test the jump goes back to is one record's, as the
