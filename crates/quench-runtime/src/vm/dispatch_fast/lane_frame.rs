@@ -355,24 +355,49 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 mod staged_ops;
 pub(super) use staged_ops::*;
 
-lane_handler! {
-    pub(super) fn lane_move<ACC: u8>(cx, r, ip, i, view) {
-        let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = LaneFrame::<ACC>::new(r, view);
-        let Step::Value(value) = crate::staged::step(&mut stage, &mut frame, Operation::Move {
-            destination: i.a, source: i.b }) else { unreachable!("a move produces a value") };
-        next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+/// A lane record read as the staged decoder's fields (`staged::Fields`), its opcode the
+/// handler's const generic. The lane admits a register-defining record only without result flags
+/// (a returning one takes `returning_handler`), so its `a` is the result register as it is.
+#[derive(Clone, Copy)]
+struct LaneFields<'a, const OP: u16>(&'a LaneInstruction);
+
+impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
+    #[inline(always)]
+    fn op(self) -> Op {
+        match Op::from_index(OP as usize) { Some(op) => op, None => unreachable!() }
+    }
+    #[inline(always)] fn result_register(self) -> u16 { self.0.a }
+    #[inline(always)] fn register_a(self) -> u16 { self.0.a }
+    #[inline(always)] fn register_b(self) -> u16 { self.0.b }
+    #[inline(always)]
+    fn constant(self, _: crate::staged::DecodeContext<'_>) -> Option<Constant> {
+        Some(Constant::untyped(self.0.constant()))
     }
 }
 
+/// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row of the flow family
+/// that falls through. Derived from the catalog, so a row that joins the family gets its
+/// handler with no line written here.
+pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
+    matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
+        && matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough)
+}
+
 lane_handler! {
-    pub(super) fn lane_load_const<>(cx, r, ip, i, view) {
+    /// The lane handler of every opcode `lane_runs_row` admits, generated from its staged row
+    /// rather than written: the record decodes by the row family's one decoder
+    /// (`Operation::decode_flow`), the row steps on `Concrete` over the lane's frame, and the
+    /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
+    /// row to the residual a hand-written handler would be (Futamura's first projection).
+    pub(super) fn lane_row<OP: u16, ACC: u8>(cx, r, ip, i, view) {
+        let Some(operation) = Operation::decode_flow(LaneFields::<OP>(i), crate::staged::DecodeContext::EMPTY)
+            else { unreachable!("a lane record holds its operands") };
         let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-        let Step::Value(value) = crate::staged::step(&mut stage, &mut frame, Operation::LoadConst {
-            destination: i.a, constant: Constant::untyped(i.constant()) })
-            else { unreachable!("a constant produces a value") };
-        next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+        let mut frame = LaneFrame::<ACC>::new(r, view);
+        match crate::staged::step(&mut stage, &mut frame, operation) {
+            Step::Value(value) => next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view }),
+            Step::Control(_) | Step::Unresolved => sibling!(lane_general_step::<H>, r, ip, view),
+        }
     }
 }
 

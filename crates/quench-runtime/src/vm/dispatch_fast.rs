@@ -3306,7 +3306,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{lane_load_const, lane_move, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
+use lane_frame::{lane_row, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_require_object_coercible, staged_to_numeric, staged_typeof_index};
 
 lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
@@ -5993,7 +5993,7 @@ script_handler! {
 script_handler! {
     /// `lane_set_index` whose stored value the next record, a register `Move`, copies, the
     /// `t = a[i] = v` of compiled code (`specialize_store_moves`): the store and the copy as
-    /// one record, the copy carried as `lane_move` carries it. A store the fast path leaves
+    /// one record, the copy carried as `lane_row` carries a `Move`. A store the fast path leaves
     /// runs the store's own slow path, which continues at the `Move` record.
     fn lane_set_index_move<>(cx, r, ip, i, view) {
         let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
@@ -20966,9 +20966,10 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     } else if MemoryStore::from_direct_op(op).is_some() {
         lane_store::<H, OP, ACC>
     } else {
+        if lane_runs_row(op) {
+            return LaneHandler::producer(lane_row::<H, OP, ACC>);
+        }
         match op.class() {
-            Class::Move => return LaneHandler::producer(lane_move::<H, ACC>),
-            Class::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
             Class::WasmI32ShiftRightUnsignedAnd => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
@@ -23111,7 +23112,7 @@ fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
 /// (`lane_return_constant`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
-    let load = lane_load_const::<H> as Handler as *const ();
+    let load = lane_row::<H, { opc::LoadConst }, ACC_NONE> as Handler as *const ();
     let ret = lane_return::<H, NOT_LEAF> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
@@ -23577,7 +23578,7 @@ fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
 /// the fused copy and read (`lane_move_get_index_proved`). The read record stays, for a jump
 /// that enters it and for the pair's declined proofs.
 fn specialize_moved_index_reads<H: Host>(records: &mut [LaneInstruction]) {
-    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let copy = lane_row::<H, { opc::Move }, ACC_NONE> as Handler as *const ();
     let read = lane_get_index_proved::<H> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == copy && records[pc + 1].handler == read {
@@ -23602,13 +23603,13 @@ fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut
 }
 
 /// Gives each backward unconditional jump whose target is an integer update (`lane_inc_dec`),
-/// then optionally a register copy of its result (`lane_move`), then a forward test against a
+/// then optionally a register copy of its result (a `Move`'s `lane_row`), then a forward test against a
 /// small constant (`lane_jump_binary_false_small`), the fused back edge, update, copy and test
 /// (`lane_jump_back_update_small`). The head's records stay, for the loop's entry and for the
 /// values the fused record leaves to them.
 fn specialize_update_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
     let back = lane_jump_always::<H, true> as Handler as *const ();
-    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let copy = lane_row::<H, { opc::Move }, ACC_NONE> as Handler as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != back {
             continue;
@@ -23732,7 +23733,7 @@ fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
 /// enters it and for the store's own slow path.
 fn specialize_store_moves<H: Host>(records: &mut [LaneInstruction]) {
     let store = lane_set_index::<H> as Handler as *const ();
-    let copy = lane_move::<H, ACC_NONE> as Handler as *const ();
+    let copy = lane_row::<H, { opc::Move }, ACC_NONE> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == store && records[pc + 1].handler == copy && records[pc + 1].b == records[pc].a {
             records[pc].handler = lane_set_index_move::<H> as Handler as *const ();

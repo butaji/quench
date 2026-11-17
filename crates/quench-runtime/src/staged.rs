@@ -42,7 +42,7 @@ pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
-pub(crate) use decode::DecodeContext;
+pub(crate) use decode::{DecodeContext, Fields};
 pub(crate) use compare::{Comparison, Nullish};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
@@ -276,14 +276,16 @@ impl<W, P> Operation<W, P> {
         }
     }
 
-    /// The register moves and control transfers of `decode`.
-    fn decode_flow(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    /// The register moves and control transfers of `decode`, from any record a tier holds
+    /// (`Fields`): the one flow decoder, the bytecode's and the lane's alike.
+    #[inline(always)]
+    pub(crate) fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
-                constant: context.constant(instruction.constant_index())? },
+                constant: instruction.constant(context)? },
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
