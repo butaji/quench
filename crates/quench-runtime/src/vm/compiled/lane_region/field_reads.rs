@@ -123,6 +123,14 @@ impl Lowering<'_, '_> {
                 None => state.proofs.fields.push(read),
             }
         }
+        self.define_read_value(state, (pc, instruction), (value, ty), exit);
+    }
+
+    /// Defines `instruction`'s register as the `value` it read, of the slots' type `ty`: a raw
+    /// double's Number, an int32 view, or a tagged value proved Number where only Number
+    /// operations read it.
+    fn define_read_value(&mut self, state: &mut State, (pc, instruction): (usize, WideInstruction), (value, ty): (ir::Value, Type),
+        exit: ir::Block) {
         let destination = instruction.result_register();
         // A raw double's read boxed its binary64 word (`compiled::take_boxed_numbers`): the
         // register holds that word, and the box, which nothing else reads, folds away; an exit

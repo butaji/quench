@@ -9,8 +9,11 @@
 //! record, its shape, its layout) is read back through the frame, so a guard the frame holds
 //! the proof of is not emitted twice.
 
+#[path = "property_slots.rs"]
+mod slots;
+use slots::{formed_slot, kept_slot};
 use super::ic::{self, IcOp, Reached};
-use super::object::{object_record_at, read_slot_value, Form, Layout, Rep};
+use super::object::{object_record_at, Form, Layout};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
 use crate::bytecode::{FieldBase, FieldLookup, Register};
 use crate::typed_ir::Type;
@@ -411,38 +414,6 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
         _ => ic::run(stage, rest, at, records, miss),
     }
-}
-
-/// The value at `slot` of `owner`'s object, which must have exact `shape` and keep its values in
-/// a plain wide arena run: one compare of the record's auxiliary word, whose storage-form bits
-/// (inline, extras, narrow) are all clear in that form, proves both, as the interpreter's formed
-/// read does (`object::formed_own_layout`); the frame keeps the shape and the run.
-fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
-    at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Rep, usize), miss: S::Miss) -> Option<S::Word> {
-    let word = super::object::header_u32(stage, super::region::Region::ShapeWord.mutable(), at.record,
-        crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
-    let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
-    stage.guard(same, miss)?;
-    frame.prove_shape(stage, owner, shape, direct);
-    let payload = stage.load_u64(super::region::Region::Payload.mutable(), at.record, crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
-    let layout = Layout { slots: super::object::Slots::Flat(super::object::arena_run(stage, payload)), storage_len };
-    frame.keep_layout(owner, shape, layout);
-    Some(read_slot_value(stage, layout, slot, rep))
-}
-
-/// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
-/// where it covers the slot, else the one this read proves and keeps.
-fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32),
-    at: &Reached<S::Word, S::Cond>, (slot, form, storage_len, rep): (u16, Form, usize, Rep), miss: S::Miss) -> Option<S::Word> {
-    let layout = match frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
-        Some(layout) => layout,
-        None => {
-            let layout = ic::slot_layout(stage, at, form, storage_len, miss)?;
-            frame.keep_layout(owner, shape, layout);
-            layout
-        }
-    };
-    Some(read_slot_value(stage, layout, slot, rep))
 }
 
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is
