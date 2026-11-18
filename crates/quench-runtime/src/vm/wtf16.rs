@@ -68,14 +68,42 @@ const DEFERRED_DECODE_MIN_BYTES: usize = 64 << 10;
 fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     let mut storage = Rc::<[u16]>::new_uninit_slice(length);
     let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+    // Source text is mostly ASCII: each ASCII run widens byte by byte, which the compiler
+    // vectorizes, and only the other characters go through UTF-16 encoding (a 250 KB bundle's
+    // text: 32 Ir per byte through `encode_utf16` alone).
     let mut written = 0;
-    for (slot, unit) in output.iter_mut().zip(text.encode_utf16()) {
-        slot.write(unit);
-        written += 1;
+    let mut rest = text;
+    while !rest.is_empty() {
+        let ascii = rest.bytes().position(|byte| !byte.is_ascii()).unwrap_or(rest.len());
+        let (run, tail) = rest.split_at(ascii);
+        let slots = output.get_mut(written..written + run.len()).expect("the text has the units counted for it");
+        for (slot, &byte) in slots.iter_mut().zip(run.as_bytes()) {
+            slot.write(u16::from(byte));
+        }
+        written += run.len();
+        let Some(character) = tail.chars().next() else { break };
+        let mut units = [0; 2];
+        for &unit in character.encode_utf16(&mut units).iter() {
+            output.get_mut(written).expect("the text has the units counted for it").write(unit);
+            written += 1;
+        }
+        rest = &tail[character.len_utf8()..];
     }
     assert_eq!(written, length, "the text has the units counted for it");
     // SAFETY: every unit was written.
     unsafe { storage.assume_init() }
+}
+
+/// `Units::utf8_len` of UTF-16 units, without decoding them: each unit counts as the bytes
+/// of a character of its size (a surrogate as three, which a lone one's replacement character
+/// is), and a high surrogate followed by a low one is a four-byte character, not two of three.
+/// Both sums vectorize (a bundle's source: 31 Ir per unit through `decode_utf16`).
+fn wide_utf8_len(units: &[u16]) -> usize {
+    let sized: usize = units.iter().map(|&unit| 1 + usize::from(unit >= 0x80) + usize::from(unit >= 0x800)).sum();
+    let pairs = units.windows(2)
+        .filter(|pair| (0xD800..0xDC00).contains(&pair[0]) && (0xDC00..0xE000).contains(&pair[1]))
+        .count();
+    sized - 2 * pairs
 }
 
 /// Text made on demand and not yet charged, which the caller now charges.
@@ -429,9 +457,7 @@ impl<'a> Units<'a> {
     pub(crate) fn utf8_len(self) -> usize {
         match self {
             Self::Ascii(bytes) => bytes.len(),
-            Self::Wide(units) => char::decode_utf16(units.iter().copied())
-                .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER).len_utf8())
-                .sum(),
+            Self::Wide(units) => wide_utf8_len(units),
         }
     }
 
@@ -1509,6 +1535,22 @@ impl Hash for JsString {
 #[cfg(test)]
 mod tests {
     use super::JsString;
+
+    #[test]
+    fn wide_utf8_length_matches_the_lossy_encoding() {
+        let samples: [&[u16]; 7] = [&[], &[0x61], &[0xE9, 0x800, 0xFFFF], &[0xD83D, 0xDE00], &[0xD800, 0x62], &[0xDC00, 0xD800], &[0xD83D, 0xD83D, 0xDE00]];
+        for units in samples {
+            assert_eq!(super::wide_utf8_len(units), String::from_utf16_lossy(units).len(), "{units:?}");
+        }
+    }
+
+    #[test]
+    fn wide_units_match_the_standard_encoding() {
+        for text in ["", "abc", "é", "aé\u{1F600}b", "\u{1F600}", "x".repeat(100).as_str(), "мир, 世界 and ascii"] {
+            let expected: Vec<u16> = text.encode_utf16().collect();
+            assert_eq!(&*super::wide_units(text, expected.len()), expected.as_slice(), "{text}");
+        }
+    }
 
     #[test]
     fn concatenation_length_checks_the_limit_and_arithmetic_overflow() {
