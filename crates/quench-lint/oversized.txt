@@ -569,7 +569,6 @@ complexity crates/quench-runtime/src/vm.rs::Vm<H>::call_prepared 13
 complexity crates/quench-runtime/src/vm.rs::Vm<H>::call_value_with_target_inner 12
 complexity crates/quench-runtime/src/vm.rs::Vm<H>::instantiate_global_declarations 16
 complexity crates/quench-runtime/src/vm/agent.rs::AgentMethod::from_index 12
-complexity crates/quench-runtime/src/vm/array.rs::Vm<H>::array_concat_native 11
 complexity crates/quench-runtime/src/vm/array_buffer.rs::Vm<H>::array_buffer_getter_native 18
 complexity crates/quench-runtime/src/vm/array_buffer.rs::Vm<H>::array_buffer_slice_native 20
 complexity crates/quench-runtime/src/vm/array_buffer.rs::Vm<H>::array_buffer_transfer_native 14

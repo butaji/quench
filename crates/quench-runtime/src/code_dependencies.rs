@@ -260,10 +260,14 @@ pub(crate) enum IntactFuse {
     StringIncludes,
     RegExpTest,
     RegExpExec,
+    /// `Array.prototype.constructor` is the realm's `Array`.
+    ArrayConstructor,
+    /// `Array[@@species]` is the intrinsic getter, a getter-only accessor.
+    ArraySpecies,
 }
 
 impl IntactFuse {
-    pub(crate) const COUNT: usize = 12;
+    pub(crate) const COUNT: usize = 14;
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -311,6 +315,13 @@ impl Fuses {
             FuseState::Popped => Some(false),
             FuseState::Unproved => None,
         }
+    }
+
+    /// The slot a proof of `fuse` names: where its holder keeps the intrinsic while it is
+    /// intact.
+    #[inline(always)]
+    pub(crate) fn slot(&self, fuse: IntactFuse) -> usize {
+        self.records[fuse as usize].slot as usize
     }
 
     /// Whether `fuse`'s holder ever changed the slot or layout a proof of it named.

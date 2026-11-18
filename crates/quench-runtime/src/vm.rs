@@ -130,6 +130,7 @@ mod array;
 pub(crate) mod array_buffer;
 mod array_builtins;
 mod array_copy;
+mod array_dense;
 mod array_flatten;
 mod array_group;
 mod array_indexed;
