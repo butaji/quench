@@ -2260,6 +2260,9 @@ pub(crate) struct Observation<'a> {
     /// callee's environment (`Vm::lane_callee_captures`): where the frame's own capture reads
     /// load, its identity guard fixing the environment.
     pub(crate) frame_captures: &'a [(usize, usize)],
+    /// The construct plan each construction record holds now, by function and PC
+    /// (`VmFacts::construct_plans`).
+    pub(in crate::vm) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<super::ScalarConstructPlan>>,
 }
 
 
