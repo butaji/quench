@@ -141,6 +141,13 @@ pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 /// again with less inlined (`Vm::compile_lane_method`).
 pub(super) const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 
+thread_local! {
+    /// The SSA builder context of this thread's lowerings, reused as Cranelift means a
+    /// `FunctionBuilderContext` to be: a finished lowering's `finalize` empties it and keeps
+    /// its tables' capacity for the next.
+    static BUILDER_CONTEXT: std::cell::Cell<Option<FunctionBuilderContext>> = const { std::cell::Cell::new(None) };
+}
+
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegisterFact {
@@ -1551,7 +1558,9 @@ pub(super) fn lower(
     // Every access this lowering emits is tagged with its alias region (`regions::flags`), so the
     // function names them before anything verifies or compiles it (declaring again is a no-op).
     super::regions::declare_regions(&mut native);
-    let mut builder_context = FunctionBuilderContext::new();
+    // The SSA builder's tables come back from the last lowering that finished, which
+    // `finalize` left empty; one that gave up drops its context with it.
+    let mut builder_context = BUILDER_CONTEXT.with(|held| held.take()).unwrap_or_default();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
     let entry_block = builder.create_block();
     builder.append_block_params_for_function_params(entry_block);
@@ -1925,6 +1934,7 @@ pub(super) fn lower(
     let stable = lowering.stable.take();
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
+    BUILDER_CONTEXT.with(|held| held.set(Some(builder_context)));
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable })
 }

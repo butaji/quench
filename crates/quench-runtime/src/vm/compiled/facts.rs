@@ -67,7 +67,9 @@ impl Facts {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
         run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
-            relations: Relations { length_of: relations(&self.length_of), below: relations(&self.below), under: relations(&self.under) } }
+            relations: { let (length_of, below, under) = (relations(&self.length_of), relations(&self.below), relations(&self.under));
+                let held = [&length_of, &below, &under].iter().any(|rows| rows.iter().any(Option::is_some));
+                Relations { length_of, below, under, held } } }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
