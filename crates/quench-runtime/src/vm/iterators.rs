@@ -1440,36 +1440,11 @@ impl<H: Host> Vm<H> {
         };
         let result_root = self.heap.root(result);
         let result = self.heap.root_value(result_root).unwrap_or(result);
-        if !self.is_object_like(result) {
-            self.heap.release_root(result_root);
-            self.heap.release_root(next_root);
-            self.heap.release_root(source_root);
-            return Err(self.type_error(p, "iterator next result is not an object".into()));
-        }
-        let done_atom = self.runtime_atoms.done;
-        let result = self.heap.root_value(result_root).unwrap_or(result);
-        let done = match self.get_property(p, result, done_atom) {
-            Ok(done) => done,
-            Err(error) => {
-                self.heap.release_root(result_root);
-                self.heap.release_root(next_root);
-                self.heap.release_root(source_root);
-                return Err(error);
-            }
-        };
-        if self.truthy(done) {
-            self.heap.release_root(result_root);
-            self.heap.release_root(next_root);
-            self.heap.release_root(source_root);
-            return Ok(None);
-        }
-        let value_atom = self.runtime_atoms.value;
-        let result = self.heap.root_value(result_root).unwrap_or(result);
-        let value = self.get_property(p, result, value_atom);
+        let step = self.iterator_result_value(p, result);
         self.heap.release_root(result_root);
         self.heap.release_root(next_root);
         self.heap.release_root(source_root);
-        value.map(Some)
+        step
     }
 
     fn mark_iterator_done(&mut self, iterator: Value) {
