@@ -70,6 +70,7 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;
+mod entry_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
@@ -106,7 +107,7 @@ mod site_posterior;
 #[path = "compiled/numeric_image.rs"] mod numeric_image; #[cfg(test)] pub(super) use numeric_image::compile_js_typed_numeric_region;
 pub(super) use numeric_image::NumericImage;
 #[path = "compiled/ahead_images.rs"] mod ahead_images; pub use ahead_images::AheadImages;
-#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{enter_body, BodyEntry, BodyReturn};
+#[path = "compiled/lane_body_abi.rs"] mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 pub(super) use lane_body_abi::lane_body_signature;
 #[path = "compiled/lane_facts.rs"]
 pub(in crate::vm) mod lane_facts;
@@ -3209,7 +3210,7 @@ impl CompiledOsrRegion {
             // A region that calls callees by their entries runs on the lane frame's payload, which their
             // own helpers read (`region_lend`).
             let lend = self.calls.enters_callees().then_some(direct_calls);
-            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend))
+            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend), region.header)
         }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
@@ -7471,9 +7472,11 @@ fn run_numeric_entry(
     );
     let mut context = CallContext::native_adapter(std::ptr::null_mut(), flag, poll_page);
     context.interrupt_owner = interrupt;
+    let descriptor = entry_protocol::EntryDescriptor { kind: entry_protocol::EntryKind::Numeric, receiver: 0, captures: 0, registers: arguments, entry };
     // SAFETY: the region reads only its parameter slots, which `arguments` holds for the
     // call, and its ABI does not inspect the adapter payload.
-    unsafe { enter_body(&mut context, 0, 0, arguments, entry) }
+    let returned = unsafe { entry_protocol::enter(&mut context, &descriptor) };
+    entry_protocol::numeric_result(&descriptor, returned)
 }
 
 /// A fault inside the running compiled call's guard reservation resumes at
