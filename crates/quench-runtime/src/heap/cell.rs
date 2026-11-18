@@ -3845,13 +3845,15 @@ impl EnvironmentSlots {
             })
         };
         let Some((_, owner)) = self.sparse() else {
-            // Every slot shares with its current owner, then the fresh and reset ones own.
-            let mut copy = super::thin_slice::ThinBoxSlice::from_exact_iter(self.0.iter().map(
-                |slot| match slot.state() {
-                    EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
-                    EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
-                },
-            ));
+            // Every slot shares with its current owner, then the fresh and reset ones own: one
+            // copy of the words, then a select per word (a shared word names its owner already).
+            let shared = EnvironmentSlot::shared(environment);
+            let mut copy = super::thin_slice::ThinBoxSlice::from_slice(&self.0);
+            for slot in copy.iter_mut() {
+                if !slot.0.is_shared_environment_slot() {
+                    *slot = shared;
+                }
+            }
             for &slot in fresh {
                 let index = usize::from(slot);
                 let Some(source) = self.0.get(index) else {

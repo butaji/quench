@@ -406,6 +406,10 @@ impl Value {
         (Self(edge), edge & TAG_MASK == TAG_HEAP)
     }
 
+    /// Whether this word is a shared environment slot (`shared_environment_slot`).
+    #[inline(always)] pub(crate) fn is_shared_environment_slot(self) -> bool {
+        self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT
+    }
     #[inline(always)] pub(crate) fn shared_environment_owner(self) -> Option<Self> {
         (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
             .then_some(Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))
