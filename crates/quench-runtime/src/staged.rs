@@ -106,7 +106,8 @@ pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
-mod wasm_concrete;
+pub(crate) mod wasm_concrete;
+pub(crate) mod wasm_gc;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
@@ -510,6 +511,8 @@ mod wasm_memory_tests;
 mod wasm_flow_tests;
 #[cfg(test)]
 mod wasm_call_tests;
+#[cfg(test)]
+mod wasm_gc_tests;
 #[cfg(test)]
 mod wasm_simd_tests;
 #[cfg(test)]

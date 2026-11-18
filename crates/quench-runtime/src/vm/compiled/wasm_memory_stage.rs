@@ -17,6 +17,7 @@ use crate::staged::wasm_memory::{
     Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
 };
 use crate::wasm::INDEX_GROW_FAILURE;
+use crate::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
@@ -136,7 +137,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 infallible(store(self, access, index, instruction.imm(), value, true));
             }
             Memory::Size => {
-                let pages = size(self);
+                // Compiled memory is admitted only at the default page size
+                // (`supports_compiled_memory`, `needs_compiled_memory`), so this is the bound
+                // memory's page size.
+                let pages = size(self, WASM_PAGE_BITS);
                 self.write(a, Kind::I32, pages);
             }
             Memory::Grow => {

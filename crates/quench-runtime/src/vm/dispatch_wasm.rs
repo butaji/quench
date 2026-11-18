@@ -13,7 +13,7 @@ use crate::staged::wasm_simd::WasmSimd as _;
 use crate::staged::wasm_simd_concrete::{ConcreteSimd, execute};
 use crate::staged::wasm_instance::Instance;
 use crate::staged::wasm_machine::ConcreteMemory;
-use crate::staged::wasm_memory::fill as memory_fill_rule;
+use crate::staged::wasm_memory::{fill as memory_fill_rule, pages as memory_pages_rule, scalar_address};
 use crate::staged::wasm_step::Step;
 use crate::staged::wasm_table_ops::TableOp;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
@@ -72,15 +72,14 @@ impl<H: Host> Vm<H> {
             }
             Op::WasmMemoryAddress => {
                 let memory = self.read(f, i.register_c());
-                let address = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
+                let index = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
                 let Constant::WasmBits64(offset) = p.constants[i.constant_index()] else {
                     return Err(JsError::validation(
                         "invalid Wasm memory offset constant".into(),
                     ));
                 };
-                let effective = address
-                    .checked_add(offset)
-                    .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsMemory))?;
+                let effective = scalar_address(&mut ConcreteWasm, index, offset)
+                    .map_err(JsError::wasm_trap_error)?;
                 let value = self.encode_wasm_value(crate::WasmValue::I64(effective as i64));
                 self.write(f, i.result_register(), value);
             }
@@ -168,7 +167,8 @@ impl<H: Host> Vm<H> {
                     let delta = self.wasm_memory_index(memory, self.read(f, i.register_c()))?;
                     self.wasm_memory_grow(memory, delta)?
                 } else {
-                    Some(self.wasm_memory_pages(memory)?)
+                    let page_bits = self.wasm_memory_type(memory)?.page_size_log2();
+                    Some(self.wasm_memory_read(memory, |stage| memory_pages_rule(stage, page_bits))?)
                 };
                 let index_type = self.wasm_memory_index_type(memory)?;
                 let value = self.encode_wasm_index_size(index_type, pages);
