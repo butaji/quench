@@ -1,7 +1,7 @@
 //! The reads `GetField` records keep as their hints beside the site caches: a prototype's
 //! method (`HolderHint`) and a getter's own-field return (`GetterHint`).
 use super::*;
-use crate::staged::holder::{concrete_holder_read, concrete_own_constant_read};
+use crate::staged::holder::concrete_own_constant_read;
 
 /// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
 /// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver whose whole auxiliary word, exact
@@ -73,19 +73,14 @@ impl PrototypeHints {
 }
 
 impl<H: Host> Vm<H> {
-    /// What the getter hint `index` answers for a read of `atom` from the direct object
-    /// `object`: its own field, for a receiver of the hint's shape and prototype while the
-    /// watch holds. `None` for any other receiver or name, or no such hint.
+    /// The operands of getter hint `index` for a read of `atom` (`IcOp::GetterOwn`): the guard
+    /// word of the receivers it answers, its watch's address and the own slot it returns, for a
+    /// receiver of the hint's shape and prototype while the watch holds. `None` for any other
+    /// name, or no such hint.
     #[inline(always)]
-    pub(super) fn getter_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
+    pub(super) fn getter_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64, u16)> {
         let hint = self.holder_hints.getter.get(usize::from(index))?;
-        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
-        // SAFETY: the hint's watch is live as long as the hint.
-        (hint.atom == atom).then(|| unsafe {
-            concrete_holder_read(receiver, hint.guard, std::rc::Rc::as_ptr(&hint.watch), Value::UNDEFINED)
-        })??;
-        // SAFETY: the exact shape the guard matched holds the slot the hint recorded.
-        Some(unsafe { self.heap.property_get_flat(receiver, usize::from(hint.slot)) })
+        (hint.atom == atom).then(|| (hint.guard, std::rc::Rc::as_ptr(&hint.watch) as u64, hint.slot))
     }
 
     /// Makes the own field `slot` of the direct object `object`, which its immediate prototype's

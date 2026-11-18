@@ -60,6 +60,10 @@ pub(crate) enum IcOp<'a> {
     /// and link guards, and the watch at `watch` on the prototype's values still holds, else the
     /// read misses. The read starts from the receiver's word, not an object record. It ends the read.
     HeldNumber { watch: u64, value: u64 },
+    /// The own field at `slot` of the record, which a getter's hint returned for a receiver of
+    /// layout `guard` (`getter_own_read`): the record's layout is `guard` and the watch at `watch`
+    /// on its prototype's values still holds, else the read misses. It ends the read.
+    GetterOwn { guard: u64, watch: u64, slot: u16 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -123,6 +127,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             }
             IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
             IcOp::HeldNumber { watch, value } => return number_read(stage, at.record, watch, value, miss),
+            IcOp::GetterOwn { guard, watch, slot } => return getter_own_read(stage, at.record, guard, watch, slot, miss),
         }
     }
     None
@@ -147,6 +152,25 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, 
     let zero = stage.constant(0);
     let value = stage.site(value);
     Some(stage.add_imm(zero, value))
+}
+
+/// The own field the getter hint `(guard, watch, slot)` records for the object part at `record`:
+/// `None` (leaving at `miss`) where the record's layout word differs from `guard` (`holder_read`'s
+/// compare), or the watch on its prototype's values no longer holds. The field is then the tagged
+/// slot `LoadSlot` reads, as a getter's own-field return is.
+#[inline(always)]
+pub(crate) fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
+    miss: S::Miss) -> Option<S::Word> {
+    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
+    let guard = stage.site(guard);
+    let same = stage.eq_imm(words, guard);
+    stage.guard(same, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let at = Reached::bare(record);
+    load_slot(stage, &at, (slot, Representation::Tagged), Form::Either, usize::from(slot) + 1, miss)
 }
 
 /// The value the own-constant hint `(record, watch, value)` records for the object part at

@@ -649,7 +649,7 @@ mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs, scalar_construct_plan, construct_plan_holds};
-use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
+use getters::{lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
 mod unary_values;
@@ -7536,6 +7536,13 @@ pub(super) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE ||
 /// as `n.toFixed`: own-form index 14.
 pub(super) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
 
+/// The site facts of a read that met a getter whose hint returns an own field of the receiver
+/// (`IcOp::GetterOwn`, `Vm::getter_hint_operands`), of `this` and of a register; a miss takes the
+/// getter's refresh, which makes the hint (`lane_get_field_getter_refresh`).
+pub(super) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
+pub(super) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
+pub(super) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
+
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
@@ -8085,7 +8092,14 @@ script_handler! {
             }
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
-            FieldSiteTier::Getter => Some(lane_get_field_getter_hinted::<H>),
+            // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a
+            // local base, which no row names, reads through the getter's activation.
+            FieldSiteTier::Getter => Some(single_base_handler(
+                i.b,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_THIS>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER>,
+                lane_get_field_getter::<H>,
+            )),
             FieldSiteTier::Polymorphic => Some(single_base_handler(
                 i.b,
                 lane_get_field_polymorphic::<H, true, true>,

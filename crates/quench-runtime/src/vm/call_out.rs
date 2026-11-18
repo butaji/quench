@@ -58,6 +58,8 @@ impl<H: Host> Vm<H> {
             CallOut::Protocol { step, .. } => self.protocol_step(p, site, step, first, second),
             CallOut::Spread { passing, .. } => self.spread_call(p, site, passing, [first, second], &list).map(Some),
             CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
+            CallOut::Accessor { atom, site: cache, .. } =>
+                self.get_field_cached(p, first.expect("an accessor read names its receiver"), atom, cache).map(Some),
             _ => self.name_step(p, site, operation, first),
         }
     }
