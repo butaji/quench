@@ -141,7 +141,7 @@ pub(super) unsafe extern "C" fn lane_new_template<H: Host>(vm: u64, residual: u6
 }
 
 /// A lane body's string concatenation of the `count` parts at `parts`, where each converts to a
-/// string without guest code (`Vm::pure_string_concat`, the lane's `lane_string_concat`);
+/// string without guest code (`Vm::pure_string_concat`, the lane's `StringConcat` row);
 /// `DELETED` for any other part, a result past the string limit, or a due collection.
 pub(super) unsafe extern "C" fn lane_new_concat<H: Host>(vm: u64, residual: u64, payload: u64, parts: u64, count: u64) -> u64 {
     // SAFETY: as `lane_new_object`; the residual is the running program, and `parts` addresses

@@ -187,7 +187,7 @@ pub(crate) enum Miss {
     Unary,
     /// A `StringConcat` whose parts the pure concatenation declines (a part that converts with guest
     /// code, or a result past the string length limit): the lane's own concatenation of the parts
-    /// (`denoted::lane_string_concat_miss`), else the general step.
+    /// (`denoted::string_concat_miss`), else the general step.
     Concat,
 }
 
