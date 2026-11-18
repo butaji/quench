@@ -225,4 +225,15 @@ function nameRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.na
 function lengthRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.length) | 0; } return a; }
 ops.field_name = function (n) { return nameRead(n, { id: 3, name: 4 }); };
 ops.field_length = function (n) { return lengthRead(n, { id: 3, length: 4 }); };
+// Builtin bodies against their C twins (TOD-1839, rule: C-shaped code runs as C). Each budget in
+// ir_budget.txt is the twin's count plus a call-dispatch allowance, not 3x C: the builtin body
+// itself must cost what C costs, and the interpreter adds only the call's dispatch.
+ops.bi_dv_get_f64 = function (n) { const dv = new DataView(new ArrayBuffer(64)); for (let j = 0; j < 8; j++) dv.setFloat64(j * 8, j + 0.5, true); let s = 0; for (let i = 0; i < n; i++) { s += dv.getFloat64((i & 7) * 8, true); } return s; };
+ops.bi_dv_set_f64 = function (n) { const dv = new DataView(new ArrayBuffer(64)); for (let i = 0; i < n; i++) { dv.setFloat64((i & 7) * 8, i, true); } return dv.getFloat64(0, true); };
+ops.bi_dv_get_u32 = function (n) { const dv = new DataView(new ArrayBuffer(64)); for (let j = 0; j < 16; j++) dv.setUint32(j * 4, j * 7); let a = 0; for (let i = 0; i < n; i++) { a = (a + dv.getUint32((i & 15) * 4)) | 0; } return a; };
+ops.bi_arr_slice = function (n) { const arr = []; for (let j = 0; j < 16; j++) arr.push(j); let a = 0; for (let i = 0; i < n; i++) { a = (a + arr.slice(4, 12).length) | 0; } return a; };
+ops.bi_arr_concat = function (n) { const x = [1, 2, 3, 4], y = [5, 6, 7, 8]; let a = 0; for (let i = 0; i < n; i++) { a = (a + x.concat(y).length) | 0; } return a; };
+ops.bi_tmpl = function (n) { const p = "ab", q = "xyz"; let a = 0; for (let i = 0; i < n; i++) { a = (a + `${p}-${i & 1023}-${q}`.length) | 0; } return a; };
+ops.bi_map_get = function (n) { const m = new Map(); for (let j = 0; j < 64; j++) m.set(j, j * 3); let a = 0; for (let i = 0; i < n; i++) { a = (a + m.get(i & 63)) | 0; } return a; };
+ops.bi_set_has = function (n) { const s = new Set(); for (let j = 0; j < 64; j += 2) s.add(j); let a = 0; for (let i = 0; i < n; i++) { if (s.has(i & 63)) a++; } return a; };
 globalThis.PRIMITIVE_OPS = ops;
