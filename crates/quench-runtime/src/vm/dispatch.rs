@@ -591,19 +591,22 @@ impl<H: Host> Vm<H> {
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                debug_assert_eq!(self.frames[f].program, self.active_program);
-                let value = self.active_constant(i.constant_index()).ok_or_else(|| {
-                    JsError::validation("constant index is outside program".into())
-                })?;
-                self.write(f, i.result_register(), value);
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of_constants(&p.constants)) {
+                    return self.load_const_miss(f, i);
+                }
             }
             Op::CreateRegExpLiteral => {
                 let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
                 self.write(f, i.result_register(), value);
             }
             Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
-            | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
             | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
+            // Captures and name loads run their staged rows first; a row that leaves is the owner's step.
+            Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof => {
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                }
+            }
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.result_register(), this);
@@ -1613,6 +1616,16 @@ impl<H: Host> Vm<H> {
         if !self.step_staged(p, f, i, pc, operation) && self.truthy(self.read(f, i.register_a())) == taken {
             *pc = i.jump_target() as usize;
         }
+    }
+
+    #[inline(never)]
+    fn load_const_miss(&mut self, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        debug_assert_eq!(self.frames[f].program, self.active_program);
+        let value = self.active_constant(i.constant_index()).ok_or_else(|| {
+            JsError::validation("constant index is outside program".into())
+        })?;
+        self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
     }
 
     /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and
