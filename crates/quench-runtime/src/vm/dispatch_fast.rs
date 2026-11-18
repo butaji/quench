@@ -4587,7 +4587,21 @@ unsafe fn lane_binary_value<H: Host>(
 ) -> Option<Value> {
     let left = lane_operand_value(cx, r, i.b)?;
     let right = lane_operand_value(cx, r, i.c)?;
-    let operator = i.imm();
+    unsafe { lane_binary_values::<H>(cx, i.imm(), left, right) }
+}
+
+/// The value of `left operator right` where it runs no guest code (`lane_binary_value`'s pure
+/// part, which the lane frame answers a row's `Binary` or `Equality` call-out with).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_binary_values<H: Host>(
+    cx: *mut LaneContext<H>,
+    operator: u32,
+    left: Value,
+    right: Value,
+) -> Option<Value> {
     match unsafe { vm(cx) }.number_binary(operator, left, right) {
         Some(value) => Some(value),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
@@ -23106,19 +23120,29 @@ fn specialize_register_operands<H: Host>(
             }
             continue;
         }
-        if ![binary, get_index, forward_test, backward_test].contains(&record.handler) {
+        // A plain `Binary` row decodes register operands and a result without flags (`decode_binary`);
+        // any other record keeps the hand handler, which reads constants and operand kinds.
+        if is_row::<H, { crate::staged::BINARY_ROW }>(record.handler)
+            && (instruction.operand_b().register_index().is_none()
+                || instruction.operand_c().register_index().is_none()
+                || instruction.result_flags() != 0)
+        {
+            record.handler = binary;
+        }
+        let plain_binary = record.handler == binary || is_row::<H, { crate::staged::BINARY_ROW }>(record.handler);
+        if !plain_binary && ![get_index, forward_test, backward_test].contains(&record.handler) {
             continue;
         }
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
         use crate::bytecode::OperandKind::{Constant, Register};
-        if record.handler == binary && let Some(handler) = constant_left_operator_handler::<H>(instruction, constants) {
+        if plain_binary && let Some(handler) = constant_left_operator_handler::<H>(instruction, constants) {
             record.handler = handler as *const ();
             continue;
         }
         let (Some(Register), Some(right_kind)) = (left.kind(), right.kind()) else {
             continue;
         };
-        if record.handler == binary {
+        if plain_binary {
             if instruction.numeric_local_target().is_some() {
                 continue;
             }

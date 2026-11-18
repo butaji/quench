@@ -176,6 +176,10 @@ pub(crate) const UNARY_ROW: u16 = Op::Unary as u16;
 /// give the row its record's hint.
 pub(crate) const GLOBAL_WRITE_ROW: u16 = Op::StoreName as u16;
 
+/// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
+/// it by this, the hand handler being the fallback for the operands the row does not decode).
+pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
+
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global
 /// store has no result register, and answers the source word it stored.

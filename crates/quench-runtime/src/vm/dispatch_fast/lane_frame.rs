@@ -133,6 +133,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The global object's own data field a global-name store writes through the record's hint,
     /// where the row is a `StoreName` (`global_name_store`).
     global_store: Option<GlobalStore>,
+    /// The lane's pure binary operation (`lane_binary_values`), which answers a `Binary` or an
+    /// `Equality` call-out a row makes where its words do not decide it (`vm_step`).
+    binary: Option<(*mut (), unsafe fn(*mut (), u32, Value, Value) -> Option<Value>)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -158,7 +161,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -182,7 +185,18 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, reads: Reads::NONE }
+    }
+}
+
+/// The operands and operator of a binary call-out the lane's pure binary answers: a `Binary`, or an
+/// `Equality` as the operator of its strictness and negation.
+fn binary_call(operation: CallOut) -> Option<(Register, Register, u32)> {
+    match operation {
+        CallOut::Binary { left, right, operator } => Some((left, right, operator)),
+        CallOut::Equality { left, right, strict, negated } =>
+            Some((left, right, crate::vm::operations::equality_binary_operator(strict, negated))),
+        _ => None,
     }
 }
 
@@ -295,6 +309,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn vm_step(&mut self, stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, Boxing)> {
+        if let Some((context, binary)) = self.binary
+            && let Some((left, right, operator)) = binary_call(operation)
+        {
+            let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+            // SAFETY: the running lane's context, live for the row's step.
+            return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
+        }
         let CallOut::Decide { left, right, operator } = operation else { return None };
         let Decisions { context, decide, .. } = self.decisions?;
         let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
@@ -640,6 +661,12 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         let (capture_slots, captures) = (Some(capture_reads(r.capture())), Some(CaptureStores::own(r)));
         return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures,
             ..LaneFrame::<ACC>::new(r, view) };
+    }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
+        // A generic row's word-decided answers, and the pure binary of its call-outs (`lane_binary_values`).
+        let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> =
+            |context, operator, left, right| unsafe { super::lane_binary_values::<H>(context.cast(), operator, left, right) };
+        return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);

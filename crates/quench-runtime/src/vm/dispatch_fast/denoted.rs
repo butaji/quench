@@ -68,7 +68,6 @@ script_handler! {
 /// general arm the views' specialized unary handlers fall back to.
 pub(super) const fn denoted_handler<H: Host>(op: Op) -> Option<Handler> {
     match op.js_denotation() {
-        crate::bytecode::JsDenotation::NumericBinary => Some(lane_binary::<H>),
         crate::bytecode::JsDenotation::StringConcatenation => Some(lane_string_concat::<H>),
         _ => None,
     }
