@@ -73,6 +73,17 @@ pub(super) struct Hoist {
     pub(super) header: usize,
 }
 
+/// The relation jump at `pc` the VM decides (`Comparison::Decided`), which the entry of the loop at
+/// `header` decides once from `sources`: its operand registers, or for one the loop copies into
+/// before the jump in the jump's own block (`Move`), the register it copies, which the loop
+/// does not write.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Decision {
+    pub(super) pc: usize,
+    pub(super) header: usize,
+    pub(super) sources: [Register; 2],
+}
+
 /// The product at `multiply` of `counter` and `scale`, which the entry of the loop `span` holds as a
 /// word that advances by `scale` at each step of the counter (every write of it in the loop).
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +100,7 @@ impl Lowering<'_, '_> {
     /// then the views of its arrays and its other invariant reads, then what they make provable.
     pub(super) fn hoist_entry(&mut self, state: &mut State, header: usize) {
         self.hoist_pure(state, header);
+        self.hoist_decisions(state, header);
         self.hoist_arrays(state, header, false);
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);

@@ -207,6 +207,12 @@ pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, regi
     }
 }
 
+/// Whether a value of type `ty` is known to be no Number (a string, a boolean, `null`): a relation
+/// reading it is no Number comparison.
+pub(in crate::vm) fn numberless(ty: Type) -> bool {
+    !ty.is_subtype(Type::NUMBER) && !Type::NUMBER.is_subtype(ty)
+}
+
 pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
     for register in operands.into_iter().filter_map(register) {
         if !types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) {
@@ -269,8 +275,11 @@ fn transfer(
             let operand_types = operands.map(|operand| operand_type(constants, operand,
                 |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
             let operator = instruction.binary_operator_field();
+            // So does a relation with an operand known to hold no Number (`numberless`), which
+            // the lane decides by the interpreter's rule (`Lowering::decided_relation`).
             let numeric = super::super::operations::NumberRelation::from_operator(operator).is_some()
-                && super::super::operations::equality_operator(operator).is_none();
+                && super::super::operations::equality_operator(operator).is_none()
+                && !operand_types.iter().any(|ty| numberless(*ty));
             if numeric && !operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
         }
@@ -369,7 +378,8 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
     written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>) -> Flow {
     let flow = unary_transfer(types, instruction)
         .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
-    if let Some(ty) = observed.filter(|_| instruction.op().class().eq(Class::GetIndex) || instruction.op().is_get_field()) {
+    // `observed` names only the reads the observation typed (element reads, `length` reads).
+    if let Some(ty) = observed {
         for register in written(instruction) { set(types, register, ty); }
     }
     flow

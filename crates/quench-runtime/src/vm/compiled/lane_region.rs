@@ -1136,8 +1136,9 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         opcode if opcode.is_to_numeric() || opcode.is_get_index() || opcode.is_require_object_coercible() => !instruction.returns_from_frame(),
         // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
-        opcode if opcode.is_unary() => instruction.result_flags() == 0 && !instruction.writes_current_this()
-            && crate::vm::operations::NumberUnary::from_js_instruction(opcode, instruction.unary_operator()).is_some(),
+        opcode if opcode.immediate_role() == crate::bytecode::ImmediateRole::UnaryOperator
+            && crate::vm::operations::NumberUnary::from_js_instruction(opcode, instruction.unary_operator()).is_some() =>
+            instruction.result_flags() == 0 && !instruction.writes_current_this(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     })
 }
@@ -1707,6 +1708,9 @@ pub(super) fn lower(
         }
     }
     let mut initial = completion.initial_types(count, usize::from(function.params));
+    if let Coverage::Loop { header, backedge, .. } = coverage {
+        seed_constant_entries(&instructions, program, (header, backedge), &mut initial);
+    }
     let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
     if !numeric {
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
@@ -1986,7 +1990,9 @@ impl Lowering<'_, '_> {
     fn int32_constant_sum(&self, pc: usize, register: Register) -> Option<(usize, Register)> {
         let (at, register) = self.reader(pc + 1, register);
         let next = self.unit.instructions.get(at).copied()?;
-        if !next.op().is_binary() || next.returns_from_frame() || next.writes_current_this() || next.result_flags() != 0 { return None; }
+        use crate::bytecode::ImmediateRole as Role;
+        let operator = matches!(next.op().immediate_role(), Role::BinaryOperator | Role::AdditionOperator | Role::MultiplicationOperator);
+        if !operator || next.returns_from_frame() || next.writes_current_this() || next.result_flags() != 0 { return None; }
         let operation = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator())?;
         if !operation.int32_projection_is_wrapping() { return None; }
         let operands = [next.operand_b(), next.operand_c()];
@@ -2703,6 +2709,11 @@ impl Lowering<'_, '_> {
                 let equal = self.equality(state, pc, left, right, strict)?;
                 Some(if negated { self.raw_binary_imm(Binary::Xor, equal, 1) } else { equal })
             }
+            // A relation of operands not both Numbers (strings, `in`): the interpreter's own
+            // rule (`lane_decision`) through the pure `Decide` helper; where only the full step
+            // decides (a coercion that may run guest code), the region leaves at the test.
+            None if !numbers && helpers && self.operand_supported(left) && self.operand_supported(right) =>
+                self.decided_relation(state, pc, operator, left, right),
             _ => self.number_relation(state, pc, operator, left, right),
         }
     }
@@ -2876,6 +2887,18 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit(state, pc);
         let (value, constructor) = (self.operand_tagged(state, value)?, self.operand_tagged(state, constructor)?);
         let holds = self.helper_call(LaneHelper::InstanceOf, &[value, constructor]);
+        let decided = self.raw_compare_imm(Relation::NotEqual, holds, Value::DELETED.to_bits() as i64);
+        emit_js_guard(&mut self.builder, decided, exit);
+        Some(self.raw_unary(Unary::Narrow(Lane::I8), holds))
+    }
+
+    /// A relation the `Decide` helper answers by the interpreter's rule (`lane_decision`): its
+    /// boolean, or a leave at the test where only the full step decides.
+    fn decided_relation(&mut self, state: &mut State, pc: u32, operator: u32, left: Operand, right: Operand) -> Option<ir::Value> {
+        let exit = self.guard_exit(state, pc);
+        let (left, right) = (self.operand_tagged(state, left)?, self.operand_tagged(state, right)?);
+        let operator = self.raw_const(Lane::I64, i64::from(operator));
+        let holds = self.helper_call(LaneHelper::Decide, &[left, right, operator]);
         let decided = self.raw_compare_imm(Relation::NotEqual, holds, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, decided, exit);
         Some(self.raw_unary(Unary::Narrow(Lane::I8), holds))
@@ -4330,3 +4353,30 @@ mod lowering_tests;
 #[cfg(test)]
 #[path = "lane_region/slot_proof_tests.rs"]
 mod slot_proof_tests;
+
+/// A loop's entry types the function's bytecode proves: a register the loop reads but never writes,
+/// whose every definition before or after the loop loads a constant that is no Number (a string,
+/// a boolean, `null`), has the join of those constants' types, which the entry guards once. A
+/// relation reading it is then decided by the interpreter's rule (`Lowering::decided_relation`)
+/// instead of being taken for a Number comparison whose entry guard always fails.
+fn seed_constant_entries(instructions: &[WideInstruction], program: &ResidualProgram,
+    (header, backedge): (usize, usize), initial: &mut [Type]) {
+    let inside = header..=backedge;
+    let written: std::collections::BTreeSet<Register> = instructions.get(inside.clone()).into_iter().flatten()
+        .filter_map(|instruction| instruction.defined_register()).collect();
+    let mut seeded = std::collections::BTreeMap::<Register, Option<Type>>::new();
+    for (_, instruction) in instructions.iter().enumerate().filter(|(pc, _)| !inside.contains(pc)) {
+        let Some(register) = instruction.defined_register() else { continue };
+        if written.contains(&register) { continue; }
+        // A definition by a constant-table index (the staged row of a heap constant, a string, has no
+        // stage word to decode, so the instruction's layout names it); the table types it.
+        let ty = (instruction.op().immediate_role() == crate::bytecode::ImmediateRole::ConstantIndex)
+            .then(|| program.constants.get(instruction.constant_index())).flatten()
+            .map(super::facts::constant_type).filter(|ty| super::facts::numberless(*ty));
+        let slot = seeded.entry(register).or_insert(ty);
+        *slot = slot.zip(ty).map(|(left, right)| left.join(right));
+    }
+    for (register, ty) in seeded {
+        if let (Some(ty), Some(slot)) = (ty, initial.get_mut(usize::from(register))) && *slot == Type::ANY { *slot = ty; }
+    }
+}

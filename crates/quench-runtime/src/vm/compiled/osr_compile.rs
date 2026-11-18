@@ -214,9 +214,10 @@ fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane
     // frame reads it from that environment's dense slots (`Observation::frame_captures`), as a
     // lane body's inlined frame does, not from the entry's snapshot of it.
     for (instruction, origin) in instructions.iter_mut().zip(&inlining.origins) {
-        if matches!(origin, osr_loop::Origin::Inlined { .. }) && instruction.op().is_load_capture()
-            && instruction.capture_depth() == 0 && instruction.capture_slot() & osr_loop::CALLEE_CAPTURE != 0
-            && let Some(&(_, slot)) = inlining.callee_captures.get(usize::from(instruction.capture_slot() & !osr_loop::CALLEE_CAPTURE)) {
+        if matches!(origin, osr_loop::Origin::Inlined { .. })
+            && let Some(crate::staged::Operation::<(), ()>::LoadCapture { depth: 0, slot: own, .. }) = crate::staged::Operation::decode(*instruction, crate::staged::DecodeContext::EMPTY)
+            && own & osr_loop::CALLEE_CAPTURE != 0
+            && let Some(&(_, slot)) = inlining.callee_captures.get(usize::from(own & !osr_loop::CALLEE_CAPTURE)) {
             *instruction = WideInstruction::new(instruction.op(), instruction.a(), instruction.b(), instruction.c(),
                 crate::bytecode::ImmediateLayout::capture_immediate(0, slot));
         }
