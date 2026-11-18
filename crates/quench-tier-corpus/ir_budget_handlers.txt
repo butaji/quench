@@ -567,18 +567,16 @@ k_nbody_pair 36.0 lane_operator_numbers_raw<10>
 k_nbody_pair 32.0 lane_operator_constant_left<11>
 k_nbody_pair 28.0 lane_load_name_bound<0, 2>
 k_nbody_pair 25.0 lane_inc_dec_loop<false, 4, true>
-k_regexp 314.5 Vm::steady_regexp_call
+k_regexp 293.5 Vm::steady_regexp_call
 k_regexp 135.8 Program::run<[u8]>
 k_regexp 119.8 Program::find<[u8]>
 k_regexp 94.0 Regex::find_ascii
-k_regexp 87.0 Vm::record_regexp_legacy_pending
 k_regexp 75.0 Option::or_else<<quench_runtime::vm::Vm>::regexp_exec_is_builtin::{closure#0}>
-k_regexp 63.0 lane_native_call
+k_regexp 71.2 Vm::record_regexp_legacy_pending
+k_regexp 52.0 lane_call_builtin<14>
 k_regexp 50.5 find_avx2
-k_regexp 49.0 lane_regexp_call
 k_regexp 44.0 lane_get_field_holder_cell_register
 k_regexp 37.5 Vm::steady_ascii_match
-k_regexp 34.0 lane_native_value
 k_regexp 31.0 Program::scan_start_bytes
 k_regexp 29.0 Heap::ordinary_builtin_object
 k_regexp 25.0 lane_inc_dec_loop<false, 4, true>

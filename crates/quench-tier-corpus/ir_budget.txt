@@ -65,7 +65,7 @@ k20_switch 169 513 3945.3
 k_dispatch 14 48 354.6
 k_json 812 2442 5694.2
 k_nbody_pair 21.1 70 1452.1
-k_regexp 40.2 127 1371.3
+k_regexp 40.2 127 1240.6
 k_str_build 14.1 49 1464.5
 k_struct_sum 8 30 179.1
 math_abs 8 30 164

@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod realm_table;
 mod register_file;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
@@ -665,7 +666,7 @@ struct RealmIntrinsics {
     function_constructors: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
     error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
-    regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
+    regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
