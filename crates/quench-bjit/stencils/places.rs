@@ -200,6 +200,10 @@ fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
     match rep_of(P) {
         Rep::Int32 => Some(word as u32 != 0),
         Rep::Float64 => Some(stage().number_truthy(word)),
+        // A boolean, what every comparison and type test gives, decides on one compare; any other
+        // word takes the staged rule.
+        Rep::Tagged if word == crate::layout::words::TRUE => Some(true),
+        Rep::Tagged if word == crate::layout::words::FALSE => Some(false),
         Rep::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
             (!undecided).then_some(truthy)
