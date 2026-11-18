@@ -18,10 +18,11 @@ enum AsciiOutcome {
     Unchanged,
     /// The receiver's bytes in `range`, as a new string.
     Slice(Range<usize>),
-    /// The receiver's bytes, each mapped by `map`, as a new string of the same length.
-    Mapped(fn(&u8) -> u8),
-    /// The receiver padded to `length` bytes with repeats of `fill`, at its end or its start.
-    Padded { length: usize, fill: JsString, at_end: bool },
+    /// The receiver's bytes, each mapped by `map`, as a new string of `length` bytes.
+    Mapped { length: usize, map: fn(&u8) -> u8 },
+    /// The receiver padded to `length` bytes with repeats of the filler `fill` (a string
+    /// value; `None` for a space), at its end or its start.
+    Padded { length: usize, fill: Option<Value>, at_end: bool },
     /// The receiver repeated to `length` bytes.
     Repeated { length: usize },
 }
@@ -31,23 +32,26 @@ impl<H: Host> Vm<H> {
     /// flat ASCII receiver; `None` for any other receiver, argument or result size.
     pub(in crate::vm) fn ascii_text_method(&mut self, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
         let outcome = self.ascii_text_outcome(native, receiver, args)?;
-        if matches!(outcome, AsciiOutcome::Unchanged) {
-            return Some(receiver);
-        }
-        // The heap is written while the result is made, so the receiver's text is held as an
-        // owned string rather than borrowed from the heap.
-        let text = owned_flat_ascii(&self.heap, receiver)?;
-        let bytes = ascii_bytes(&text)?;
-        Some(match outcome {
-            AsciiOutcome::Unchanged => receiver,
-            AsciiOutcome::Slice(range) => self.heap.alloc_ascii_run(&bytes[range]),
-            AsciiOutcome::Mapped(map) => self.heap.alloc_ascii_filled(bytes.len(), |out| map_into(out, bytes, map)),
-            AsciiOutcome::Padded { length, fill, at_end } => {
-                let fill_bytes = ascii_bytes(&fill)?;
-                self.heap.alloc_ascii_filled(length, |out| pad_into(out, bytes, fill_bytes, at_end))
+        // Each result is written once, from the receiver's bytes (and the filler's) read in place.
+        let heap = &mut self.heap;
+        match outcome {
+            AsciiOutcome::Unchanged => Some(receiver),
+            AsciiOutcome::Slice(range) => {
+                heap.alloc_ascii_derived([receiver], range.len(), move |out, [text]| out.copy_from_slice(&text[range]))
             }
-            AsciiOutcome::Repeated { length } => self.heap.alloc_ascii_filled(length, |out| repeat_into(out, bytes)),
-        })
+            AsciiOutcome::Mapped { length, map } => {
+                heap.alloc_ascii_derived([receiver], length, move |out, [text]| map_into(out, text, map))
+            }
+            AsciiOutcome::Padded { length, fill: None, at_end } => {
+                heap.alloc_ascii_derived([receiver], length, move |out, [text]| pad_into(out, text, DEFAULT_PAD, at_end))
+            }
+            AsciiOutcome::Padded { length, fill: Some(fill), at_end } => {
+                heap.alloc_ascii_derived([receiver, fill], length, move |out, [text, fill]| pad_into(out, text, fill, at_end))
+            }
+            AsciiOutcome::Repeated { length } => {
+                heap.alloc_ascii_derived([receiver], length, |out, [text]| repeat_into(out, text))
+            }
+        }
     }
 
     /// The outcome of `native` over the receiver's flat ASCII bytes, read in place.
@@ -79,10 +83,21 @@ impl<H: Host> Vm<H> {
             return Some(AsciiOutcome::Unchanged);
         }
         let fill = match args.get(1).copied() {
-            None | Some(Value::UNDEFINED) => JsString::short_ascii(DEFAULT_PAD),
-            Some(value) => owned_flat_ascii(&self.heap, value)?,
+            None | Some(Value::UNDEFINED) => None,
+            Some(value) => Some(value),
         };
-        pad_outcome(native == Native::StringPadEnd, target, fill)
+        // An empty filler never pads; a filler that is not flat ASCII is the general path's.
+        let fill_len = match fill {
+            None => DEFAULT_PAD.len(),
+            Some(value) => self.heap.existing_ascii_len(value)?,
+        };
+        if fill_len == 0 {
+            return Some(AsciiOutcome::Unchanged);
+        }
+        if target > FAST_TEXT_MAX_BYTES {
+            return None;
+        }
+        Some(AsciiOutcome::Padded { length: target, fill, at_end: native == Native::StringPadEnd })
     }
 }
 
@@ -111,7 +126,7 @@ pub(super) fn ascii_bytes(string: &JsString) -> Option<&[u8]> {
 /// itself when none does.
 fn ascii_case(bytes: &[u8], needs_change: fn(&u8) -> bool, map: fn(&u8) -> u8) -> AsciiOutcome {
     if bytes.iter().any(needs_change) {
-        AsciiOutcome::Mapped(map)
+        AsciiOutcome::Mapped { length: bytes.len(), map }
     } else {
         AsciiOutcome::Unchanged
     }
@@ -135,18 +150,6 @@ fn ascii_trim(bytes: &[u8], from_start: bool, from_end: bool) -> AsciiOutcome {
         return AsciiOutcome::Unchanged;
     }
     AsciiOutcome::Slice(start..end)
-}
-
-/// The outcome of padding to `target` bytes with `fill`: the receiver itself when `fill` is
-/// empty, `None` past the longest result.
-fn pad_outcome(at_end: bool, target: usize, fill: JsString) -> Option<AsciiOutcome> {
-    if ascii_bytes(&fill)?.is_empty() {
-        return Some(AsciiOutcome::Unchanged);
-    }
-    if target > FAST_TEXT_MAX_BYTES {
-        return None;
-    }
-    Some(AsciiOutcome::Padded { length: target, fill, at_end })
 }
 
 /// `repeat` of ASCII `bytes` by the non-negative int32 count in `args`; `None` for a negative

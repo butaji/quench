@@ -32,7 +32,12 @@ impl<H: Host> Vm<H> {
     /// answers for this one too.
     #[inline(always)]
     fn enum_cache_shape(&self, object: Value) -> Option<u32> {
-        let data = self.heap.object_record(object)?;
+        self.enum_cache_shape_of(self.heap.object_record(object)?)
+    }
+
+    /// `enum_cache_shape` of the ordinary object record `data`, for a caller that holds it.
+    #[inline(always)]
+    fn enum_cache_shape_of(&self, data: &Object) -> Option<u32> {
         if data.has_exotic_access() || data.has_side_descriptors() || data.boxed_primitive().is_some() {
             return None;
         }
@@ -65,7 +70,10 @@ impl<H: Host> Vm<H> {
         if target_proto != self.object_proto || !self.is_fresh_empty(target_data) {
             return false;
         }
-        let Some(source_shape) = self.enum_cache_shape(source) else {
+        let Some(source_data) = self.heap.object_record(source) else {
+            return false;
+        };
+        let Some(source_shape) = self.enum_cache_shape_of(source_data) else {
             return false;
         };
         let epoch = crate::heap::prototype_layout_epoch();
@@ -76,16 +84,10 @@ impl<H: Host> Vm<H> {
         let (Some((shape, _)), Some(slots)) = (memoized, self.enumerable_keys.get(source_shape)) else {
             return false;
         };
-        let Some(data) = self.heap.object_record(source) else {
+        let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
+        if !self.read_shaped_values(source_data, &slots, &mut values) {
             return false;
-        };
-        let Some(values) = slots
-            .iter()
-            .map(|&(_, slot)| self.heap.property_get(data, slot as usize))
-            .collect::<Option<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>>()
-        else {
-            return false;
-        };
+        }
         self.initialize_plain_copy(target, shape, &values, slots.iter().map(|&(atom, _)| atom));
         true
     }

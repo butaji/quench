@@ -136,24 +136,41 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let replace_all = native == Native::StringReplaceAll;
-        // Flat ASCII text, pattern and replacement read in place, with no copy of any of them.
-        let ascii = |value: Value| match self.heap.string(value)?.existing_flat()?.view() {
-            Units::Ascii(bytes) => Some(bytes),
-            Units::Wide(_) => None,
-        };
-        if let (Some(text), Some(needle), Some(with)) = (ascii(receiver), ascii(*search), ascii(*replacement))
-            && !needle.is_empty()
-            && !with.contains(&b'$')
-        {
-            return Some(Ok(match ascii_replaced(text, needle, with, replace_all) {
-                Some(bytes) => self.heap.alloc_ascii_run(&bytes),
-                None => receiver,
-            }));
+        if let Some(replaced) = self.ascii_replace(receiver, *search, *replacement, replace_all) {
+            return Some(Ok(replaced));
         }
         let input = self.flat_string(receiver)?;
         let search = self.flat_string(*search)?;
         let template = self.flat_string(*replacement)?;
         Some(self.replace_units(p, receiver, &input, &search, &template, replace_all))
+    }
+
+    /// `replace` or `replaceAll` of a flat ASCII receiver at a flat ASCII pattern, with a flat
+    /// ASCII replacement that holds no `$`: the matches are found in place, which gives the
+    /// result's length, and the result is then written once from the operands read in place.
+    /// The receiver itself when nothing matches. `None` leaves the call to the general path.
+    fn ascii_replace(&mut self, receiver: Value, search: Value, replacement: Value, replace_all: bool) -> Option<Value> {
+        let (offsets, length) = {
+            let text = self.heap.flat_text(receiver)?;
+            let needle = self.heap.flat_text(search)?;
+            let with = self.heap.flat_text(replacement)?;
+            let (Units::Ascii(text), Units::Ascii(needle), Units::Ascii(with)) = (text.units(), needle.units(), with.units())
+            else {
+                return None;
+            };
+            if needle.is_empty() || with.contains(&b'$') {
+                return None;
+            }
+            let offsets = ascii_match_offsets(text, needle, replace_all);
+            if offsets.is_empty() {
+                return Some(receiver);
+            }
+            let length = replaced_len(text.len(), needle.len(), with.len(), offsets.len())?;
+            (offsets, length)
+        };
+        self.heap.alloc_ascii_derived([receiver, search, replacement], length, |out, [text, needle, with]| {
+            write_replaced(out, text, needle.len(), with, &offsets);
+        })
     }
 
     /// A string value's flat units, read in place: a rope is left to the general path, which
@@ -225,25 +242,52 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The text of `replace` (or `replaceAll`) of flat ASCII `text` with a non-empty `needle` and
-/// a `with` holding no `$`: the unmatched runs copied around each replacement, written once.
-/// `None` when nothing matches, so the receiver is the result.
-fn ascii_replaced(text: &[u8], needle: &[u8], with: &[u8], replace_all: bool) -> Option<smallvec::SmallVec<[u8; 64]>> {
-    let first = crate::vm::wtf16::find_ascii(text, needle)?;
-    let mut bytes = smallvec::SmallVec::<[u8; 64]>::new();
-    bytes.extend_from_slice(&text[..first]);
-    bytes.extend_from_slice(with);
-    let mut cursor = first + needle.len();
-    if replace_all {
-        // Occurrences do not overlap: each search starts past the previous match.
-        while let Some(at) = crate::vm::wtf16::find_ascii(&text[cursor..], needle) {
-            bytes.extend_from_slice(&text[cursor..cursor + at]);
-            bytes.extend_from_slice(with);
-            cursor += at + needle.len();
+/// The inline capacity of a replace's match offsets: a typical search's matches stay off the heap.
+const REPLACE_INLINE_MATCHES: usize = 8;
+/// The byte offsets of the matches of a replace, in order.
+type MatchOffsets = smallvec::SmallVec<[usize; REPLACE_INLINE_MATCHES]>;
+
+/// The byte offsets of the occurrences of the non-empty `needle` in `text`, in order: only the
+/// first when not `replace_all`. Occurrences do not overlap, so each search starts past the
+/// previous match.
+fn ascii_match_offsets(text: &[u8], needle: &[u8], replace_all: bool) -> MatchOffsets {
+    let mut offsets = MatchOffsets::new();
+    let mut cursor = 0;
+    while let Some(at) = crate::vm::wtf16::find_ascii(&text[cursor..], needle) {
+        offsets.push(cursor + at);
+        cursor += at + needle.len();
+        if !replace_all {
+            break;
         }
     }
-    bytes.extend_from_slice(&text[cursor..]);
-    Some(bytes)
+    offsets
+}
+
+/// The length of a replace's result: `text_len` less `count` matches of `needle_len` bytes,
+/// plus `count` replacements of `with_len`; `None` past the longest string.
+fn replaced_len(text_len: usize, needle_len: usize, with_len: usize, count: usize) -> Option<usize> {
+    let kept = text_len.checked_sub(count.checked_mul(needle_len)?)?;
+    let length = kept.checked_add(count.checked_mul(with_len)?)?;
+    (length <= crate::vm::wtf16::MAX_STRING_UNITS).then_some(length)
+}
+
+/// Writes `text` into `out` with each match at `offsets` (of `needle_len` bytes) replaced by
+/// `with`; `out` is exactly the length `replaced_len` gives.
+fn write_replaced(out: &mut [u8], text: &[u8], needle_len: usize, with: &[u8], offsets: &[usize]) {
+    let mut at = 0;
+    let mut cursor = 0;
+    for &index in offsets {
+        put(out, &mut at, &text[cursor..index]);
+        put(out, &mut at, with);
+        cursor = index + needle_len;
+    }
+    put(out, &mut at, &text[cursor..]);
+}
+
+/// Writes `bytes` into `out` at `*at`, then advances `*at` past them.
+fn put(out: &mut [u8], at: &mut usize, bytes: &[u8]) {
+    out[*at..*at + bytes.len()].copy_from_slice(bytes);
+    *at += bytes.len();
 }
 
 /// The units range `slice` (negative bounds count from the end) or `substring` (bounds in

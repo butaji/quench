@@ -16,6 +16,10 @@ impl<H: Host> Vm<H> {
         if families == 0 {
             return None;
         }
+        // A native with an in-place row answers from its row's body alone (`in_place_row_value`).
+        if families & ROW != 0 {
+            return super::native_calls::in_place_row_value(self, code, native, receiver, args);
+        }
         let tries = |family: u16| families & family != 0;
         if tries(STEADY) && let Some(value) = self.steady_native_value(native, receiver, args) {
             return Some(value);
@@ -58,11 +62,17 @@ const ARRAY: u16 = 1 << 5;
 const INTERNAL_SLOT: u16 = 1 << 6;
 const PRIMITIVE: u16 = 1 << 7;
 const PRIMITIVE_LEAF: u16 = 1 << 8;
+/// A native with an in-place row (`native_calls::in_place_row`): its row's body answers it alone.
+const ROW: u16 = 1 << 9;
 
 /// The families whose functions below can answer `native`: each family's arms, listed
 /// beside the function that holds them. A native outside every family completes through
-/// the native itself, with no in-place attempt.
+/// the native itself, with no in-place attempt. A native with an in-place row is answered by
+/// that row alone, so its family arms are not listed here.
 const fn in_place_families(native: Native) -> u16 {
+    if super::native_calls::in_place_row(native).is_some() {
+        return ROW;
+    }
     let mut families = 0;
     // `Vm::steady_native_value`.
     if matches!(native, Native::ArrayPush | Native::ArrayPop | Native::StringCharCodeAt | Native::StringCharAt
@@ -79,8 +89,8 @@ const fn in_place_families(native: Native) -> u16 {
     }
     if matches!(native, Native::ObjectCreate | Native::ObjectPrototypeHasOwnProperty
         | Native::ObjectPrototypePropertyIsEnumerable | Native::ObjectHasOwn | Native::ObjectIs | Native::ReflectGet
-        | Native::ReflectHas | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries
-        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor | Native::ObjectAssign
+        | Native::ReflectHas | Native::ObjectValues | Native::ObjectEntries
+        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor
         | Native::ObjectGetPrototypeOf)
     {
         families |= OBJECT;
@@ -93,9 +103,8 @@ const fn in_place_families(native: Native) -> u16 {
     {
         families |= COLLECTION;
     }
-    if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
-        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArraySlice | Native::ArrayConcat | Native::ArrayFill
-        | Native::ArrayFrom | Native::ArrayOf | Native::ArrayJoin | Native::ArrayAt | Native::ArrayLastIndexOf
+    if matches!(native, Native::ArraySplice | Native::ArrayUnshift
+        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArrayFrom | Native::ArrayOf | Native::ArrayLastIndexOf
         | Native::ArrayReverse | Native::ArrayToReversed | Native::ArrayWith)
     {
         families |= ARRAY;
@@ -186,11 +195,10 @@ fn math_value(native: Native, args: &[Value]) -> Option<Value> {
 
 /// Object queries whose steps observe nothing: `Object.create` without properties, an own
 /// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, an object's
-/// keys, values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
+/// values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
-/// property read ignores the receiver), `Object.assign` of plain data properties
-/// (`Vm::plain_object_assign`), `Symbol.for` of a string and `Object.prototype.toString`
-/// (`object_to_string_in_place`).
+/// property read ignores the receiver), `Symbol.for` of a string and `Object.prototype.toString`
+/// (`object_to_string_in_place`). `Object.keys` and `Object.assign` are rows (`native_calls`).
 fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -205,8 +213,6 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
-        // Copies of plain data properties onto a plain target (`Vm::plain_object_assign`).
-        Native::ObjectAssign => vm.plain_object_assign(args),
         Native::ObjectGetPrototypeOf => vm.plain_object_get_prototype_of(args),
 
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
@@ -291,23 +297,18 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
     matches!(vm.heap.get(receiver), Some(Cell::Map { .. })).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
 }
 
-/// A dense array's `indexOf`, `includes`, `splice`, `unshift`, `shift`, `slice` and `concat`, and an array iterator's step
-/// over a plain array.
+/// A dense array's `splice`, `unshift`, `shift` and `lastIndexOf`, and the array-building and
+/// reversing methods over a plain array, and an array iterator's step over a plain array.
+/// The rows of `native_calls` answer the others (`in_place_row_value`).
 fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
     match native {
-        Native::ArrayIndexOf | Native::ArrayIncludes => vm.dense_search_call(native, receiver, args),
         Native::ArraySplice => vm.plain_array_splice(code, callee, receiver, args),
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         Native::ArrayIteratorNext => vm.plain_array_iterator_next(callee, receiver),
-        Native::ArraySlice => vm.plain_array_slice(receiver, args),
-        Native::ArrayConcat => vm.array_concat_dense(receiver, args),
-        Native::ArrayFill => vm.plain_array_fill(receiver, args),
         Native::ArrayFrom => vm.plain_array_from(receiver, args),
         Native::ArrayOf => vm.plain_array_of(receiver, args),
-        Native::ArrayJoin => vm.plain_array_join(receiver, args),
-        Native::ArrayAt => vm.plain_array_at(receiver, args),
         Native::ArrayLastIndexOf => vm.plain_array_last_index_of(receiver, args),
         Native::ArrayReverse => vm.plain_array_reverse(receiver, args),
         Native::ArrayToReversed => vm.plain_array_to_reversed(receiver, args),

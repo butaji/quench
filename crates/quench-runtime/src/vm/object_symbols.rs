@@ -1,3 +1,4 @@
+use super::enumerable_key_memo::EnumerableSlots;
 use super::operations::ArrayLikeElementKind;
 use super::property_key::PropertyKey;
 use super::*;
@@ -402,28 +403,10 @@ impl<H: Host> Vm<H> {
                 .map(|(shape, _)| shape),
         };
         if memoizes && let Some(shape) = memoized {
-            // A shaped source's values are read straight into a fixed buffer: its shape lists
-            // each enumerable slot it holds (`shape_enumerable_slots`), which
-            // `property_get_shaped` reads with no bounds or deleted-marker test.
-            if slots.len() <= PLAIN_COPY_INLINE_PROPERTIES && !self.shape_is_dictionary(source_shape) {
-                let mut values = [Value::UNDEFINED; PLAIN_COPY_INLINE_PROPERTIES];
-                for (value, (_, slot)) in values.iter_mut().zip(slots.iter()) {
-                    // SAFETY: as above.
-                    let Some(read) = (unsafe { self.heap.property_get_shaped(data, *slot as usize) }) else {
-                        return false;
-                    };
-                    *value = read;
-                }
-                self.initialize_plain_copy(target, shape, &values[..slots.len()], slots.iter().map(|(atom, _)| *atom));
-                return true;
-            }
-            let Some(values) = slots
-                .iter()
-                .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
-                .collect::<Option<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>>()
-            else {
+            let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
+            if !self.read_shaped_values(data, &slots, &mut values) {
                 return false;
-            };
+            }
             self.initialize_plain_copy(target, shape, &values, slots.iter().map(|(atom, _)| *atom));
             return true;
         }
@@ -515,6 +498,26 @@ impl<H: Host> Vm<H> {
                 self.invalidate_method_caches_for_prototype_add(target, atom);
             }
         }
+    }
+
+    /// Reads the values of `slots` of `data` into `values`, one per slot in order (`values` holds
+    /// as many as `slots`). `slots` came from `shape_enumerable_slots`, so `data` is a shaped
+    /// object outside dictionary storage whose listed slots all exist and none is deleted; a
+    /// contiguous `slots` reads the storage's first values in order. `false` for a read the
+    /// storage declines, before any value is used.
+    pub(super) fn read_shaped_values(&self, data: &Object, slots: &EnumerableSlots, values: &mut [Value]) -> bool {
+        values.iter_mut().enumerate().all(|(index, value)| {
+            let slot = if slots.contiguous() { index } else { slots[index].1 as usize };
+            // SAFETY: `slots` lists slots of `data`'s non-dictionary shape, which the shape
+            // guarantees exist, so the shaped read is in bounds and undeleted.
+            match unsafe { self.heap.property_get_shaped(data, slot) } {
+                Some(read) => {
+                    *value = read;
+                    true
+                }
+                None => false,
+            }
+        })
     }
 
     /// Whether `[[Set]]` of `key` on an object without it that inherits from `prototype` would
