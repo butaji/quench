@@ -1884,8 +1884,8 @@ pub(crate) struct Vm<H> {
     js_native_contexts: Vec<Box<compiled::CallContext>>,
     /// The environments native Wasm code holds across its calls into other instances.
     native_roots: Box<compiled::NativeRoots>,
-    /// Activations a running lane holds without frames.
-    lane_stack: dispatch_fast::LaneStack,
+    /// Activations a running lane holds without frames, boxed so a nested run swaps pointers.
+    lane_stack: Box<dispatch_fast::LaneStack>,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
     lane_roots: Vec<dispatch_fast::ParkedLane>,
     /// Empty lane stacks a nested run returned, which the next one starts over

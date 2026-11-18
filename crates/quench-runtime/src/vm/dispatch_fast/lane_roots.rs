@@ -156,17 +156,17 @@ impl<H: Host> Vm<H> {
     /// (`enter_generation`). A job run (`run_job`) and the code of a direct eval (`lane_eval`)
     /// start nested runs.
     pub(in crate::vm) fn nested_lane_run<T>(&mut self, innermost: [Value; 2], run: impl FnOnce(&mut Self) -> T) -> T {
-        // The stacks swap in place, boxed, as a stack is large to move.
+        // The stacks swap boxes, as a stack is large to move.
         let mut stack = self.spare_lane_stacks.pop().unwrap_or_default();
         // Its cached targets admit calls of the program that runs (`LaneStack::enter_program`).
         stack.enter_program(self.active_program);
-        std::mem::swap(&mut self.lane_stack, &mut *stack);
+        std::mem::swap(&mut self.lane_stack, &mut stack);
         self.lane_roots.push(ParkedLane { stack, innermost });
         let (deferred, native, window) = (self.lane_deferred.take(), self.lane_native.take(), self.running_window.take());
         let result = run(self);
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
-        std::mem::swap(&mut self.lane_stack, &mut *stack);
+        std::mem::swap(&mut self.lane_stack, &mut stack);
         if stack.activations.is_empty() {
             self.spare_lane_stacks.push(stack);
         }

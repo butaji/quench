@@ -54,7 +54,10 @@ impl<H: Host> Vm<H> {
     ) -> Option<*mut FrameRecord> {
         let (frame, resume_register) = self.generator_record_mut(generator)?.resume_windowed()?;
         // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
-        unsafe { &mut *frame }.receive(resume_register, sent);
+        let epoch = self.heap.collection_epoch();
+        let record = unsafe { &mut *frame };
+        record.settle_registers(epoch);
+        record.receive(resume_register, sent);
         // The frames the lane's activations become sit below the generator's.
         self.realm.promise.active_native.push(super::super::activation::NativeActivation {
             callable: method,
@@ -90,13 +93,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead
-    /// registers cleared, and the iterators and `with` objects the activation at `depth` holds
+    /// registers noted, and the iterators and `with` objects the activation at `depth` holds
     /// taken back.
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
-        let live_registers = self.release_dead_registers(frame.program, frame.function, pc, &mut frame.registers);
+        let live = self.suspension_registers(frame.program, frame.function, pc);
         let with_objects = self.lane_stack.drain_with_objects(depth);
-        frame.suspend_at(pc, live_registers, self.lane_stack.drain_iterators(depth), with_objects.into_iter());
+        frame.suspend_at(pc, live, self.lane_stack.drain_iterators(depth), with_objects.into_iter());
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
