@@ -8064,20 +8064,6 @@ script_handler! {
 
 
 
-script_handler! {
-    /// `StringCaseIndex`: the case a string `switch` selects (`Vm::string_case_index`) among
-    /// the run of constants the record's immediate starts, which the view checked lies in
-    /// the program's constants (`lane_operand`).
-    fn lane_string_case_index<>(cx, r, ip, i, view) {
-        let start = i.imm() as usize;
-        // SAFETY: the run's program keeps its constants (`LaneContext::constants`).
-        let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + usize::from(i.b)) };
-        let index = unsafe { vm(cx) }.string_case_index(r.get(i.c), cases);
-        r.set(i.a, Value::integer(index as i32));
-        next!(cx, r, following(ip), view)
-    }
-}
-
 /// The strict operators `lane_jump_strict_constant_false` decides.
 const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
 
@@ -17923,7 +17909,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
-        Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
         Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),

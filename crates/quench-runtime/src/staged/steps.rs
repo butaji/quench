@@ -61,10 +61,25 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
         Operation::TypeofTest { destination, source, index, negated } =>
             super::control::typeof_test(stage, frame, destination, source, index, negated),
+        Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
         heap => super::heap::heap_step(stage, frame, heap),
+    }
+}
+
+/// `StringCaseIndex`: the frame's case-table index of `source` among the constants `start..start + count`,
+/// defined into `destination`; a frame with no case table leaves it to the general step.
+#[inline(always)]
+fn string_case_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    source: Register, start: u32, count: u16) -> Step<S::Word, F::Control> {
+    match frame.case_index(stage, source, start, count) {
+        Some((value, fact)) => {
+            frame.write(stage, destination, value, fact);
+            Step::Value(value)
+        }
+        None => Step::Unresolved,
     }
 }
 

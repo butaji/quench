@@ -133,7 +133,16 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     host: Option<LaneHost>,
     /// The capture stores of the running lane, for a staged capture store.
     captures: Option<CaptureStores>,
-    /// The running lane's steady decisions, for a staged comparison jump.
+    /// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
+/// filter, null where the record has none.
+#[derive(Clone, Copy)]
+struct StringCases {
+    context: *mut (),
+    filter: *const super::string_case_filter::StringCaseFilter,
+    index: unsafe fn(*mut (), *const super::string_case_filter::StringCaseFilter, Value, usize, usize) -> u32,
+}
+
+/// The running lane's steady decisions, for a staged comparison jump.
     decisions: Option<Decisions>,
     /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
     capture_slots: Option<*const usize>,
@@ -161,6 +170,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     clones: Option<EnvironmentClones>,
     /// The iterator cleanup stack an `IteratorCleanupPush`/`Pop` row keeps (`iterator_push_in_lane`).
     cleanups: Option<IteratorCleanups>,
+    /// The string-case index a `StringCaseIndex` row answers (`case_index_in_lane`).
+    string_cases: Option<StringCases>,
     /// The running function, which a `LoadCallee` row reads (`running_callee`), where the row is one.
     callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The lane context and the VM's Wasm global load and store, for a staged instance-state row
@@ -237,7 +248,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -261,7 +272,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 }
 
@@ -391,6 +402,15 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let host = self.host?;
         // SAFETY: the definer was made for the lane context this frame runs in.
         unsafe { (host.define)(host.cx, array, index, value) }.then_some(())
+    }
+
+    #[inline(always)]
+    fn case_index(&mut self, stage: &mut Concrete, source: Register, start: u32, count: u16) -> Option<(u64, Self::Fact)> {
+        let cases = self.string_cases?;
+        let value = Value::from_bits(self.read(stage, source));
+        // SAFETY: the running lane's context, and the filter the record's operand names (null where none).
+        let index = unsafe { (cases.index)(cases.context, cases.filter, value, start as usize, usize::from(count)) };
+        Some((Value::integer(index as i32).to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -847,6 +867,9 @@ pub(in crate::vm::dispatch_fast) const FLAG_NAME_INTRINSIC: u8 = 6;
 /// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
 /// but a refresh checks the scopes' declarations first (`lane_load_global_name_refresh`, `SCOPED`).
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
+/// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
+/// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
+pub(in crate::vm::dispatch_fast) const FLAG_CASE_FILTER: u8 = 8;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -936,7 +959,22 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
-        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads,
+        // A string-case index reads its operand from the register file (`LaneFrame::read` stands for field B),
+        // and answers from the case table of the record's filter (`FLAG_CASE_FILTER`), else the VM's selector.
+        let string_case = const { OP == crate::staged::STRING_CASE_INDEX_ROW };
+        let string_cases = if string_case {
+            let filter = if FLAG == FLAG_CASE_FILTER { unsafe { i.operand.string_case_filter } } else { std::ptr::null() };
+            Some(StringCases { context: cx.cast(), filter, index: super::string_case_filter::case_index_in_lane::<H> })
+        } else {
+            None
+        };
+        let heap: Option<*const crate::heap::Heap> = if string_case {
+            let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
+            Some(heap)
+        } else {
+            None
+        };
+        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads, heap, string_cases,
             ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {

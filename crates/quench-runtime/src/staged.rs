@@ -406,6 +406,9 @@ pub(crate) const CLONE_ENV_ROW: u16 = Op::CloneEnv as u16;
 /// The opcode whose row reads a capture (`Operation::LoadCapture`), which a tier names to find the
 /// captures a loop reads.
 pub(crate) const LOAD_CAPTURE_ROW: u16 = Op::LoadCapture as u16;
+/// The opcode whose row answers a string-case selector (`Operation::StringCaseIndex`), which a tier
+/// names to instantiate the row of a selector it filtered (`string_case_filter::specialize`).
+pub(crate) const STRING_CASE_INDEX_ROW: u16 = Op::StringCaseIndex as u16;
 /// The opcode whose row is an unconditional jump (`Operation::Jump`).
 pub(crate) const JUMP_ROW: u16 = Op::Jump as u16;
 /// The opcode whose row defines a register from a constant (`Operation::LoadConst`), which the
@@ -689,6 +692,9 @@ pub(crate) enum Operation<W, P> {
     IteratorCleanupPush { iterator: Register, done: Register },
     /// Pop the running cleanup stack's top entry (`Frame::iterator_pop`).
     IteratorCleanupPop,
+    /// The index of the value in register `source` among the `count` program constants from `start`
+    /// (`Frame::case_index`), defined into `destination`: the switch's string-case selector.
+    StringCaseIndex { destination: Register, source: Register, start: u32, count: u16 },
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup },
@@ -884,6 +890,8 @@ impl<W, P> Operation<W, P> {
                 root: false },
             Op::StoreCapture => Self::StoreCapture {
                 source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
+            Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
+                source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
             Op::Unary => return Self::decode_unary(instruction),
             _ => return None,
         })

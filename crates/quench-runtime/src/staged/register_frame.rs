@@ -112,6 +112,11 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// `StringCaseIndex`: the index of the value in `source` among the `count` program constants from
+    /// `start`, as the frame's case table answers it; `None` where the frame has none (the general step).
+    #[inline(always)]
+    fn case_index(&mut self, _stage: &mut S, _source: Register, _start: u32, _count: u16) -> Option<(S::Word, Self::Fact)> { None }
+
     /// `IteratorCleanupPush`: pushes the iterator in register `iterator` with its `done` register on the
     /// running activation's cleanup stack, closed if the loop exits abruptly; `None` where the frame keeps
     /// no such stack (the general step pushes it).

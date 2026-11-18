@@ -113,21 +113,27 @@ impl StringCaseFilter {
     }
 }
 
-script_handler! {
-    fn lane_string_case_filtered<>(cx, r, ip, i, view) {
-        // SAFETY: specialization installs this pointer; the view owns the immutable plan.
-        let filter = unsafe { &*i.operand.string_case_filter };
-        // SAFETY: the original selector's validated run of constants is unchanged.
-        let cases = unsafe { (&*(*cx).constants).get_unchecked(filter.start..filter.start + usize::from(i.b)) };
-        let vm = unsafe { vm(cx) };
-        let value = r.get(i.c);
-        let index = match vm.heap.string(value) {
+/// The index of `value` among the `count` program constants from `start`, as a `StringCaseIndex` row
+/// answers it: the record's filter where `filter` is present (`StringCaseFilter::select`), else the VM's
+/// selector (`Vm::string_case_index`). A filtered row's constants are the filter's own run.
+///
+/// # Safety
+/// `cx` is the running lane's context; `filter` is null or the record's filter, which the lane's
+/// constants retain.
+#[inline(always)]
+pub(super) unsafe fn case_index_in_lane<H: Host>(cx: *mut (), filter: *const StringCaseFilter, value: Value, start: usize, count: usize) -> u32 {
+    let cx = cx.cast::<LaneContext<H>>();
+    // SAFETY: the original selector's validated run of constants is unchanged.
+    let cases = unsafe { (&*(*cx).constants).get_unchecked(start..start + count) };
+    let vm = unsafe { vm(cx) };
+    let index = match unsafe { filter.as_ref() } {
+        Some(filter) => match vm.heap.string(value) {
             Some(text) => filter.select(vm, value, text, cases),
-            None => u32::from(i.b),
-        };
-        #[cfg(feature = "profile-lane-exits")]
-        super::super::lane_exits::record_detail(format!("case-filter cases={} index={}", i.b, index));
-        r.set(i.a, Value::integer(index as i32));
-        next!(cx, r, following(ip), view)
-    }
+            None => count as u32,
+        },
+        None => vm.string_case_index(value, cases),
+    };
+    #[cfg(feature = "profile-lane-exits")]
+    super::super::lane_exits::record_detail(format!("case-filter cases={} index={}", count, index));
+    index
 }
