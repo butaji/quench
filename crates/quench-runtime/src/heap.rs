@@ -1571,7 +1571,7 @@ impl Heap {
     }
 
     /// The record of `object`, an ordinary object's only allocation, charged as one allocation
-    /// with no payload or external bytes (`charge_allocation(0, 0)`). The caller admits the
+    /// with no payload or external bytes (`allocated += 1` only). The caller admits the
     /// object's initial values (`admit_object_contents`) and marks its prototype, or leaves them
     /// as they are where placeholders must record nothing. The object record space holds as many
     /// records as `RECORD_SPACE_CAPACITY`, so a full space is a panic, as for functions and
