@@ -1,7 +1,7 @@
 //! The reads `GetField` records keep as their hints beside the site caches: a prototype's
 //! method (`HolderHint`) and a getter's own-field return (`GetterHint`).
 use super::*;
-use crate::staged::holder::concrete_holder_read;
+use crate::staged::holder::{concrete_holder_read, concrete_own_constant_read};
 
 /// A `GetField` record's read of `atom` that a receiver's immediate prototype answered
 /// (`Vm::holder_hint_hit`, `Vm::string_hint_hit`): a receiver whose whole auxiliary word, exact
@@ -43,18 +43,22 @@ pub(super) struct GetterHint {
 pub(super) struct PrototypeHints {
     pub(super) holder: Vec<HolderHint>,
     pub(super) getter: Vec<GetterHint>,
+    /// Own constants (`Vm::own_constant_hint_hit`): a `HolderHint` whose holder is the receiver
+    /// itself and whose guard is its record's address.
+    pub(super) own: Vec<HolderHint>,
 }
 
 impl PrototypeHints {
     pub(super) fn clear(&mut self) {
         self.holder.clear();
         self.getter.clear();
+        self.own.clear();
     }
 
     /// Retires the watch of every hint whose prototype `live` no longer holds: a hint names its
     /// prototype by record id, which an allocation may give another object once it is swept.
     pub(super) fn retire_dead(&mut self, live: impl Fn(Value) -> bool) {
-        let holders = self.holder.iter().map(|hint| (hint.holder, &hint.watch));
+        let holders = self.holder.iter().chain(&self.own).map(|hint| (hint.holder, &hint.watch));
         let getters = self.getter.iter().map(|hint| (hint.holder, &hint.watch));
         holders.chain(getters).filter(|(holder, _)| !live(*holder)).for_each(|(_, watch)| watch.retire());
     }
@@ -99,6 +103,49 @@ impl<H: Host> Vm<H> {
         let index = u16::try_from(self.holder_hints.getter.len()).ok().filter(|&index| index < limit)?;
         self.holder_hints.getter.push(hint);
         Some(index)
+    }
+}
+
+impl<H: Host> Vm<H> {
+    /// What the own-constant hint `index` answers for a read of `atom` from the direct object
+    /// `object`: the value the hint recorded, for the hinted object itself while nothing has
+    /// written its values or changed its layout. `None` for any other receiver or name.
+    #[inline(always)]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn own_constant_hint_hit(&self, index: u16, atom: Atom, object: Value) -> Option<Value> {
+        let hint = self.holder_hints.own.get(usize::from(index))?;
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        // SAFETY: the hint's watch is live as long as the hint.
+        (hint.atom == atom).then(|| unsafe {
+            concrete_own_constant_read(receiver, hint.guard, std::rc::Rc::as_ptr(&hint.watch), hint.value)
+        })?
+    }
+
+    /// Makes `value`, the own field `atom` of the direct object `object` that a site keeps
+    /// reading from that one object, a record's own-constant hint: in place of `owned`, else as
+    /// a new one below `limit`. The object is marked, so a write to any of its values or a
+    /// change of its layout retires the watch; a site whose hint retired should not make one
+    /// again (the object is written after all).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn hold_own_constant_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
+        let record = self.heap.object_record_by_id(object.direct_object_index()?);
+        let (guard, shape) = (record as *const crate::heap::Object as u64, record.exact_shape());
+        self.heap.mark_prototype(object);
+        let watch = crate::heap::watch_prototype_values(shape)?;
+        let hint = HolderHint { guard, atom, holder: object, value, watch };
+        if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.own.len()) {
+            self.holder_hints.own[usize::from(index)] = hint;
+            return Some(index);
+        }
+        let index = u16::try_from(self.holder_hints.own.len()).ok().filter(|&index| index < limit)?;
+        self.holder_hints.own.push(hint);
+        Some(index)
+    }
+
+    /// Whether own-constant hint `index` is held and its watch still published.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn own_constant_hint_live(&self, index: u16) -> bool {
+        self.holder_hints.own.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
     }
 }
 
