@@ -1159,6 +1159,17 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+impl<W, P> Operation<W, P> {
+    /// The operation as a root read where it is a `LoadCapture` (`root`), else unchanged: a row whose
+    /// record a walk settled on a root binding decodes its read so (`FLAG_ROOT`).
+    pub(crate) fn rooted(self) -> Self {
+        match self {
+            Self::LoadCapture { destination, depth, slot, .. } => Self::LoadCapture { destination, depth, slot, root: true },
+            other => other,
+        }
+    }
+}
+
 impl Operation<u64, ()> {
     /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
     /// tier asks an instruction's meaning by, where the row's operands need no table.

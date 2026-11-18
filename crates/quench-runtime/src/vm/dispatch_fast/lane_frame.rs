@@ -1131,6 +1131,12 @@ pub(in crate::vm::dispatch_fast) const FLAG_WINDOW_CLOSURE: u8 = 12;
 /// its own): the row's miss is the probe (`name_probe`), which asks the general path where the name lands and
 /// then settles the record (`settle_name_record`).
 pub(in crate::vm::dispatch_fast) const FLAG_PROBE: u8 = 13;
+/// `FLAG` of a loop site's backward jump (`dispatch_fast::loop_jump_row`): the jump row takes the jump while the
+/// site warms up; past that, or out of fuel, the site's body (`loop_jump_miss`) runs.
+pub(in crate::vm::dispatch_fast) const FLAG_LOOP: u8 = 14;
+/// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`lane_load_capture_walk`): its row decodes
+/// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
+pub(in crate::vm::dispatch_fast) const FLAG_ROOT: u8 = 15;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -1517,7 +1523,7 @@ pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
 
 /// Opcode `OP`'s jump row in direction `backward`.
 pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backward: bool) -> Handler {
-    if backward { row_jump::<H, OP, true> } else { row_jump::<H, OP, false> }
+    if backward { row_jump::<H, OP, true, FLAG_UNREAD> } else { row_jump::<H, OP, false, FLAG_UNREAD> }
 }
 
 /// Opcode `$op`'s staged operation decoded from `$fields` by its row family's one decoder. Each
@@ -1567,7 +1573,19 @@ lane_handler! {
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
     /// its target runs the lane's jump (`lane_jump`), whose backward edge (`BACKWARD`, which the
     /// view fixes per record) is a safepoint.
-    pub(super) fn row_jump<OP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+    pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8>(cx, r, ip, i, view) {
+        // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
+        // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
+        // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
+        if const { FLAG == FLAG_LOOP } {
+            let site = i.loop_site();
+            if unsafe { (*cx).fuel } == 0 || !site.warm_backedge() {
+                sibling!(super::loop_jump_miss::<H>, r, ip, view)
+            }
+            unsafe { (*cx).fuel -= 1 };
+            let header = unsafe { ip.byte_offset(site.jump) };
+            next!(cx, r, header, Carried::script_in(cx, view))
+        }
         let fields = LaneFields::<OP>(i);
         // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
         let decoded = if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
@@ -1624,7 +1642,7 @@ lane_handler! {
         }
         // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
-        let decoded = row_decode!(OP, FLAG, fields);
+        let decoded = row_decode!(OP, FLAG, fields).map(|operation| if const { FLAG == FLAG_ROOT } { operation.rooted() } else { operation });
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) may read a slot of the property arena.
         let property_values = if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {

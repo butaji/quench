@@ -148,9 +148,6 @@ union LaneOperand {
     call: CallOperand,
     jump: isize,
     constant: Value,
-    /// A loop's backward jump in compiled execution: its site (`LoopSite`), which holds the
-    /// jump's distance.
-    site: *const LoopSite,
     /// The first record of a vector region: the region, which the view owns.
     region: *const vector_region::VectorRegion,
 }
@@ -223,11 +220,26 @@ impl LaneInstruction {
         unsafe { self.operand.constant }
     }
 
+    /// The loop site of a loop's backward jump record (`set_loop_site`): its address, split over
+    /// `a`, `b` and `c`, which a jump record leaves unused, so the operand keeps the jump's distance.
     #[inline(always)]
     fn loop_site(&self) -> &LoopSite {
-        // SAFETY: `install_loop_sites` writes `site` for the records it gives
-        // `lane_loop_jump`, the only handler that reads it; the sites live in the view.
-        unsafe { &*self.operand.site }
+        let address = u64::from(self.a) | u64::from(self.b) << 16 | u64::from(self.c) << 32;
+        // SAFETY: `install_loop_sites` writes the address of a live site of the view, which holds this record.
+        unsafe { &*(address as usize as *const LoopSite) }
+    }
+
+    /// Records `site` as this jump record's loop site; false where its address needs more than 48
+    /// bits, which the install then keeps from having sites.
+    fn set_loop_site(&mut self, site: &LoopSite) -> bool {
+        let address = site as *const LoopSite as usize as u64;
+        if address >> 48 != 0 {
+            return false;
+        }
+        self.a = address as u16;
+        self.b = (address >> 16) as u16;
+        self.c = (address >> 32) as u16;
+        true
     }
 
     #[inline(always)]
@@ -366,7 +378,7 @@ pub(super) struct LaneView {
     /// (`Vm::run_frame_from_lane`), whatever the run's length, since that call enters no
     /// general loop the lane would save.
     returns_from_entry: bool,
-    /// The loops whose backward jumps run `lane_loop_jump`. The view owns them for the
+    /// The loops whose backward jumps run `loop_jump_row` (`loop_jump_miss` on a miss). The view owns them for the
     /// records that point into them, which are their only readers.
     loops: Box<[LoopSite]>,
     /// The backward jumps' PCs, ascending, each with the index in `loops` of the first loop
@@ -3300,7 +3312,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 lane_handler! {
@@ -4533,6 +4545,14 @@ fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -
 /// `lane_capture_value`, with `PLAIN` also a root projection's plain read
 /// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held.
 #[inline(always)]
+/// Whether a capture of `depth` in the running activation's environment settles on a root binding
+/// (the root `walked_capture_slots` reports), which a record's root row answers (`FLAG_ROOT`).
+fn lane_capture_settles_on_root<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> bool {
+    let vm = unsafe { vm(cx) };
+    let env = unsafe { (*cx).registers }.env();
+    !env.is_deleted() && vm.walked_capture_slots(env, false, depth).is_some_and(|(_, root)| root.is_some())
+}
+
 fn lane_read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
@@ -4595,6 +4615,11 @@ script_handler! {
         }
         if let Some(value) = value {
             r.set(i.a, value);
+            // A walk that settled on a root binding requickens the record to its root row (`FLAG_ROOT`),
+            // which reads the binding through the same reads this walk takes.
+            if lane_capture_settles_on_root::<H>(cx, depth) {
+                requicken::<H>(ip, lane_row::<H, { crate::staged::LOAD_CAPTURE_ROW }, ACC_NONE, FLAG_ROOT> as Handler);
+            }
             next!(cx, r, following(ip), view)
         }
         // A capture of a root environment's global var or lexical: the staged row's root read.
@@ -7214,7 +7239,7 @@ script_handler! {
     /// the loop's native code once the jump is hot and the region compiled. Native code
     /// resumes the lane where control leaves the region, or leaves to the general path at an
     /// instruction outside its subset; a run its entry guards decline takes the jump.
-    fn lane_loop_jump<>(cx, r, ip, i, view) {
+    fn loop_jump_miss<>(cx, r, ip, i, view) {
         let site = i.loop_site();
         if site.diagnostics {
             site.lane_backedge_count
@@ -16510,7 +16535,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         return None;
     }
     if jumps_by_row(op) {
-        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD>, produces: false });
+        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD>, produces: false });
     }
     if lane_runs_row(op) {
         return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
@@ -17637,8 +17662,14 @@ fn holds_no_call_link(op: Op) -> bool {
     !op.traits().has(crate::bytecode::Traits::CALL_LINK)
 }
 
+/// The handler of a loop site's backward jump: the jump row in the loop's flag (`FLAG_LOOP`), which
+/// takes the jump while the site warms up and leaves any other to `loop_jump_miss`.
+fn loop_jump_row<H: Host>() -> Handler {
+    row_jump::<H, JUMP, true, FLAG_LOOP> as Handler
+}
+
 /// Gives each backward `Jump` whose loop the shared compiler admits (`analyze_osr_region`) the
-/// record that counts it and enters its native code (`lane_loop_jump`). Runs after every
+/// record that counts it and enters its native code (`loop_jump_row`). Runs after every
 /// other pass, which read a jump record's distance from its operand.
 fn install_loop_sites<'live, H: Host>(
     function_id: u32,
@@ -17766,9 +17797,15 @@ fn install_loop_sites<'live, H: Host>(
     }
     let pcs: Vec<usize> = sites.iter().map(|(pc, _)| *pc).collect();
     let sites: Box<[LoopSite]> = sites.into_iter().map(|(_, site)| site).collect();
+    // A site's address must fit `set_loop_site`'s 48 bits; a view outside them keeps no sites (its
+    // loops run their plain jumps).
+    if sites.iter().any(|site| (site as *const LoopSite as usize as u64) >> 48 != 0) {
+        return (Box::default(), rejections);
+    }
     for (pc, site) in pcs.into_iter().zip(sites.iter()) {
-        records[pc].handler = lane_loop_jump::<H> as Handler as *const ();
-        records[pc].operand = LaneOperand { site };
+        records[pc].handler = loop_jump_row::<H>() as *const ();
+        let placed = records[pc].set_loop_site(site);
+        debug_assert!(placed, "the site's address fits 48 bits");
         if site.hookable {
             records[site.header as usize].call_link.set((pc - site.header as usize) as u16);
         }
