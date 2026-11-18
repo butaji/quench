@@ -416,6 +416,8 @@ struct LoopStore {
     header: ObjectHeader,
     address: ir::Value,
     packed_range: Option<IntRange>,
+    /// Whether the slot's arena word is a raw double, which the carried Number stores as is.
+    raw: bool,
 }
 
 pub(super) struct LoweredRegion {
@@ -3537,12 +3539,13 @@ impl Lowering<'_, '_> {
                         &self.unit.instructions, &boundaries, &self.program.constants, &writes, self.native_calls).is_int32()
                 })
             } else { int32 };
+            let number = carried && !int32 && self.carries_number(&self.loop_fields[field.unwrap()], instruction, &boundaries);
             if int32 {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
             }
-            let mut ty = if int32 { Type::INT32 } else { Type::ANY };
-            if !int32 {
+            let mut ty = if int32 { Type::INT32 } else if number { Type::NUMBER } else { Type::ANY };
+            if !int32 && !number {
                 // This is a candidate, never a proof from source syntax. Admit the
                 // loaded closure on the same entry edge that already hoists its
                 // immutable read. A failed admission exits before loop effects.
@@ -3574,9 +3577,23 @@ impl Lowering<'_, '_> {
                     ty = admitted;
                 }
             }
-            let representation = if int32 { Representation::Int32 } else { Representation::Tagged };
-            let raw = if representation == Representation::Int32 { self.raw_unary(Unary::Narrow(Lane::I32), value) } else { value };
-            let variable = self.builder.declare_var(if representation == Representation::Int32 { types::I32 } else { types::I64 });
+            let representation = if int32 { Representation::Int32 } else if number { Representation::Float64 } else { Representation::Tagged };
+            let raw = match representation {
+                Representation::Int32 => self.raw_unary(Unary::Narrow(Lane::I32), value),
+                Representation::Float64 => {
+                    let bits = self.builder.func.dfg.resolve_aliases(value);
+                    match state.proofs.numbers.iter().find(|(source, _)| *source == bits) {
+                        Some((_, number)) => *number,
+                        None => emit_js_tagged_number(&mut self.builder, value, exit),
+                    }
+                }
+                _ => value,
+            };
+            let variable = self.builder.declare_var(match representation {
+                Representation::Int32 => types::I32,
+                Representation::Float64 => types::F64,
+                _ => types::I64,
+            });
             self.builder.def_var(variable, raw);
             let receiver = if instruction.op().is_get_field() {
                 match instruction.field_lookup() {
@@ -3587,7 +3604,7 @@ impl Lowering<'_, '_> {
             } else { None };
             let stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> =
                 field.into_iter().flat_map(|index| self.loop_fields[index].stores.iter()).filter_map(|store| {
-                    if !int32 { return None; }
+                    if !int32 && !number { return None; }
                     let site = self.unit.instructions[*store].cache_site_index();
                     let binding = self.entry.as_ref()?.fields.iter().find_map(|(known, binding)|
                         (*known == site).then_some(*binding));
@@ -3603,7 +3620,14 @@ impl Lowering<'_, '_> {
                     let site = instruction.cache_site_index();
                     let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
                         &mut self.builder, self.payload, site, exit, None));
-                    self.admit_field_writes(&mut binding, Type::INT32, exit);
+                    if number {
+                        // The slot keeps raw doubles, which the carried Number stores as they are.
+                        let shape = self.raw_unary(Unary::ZeroExtend(Lane::I64), binding.receiver);
+                        let slot = binding.slot.read(&mut self.builder);
+                        self.admit_slot_writes_as((shape, slot), Type::NUMBER, true, exit);
+                    } else {
+                        self.admit_field_writes(&mut binding, Type::INT32, exit);
+                    }
                     let allowed = self.store_atom_admitted(state, instruction.atom_index(), exit);
                     emit_js_guard(&mut self.builder, allowed, exit);
                     let packed = self.builder.create_block();
@@ -3615,13 +3639,18 @@ impl Lowering<'_, '_> {
                         false, exit, Some(binding), Some(object_header), Some(packed));
                     self.goto(done, &[arena_address]);
                     self.builder.switch_to_block(packed);
-                    self.goto(done, &[packed_address]);
+                    if number {
+                        // A packed record holds narrow values, never a double: the loop runs in the lane.
+                        self.goto(exit, &[]);
+                    } else {
+                        self.goto(done, &[packed_address]);
+                    }
                     self.builder.switch_to_block(done);
                     let packed_range = field.and_then(|index| {
                         let field = &self.loop_fields[index];
                         field.stores.iter().position(|pc| *pc == store).and_then(|index| field.store_ranges[index])
                     });
-                    self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range });
+                    self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range, raw: number });
                 }
             }
             let read = LoopRead { value: variable, ty, representation, receiver, header: object_header, step: None };
@@ -4023,7 +4052,9 @@ impl Lowering<'_, '_> {
         };
         let exit = self.guard_exit(state, pc as u32);
         let carried_int = carried.filter(|read| read.representation == Representation::Int32)
-            .map(|_| self.int(state, source, exit));
+            .map(|_| self.int(state, source, exit))
+            .or_else(|| carried.filter(|read| read.representation == Representation::Float64)
+                .map(|_| self.number(state, source, exit)));
         let ty = state.values[usize::from(source)].value.ty;
         let operation = crate::staged::Operation::SetField { value: source, base: register,
             atom: instruction.atom_index(), site: instruction.cache_site_index() };
@@ -4079,7 +4110,7 @@ impl Lowering<'_, '_> {
     /// The slot a loop's entry projected for the int32 store at `pc` (`LoopStore`), where the
     /// store's object is the record the projection addresses.
     fn projected_slot(&self, state: &State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
-        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(Type::INT32)
+        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(if slot.raw { Type::NUMBER } else { Type::INT32 })
             && state.proofs.headers[state.header_index(register)].is_some_and(|header| header.record == slot.header.record))
     }
 
