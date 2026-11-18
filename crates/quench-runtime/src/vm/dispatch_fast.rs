@@ -3376,7 +3376,7 @@ fn lane_operand_value<H: Host>(
         crate::bytecode::OperandKind::Constant => unsafe { &*(*cx).constants }
             .get(usize::from(operand.payload()))
             .copied(),
-        crate::bytecode::OperandKind::Local => lane_plain_local_operand(cx, operand.payload()),
+        crate::bytecode::OperandKind::Local => plain_local_operand(cx, operand.payload()),
         _ => None,
     }
 }
@@ -3394,7 +3394,7 @@ fn lane_call_operand<H: Host>(cx: *mut LaneContext<H>, r: Registers, operand: cr
 /// activation reads its window's local (`row_frame`'s `FLAG_WINDOW`). Any other frameless
 /// activation has no locals; any other local is the general path's.
 #[inline(never)]
-fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Option<Value> {
+fn plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
@@ -3420,7 +3420,7 @@ fn lane_plain_local_operand<H: Host>(cx: *mut LaneContext<H>, slot: u16) -> Opti
 }
 
 /// The local slots a lane body run on `registers` reads and writes (`JsStepDispatch::native_locals`):
-/// those of the activation it runs for, where `lane_plain_local_operand` finds them. An
+/// those of the activation it runs for, where `plain_local_operand` finds them. An
 /// environment activation keeps them in its window after its registers; a VM frame in its own
 /// storage, or in the window after its registers where that storage does not cover the function
 /// (as `osr_lane::bind_frame`); any other frameless activation has none (null), and a run whose
@@ -3471,7 +3471,7 @@ pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i
 script_handler! {
     /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
     /// general path does (`Vm::owner_binding_mut`).
-    fn lane_initialize_tdz<>(cx, r, ip, i, view) {
+    fn initialize_tdz_miss<>(cx, r, ip, i, view) {
         // An activation's own environment holds its bindings (its window's locals), which the frame's owner
         // lookup does not reach: the general path opens them.
         if !unsafe { (*cx).registers }.env().is_deleted() {
@@ -6114,7 +6114,7 @@ unsafe fn lane_field_base<H: Host>(
     base: crate::bytecode::FieldBase,
 ) -> Option<Value> {
     if let Some(slot) = base.local_index() {
-        return lane_plain_local_operand(cx, slot);
+        return plain_local_operand(cx, slot);
     }
     match base.register_index() {
         Some(register) => Some(r.get(register)),

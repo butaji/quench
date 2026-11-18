@@ -2403,7 +2403,7 @@ impl Function {
 
     /// Whether the handlers of an environment window read every local `instruction` addresses:
     /// the local loads, stores and dead-zone openings, a field read from a plain local
-    /// (`lane_plain_local_operand`), a binary operator of a suspending function over plain
+    /// (`plain_local_operand`), a binary operator of a suspending function over plain
     /// locals, whose operands and numeric target the window holds (`lane_store_numeric_local`),
     /// the reads of the values
     /// passed, which the window keeps, and a function's store to a `var` binding its Annex B

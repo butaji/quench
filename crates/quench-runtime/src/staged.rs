@@ -182,7 +182,7 @@ pub(crate) enum Miss {
     /// (`store_local_miss`).
     LocalStore,
     /// An InitializeTdz the frame does not hold in its own locals: the lane's dead-zone opening
-    /// (`lane_initialize_tdz`), which finds the binding wherever the frame keeps it.
+    /// (`initialize_tdz_miss`), which finds the binding wherever the frame keeps it.
     LocalInitialize,
     /// A by-name load the frame does not answer: its first run resolves the name, and a later
     /// run whose binding misses takes that binding's residual (`NameLoad`).

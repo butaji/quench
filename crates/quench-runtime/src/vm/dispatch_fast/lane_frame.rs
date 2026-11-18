@@ -1417,7 +1417,7 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
         crate::staged::Miss::WasmMemoryAddress => super::lane_wasm_memory_address::<H>,
         crate::staged::Miss::LocalLoad => super::load_local_miss::<H>,
         crate::staged::Miss::LocalStore => super::store_local_miss::<H>,
-        crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
+        crate::staged::Miss::LocalInitialize => super::initialize_tdz_miss::<H>,
         crate::staged::Miss::Unary => super::denoted::lane_unary::<H>,
         crate::staged::Miss::Concat => super::denoted::string_concat_miss::<H>,
         crate::staged::Miss::Yield => super::generator_yields::yield_miss::<H>,

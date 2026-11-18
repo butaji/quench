@@ -14,7 +14,7 @@ pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInst
     if vm.is_private_name(i.imm()) || vm.reads_function_info(i.imm()) {
         return None;
     }
-    lane_plain_local_operand(cx, slot)?.direct_object_index()?;
+    plain_local_operand(cx, slot)?.direct_object_index()?;
     match lane_field_site_tier(vm, code, i) {
         FieldSiteTier::Own => Some(lane_get_field_local::<H, RETURNING_FIELD_OWN>),
         FieldSiteTier::Holder => Some(lane_get_field_local::<H, RETURNING_FIELD_HOLDER>),
@@ -32,7 +32,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let value = crate::bytecode::FieldBase(i.b)
             .local_index()
-            .and_then(|slot| lane_plain_local_operand(cx, slot))
+            .and_then(|slot| plain_local_operand(cx, slot))
             .and_then(|object| returning_field_hit::<H, KIND>(unsafe { vm(cx) }, code, object, i.c));
         let Some(value) = value else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script(cx))

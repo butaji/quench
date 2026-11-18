@@ -40,7 +40,7 @@ impl Reads {
         let context: *mut () = cx.cast();
         Self { constants: unsafe { (*cx).constants }, immediate,
             locals: Some(LocalReads { context, read: |context, slot|
-                lane_plain_local_operand(context.cast::<LaneContext<H>>(), slot) }),
+                plain_local_operand(context.cast::<LaneContext<H>>(), slot) }),
             captures: None }
     }
 
