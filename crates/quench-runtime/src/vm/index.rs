@@ -181,7 +181,7 @@ impl<H: Host> Vm<H> {
                 && !self.has_own_array_index(object, index)
                 && !self.inherited_index_unclaimed(object, index)
             {
-                let atom = self.intern_atom(&index.to_string());
+                let atom = self.index_key_atom(index);
                 return self.set_property_with_program_mode(p, object, atom, value, strict);
             }
             if self
@@ -206,9 +206,7 @@ impl<H: Host> Vm<H> {
                 if integrity.is_some_and(Object::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
-                    let atom = self
-                        .lookup_array_index_atom(index)
-                        .unwrap_or_else(|| self.intern_atom(&index.to_string()));
+                    let atom = self.index_key_atom(index);
                     return self.set_property_with_program_mode(p, object, atom, value, strict);
                 }
                 // An array cannot gain an index at or past a non-writable length
@@ -840,7 +838,7 @@ mod tests {
     fn array_index_atom_lookup_uses_canonical_decimal_text() {
         let mut vm = Vm::new(TestHost::default());
         for index in [0, 9, 10, 99, 100, 1023, u32::MAX as usize, usize::MAX] {
-            let expected = vm.intern_atom(&index.to_string());
+            let expected = vm.index_key_atom(index);
             assert_eq!(vm.lookup_array_index_atom(index), Some(expected));
         }
     }

@@ -47,6 +47,9 @@ const CASES: &[(&str, &str)] = &[
     ("let base = 5; class E { add(x) { return base + x; } } base = 6; new E().add(1)", "7"),
     ("class F { 'k k'(a) { return a; } set v(x) { this.x = x; } } Object.getOwnPropertyDescriptor(F.prototype, 'v').set.name + F.prototype['k k'].toString()", "set v'k k'(a) { return a; }"),
     ("class G extends Object { m() { return super.constructor === Object; } } new G().m()", "true"),
+    ("class H { m() { return 'H'; } static s() { return 'S'; } get g() { return 'g'; } } class I extends H { m() { const f = () => super.m(); return 'I' + f(); } static s() { return 's' + super.s(); } get g() { return super.g + '!'; } } const i = new I(); i.m() + I.s() + i.g", "IHsSg!"),
+    ("function outer() { class J { m() { return 1; } } class K extends J { m() { return super.m() + 1; } } return new K().m(); } outer()", "2"),
+    ("var w = 'out'; function dp(a = w, { b } = { b: 2 }, ...r) { var z = 1; return a + b + r.length + z; } const da = (x = w) => { return x; }; dp() + dp('x', { b: 3 }, 1, 2) + da()", "out201x321out"),
 ];
 
 /// Each case gives the same result stubbed as eager, and the one it names.

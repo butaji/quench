@@ -20,16 +20,8 @@ fn derive(profile: &Profile, program_id: u32, program: &ResidualProgram) -> Matr
         let class = usize::from(function.dispatch == DispatchClass::Numeric);
         let first = function.code[pc as usize];
         let second = function.code[pc as usize + 1];
-        let first = if first.is_wide() {
-            function.wide[first.wide_index()].op()
-        } else {
-            first.op()
-        } as usize;
-        let second = if second.is_wide() {
-            function.wide[second.wide_index()].op()
-        } else {
-            second.op()
-        } as usize;
+        let first = function.op_of(first) as usize;
+        let second = function.op_of(second) as usize;
         pairs[class][first * Op::COUNT + second] += count;
         outgoing[class][first] += count;
     }

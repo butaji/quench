@@ -28,11 +28,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether a lane call may derive `function`'s view now (`ProgramStore::lane_call_may_derive`),
-    /// lowering it first where its unlowered runs are done.
+    /// lowering it first where its unlowered runs are done, or from its unlowered record where
+    /// a live frame of it kept blocking that (`ResidualProgram::tier0_blocked`).
     pub(super) fn lane_call_may_derive(&self, program: ProgramId, function: u32) -> bool {
-        if let Some(code) = self.programs.residual(program) {
+        let blocked = self.programs.residual(program).is_some_and(|code| {
             self.promote_tier0_if_due(code, function);
-        }
-        self.programs.lane_call_may_derive(program, function)
+            code.runs_tier0(function as usize) && code.tier0_blocked(function as usize, super::compiled::tier_policy::TIER0_BLOCKED_RUNS)
+        });
+        self.programs.lane_call_may_derive(program, function, blocked)
     }
 }

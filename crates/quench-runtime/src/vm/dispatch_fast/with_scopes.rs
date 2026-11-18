@@ -13,14 +13,18 @@ impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.
     pub(super) fn restore_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
-        self.with_objects.extend(held.drain(..).map(|object| (depth, object)));
+        if !held.is_empty() {
+            self.with_objects.extend(held.drain(..).map(|object| (depth, object)));
+        }
     }
 
-    /// The chain of the activation at `depth`, the innermost, taken off the stack: what a
-    /// suspended frame keeps (`FrameRecord::suspend_at`).
-    pub(in crate::vm) fn drain_with_objects(&mut self, depth: usize) -> WithChain {
-        let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
-        WithChain::from_iter(self.with_objects.drain(first..).map(|(_, object)| object))
+    /// The chain of the activation at `depth`, the innermost, moved off the stack to the end
+    /// of `held`, the suspending frame's (`FrameRecord::with_objects`); usually none.
+    pub(in crate::vm) fn take_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
+        if self.with_objects.last().is_some_and(|(owner, _)| *owner >= depth) {
+            let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
+            held.extend(self.with_objects.drain(first..).map(|(_, object)| object));
+        }
     }
 
     /// The chain of the activation at `depth`, outermost first.

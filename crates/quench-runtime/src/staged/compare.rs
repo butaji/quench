@@ -8,7 +8,6 @@ use super::value::{is_direct_array, is_direct_object, is_direct_string};
 use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 use crate::bytecode::{Operand, WideInstruction};
 use crate::typed_ir::Type;
-use crate::value::ValueLayout;
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
@@ -71,6 +70,10 @@ pub(crate) enum Comparison {
     /// `Vm::plain_in` for an ordinary object). The decode leaves `in` as `Operator`; a tier that
     /// has the VM's residual names it (`Comparison::by_vm`).
     Membership,
+    /// A relation (`<`, `<=`, `>`, `>=`) of operands a tier proved are not both Numbers (a string
+    /// constant): the VM's decision by its own operator (`CallOut::Decide`, `Vm::string_relation`),
+    /// which leaves the row where a conversion would run guest code. The decode never names it.
+    Decided(u32),
     /// Any other operator (`in` to a tier with no VM): no Number relation names it, so a tier
     /// decides it by the operator, and the step is `Unresolved` for the interpreter's exact path.
     Operator(u32),
@@ -85,7 +88,7 @@ impl Comparison {
             Self::Equality { strict, negated } => Some(equality_binary_operator(strict, negated)),
             Self::Instanceof => Some(INSTANCEOF_OPERATOR),
             Self::Membership => Some(IN_OPERATOR),
-            Self::Operator(operator) => Some(operator),
+            Self::Decided(operator) | Self::Operator(operator) => Some(operator),
         }
     }
 
@@ -116,7 +119,7 @@ impl Comparison {
     /// a nullish test and a strict equality.
     pub(crate) const fn runs_guest_code(self) -> bool {
         !matches!(self, Self::Relation { .. } | Self::Bitwise(_) | Self::Nullish { .. } | Self::Boolean { .. }
-            | Self::Equality { strict: true, .. })
+            | Self::Equality { strict: true, .. } | Self::Decided(_))
     }
 }
 
@@ -157,6 +160,7 @@ fn outcome<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, co
         Comparison::Bitwise(operation) => bitwise(stage, frame, [left, right], operation),
         Comparison::Instanceof => instanceof(stage, frame, [left, right]),
         Comparison::Membership => decided_by_vm(stage, frame, [left, right], IN_OPERATOR),
+        Comparison::Decided(operator) => decided_by_vm(stage, frame, [left, right], operator),
         Comparison::Operator(_) => None,
     }
 }
@@ -247,8 +251,7 @@ fn walked_instanceof<S: NumericStage>(stage: &mut S, (records, value): (S::Word,
         let answer = stage.select(holds, yes, no);
         stage.select(decided, answer, unknown)
     }, |stage| {
-        let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-        let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+        let heap = super::value::is_heap(stage, value);
         let immediate = stage.not(heap);
         let string = is_direct_string(stage, value);
         let primitive = stage.any(immediate, string);
@@ -305,8 +308,7 @@ fn known_equal(ty: Type, expected: Nullish, strict: bool) -> Option<bool> {
 #[inline(always)]
 fn loosely_nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, word: S::Word) -> Option<S::Cond> {
     if frame.html_dda_possible() {
-        let tag = stage.and_imm(word, ValueLayout::TAG_MASK);
-        let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+        let heap = super::value::is_heap(stage, word);
         let (object, array) = (is_direct_object(stage, word), is_direct_array(stage, word));
         let record = stage.either(object, array);
         let unrecorded = stage.not(record);

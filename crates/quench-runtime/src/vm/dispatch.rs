@@ -907,7 +907,7 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::ArrayPatternFits | Op::AppendArray | Op::ForInStart | Op::Delete => {
+            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
                 self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
@@ -927,10 +927,6 @@ impl<H: Host> Vm<H> {
             }
             Op::SetFunctionDebugName => {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
-            }
-            Op::RestLength | Op::RestGet => {
-                let value = self.read_rest_view(p, f, i)?;
-                self.write(f, i.result_register(), value);
             }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
@@ -1594,8 +1590,21 @@ impl<H: Host> Vm<H> {
                 return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
-            _ => return self.step_wasm(p, f, i, pc),
+            _ => return self.step_unlisted(p, f, i, pc),
         }
+        Ok(StepResult::Continue)
+    }
+
+    /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and
+    /// iteration operations runs on the interpreter's stage, whose call-out the VM answers
+    /// (`staged_value_step`); any other is a Wasm step.
+    #[inline(never)]
+    fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        if !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
+            return self.step_wasm(p, f, i, pc);
+        }
+        let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
+        self.staged_value_step(p, site, i)?;
         Ok(StepResult::Continue)
     }
 

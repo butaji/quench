@@ -1,9 +1,15 @@
 //! Float width projections share declarations while preserving IEEE bits.
 
+#[cfg(not(stencil_build))]
 use super::WasmValue;
-use super::numeric::{NumericResult, selectors};
+#[cfg(test)]
+use super::numeric::NumericResult;
+use super::numeric::selectors;
+#[cfg(not(stencil_build))]
 use crate::staged::ConcreteWasm;
+#[cfg(not(stencil_build))]
 use crate::staged::machine::MachineStage;
+#[cfg(not(stencil_build))]
 use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
 
 macro_rules! binary_family {
@@ -12,6 +18,9 @@ macro_rules! binary_family {
      $($name:ident, $wasm:ident => $body:expr;)+) => {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
+            /// The operator written out on its own: the oracle the staged rules are tested
+            /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
+            #[cfg(test)]
             #[inline(always)]
             pub(crate) fn apply(self, $left: $float, $right: $float) -> WasmValue {
                 type $float_alias = $float;
@@ -45,6 +54,9 @@ macro_rules! unary_family {
      $($name:ident, $wasm:ident => $body:expr;)+) => {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
+            /// The operator written out on its own: the oracle the staged rules are tested
+            /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
+            #[cfg(test)]
             #[inline(always)]
             pub(crate) fn apply(self, $value: $float) -> WasmValue {
                 type $float_alias = $float;
@@ -143,6 +155,7 @@ impl F64UnaryOperator {
 
 /// The interpreter's execution of the operators of one float width, through the staged rules
 /// (`staged::wasm_float`); `apply` stays the declaration the tests compare them to.
+#[cfg(not(stencil_build))]
 macro_rules! float_evaluation {
     ($binary:ident, $unary:ident, $float:ty, $bits:ty, $variant:ident, $width:ident) => {
         impl $binary {
@@ -178,5 +191,7 @@ macro_rules! float_evaluation {
     };
 }
 
+#[cfg(not(stencil_build))]
 float_evaluation!(F32BinaryOperator, F32UnaryOperator, f32, u32, F32, F32);
+#[cfg(not(stencil_build))]
 float_evaluation!(F64BinaryOperator, F64UnaryOperator, f64, u64, F64, F64);

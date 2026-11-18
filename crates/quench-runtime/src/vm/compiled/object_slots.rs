@@ -198,6 +198,9 @@ pub(crate) struct NativeFieldLoad {
     /// Whether a live function record had the receiver shape when the plan was made: a read
     /// then proves a readable record (an object or a function's), never a direct object.
     pub(crate) function_shape: bool,
+    /// Whether the slot's arena words are raw doubles (its owner's type is Number under float
+    /// slots): its load reads the double and boxes it (`staged::object::read_slot`).
+    pub(crate) raw_double: bool,
     /// For an own read, the whole auxiliary word (`Object::hint_shape`) of the receivers the
     /// site's lane record last answered: the read guards it in one compare, proving the shape
     /// and the storage form, and reads that form's layout with no test (`IcOp::GuardFormed`).
@@ -223,7 +226,7 @@ pub(crate) fn field_load_groups(loads: &[NativeFieldLoad]) -> Option<Vec<(Native
     let mut groups: Vec<(NativeFieldLoad, Vec<u32>)> = Vec::new();
     for load in loads {
         let family = groups.iter_mut().find(|(known, _)| load.holder.is_none() && known.holder.is_none()
-            && known.slot == load.slot && known.storage == load.storage);
+            && known.slot == load.slot && known.storage == load.storage && known.raw_double == load.raw_double);
         match family {
             Some((known, shapes)) => {
                 shapes.push(load.shape);
@@ -355,7 +358,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

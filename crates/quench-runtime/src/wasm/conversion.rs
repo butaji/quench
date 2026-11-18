@@ -1,10 +1,17 @@
 //! Scalar conversions keep selector, input/output type, and semantics together.
 
 use super::numeric::selectors;
-use super::{WasmTrap, WasmType, WasmValue};
+use super::WasmType;
+#[cfg(not(stencil_build))]
+use super::WasmTrap;
+#[cfg(not(stencil_build))]
+use super::WasmValue;
+#[cfg(not(stencil_build))]
 use crate::staged::ConcreteWasm;
 use crate::staged::wasm::Width;
-use crate::staged::wasm_float::{Float, Truncation, convert};
+use crate::staged::wasm_float::{Float, Truncation};
+#[cfg(not(stencil_build))]
+use crate::staged::wasm_float::convert;
 
 macro_rules! scalar_conversions {
     ($value:ident; $($name:ident, $wasm:ident, $source:ident => $result:ident, $body:expr;)+) => {
@@ -19,6 +26,9 @@ macro_rules! scalar_conversions {
                 match self { $(Self::$name => WasmType::$result,)+ }
             }
 
+            /// The conversion written out on its own: the oracle `ConcreteWasm::convert` is tested
+            /// against; execution goes through `evaluate`.
+            #[cfg(test)]
             pub(crate) fn apply(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
                 match (self, value) {
                     $((Self::$name, WasmValue::$source($value)) => Ok($body),)+
@@ -33,25 +43,41 @@ impl ScalarConversionOperator {
     /// The integers a trapping float-to-integer conversion may produce; `None` for every other
     /// conversion, which cannot trap.
     pub(crate) fn truncation(self) -> Option<Truncation> {
-        let signed = match self {
+        self.float_to_integer().filter(|&(_, saturating)| !saturating).map(|(truncation, _)| truncation)
+    }
+
+    /// The integers a float-to-integer conversion produces, and whether it saturates instead of
+    /// trapping outside them; `None` for every other conversion.
+    pub(crate) fn float_to_integer(self) -> Option<(Truncation, bool)> {
+        let (signed, saturating) = match self {
             Self::TruncateF32SignedI32
             | Self::TruncateF64SignedI32
             | Self::TruncateF32SignedI64
-            | Self::TruncateF64SignedI64 => true,
+            | Self::TruncateF64SignedI64 => (true, false),
             Self::TruncateF32UnsignedI32
             | Self::TruncateF64UnsignedI32
             | Self::TruncateF32UnsignedI64
-            | Self::TruncateF64UnsignedI64 => false,
+            | Self::TruncateF64UnsignedI64 => (false, false),
+            Self::SaturateF32SignedI32
+            | Self::SaturateF64SignedI32
+            | Self::SaturateF32SignedI64
+            | Self::SaturateF64SignedI64 => (true, true),
+            Self::SaturateF32UnsignedI32
+            | Self::SaturateF64UnsignedI32
+            | Self::SaturateF32UnsignedI64
+            | Self::SaturateF64UnsignedI64 => (false, true),
             _ => return None,
         };
-        Some(Truncation {
+        let truncation = Truncation {
             float: Float::of(self.source_type())?,
             width: Width::of(self.result_type())?,
             signed,
-        })
+        };
+        Some((truncation, saturating))
     }
 
     /// `apply` through the staged rules (`staged::wasm_float`).
+    #[cfg(not(stencil_build))]
     #[inline(always)]
     pub(crate) fn evaluate(self, value: WasmValue) -> Result<WasmValue, WasmTrap> {
         let word = convert(&mut ConcreteWasm, self, value.word())?;
@@ -62,7 +88,7 @@ impl ScalarConversionOperator {
 /// The truncated values a `bits`-wide integer represents: `lower <= value <
 /// limit`.
 pub(crate) fn truncation_bounds(bits: u32, signed: bool) -> (f64, f64) {
-    let limit = 2.0_f64.powi(if signed { bits as i32 - 1 } else { bits as i32 });
+    let limit = (1_u128 << if signed { bits - 1 } else { bits }) as f64;
     (if signed { -limit } else { 0.0 }, limit)
 }
 
@@ -77,6 +103,7 @@ pub(crate) fn saturate(value: f64, bits: u32, signed: bool) -> i64 {
     }
 }
 
+#[cfg(test)]
 fn trunc_to_integer(
     value: f64,
     bits: u32,

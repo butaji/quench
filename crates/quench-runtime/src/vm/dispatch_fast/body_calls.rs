@@ -26,7 +26,7 @@ pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
         }
         _ => return None,
     }
-    vm.lane_native_returned = Some(value);
+    vm.lane_completion.set(LaneCompletion::NativeReturned(value));
     Some(Resumed::Exit(exit(activation.call)))
 }
 
@@ -102,7 +102,7 @@ fn run_nested<H: Host>(cx: *mut LaneContext<H>, resume: Ip, acc: Value) -> Optio
     let outer = vm.lane_stack.body_boundary.take();
     let left = lane_dispatch(cx, resume);
     vm.lane_stack.body_boundary = outer;
-    vm.lane_native_returned.take().is_none().then_some(left)
+    vm.lane_completion.take_native_returned().is_none().then_some(left)
 }
 
 /// A body's call of an array callback method whose first callback's activation the body made
@@ -431,6 +431,8 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     drop(method);
     if lane_leave_counts(cx, exit) {
         super::lane_note_body_end(cx, own, feedback, |left| lane_note_leave(cx, target.function, left));
+    } else {
+        super::lane_note_warming_leave(cx, own);
     }
     match resumed {
         LaneBodyLeft::Terminated => LANE_CALL_TERMINATED,

@@ -208,12 +208,8 @@ impl Heap {
         // writes nothing into the record, so no barrier applies.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
         // An array a lane proves is hot: its reads take the proof's wide values. Widening
-        // copies the same values (a marker reading the old copy sees what it would have).
+        // copies the same values.
         array.widen_elements();
-        // Proven storage is written past the snapshot barrier: none is proven while a cycle marks.
-        if self.satb_active {
-            return false;
-        }
         let armed: *mut ArrayStorageProofs = proofs;
         if ARMED_PROOFS.get() != armed {
             retire_array_storage_proofs();
@@ -228,13 +224,10 @@ impl Heap {
     /// The dense storage of the record array `base` names, as `ArrayStorageProofs::prove`
     /// would prove it: its first element, the elements a read may reach, and those a store
     /// of a Number may replace in place (zero where none may). `None` for any other value,
-    /// or while a cycle marks. Valid until the next change that retires proofs
+    /// Valid until the next change that retires proofs
     /// (`retire_array_storage_proofs`): a loop kernel holds it across no call or allocation.
     pub(crate) fn array_storage_span(&mut self, base: Value) -> Option<(NonNull<Value>, usize, usize)> {
         let record_id = base.direct_array_index()?;
-        if self.satb_active {
-            return None;
-        }
         // SAFETY: as in `prove_array_storage`.
         let array = unsafe { self.array_records.get_live_mut_unbarriered(record_id) };
         // The span is read and written as wide values: a narrow backing widens once, as for

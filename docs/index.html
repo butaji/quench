@@ -5,6 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quench — TypeScript, JavaScript and WebAssembly runtime with AOT, in Rust</title>
+    <link rel="alternate" type="application/atom+xml" title="Quench engineering blog" href="/blog/feed.xml">
     <meta name="description" content="Quench is a modern TypeScript, JavaScript and WebAssembly runtime written in Rust. Node-compatible, with an interpreter, two JIT tiers and AOT compilation to a native binary." />
     <meta name="keywords" content="TypeScript runtime, JavaScript runtime, WebAssembly runtime, AOT compiler, ahead-of-time compilation, compile TypeScript to native binary, Node.js alternative, Bun alternative, Rust JavaScript engine, JIT, Cranelift, copy-and-patch, low memory" />
     <meta name="author" content="Quench" />
@@ -102,7 +103,7 @@
             font-weight: 700;
             font-size: 5rem;
             color: #3C3C3C;
-            letter-spacing: -0.02em;
+            letter-spacing: -0.085em;
             line-height: 1;
         }
 
@@ -111,9 +112,9 @@
             font-weight: 700;
             font-size: 5rem;
             color: #EF5102;
-            letter-spacing: -0.02em;
+            letter-spacing: -0.085em;
             line-height: 1;
-            margin-left: -6px;
+            margin-left: -0.045em;
         }
 
         .metal-panel {
@@ -765,6 +766,12 @@
 
         .tile .stat-note { font-size: 0.875rem; line-height: 1.45; color: #6B7280; }
         .tile.orange .stat-note { color: #1C1C1E; }
+        .tlink { color: #1C1C1E; font-weight: 600; text-decoration: underline; text-decoration-color: #EF5102; text-underline-offset: 3px; }
+        .tlink:hover { color: #EF5102; }
+        .tile.orange .tlink { text-decoration-color: #1C1C1E; }
+        .tile.orange .tlink:hover { color: #F0F0F0; }
+        .tile.orange p { color: #1C1C1E; }
+        #start, #contribute { scroll-margin-top: 1rem; }
         .tile .fine { font-size: 0.8125rem; color: #6B7280; }
 
         .faq details { border-top: 1px solid #DCDCDC; }
@@ -881,7 +888,7 @@
                     <div class="card-body swap" id="card-body" aria-live="polite">
                         <p class="feature-description" id="feature-description">One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.</p>
                         <p class="tui-header"><span class="tui-prompt">$</span> <span id="feature-cmd">quench-node app.ts</span></p>
-                        <p class="feature-detail" id="feature-detail">TypeScript runs directly. Types are stripped.</p>
+                        <p class="feature-detail" id="feature-detail">Types are kept, and they make it fast.</p>
                     </div>
                 </div>
             </div>
@@ -912,7 +919,7 @@
             </div>
         </section>
 
-        <section class="frame cols-2" aria-label="Usage">
+        <section class="frame cols-2" id="start" aria-label="Usage">
             <div class="tile">
                 <h2>Run</h2>
                 <pre><span class="c"># TypeScript, JavaScript, WebAssembly</span>
@@ -970,6 +977,7 @@
                 <ul>
                     <li><b>One semantics.</b> Each tier is the interpreter specialized to what is known (Futamura projections).</li>
                     <li><b>Check once.</b> A fact about a value is proved once, then trusted.</li>
+                    <li><b>Types are kept.</b> TypeScript types are not erased. They feed the specializer, so typed code can start out specialized.</li>
                     <li><b>Measured against C.</b> Instruction budgets for every operation, with the equivalent C as the reference.</li>
                     <li><b>Conformance.</b> test262 runs in interpreter and JIT modes before changes merge.</li>
                 </ul>
@@ -983,6 +991,32 @@
             </div>
         </section>
 
+        <section class="frame cols-3" id="contribute" aria-label="Get involved">
+            <div class="tile orange">
+                <h2>Try it on your code</h2>
+                <p>Build it, point it at a TypeScript or JavaScript file you already have, and tell us what broke or what was slow. A failing program is the most useful thing you can send.</p>
+                <p><a class="tlink" href="https://github.com/butaji/quench" target="_blank" rel="noopener">Star and watch on GitHub →</a></p>
+            </div>
+            <div class="tile">
+                <h2>Work on the engine</h2>
+                <ul>
+                    <li><b>quench-runtime.</b> Interpreter, object model, GC and the tiers.</li>
+                    <li><b>quench-node.</b> Node-compatible APIs in Rust, checked against Node.</li>
+                    <li><b>quench-wasm, quench-regexp, quench-intl.</b> Self-contained and easy to start in.</li>
+                    <li><b>AGENTS.md.</b> The rules every change follows, and the gates it must pass.</li>
+                </ul>
+            </div>
+            <div class="tile">
+                <h2>Follow the build</h2>
+                <ul>
+                    <li><a class="tlink" href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a></li>
+                    <li><a class="tlink" href="/blog/an-instruction-budget-for-every-operation/">3 × C + 6: an instruction budget for every operation</a></li>
+                    <li><a class="tlink" href="/blog/one-interpreter-four-outputs/">One interpreter, four outputs</a></li>
+                    <li><a class="tlink" href="/blog/">All 17 posts</a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
+                </ul>
+            </div>
+        </section>
+
         <section class="frame" aria-labelledby="faq-title">
             <div class="tile wide faq">
                 <h2 id="faq-title">Questions</h2>
@@ -992,7 +1026,7 @@
                     </details>
                     <details>
                         <summary>Does Quench run TypeScript?</summary>
-                        <p>Yes. Quench runs TypeScript files directly by stripping the types, the same model Node uses. OXC parses both TypeScript and JavaScript.</p>
+                        <p>Yes, and it does not throw the types away. Quench parses TypeScript natively and keeps the type information, so the engine can use it: a declared type lets the compiler pick specialized code up front, checked once where a value enters, instead of waiting to observe types at run time. Using types for speed this way is the design and is being built out now.</p>
                     </details>
                     <details>
                         <summary>Does Quench support WebAssembly?</summary>
@@ -1092,7 +1126,7 @@
         "name": "Does Quench run TypeScript?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Yes. Quench runs TypeScript files directly by stripping the types, the same model Node uses. OXC parses both TypeScript and JavaScript."
+          "text": "Yes, and it does not throw the types away. Quench parses TypeScript natively and keeps the type information, so the engine can use it: a declared type lets the compiler pick specialized code up front, checked once where a value enters, instead of waiting to observe types at run time. Using types for speed this way is the design and is being built out now."
         }
       },
       {
@@ -1157,7 +1191,7 @@
                         "vertical2": "RUNTIME IN RUST",
                         "description": "One runtime for TypeScript, JavaScript and WebAssembly, with Node-compatible APIs. Written in Rust, parsed by OXC.",
                         "cmd": "quench-node app.ts",
-                        "detail": "TypeScript runs directly. Types are stripped."
+                        "detail": "Types are kept, and they make it fast."
             },
             {
                         "name": "AOT Compile",

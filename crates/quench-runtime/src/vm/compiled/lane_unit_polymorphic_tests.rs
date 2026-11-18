@@ -16,7 +16,7 @@ fn a_polymorphic_site_with_an_unbodied_target_keeps_its_call_after_the_last_alte
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "probe")).map(|(id, _)| id as u32).collect();
     assert_eq!(probes.len(), 4);
     let call_pc = program.function(caller).code.iter().position(|packed|
-        super::super::dispatch_fast::decoded_instruction(program.function(caller), *packed).op().class().eq(Class::Call)).unwrap() as u32;
+        program.function(caller).widened(*packed).op().class().eq(Class::Call)).unwrap() as u32;
     let targets = |function: u32, pc: u32| if function == caller as u32 && pc == call_pc {
         probes.iter().map(|&function| CallTarget { function, callee: CalleeBinding::Function }).collect()
     } else { Vec::new() };
@@ -44,7 +44,7 @@ fn a_budget_for_one_callee_inlines_the_heavier_call_site() {
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap() as u32;
     let (caller, cold, hot) = (id_of("caller"), id_of("p"), id_of("q"));
     let calls: Vec<u32> = program.function(caller as usize).code.iter().enumerate().filter(|(_, packed)|
-        super::super::dispatch_fast::decoded_instruction(program.function(caller as usize), **packed).op().class().eq(Class::Call))
+        program.function(caller as usize).widened(**packed).op().class().eq(Class::Call))
         .map(|(pc, _)| pc as u32).collect();
     assert_eq!(calls.len(), 2);
     let targets = |function: u32, pc: u32| match (function == caller, pc) {

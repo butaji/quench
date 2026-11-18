@@ -988,6 +988,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_shape = None;
         self.collection_iteration_shape = None;
         self.array_species_proof = None;
+        self.concat_spreadable_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.promise_species_proof.take();
@@ -1008,6 +1009,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
+        self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
@@ -1697,14 +1699,14 @@ impl<H: Host> Vm<H> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
         let storage_len = self.shapes.get(cache.receiver as usize)?.storage_len();
-        if usize::from(cache.slot) >= storage_len || self.heap.slot_holds_raw_doubles(cache.receiver, usize::from(cache.slot)) { return None; }
+        if usize::from(cache.slot) >= storage_len { return None; }
+        let (ty, raw_double) = self.native_slot_rep(cache.receiver, None, cache.slot)?;
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
             .filter(|object| object.exact_shape() == cache.receiver)
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
-            shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage,
-            ty: self.heap.slot_type(cache.receiver, usize::from(cache.slot)),
-            inherited: None, function_shape: false, formed: None,
+            shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage, ty,
+            inherited: None, function_shape: false, raw_double, formed: None,
         })
     }
 
@@ -1764,7 +1766,8 @@ impl<H: Host> Vm<H> {
                 storage_len: usize::from(slot) + 1,
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
-                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]), function_shape: false, formed: None,
+                inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]), function_shape: false,
+                raw_double: false, formed: None,
             });
         }
         loads
@@ -1813,12 +1816,26 @@ impl<H: Host> Vm<H> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(entry.receiver) as usize)?.storage_len();
-        let owner = holder.unwrap_or(entry.receiver);
-        (usize::from(entry.slot) < storage_len && !self.heap.slot_holds_raw_doubles(owner, usize::from(entry.slot))).then(|| super::compiled::NativeFieldLoad {
-            shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None,
-            ty: self.heap.slot_type(holder.unwrap_or(entry.receiver), usize::from(entry.slot)),
-            inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false, formed: None,
+        if usize::from(entry.slot) >= storage_len { return None; }
+        let (ty, raw_double) = self.native_slot_rep(entry.receiver, holder, entry.slot)?;
+        Some(super::compiled::NativeFieldLoad {
+            shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None, ty,
+            inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
+            raw_double, formed: None,
         })
+    }
+
+    /// The type of `slot` of the shape that holds it (`holder`, else the receiver's) and whether
+    /// its arena words are raw doubles (`Heap::slot_holds_raw_doubles`). Generated code reads a
+    /// raw-double slot only as its receiver's own, under a dependency on its type
+    /// (`NativeFieldLoad::slot_dependency`), which a widening that recodes the words retires;
+    /// `None` for any other raw-double slot.
+    fn native_slot_rep(&self, receiver: u32, holder: Option<u32>, slot: u16) -> Option<(crate::typed_ir::Type, bool)> {
+        let owner = holder.unwrap_or(receiver);
+        let ty = self.heap.slot_type(owner, usize::from(slot));
+        let raw_double = self.heap.slot_holds_raw_doubles(owner, usize::from(slot));
+        let depended = ty != crate::typed_ir::Type::ANY && ty != crate::typed_ir::Type::NEVER;
+        (!raw_double || (holder.is_none() && depended)).then_some((ty, raw_double))
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
@@ -2758,7 +2775,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::ArrayRecord(_)
                 | HeapReference::PromiseRecord(_)
                 | HeapReference::AwaitRecord(_)
-                | HeapReference::V128Record(_),
+                | HeapReference::V128Record(_)
+                | HeapReference::EnvironmentRecord(_),
             )
             | None => None,
         };
@@ -4228,6 +4246,33 @@ impl<H: Host> Vm<H> {
         unsafe { self.heap.flat_property_mut_ptr_unchecked(object, slot, writes) }
     }
 
+    /// Whether a loop region's native stores of `writes` to the own data slot `site` caches on
+    /// `object` are admitted, and the slot's address for its entry record where its words are
+    /// tagged (null where they are raw doubles, which the region's staged store writes as raw
+    /// doubles, `StoreArm::raw_double`, and which no raw tagged writer may take).
+    pub(super) fn cached_field_store_admission(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+        writes: crate::typed_ir::Type,
+    ) -> Option<*mut Value> {
+        let slot = self.cached_own_writable_slot(p, object, atom, site)?;
+        let shape = self.heap.object(object)?.shape();
+        // A Number store's own row admits the domain of the value it stores
+        // (`Lowering::admit_slot_writes_as`): the entry keeps a Number slot's narrower type
+        // rather than widening it to every Number, which would make an int32 slot hold raw
+        // doubles and decline the code its compile planned on that slot.
+        let current = self.heap.slot_type(shape, slot);
+        let writes = if writes == crate::typed_ir::Type::NUMBER && current.is_subtype(writes) { current } else { writes };
+        if self.heap.slot_holds_raw_doubles(shape, slot) {
+            return self.heap.admit_slot_writes_as(shape, slot, writes, true).then(std::ptr::null_mut);
+        }
+        // SAFETY: the address goes to the entry record alone; the region writes it as its admission says.
+        unsafe { self.cached_field_store_pointer(p, object, atom, site, writes) }
+    }
+
     /// Admit an own data slot once for a no-reentry operation. Its physical
     /// encoding is independent of the shape/descriptor permission to write it.
     fn cached_own_writable_slot(&self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<usize> {
@@ -5026,17 +5071,14 @@ impl<H: Host> Vm<H> {
                     .get_unchecked_mut(table_index as usize)
             };
             entries.insert(cache);
+            self.set_primary_field_cache(site, cache);
             return;
         }
         let entry = self.field_caches.get(site);
         if (entry.receiver == cache.receiver && entry.holder == cache.holder)
             || entry.receiver == NO_FIELD_RECEIVER
         {
-            let leaves = self.field_site_leaves(site);
-            self.field_caches.set(site, cache);
-            if leaves != 0 {
-                self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD] |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
-            }
+            self.set_primary_field_cache(site, cache);
             return;
         }
         let table_index = self.megamorphic_fields.len() as u32;
@@ -5045,6 +5087,19 @@ impl<H: Host> Vm<H> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         unsafe {
             self.megamorphic_field_indices.set_unchecked(site, table_index);
+        }
+        self.set_primary_field_cache(site, cache);
+    }
+    /// Makes `cache` the site's primary entry, keeping its leave count. The primary entry is the
+    /// one the specializers' site rows read (`staged::entry::site_read`), so it is always the
+    /// latest the interpreter resolved: a receiver whose shape moved on is read natively again
+    /// after one leave, where a primary entry pinned to the first shape left on every read.
+    /// The megamorphic set, which holds every entry, still answers the interpreter's misses.
+    fn set_primary_field_cache(&mut self, site: usize, cache: FieldCache) {
+        let leaves = self.field_site_leaves(site);
+        self.field_caches.set(site, cache);
+        if leaves != 0 {
+            self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD] |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
         }
     }
     #[inline(always)]

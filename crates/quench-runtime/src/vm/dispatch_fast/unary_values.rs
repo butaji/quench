@@ -58,6 +58,9 @@ fn lane_value_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> O
     if operator == crate::bytecode::UNARY_TYPEOF_INDEX {
         return Some(vm.typeof_index_value(operand));
     }
+    if let Some(elements) = crate::bytecode::array_pattern_test(operator) {
+        return Some(Value::boolean(vm.array_pattern_fits(operand, elements)));
+    }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);
         // Interning the type's name can allocate.

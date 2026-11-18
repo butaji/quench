@@ -10,8 +10,9 @@ pub(super) fn utf16_lossy(units: &[u16]) -> String {
     let mut text = String::with_capacity(units.len());
     let mut rest = units;
     while !rest.is_empty() {
-        let (ascii, tail) = rest.split_at(rest.iter().take_while(|&&unit| unit < FIRST_NON_ASCII).count());
-        text.extend(ascii.iter().map(|&unit| char::from(unit as u8)));
+        let (ascii, tail) = rest.split_at(rest.iter().position(|&unit| unit >= FIRST_NON_ASCII).unwrap_or(rest.len()));
+        // SAFETY: every unit of `ascii` is below 0x80, so each byte is one UTF-8 character.
+        unsafe { text.as_mut_vec() }.extend(ascii.iter().map(|&unit| unit as u8));
         let (wide, tail) = tail.split_at(tail.iter().take_while(|&&unit| unit >= FIRST_NON_ASCII).count());
         text.extend(char::decode_utf16(wide.iter().copied()).map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER)));
         rest = tail;

@@ -629,7 +629,7 @@ pub(super) fn math_numbers(native: Native, values: &[f64]) -> Option<f64> {
         Native::MathPow => super::operations::exponentiate(argument(0), argument(1)),
         Native::MathAtan2 => super::fdlibm_math::atan2(argument(0), argument(1)),
         Native::MathImul => {
-            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_u32(number) as i32);
+            let [left, right] = [argument(0), argument(1)].map(|number| crate::value::number_to_i32(number));
             f64::from(crate::staged::math::int_multiply(left, right))
         }
         _ => return None,
@@ -657,13 +657,19 @@ pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> 
                     Native::MathMax => return Some(Value::integer(x.max(y))),
                     Native::MathMin => return Some(Value::integer(x.min(y))),
                     // ToInt32 of an int32 is itself: the product's low 32 bits.
-                    Native::MathImul => return Some(Value::integer(x.wrapping_mul(y))),
+                    Native::MathImul => return Some(Value::integer(crate::staged::math::int_multiply(x, y))),
                     _ => {}
                 }
             }
             math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number)
         }
         [only] => {
+            // An int32's absolute value is an int32 but at -2^31: no conversion to a double and
+            // back. (The integral functions keep their double path: their arguments are
+            // doubles far more often, and a test first costs those.)
+            if native == Native::MathAbs && let Some(x) = only.as_int() && x != i32::MIN {
+                return Some(Value::integer(x.abs()));
+            }
             let number = only.as_number()?;
             math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
         }

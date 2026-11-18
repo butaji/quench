@@ -59,7 +59,7 @@ fn infer_inductive(body: &str, names: &[&str]) -> (Vec<Type>, Vec<Register>) {
     let mut candidates: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
     for register in &homes { candidates.insert(usize::from(*register)); }
     inductive_int32(&mut initial, candidates, header..=back, &instructions, &leaders, &program.constants,
-        &super::super::lane_region::writes, &|_| None, false, Observed::NONE);
+        &super::super::lane_region::writes, &|_| None, false, &[], Observed::NONE);
     (initial, homes)
 }
 
@@ -132,7 +132,7 @@ fn overflow_proofs_entered(source: &str, input: Type, entering: &[(Register, Int
     let mut initial = vec![Type::ANY; usize::from(function.registers)];
     initial[0] = input;
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
-        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
     let seeds = Seeds { entering, ..Seeds::observing(Observed::NONE) };
     let mut free = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {
@@ -192,7 +192,7 @@ fn a_seeded_typed_array_load_types_its_register_with_the_kinds_range() {
     assert!(!reads.is_empty());
     let initial = vec![Type::ANY; usize::from(function.registers)];
     let text = Text { entry: 0, instructions: &instructions, leaders: &leaders, constants: &program.constants,
-        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false };
+        written: &super::super::lane_region::writes, own_shape: &|_| None, native_calls: false, raises: &[] };
     let seeds = Seeds { observed: Observed(&reads), ..Seeds::observing(Observed::NONE) };
     let mut loaded = Vec::new();
     analyze_text(&text, &initial, seeds).replay(&text, seeds, |pc, point| {

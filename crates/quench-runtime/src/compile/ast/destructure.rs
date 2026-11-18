@@ -288,7 +288,7 @@ impl FunctionCompiler<'_, '_> {
         }
         match target {
             AssignmentTarget::ArrayAssignmentTarget(array) => {
-                let targets = if array.rest.is_some() { None } else {
+                let targets = if array.rest.is_some() || array.elements.is_empty() || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
                     array.elements.iter().map(|element| match element {
                         None => Some(None),
                         Some(AssignmentTargetMaybeDefault::AssignmentTargetIdentifier(identifier)) => {
@@ -650,7 +650,8 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             BindingPattern::ArrayPattern(array) => {
-                let targets = if array.rest.is_some() || reference.is_some() { None } else {
+                let targets = if array.rest.is_some() || reference.is_some() || array.elements.is_empty()
+                    || array.elements.len() > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS as usize { None } else {
                     array.elements.iter().map(|element| match element {
                         None => Some(None),
                         Some(BindingPattern::BindingIdentifier(identifier)) => {
@@ -810,7 +811,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     /// The direct reads of an array pattern whose `targets` (an atom, or `None` for an
-    /// elision) each store only a local (`stores_locally`): while `ArrayPatternFits` holds,
+    /// elision) each store only a local (`stores_locally`): while its `UNARY_ARRAY_PATTERN` test holds,
     /// the pattern's iteration runs no guest code and its close calls nothing, so it is the
     /// reads of `value`'s elements `0..targets.len()` and the stores, in order; else it jumps
     /// to the iterator protocol the caller emits next. Every element is read before the first
@@ -818,7 +819,7 @@ impl FunctionCompiler<'_, '_> {
     /// protocol, for the caller to patch after it.
     fn direct_array_pattern(&mut self, value: Register, targets: &[Option<Atom>], initializing: bool) -> usize {
         let fits = self.reg();
-        self.emit(Op::ArrayPatternFits, fits, value, 0, targets.len() as u32);
+        self.emit(Op::Unary, fits, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + targets.len() as u32 - 1);
         let protocol = self.emit(Op::JumpFalse, fits, 0, 0, 0);
         let mut elements = Vec::with_capacity(targets.len());
         for (index, target) in targets.iter().enumerate() {

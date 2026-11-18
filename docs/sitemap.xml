@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://quench.run/</loc>
-    <lastmod>2026-11-17</lastmod>
-  </url>
+  <url><loc>https://quench.run/</loc><lastmod>2026-11-17</lastmod></url>
+  <url><loc>https://quench.run/blog/</loc><lastmod>2026-11-17</lastmod></url>
+  <url><loc>https://quench.run/blog/where-quench-stands/</loc><lastmod>2026-11-17</lastmod></url>
+  <url><loc>https://quench.run/blog/an-instruction-budget-for-every-operation/</loc><lastmod>2026-11-17</lastmod></url>
+  <url><loc>https://quench.run/blog/compiled-but-never-entered/</loc><lastmod>2026-11-17</lastmod></url>
+  <url><loc>https://quench.run/blog/entry-cells-exits-and-gc-without-stack-maps/</loc><lastmod>2026-11-15</lastmod></url>
+  <url><loc>https://quench.run/blog/javascript-that-looks-like-c/</loc><lastmod>2026-11-14</lastmod></url>
+  <url><loc>https://quench.run/blog/one-interpreter-four-outputs/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://quench.run/blog/a-17-percent-regression-from-four-deleted-globals/</loc><lastmod>2026-11-08</lastmod></url>
+  <url><loc>https://quench.run/blog/aot-without-a-second-compiler/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://quench.run/blog/most-optimizations-do-not-survive/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://quench.run/blog/interpreter-against-interpreter/</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://quench.run/blog/your-rss-depends-on-which-cpu-you-ran-on/</loc><lastmod>2026-10-27</lastmod></url>
+  <url><loc>https://quench.run/blog/objects-values-and-three-loads/</loc><lastmod>2026-10-12</lastmod></url>
+  <url><loc>https://quench.run/blog/the-day-we-deleted-405013-lines/</loc><lastmod>2026-10-08</lastmod></url>
+  <url><loc>https://quench.run/blog/deleting-our-benchmark-wins/</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://quench.run/blog/thirty-five-thousand-commits/</loc><lastmod>2026-08-16</lastmod></url>
+  <url><loc>https://quench.run/blog/test262-and-the-skip-list/</loc><lastmod>2026-07-23</lastmod></url>
+  <url><loc>https://quench.run/blog/a-transpiler-that-wanted-to-be-an-engine/</loc><lastmod>2026-06-11</lastmod></url>
 </urlset>

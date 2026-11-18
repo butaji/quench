@@ -77,8 +77,6 @@ impl Heap {
             self.string_atoms.young_kept.borrow_mut().push(atom);
         }
         let string = Value::direct_string(*record & !KEPT);
-        // An atom's string is held weakly unless kept: a cycle may not reach it otherwise.
-        self.shade(string);
         Some(string)
     }
 

@@ -32,7 +32,7 @@ struct Span {
 const NO_SPAN: Span = Span { base: Value::UNDEFINED, values: std::ptr::null_mut(), readable: 0, writable: 0, typed: None };
 
 /// A run's state: the entry facts and the recurrences' current values.
-struct State {
+pub(super) struct State {
     scalars: [f64; SLOTS],
     /// Each affine value's index at the run's first iteration.
     firsts: [i64; SLOTS],
@@ -48,7 +48,7 @@ struct State {
 }
 
 impl State {
-    const EMPTY: Self = Self {
+    pub(super) const EMPTY: Self = Self {
         scalars: [0.0; SLOTS],
         firsts: [0; SLOTS],
         steps: [0; SLOTS],
@@ -109,7 +109,7 @@ pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
 
 #[inline(always)]
 fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
-    let int32 = |value: f64| crate::value::number_to_u32(value) as i32;
+    let int32 = |value: f64| crate::value::number_to_i32(value);
     super::super::super::operations::number_bitwise_f64_result(operation, int32(a), int32(b))
 }
 
@@ -141,11 +141,31 @@ fn trip_count(start: f64, step: f64, relation: NumberRelation, bound: f64) -> u6
         return u64::MAX;
     }
     // An estimate from the distance, then exact steps around it.
-    let mut k = ((bound - start) / step).floor().clamp(0.0, 1e15) as u64;
-    while k > 0 && !holds(start + step * k as f64) {
+    let k = ((bound - start) / step).floor().clamp(0.0, 1e15) as u64;
+    // The estimate or the one before it is the last iteration whose test holds, but for
+    // rounding: test those two first, and step only past them (the compiler vectorized the
+    // steps, which made every entry pay for a long walk).
+    let at = |k: u64| holds(start + step * k as f64);
+    if !at(k + 1) {
+        if at(k) {
+            return k + 1;
+        }
+        if k > 0 && at(k - 1) {
+            return k;
+        }
+    }
+    trip_walk(k, at)
+}
+
+/// `trip_count`'s exact steps from the estimate `k`, where neither it nor the one before it is
+/// the last iteration whose test holds (`at`).
+#[cold]
+#[inline(never)]
+fn trip_walk(mut k: u64, at: impl Fn(u64) -> bool) -> u64 {
+    while k > 0 && !at(k) {
         k -= 1;
     }
-    while holds(start + step * (k + 1) as f64) {
+    while at(k + 1) {
         k += 1;
     }
     k + 1
@@ -171,7 +191,9 @@ const WORK_PER_ITERATION: u64 = 4;
 impl LoopKernel {
     /// Runs the loop from the registers' current state (module documentation).
     pub(super) unsafe fn run<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, ip: Ip) {
-        let Some(mut state) = self.enter(cx, r) else {
+        // SAFETY: the kernel's state, used by one run at a time (the body calls nothing).
+        let state = unsafe { &mut **self.state.get() };
+        let Some(()) = self.enter(cx, r, state) else {
             if crate::trace::Channel::LoopKernel.on() {
                 eprintln!("loop-kernel: entry declined ({} declines)", self.declines.get());
             }
@@ -186,7 +208,7 @@ impl LoopKernel {
         let mut done = 0u64;
         while done < state.limit {
             let len = (state.limit - done).min(state.chunk as u64) as usize;
-            if !self.chunk::<H>(&mut state, scratch, done, len) {
+            if !self.chunk::<H>(state, scratch, done, len) {
                 // A chunk met a value the kernel does not compute: the loop's own records
                 // run from its first iteration, now and at every later entry.
                 if crate::trace::Channel::LoopKernel.on() {
@@ -205,19 +227,21 @@ impl LoopKernel {
         }
         // The work clock counts the iterations the kernel ran in place of the records.
         crate::clock::charge_work(done * WORK_PER_ITERATION);
-        self.write_back(&state, r, done);
+        self.write_back(state, r, done);
     }
 
     /// The run's entry facts, or `None` where the kernel runs nothing.
-    fn enter<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers) -> Option<State> {
+    /// Every slot the shape uses is written here or by the run before it is read; the rest
+    /// keep what an earlier run left and are never read.
+    fn enter<H: Host>(&self, cx: *mut LaneContext<H>, r: Registers, state: &mut State) -> Option<()> {
         let shape = &self.shape;
-        let mut state = State::EMPTY;
+        state.chunk = CHUNK;
         for (slot, affine) in shape.affines.iter().enumerate() {
             state.firsts[slot] = i64::from(r.get(affine.register).as_int()?) + i64::from(affine.offset);
             state.steps[slot] = stride(affine.step, r)?;
         }
         let start = state.firsts[usize::from(shape.counter)];
-        self.scalars(cx, &mut state, r)?;
+        self.scalars(cx, state, r)?;
         let step = state.steps[usize::from(shape.counter)];
         state.trip = trip_count(start as f64, step as f64, shape.relation, state.scalars[usize::from(shape.bound)]);
         if state.trip < MIN_TRIP {
@@ -232,9 +256,9 @@ impl LoopKernel {
         for (slot, &register) in shape.bases.iter().enumerate() {
             state.spans[slot] = span(vm, r.get(register))?;
         }
-        state.limit = self.limit(&state)?;
-        state.chunk = self.chunk_length(&state)?;
-        Some(state)
+        state.limit = self.limit(state)?;
+        state.chunk = self.chunk_length(state)?;
+        Some(())
     }
 
     /// The scalars' values at entry: constants, unwritten registers, and the loop-invariant

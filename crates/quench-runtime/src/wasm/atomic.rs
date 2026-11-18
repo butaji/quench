@@ -191,7 +191,7 @@ impl AtomicOperator {
             AtomicKind::Wait | AtomicKind::Notify => unreachable!("handled before byte mutation"),
             AtomicKind::Load => None,
             AtomicKind::Store | AtomicKind::Exchange => value,
-            AtomicKind::Modify(op) => Some(op.apply(
+            AtomicKind::Modify(op) => Some(op.evaluate(
                 integer_bits(loaded) as i64,
                 integer_bits(value.expect("atomic value operand")) as i64,
             )?),

@@ -22,6 +22,7 @@ pub(crate) const TAG_DELETE: u8 = 11;
 pub(crate) const TAG_LOAD_NAME: u8 = 12;
 pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
+pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -69,6 +70,8 @@ pub(crate) enum CallOut {
     /// case. It defines no register; its answer is a canonical boolean, which a lane's helper
     /// reports as its status (`LANE_CALL_HOLDS`).
     Decide { left: Register, right: Register, operator: u32 } = TAG_DECIDE,
+    /// `base[key]` of a for-in's enumerated read whose state's memo did not answer: the element read.
+    EnumeratedGet { base: Register, key: Register } = TAG_ENUMERATED_GET,
 }
 
 /// The registers the VM reads for a `CallOut`: up to two of fixed place, and a list a call
@@ -106,6 +109,20 @@ impl Operands {
 }
 
 impl CallOut {
+    /// The operands and operator of a step the VM decides from the two words alone, with no
+    /// effect: `===` and `!==` (`Vm::strict_equal`), as a decision or a value. It runs no guest
+    /// code, allocates nothing and never raises, so a tier may ask a pure helper of the words
+    /// (`dispatch_fast::lane_decide`) instead of making the step in place.
+    pub(crate) fn word_decision(self) -> Option<([Register; 2], u32)> {
+        use crate::vm::operations::{equality_binary_operator, equality_operator};
+        match self {
+            Self::Decide { left, right, operator } if equality_operator(operator).is_some_and(|(strict, _)| strict) =>
+                Some(([left, right], operator)),
+            Self::Equality { left, right, strict: true, negated } => Some(([left, right], equality_binary_operator(true, negated))),
+            _ => None,
+        }
+    }
+
     /// Whether the step reads or writes the locals of the running activation, or resolves a name
     /// through its bindings (`Vm::load_name` searches its scope): its owner is the activation's
     /// (`Vm::running_owner`), not the innermost frame's, which beside the lane's frameless
@@ -121,7 +138,7 @@ impl CallOut {
     pub(crate) fn operands(self) -> Operands {
         Operands::of_fixed(match self {
             Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. }
-                | Self::Decide { left, right, .. } => [Some(left), Some(right)],
+                | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. } => [None, None],
@@ -145,6 +162,7 @@ impl<W, P> Operation<W, P> {
                 (CallOut::Binary { left, right, operator }, Some(destination)),
             Self::Protocol { step, destination, operands } => (CallOut::Protocol { step, operands }, destination),
             Self::ForInNext { destination, state } => (CallOut::ForInNext { state }, Some(destination)),
+            Self::EnumeratedGet { destination, base, key, .. } => (CallOut::EnumeratedGet { base, key }, Some(destination)),
             _ => return self.binding_call_out(),
         })
     }

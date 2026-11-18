@@ -126,12 +126,6 @@ fn intern_slow(word: u64, slot: usize) -> u32 {
     id
 }
 
-/// Layouts interned so far (memory reports).
-#[allow(dead_code)]
-pub(crate) fn count() -> usize {
-    NEXT.load(Ordering::Relaxed) as usize
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

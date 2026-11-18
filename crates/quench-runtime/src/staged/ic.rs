@@ -7,7 +7,7 @@ use super::Stage;
 use super::region::Region;
 use super::object::{Form, Layout, PackedAccess, arena_run, extras_pointer, formed_own_layout, has_extras, inline_storage, object_record_at, own_layout,
     recorded_shape,
-    proto_link, proto_object_record_id, read_slot, Rep};
+    proto_link, proto_object_record_id, read_slot, read_slot_value, Rep};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// One step of a proved property read, over the record the read has reached.
@@ -22,8 +22,9 @@ pub(crate) enum IcOp<'a> {
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
-    /// values in `form`; it ends the read.
-    LoadSlot { slot: u16, form: Form, storage_len: usize },
+    /// values in `form`, an arena word of which encodes its value in `rep` (`read_slot`); it
+    /// ends the read.
+    LoadSlot { slot: u16, form: Form, storage_len: usize, rep: Rep },
     /// The value at `slot` of a prototype record, which keeps its values in the arena past its
     /// extras (`Object::extras_storage_start`), else the read misses; it ends the read.
     LoadPrototypeSlot(u16),
@@ -70,7 +71,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
                 let records = records.expect("a read through a prototype has the record table");
                 at = Reached::bare(object_record_at(stage, records, id));
             }
-            IcOp::LoadSlot { slot, form, storage_len } => return load_slot(stage, &at, slot, form, storage_len, miss),
+            IcOp::LoadSlot { slot, form, storage_len, rep } => return load_slot(stage, &at, (slot, rep), form, storage_len, miss),
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
             IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
         }
@@ -101,10 +102,10 @@ pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJE
 
 /// `IcOp::LoadSlot`: the value at `slot` of the reached record.
 #[inline(always)]
-fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, slot: u16, form: Form, storage_len: usize,
+fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Rep), form: Form, storage_len: usize,
     miss: S::Miss) -> Option<S::Word> {
     let layout = slot_layout(stage, at, form, storage_len, miss)?;
-    Some(read_slot(stage, layout, slot, Rep::Tagged))
+    Some(read_slot_value(stage, layout, slot, rep))
 }
 
 /// The layout `IcOp::LoadSlot` reads through: the reached record's, whose shape is guarded
@@ -174,6 +175,17 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     let record = object as *const crate::heap::Object as u64;
     // The word proves the shape and, by its storage-form bits, where the values live.
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    // An exact shape has no form bits, so the whole word equals it only in the arena form,
+    // whose payload is the run's start: one compare proves the shape and the form.
+    // The caller's contract: an exact shape, so no form bit needs testing.
+    debug_assert_eq!(shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form), 0, "an exact shape has no form bit");
+    let whole = stage.eq_imm(word, u64::from(shape));
+    if stage.known(whole) == Some(true) {
+        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+        let run = arena_run(&mut stage, payload);
+        let layout = Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
+        return Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)));
+    }
     let at = Reached { shape: Some(recorded_shape(&mut stage, word)), word: Some(word), ..Reached::bare(record) };
     guard_shape(&mut stage, &at, shape, ())?;
     let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
@@ -310,7 +322,7 @@ mod tests {
         let (own, holder) = (heap.object(object).unwrap().exact_shape(), heap.object(prototype).unwrap().exact_shape());
         let read = |receiver, holder| [IcOp::GuardShape(receiver), IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(0)];
         assert_eq!(concrete(&heap, &read(own, holder), object), Some(Value::number(1.5)));
-        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2 };
+        let load = IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: Rep::Tagged };
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(own), load], object), Some(Value::number(8.0)));
         assert_eq!(concrete(&heap, &[IcOp::GuardShape(holder), load], object), None);
         assert_eq!(concrete(&heap, &read(holder, holder), object), None);
@@ -368,7 +380,7 @@ mod tests {
             let at = Reached::bare(0);
             let record = trace.constant(0);
             let at = Reached { record, ..at };
-            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1 }];
+            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Rep::Tagged }];
             run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
             trace
         };

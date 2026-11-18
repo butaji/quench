@@ -140,6 +140,20 @@ impl ResidualProgram {
         false
     }
 
+    /// Whether function `index` still runs unlowered after its lowering, due, was blocked on
+    /// the calls up to `runs` (counting the one asked for) by a live frame of it: a recursion
+    /// that never unwinds to a call free of it, as a renderer's tree walk. Its lane view then
+    /// derives from the unlowered record, which pins it, instead of every call leaving the lane.
+    pub(crate) fn tier0_blocked(&self, index: usize, runs: u8) -> bool {
+        let Some(tier0) = self.functions[index].tier0.get().filter(|_| self.runs_tier0(index)) else { return false };
+        let made = tier0.runs.get();
+        if made >= runs {
+            return true;
+        }
+        tier0.runs.set(made + 1);
+        false
+    }
+
     /// Whether function `index` still runs its unlowered record, from which no lane view
     /// derives where the derivation may wait (`ProgramStore::entry_lane_view`).
     pub(crate) fn runs_tier0(&self, index: usize) -> bool {

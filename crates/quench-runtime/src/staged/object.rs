@@ -515,9 +515,10 @@ pub(crate) fn narrow_run<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
     stage.ne_imm(tag, 0u32)
 }
 
-/// Value `slot` of an object of `layout`, which holds it, as the word its owner's `rep` encodes
-/// (a `Value`'s bits for `Rep::Tagged` and `Rep::Int32`, the IEEE double for `Rep::Float64`,
-/// which only an arena slot takes: a packed slot is narrow).
+/// Value `slot` of an object of `layout`, which holds it, as the word its owner's `rep` encodes:
+/// a `Value`'s bits for `Rep::Tagged` and `Rep::Int32`, the IEEE double for `Rep::Float64`
+/// (`value_word` makes a `Value` of either). Only an arena slot holds a raw double: a packed or
+/// narrow slot holds a narrow value whatever its owner's type, and reads as one, a `Value`.
 #[inline(always)]
 pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Rep) -> S::Word {
     debug_assert!(usize::from(slot) < layout.storage_len);
@@ -530,10 +531,22 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
     }
 }
 
+/// The `Value` bits of the word `read_slot` read at `slot` of `layout` in `rep`: a raw double
+/// of an arena run boxed (`Stage::box_number`), any other word as it is.
+#[inline(always)]
+pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Rep) -> S::Word {
+    match (rep, layout.slots) {
+        (Rep::Float64, Slots::Flat(_)) => { let number = read_slot(stage, layout, slot, rep); stage.box_number(number) }
+        (Rep::Float64, Slots::Either { packed, inline, flat }) => stage.choose(inline,
+            |stage| packed_read(stage, packed, slot, Rep::Tagged),
+            |stage| { let number = flat_read(stage, flat, slot, rep); stage.box_number(number) }),
+        _ => read_slot(stage, layout, slot, Rep::Tagged),
+    }
+}
+
 /// `read_slot` at a run-time `index` (a for-in key's listed slot): value `index` of an object
 /// of `layout`, which the caller proved holds it (`index < layout.storage_len`), as the word
 /// its owner's `rep` encodes.
-#[allow(dead_code)] // The for-in keyed-read row is its first caller.
 #[inline(always)]
 pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, index: S::Word, rep: Rep) -> S::Word {
     match layout.slots {
@@ -552,7 +565,6 @@ pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::C
 }
 
 /// Flat value `index` of the run at `base`, `index` a run-time word.
-#[allow(dead_code)] // The for-in keyed-read row is its first caller.
 #[inline(always)]
 fn flat_read_at<S: Stage>(stage: &mut S, base: S::Word, index: S::Word, rep: Rep) -> S::Word {
     let offset = stage.mul_imm(index, OBJECT.property_value_size as u64);
@@ -564,7 +576,6 @@ fn flat_read_at<S: Stage>(stage: &mut S, base: S::Word, index: S::Word, rep: Rep
 }
 
 /// Packed value `index` (0 or 1, a run-time word): its half of the payload word, decoded.
-#[allow(dead_code)] // The for-in keyed-read row is its first caller.
 #[inline(always)]
 fn packed_read_at<S: Stage>(stage: &mut S, packed: Packed<S::Word>, index: S::Word, rep: Rep) -> S::Word {
     const _: () = assert!(OBJECT.inline_property_count == 2, "a packed index selects one of two halves");
@@ -582,8 +593,7 @@ fn packed_read_at<S: Stage>(stage: &mut S, packed: Packed<S::Word>, index: S::Wo
 
 /// Narrow value `slot` of the run whose word zero is at `base`, decoded.
 #[inline(always)]
-fn narrow_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, rep: Rep) -> S::Word {
-    debug_assert!(rep != Rep::Float64, "a narrow run holds narrow values, never a raw double");
+fn narrow_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, _rep: Rep) -> S::Word {
     const _: () = assert!(cfg!(target_endian = "little"), "narrow slot i is the u32 at byte 4 * i");
     let offset = stage.site(u64::from(slot) * u64::from(u32::BITS / 8));
     let address = stage.add_imm(base, offset);
@@ -606,9 +616,8 @@ fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, rep: Rep) -> S::
 
 /// Packed value `slot`: its half of the payload word, decoded.
 #[inline(always)]
-fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16, rep: Rep) -> S::Word {
+fn packed_read<S: Stage>(stage: &mut S, packed: Packed<S::Word>, slot: u16, _rep: Rep) -> S::Word {
     debug_assert!(usize::from(slot) < OBJECT.inline_property_count);
-    debug_assert!(rep != Rep::Float64, "a packed slot holds a narrow value, never a raw double");
     let payload = match packed {
         Packed::Snapshot(payload) => payload,
         Packed::Record(record) => stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32),

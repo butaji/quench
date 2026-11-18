@@ -1,12 +1,15 @@
 //! Shared typed numeric results and macro-derived selector views.
 
+#[cfg(not(stencil_build))]
 use super::{ScalarBits, WasmValue};
 
+#[cfg(test)]
 pub(super) enum NumericResult<T> {
     Value(T),
     Comparison(bool),
 }
 
+#[cfg(test)]
 impl<T> NumericResult<T> {
     pub(super) fn into_wasm(self, integer: impl FnOnce(T) -> WasmValue) -> WasmValue {
         match self {
@@ -16,6 +19,7 @@ impl<T> NumericResult<T> {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl WasmValue {
     /// The word `from_bits` reads back: a 32-bit scalar's payload, zero-extended.
     #[inline]
@@ -43,6 +47,7 @@ macro_rules! selectors {
             /// How many selectors the family has.
             #[allow(dead_code)]
             pub(crate) const COUNT: usize = Self::ALL.len();
+            #[cfg(not(stencil_build))]
             pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }
             }

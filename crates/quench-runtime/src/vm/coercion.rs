@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
         // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
         // that atom (`string_key_atom`) instead of parsing it.
         if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
-            let atom = self.lookup_array_index_atom(index).unwrap_or_else(|| self.intern_atom(&index.to_string()));
+            let atom = self.index_key_atom(index);
             return Ok(self.atom_string(atom));
         }
         let text = self.coerce_js_string(program, primitive)?;
@@ -236,6 +236,9 @@ impl<H: Host> Vm<H> {
                 self.typeof_test_value(value, index, negated)
             }
             crate::bytecode::UNARY_TYPEOF_INDEX => self.typeof_index_value(value),
+            op if let Some(elements) = crate::bytecode::array_pattern_test(op) => {
+                Value::boolean(self.array_pattern_fits(value, elements))
+            }
             op @ (crate::bytecode::UNARY_TO_STRING_PRIMITIVE | crate::bytecode::UNARY_ADD_OPERAND_STRING) => return self.string_primitive(p, op, value),
             _ => return Err(JsError("unsupported unary operator".into())),
         })

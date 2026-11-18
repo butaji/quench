@@ -21,9 +21,9 @@ impl Heap {
     }
 
     /// Recomputes `store_watched` after a gate input changed: the snapshot barrier
-    /// (`set_satb`), reference counts (`set_rc`) or slot observation (`track_slot_representations`).
+    /// reference counts (`set_rc`) or slot observation (`track_slot_representations`).
     pub(super) fn refresh_store_watch(&mut self) {
-        self.store_watched = self.satb_active || self.rc_active || self.properties.tracks();
+        self.store_watched = self.rc_active || self.properties.tracks();
     }
 
     /// Whether the property arena records its slots' value classes (`ValueArena::tracks`), which

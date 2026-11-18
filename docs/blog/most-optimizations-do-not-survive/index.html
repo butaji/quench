@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Most optimizations do not survive measurement · Quench blog</title>
+<meta name="description" content="Notes from a ledger of rejected changes. Superinstructions, inline allocation, tail-call conventions and a 33% win on one benchmark, all turned down, and the rule that turned them down." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/blog/most-optimizations-do-not-survive/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="application/atom+xml" title="Quench blog" href="https://quench.run/blog/feed.xml" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/blog/most-optimizations-do-not-survive/" />
+<meta property="og:title" content="Most optimizations do not survive measurement · Quench blog" />
+<meta property="og:description" content="Notes from a ledger of rejected changes. Superinstructions, inline allocation, tail-call conventions and a 33% win on one benchmark, all turned down, and the rule that turned them down." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-11-05" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "Most optimizations do not survive measurement", "description": "Notes from a ledger of rejected changes. Superinstructions, inline allocation, tail-call conventions and a 33% win on one benchmark, all turned down, and the rule that turned them down.", "datePublished": "2026-11-05", "dateModified": "2026-11-05", "url": "https://quench.run/blog/most-optimizations-do-not-survive/", "image": "https://quench.run/og.png", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "publisher": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "mainEntityOfPage": "https://quench.run/blog/most-optimizations-do-not-survive/", "keywords": "performance engineering, superinstructions, quickening, inline allocation, Cranelift, benchmarking, regression budget"}</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/blog/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z"/></svg>Blog</a>
+<a class="badge" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>THE REJECTION</span><span>LEDGER</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/blog/">blog</a> / <time datetime="2026-11-05">5 November 2026</time> · 4 min read · performance</p>
+<h1>Most optimizations do not survive measurement</h1>
+<p class="lead">Notes from a ledger of rejected changes. Superinstructions, inline allocation, tail-call conventions and a 33% win on one benchmark, all turned down, and the rule that turned them down.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p>Quench keeps a ledger of every optimization that was tried and what happened to it. By early November 2026 it had dozens of entries from the previous month. Most of them are rejections.</p>
+<p>This post goes through some of the more instructive ones. The pattern is the same each time: a plausible idea, an estimate of what it should save, and a measurement that disagreed.</p>
+<h2 id="expected-against-measured">Expected against measured</h2>
+<figure class="fig"><div class="fig-scroll"><svg viewBox="0 0 720 126" width="720" height="126" role="img" aria-label="What an idea was expected to address, and what it measured (% of run)" xmlns="http://www.w3.org/2000/svg"><title>What an idea was expected to address, and what it measured (% of run)</title><rect x="230" y="4" width="12" height="12" rx="3" fill="#3C3C3C"/><text x="248" y="15" font-size="12" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">expected share</text><rect x="366.4" y="4" width="12" height="12" rx="3" fill="#EF5102"/><text x="384.4" y="15" font-size="12" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">measured effect</text><text x="220" y="50" text-anchor="end" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">Superinstructions (raytrace)</text><rect x="230" y="30" width="410.0" height="14" rx="3" fill="#3C3C3C"/><text x="646.0" y="41" font-size="11" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">19.4%</text><rect x="230" y="47" width="25.4" height="14" rx="3" fill="#EF5102"/><text x="261.4" y="58" font-size="11" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">1.2%</text><text x="220" y="98" text-anchor="end" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">Polymorphic field chain (splay)</text><rect x="230" y="78" width="126.8" height="14" rx="3" fill="#3C3C3C"/><text x="362.8" y="89" font-size="11" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">6%</text><rect x="230" y="95" width="27.5" height="14" rx="3" fill="#EF5102"/><text x="263.5" y="106" font-size="11" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">1.3%</text></svg></div><figcaption>Expected: the share of dispatches or instructions the idea targeted. Measured: the actual effect on the whole row.</figcaption></figure>
+<p><b>Superinstructions.</b> Fusing the most common pair of instructions into one saves a dispatch. On RayTrace the top pair was 19.4% of all dispatches, which sounds like a large prize. Fused, it was worth about 1.2% of the row. Dispatch through a tail call is already only about 3 instructions, so there was little left to save.</p>
+<p><b>A compare chain for polymorphic field reads.</b> Estimated at 6% of Splay's instructions. Measured at about 1.3%, around 90 instructions per hit. The real cost on Splay was calls and allocation.</p>
+<p><b>Re-specializing stale quickened instructions.</b> Measured at 0.05% on Richards and 0.32% on DeltaBlue, with an upper bound of 1.3%.</p>
+<p><b>Inline bump allocation.</b> The allocation path was under 2% of the run. The collector's real cost was marking: 7.3% of Splay, 4.6% of EarleyBoyer.</p>
+<h2 id="the-ones-that-went-backwards">The ones that went backwards</h2>
+<div class="table-scroll"><table><thead><tr><th>Idea</th><th>Expected</th><th>Measured</th></tr></thead><tbody><tr><td>Tail calling convention for compiled bodies</td><td>cheaper calls</td><td>12% slower per call with six live values (1.81 against 1.62 ns)</td></tr><tr><td>Merging duplicate constants in the compiler IR</td><td>19 to 26% of IR is duplicates</td><td>run cost up 0.09 to 0.67%, compile cost up too. The optimizer already merged them</td></tr><tr><td>A separate exit block per guard</td><td>better diagnostics</td><td>+2.4% run instructions on RayTrace</td></tr><tr><td>Single-pass register allocation</td><td>faster compiles</td><td>generated code about 3 times slower</td></tr><tr><td>Evaluating leaf methods in place</td><td>skip the call</td><td>Richards +6.6% instructions (about 470 per call against 173 for a normal activation)</td></tr><tr><td>Lower dictionary-mode threshold</td><td>fewer shapes</td><td>shape count unchanged, a 300-method loop went from 1.1 s to 7.3 s</td></tr><tr><td>Young-only marking on Splay</td><td>less GC work</td><td>score down 28% for 29% less memory</td></tr></tbody></table></div>
+<p>The duplicate-constant one is our favourite. A count showed that a fifth of the compiler's input was the same constants repeated, and Richards alone had 55,000 duplicates of 1,041 distinct values. Merging them made things slightly worse, because Cranelift's optimizer was already doing it for free.</p>
+<h2 id="the-win-we-turned-down">The win we turned down</h2>
+<p>One change gave doubles a single global integer encoding. NavierStokes got 33.6% fewer cycles. It also made Crypto 2.6% slower and DeltaBlue 8.2% slower, so it was rejected.</p>
+<p>That is the rule doing its job:</p>
+<aside class="note">A candidate is rejected if any benchmark regresses in cycles or peak memory by more than 0.5%, even when other benchmarks gain.</aside>
+<p>It is a strict rule. It is also the only one we found that stops an engine from slowly becoming a collection of trade-offs tuned to whichever benchmark someone looked at last.</p>
+<h2 id="when-the-process-itself-was-the-problem">When the process itself was the problem</h2>
+<p>On 5 November the project stopped and wrote down an uncomfortable observation: two weeks of JIT work had moved microbenchmarks by 5 to 12% while whole Richards stayed flat. About forty overlapping tasks across five lines of work were editing the same compiler code, and measuring and archiving was taking longer than coding.</p>
+<p>The rules that came out of it:</p>
+<ol><li><b>One critical path.</b> A single ordered list of steps for the native tiers.</li><li><b>Whole benchmarks only.</b> A change is kept only if fixed-work instructions drop on a whole benchmark. A faster microbenchmark is not evidence.</li><li><b>Full qualification only at a gate.</b> The expensive 11-round comparison runs when a step is finished, not for every experiment.</li><li><b>Two strikes.</b> After two rejected variants of one mechanism, stop and rethink the mechanism.</li><li><b>Short records.</b> A task description fits in 25 lines and a result in 5.</li></ol>
+<h2 id="what-the-ledger-is-for">What the ledger is for</h2>
+<p>A rejection is a result. It tells the next person, or the next agent, that the idea was tried, what it was expected to do and what it did. The fastest way to waste a week on an engine is to re-run an experiment someone already ran.</p>
+<p>The other thing the ledger shows is where the time is not. After enough entries read "expected 6%, measured 1%", it becomes hard to avoid the conclusion that dispatch, quickening and allocation fast paths were never the problem. The cost was in calls, in field access and in everything the compiled code did not know. That is where the next two weeks went.</p>
+</div></div>
+</article>
+<nav class="frame cols-2" aria-label="More posts"><a class="tile navt" href="/blog/interpreter-against-interpreter/"><span class="mono">← earlier · 28 October 2026</span><b>Interpreter against interpreter: eight for eight, and the JIT that was not ready</b></a><a class="tile navt right" href="/blog/aot-without-a-second-compiler/"><span class="mono">later · 7 November 2026 →</span><b>AOT without a second compiler</b></a></nav>
+<section class="frame cols-3 cta-frame" aria-label="Get involved">
+<div class="tile orange"><h2>Try it</h2><p>Quench builds from source with Cargo and runs TypeScript, JavaScript and WebAssembly.</p><a class="btn" href="/#start">Build and run</a></div>
+<div class="tile"><h2>Work on it</h2><p>Interpreter, JIT, AOT, GC, Node APIs. Every claim on this blog has a measurement you can rerun.</p><a class="btn" href="/#contribute">Where to start</a></div>
+<div class="tile"><h2>Follow it</h2><p>New posts land here as the engine moves. Star the repository or subscribe to the feed.</p><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Feed</a></div>
+</section>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/blog/">blog</a> · <a href="/blog/feed.xml">feed</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

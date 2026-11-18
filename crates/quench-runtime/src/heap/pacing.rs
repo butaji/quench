@@ -254,11 +254,6 @@ impl PacingState {
         }
     }
 
-    /// Makes the measured survival favor full collections (`Regime::FullOnly`).
-    #[cfg(test)]
-    pub(super) fn favor_full_collections_for_test(&mut self) {
-        self.survival = SURVIVAL_SCALE;
-    }
 
     pub(super) fn regime(&self, pacing: &GenerationalPacing) -> Regime {
         if self.survival > pacing.survival_limit {

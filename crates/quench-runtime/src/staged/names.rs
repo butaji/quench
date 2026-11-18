@@ -23,13 +23,16 @@ pub(crate) enum Protocol {
     /// Append `length` holes to the array operand, then the optional element operand, spread
     /// where `spread` (`AppendArray`).
     AppendArray { length: usize, spread: bool },
-    /// Whether an array pattern of `count` elements reads the operand's elements with no
-    /// observable step (`ArrayPatternFits`).
-    ArrayPatternFits { count: usize },
+    /// `rest.length` (`get` false, `RestLength`) or `rest[key]` (`RestGet`) of a rest view
+    /// (`Function::rest_view`): the values the activation kept past its first `fixed`
+    /// parameters while the rest register (`rest`, the second operand) holds `undefined`,
+    /// else the array there. A key no kept value answers makes the rest array, into `rest`.
+    RestView { get: bool, fixed: usize, rest: Register },
 }
 
 /// The staged operation `instruction` denotes among the name, environment and iteration
 /// opcodes; `None` for any other opcode.
+#[inline(always)]
 pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>> {
     let destination = || instruction.result_register();
     let slot = || u16::try_from(instruction.local_slot()).ok();
@@ -44,6 +47,8 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
             site: instruction.cache_site_index(),
             initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
         Op::ForInNext => Operation::ForInNext { destination: destination(), state: instruction.register_b() },
+        Op::GetEnumerated => Operation::EnumeratedGet { destination: destination(), base: instruction.register_b(),
+            key: instruction.register_c(), state: crate::bytecode::ImmediateLayout::register_pair(instruction.imm()).0 },
         _ => return decode_protocol(instruction),
     })
 }
@@ -71,8 +76,10 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
-        Op::ArrayPatternFits => (Protocol::ArrayPatternFits { count: instruction.array_length() },
+        Op::RestLength => (Protocol::RestView { get: false, fixed: instruction.array_length(), rest: instruction.register_b() },
             Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
+            Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
         _ => return super::spread::decode(instruction),
     };
     Some(Operation::Protocol { step, destination, operands })
@@ -96,6 +103,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),
+        Operation::EnumeratedGet { destination, state, base, key } => enumerated_get(stage, frame, destination, [state, base, key]),
         _ => delegated_step(stage, frame, operation),
     }
 }
@@ -229,6 +237,22 @@ fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
         }
         None => Step::Unresolved,
     }
+}
+
+/// `EnumeratedGet`: where the frame reads live records (`Frame::heap_records`), the key's listed
+/// slot under the state's memo (`iteration::for_in_keyed_get`); any other read, and a frame that
+/// reads none, take the element read the VM makes.
+#[inline(always)]
+fn enumerated_get<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    [state, base, key]: [Register; 3]) -> Step<S::Word, F::Control> {
+    if let Some((arrays, objects, epoch)) = frame.heap_records(stage) {
+        let (state_word, base_word, key_word) = (frame.tagged(stage, state), frame.tagged(stage, base), frame.tagged(stage, key));
+        let miss = frame.miss();
+        if let Some(value) = super::iteration::for_in_keyed_get(stage, (arrays, objects), state_word, base_word, key_word, epoch, miss) {
+            return Step::Value(value);
+        }
+    }
+    calling(stage, frame, CallOut::EnumeratedGet { base, key }, Some(destination))
 }
 
 #[cfg(test)]

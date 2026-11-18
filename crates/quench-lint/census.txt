@@ -1,6 +1,6 @@
 opcodes 268
 opcodes_with_staged_operation 46
-hand_semantics_lines 0
+derivation_debt_lines 1008
 tier_opcode_arms 156
 frame_structs 10
 exit_mechanisms 10
