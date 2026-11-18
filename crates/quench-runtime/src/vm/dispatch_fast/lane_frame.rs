@@ -1140,8 +1140,10 @@ lane_handler! {
     /// the next keeps its own row for jumps into it. A miss of `A` takes `A`'s miss here; a miss
     /// of `B` takes `B`'s at the next record, after `A`'s effects, as two records would.
     /// `BACKWARD` is `B`'s jump direction where `B` is a jump (`jumps_by_row`). A flagged row
-    /// reads its flag from its record at run time.
-    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+    /// reads its flag from its record at run time. `MODE` is the pair's `staged::FUSED_*`:
+    /// `FUSED_DEAD_FIRST` skips `A`'s register write (installed only where liveness proves
+    /// `A`'s register dead and `B` does not name it); `FUSED_RAW` runs as `FUSED_PLAIN` here.
+    pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8>(cx, r, ip, i, view) {
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
         // from the record, rather than requickening (`lane_row`).
         macro_rules! step_a { ($flag:expr) => {{
@@ -1154,7 +1156,7 @@ lane_handler! {
             let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, i, view);
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
-                    if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) } {
+                    if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) && MODE != crate::staged::FUSED_DEAD_FIRST } {
                         r.set(i.a, Value::from_bits(value));
                     }
                 }
@@ -1221,8 +1223,8 @@ lane_handler! {
 }
 
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`.
-pub(in crate::vm::dispatch_fast) const fn fused_row<H: Host, const A: u16, const B: u16>(backward: bool) -> Handler {
-    if backward { fused_rows::<H, A, B, true> } else { fused_rows::<H, A, B, false> }
+pub(in crate::vm::dispatch_fast) const fn fused_row<H: Host, const A: u16, const B: u16, const MODE: u8>(backward: bool) -> Handler {
+    if backward { fused_rows::<H, A, B, true, MODE> } else { fused_rows::<H, A, B, false, MODE> }
 }
 
 /// Whether `handler` is opcode `OP`'s plain row in any direction: its value row with no
@@ -1241,26 +1243,49 @@ fn is_row_flagged_plain<H: Host, const OP: u16>(handler: *const ()) -> bool {
 }
 
 /// Gives each record whose row and next record's row are a pair of `staged::FUSED_ROWS` the
-/// pair's fused record (`fused_rows`); the next record keeps its own row.
-pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction]) {
+/// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
+/// pair takes its fused record only where `liveness` proves `A`'s result register dead after
+/// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
+pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
                 (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }>(handler)) as fn(*const ()) -> bool,
                 (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].1 }>(handler)) as fn(*const ()) -> bool,
                 jump_row_backward::<H, { crate::staged::FUSED_ROWS[$pair].1 }> as fn(*const ()) -> bool,
-                [fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }>(false),
-                    fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }>(true)],
+                crate::staged::FUSED_ROWS[$pair].2,
+                [fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_ROWS[$pair].2 }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_ROWS[$pair].2 }>(true)],
+                [fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_PLAIN }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_PLAIN }>(true)],
             )),*]
         };
     }
-    let pairs = pairs!(0, 1, 2, 3);
-    const { assert!(crate::staged::FUSED_ROWS.len() == 4, "one `pairs!` index per fused pair") };
+    let pairs = pairs!(0, 1, 2, 3, 4);
+    const { assert!(crate::staged::FUSED_ROWS.len() == 5, "one `pairs!` index per fused pair") };
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
-        if let Some((_, _, backward, fused)) = pairs.iter().find(|(a, b, _, _)| a(first) && b(second)) {
-            records[pc].handler = fused[usize::from(backward(second))] as *const ();
-        }
+        let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {
+            continue;
+        };
+        let direction = usize::from(backward(second));
+        // The dead-first form is only sound when `B` never reads `A`'s register, and nothing
+        // after the pair reads it: the same liveness the hand pass used, plus `B`'s operands.
+        let dead_first = {
+            let (first, second) = (&records[pc], &records[pc + 1]);
+            second.b != first.a
+                && second.c != first.a
+                && (second.a == first.a
+                    || live
+                        .and_then(|masks| masks.get(pc + 2))
+                        .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a))))
+        };
+        let handler = if *mode == crate::staged::FUSED_DEAD_FIRST && !dead_first {
+            plain[direction]
+        } else {
+            fused[direction]
+        };
+        records[pc].handler = handler as *const ();
     }
 }
 

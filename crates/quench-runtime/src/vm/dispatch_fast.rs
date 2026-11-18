@@ -4411,23 +4411,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// A postfix update of a Number or BigInt (`lane_bigint_increment`): `ToNumeric` into `a` and the
-    /// `IncDec` of its result into `c` that follows it (`specialize_updates`). Other values
-    /// take the general path at the conversion.
-    fn lane_postfix_update<DECREMENT: bool>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        let Some(updated) = super::dispatch::number_increment(value, DECREMENT)
-            .or_else(|| lane_bigint_increment::<H, DECREMENT>(cx, value))
-        else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        r.set(i.c, updated);
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// Numeric operands on the integer fast path; the regional site profile
     /// records the execution exactly as the general path does.
     fn lane_binary<>(cx, r, ip, i, view) {
@@ -22226,7 +22209,6 @@ fn derive_lane_view<'live, H: Host>(
         }
     }
     specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
-    specialize_updates::<H>(&mut records);
     specialize_updated_index_reads::<H>(&mut records);
     specialize_updated_index_operators::<H>(&mut records);
     specialize_negated_instanceof::<H>(&mut records);
@@ -22276,7 +22258,7 @@ fn derive_lane_view<'live, H: Host>(
     };
     // Adjacent generated rows the staged pair list names run as one generated record.
     if !wasm {
-        lane_frame::fuse_rows::<H>(&mut records);
+        lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks));
     }
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
@@ -22795,33 +22777,6 @@ fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
             records[pc].handler = lane_return_constant::<H, NOT_LEAF> as Handler as *const ();
         }
-    }
-}
-
-/// Gives each `IncDec` record the handler of its direction, and runs each `ToNumeric` whose
-/// result the next record, an `IncDec`, reads as one record (`lane_postfix_update`). The
-/// `IncDec` record stays for jumps that reach it; it reads no accumulator, and neither does
-/// its successor, since it produces none.
-fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
-    for pc in 0..records.len().saturating_sub(1) {
-        let (conversion, update) = (&records[pc], &records[pc + 1]);
-        let Some(decrement) = update_direction::<H>(update) else { continue };
-        if !is_row::<H, { opc::ToNumeric }>(conversion.handler) || update.b != conversion.a {
-            continue;
-        }
-        let handler: Handler = if decrement {
-            lane_postfix_update::<H, true>
-        } else {
-            lane_postfix_update::<H, false>
-        };
-        records[pc] = LaneInstruction {
-            handler: handler as *const (),
-            operand: LaneOperand { imm: 0 },
-            a: conversion.a,
-            b: conversion.b,
-            c: update.a,
-            call_link: std::cell::Cell::new(NO_CALL_LINK),
-        };
     }
 }
 

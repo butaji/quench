@@ -221,12 +221,26 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// row `.0` then row `.1`, with no dispatch between them. Each is a pair of generated rows the
 /// lane meets back to back in loops: a local store or a move then the loop's back jump, a local
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
-pub(crate) const FUSED_ROWS: [(u16, u16); 4] = [
-    (Op::StoreLocalPlain as u16, Op::Jump as u16),
-    (Op::Move as u16, Op::Jump as u16),
-    (Op::LoadLocalPlain as u16, Op::JumpFalse as u16),
-    (Op::LoadLocalPlain as u16, Op::JumpTrue as u16),
+///
+/// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 5] = [
+    (Op::StoreLocalPlain as u16, Op::Jump as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
+    (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
+    (Op::LoadLocalPlain as u16, Op::JumpTrue as u16, FUSED_PLAIN),
+    (Op::ToNumeric as u16, Op::IncDec as u16, FUSED_PLAIN),
 ];
+
+/// `FUSED_ROWS` mode: both rows run in full, `A`'s result is written to its register.
+pub(crate) const FUSED_PLAIN: u8 = 0;
+/// `FUSED_ROWS` mode: `A`'s result register is dead after the pair, and `B` does not name it, so
+/// the fused record skips `A`'s register write. `fuse_rows` installs it only where liveness
+/// proves that; otherwise the pair runs as `FUSED_PLAIN`.
+pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
+/// `FUSED_ROWS` mode: `A`'s result stays an unboxed word for `B`. Never boxed in the fused record.
+pub(crate) const FUSED_RAW: u8 = 2;
+/// `FUSED_ROWS` mode: `B` runs on the record at `A`'s jump target (reserved; not yet implemented in `fused_rows`).
+pub(crate) const FUSED_TARGET: u8 = 4;
 
 /// The opcode whose row answers an arguments binding's count (`Miss::ArgumentsBinding`), which a
 /// tier names to give the row a fact it proved at view time.
