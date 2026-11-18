@@ -81,6 +81,14 @@ impl<'b, B: Builds<'b>> MachineFlow for B {
     }
 
     fn branch_if(&mut self, flag: ir::Value, then: (ir::Block, &[ir::Value]), otherwise: (ir::Block, &[ir::Value])) {
+        // A flag the lowering already knows takes its one edge: the other side is not built
+        // into the CFG (no block, dominator or allocation work for a branch never taken).
+        if let Some((known, _)) = super::scalar::known_integer(self.function_builder(), flag) {
+            let (block, arguments) = if known != 0 { then } else { otherwise };
+            let arguments = block_args(arguments);
+            self.function_builder().ins().jump(block, &arguments);
+            return;
+        }
         let (taken, other) = (block_args(then.1), block_args(otherwise.1));
         let builder = self.function_builder();
         // A flag the stage already knows takes its edge: the other arm is not a predecessor of the

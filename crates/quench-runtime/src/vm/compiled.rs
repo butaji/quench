@@ -998,6 +998,8 @@ macro_rules! lane_helper_inventory {
 }
 lane_helper_inventory! { H;
     FunctionCapture => lane_function_capture_read::<H>,
+    /// A leave's boxing of an unboxed double (`lane_box_number`): out of line, as leaves are cold.
+    BoxNumber => lane_box_number,
     FieldGet => lane_field_get::<H>,
     /// The count of the entry function's `arguments` (`lane_body_arguments_length`).
     ArgumentsLength => super::dispatch_fast::lane_body_arguments_length::<H>,
@@ -3806,6 +3808,13 @@ unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u
 
 /// A lane body's fused `typeof` test of a heap value (`Vm::typeof_test_value`): 1 where its
 /// name is the one at `index` of `bytecode::TYPEOF_NAMES`, else 0.
+/// The tagged Number of the double `bits` (`Value::number`): a leave's boxing of an unboxed
+/// register, called from its cold block instead of the inline encoding's two blocks and
+/// fifteen instructions per register.
+unsafe extern "C" fn lane_box_number(_vm: u64, _residual: u64, bits: u64) -> u64 {
+    Value::number(f64::from_bits(bits)).to_bits()
+}
+
 unsafe extern "C" fn lane_typeof_is<H: Host>(vm: u64, _residual: u64, value: u64, index: u64) -> u64 {
     // SAFETY: as `lane_field_get`; the test reads the value's cell and allocates nothing.
     let vm = unsafe { &*(vm as *const Vm<H>) };
