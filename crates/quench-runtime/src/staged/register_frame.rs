@@ -149,6 +149,11 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn wasm_global_store(&mut self, _stage: &mut S, _binding: S::Word, _value: S::Word) -> Option<()> { None }
 
+    /// The bytes of the linear memory a direct access addresses (the function's memory, which the
+    /// frame resolved); `None` where the frame holds none, which leaves the row to its miss.
+    #[inline(always)]
+    fn direct_memory(&mut self) -> Option<&mut [u8]> { None }
+
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.
     #[inline(always)]

@@ -179,6 +179,8 @@ pub(crate) enum Decoder {
     /// The Wasm instance's state: a global's load and store, and the fill of a register window
     /// with one constant (`staged::wasm_state`).
     WasmState,
+    /// A Wasm direct load or store of the function's memory (`staged::wasm_access`).
+    WasmMemory,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the

@@ -1421,6 +1421,17 @@ impl MemoryView {
         }
     }
 
+    /// The base and length of the memory the view addresses, for a row that reads its bytes itself
+    /// (`Decoder::WasmMemory`). The reach is the length less the widest access, so the length is the
+    /// reach plus that width, and `NONE` is empty.
+    ///
+    /// SAFETY: the view must have been resolved during the current lane run.
+    #[inline(always)]
+    unsafe fn extent(self) -> (*mut u8, usize) {
+        let length = unsafe { self.reach.get() } + WIDEST_DIRECT_ACCESS as isize;
+        (self.bytes, length.max(0) as usize)
+    }
+
     /// Direct load `load` at `address`, when the access lies within the
     /// reach; `None` leaves it to the general path, which also decides the
     /// last bytes before the memory's end exactly.
@@ -11061,7 +11072,7 @@ lane_handler! {
     /// takes as its left (`LEFT`) or right operand: both records run here.
     /// Bits that need a box leave the lane at the load.
     fn lane_f64_load_pair<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::F64(bits)) = (unsafe { view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view)) })
         else {
             return exit(ip);
@@ -11094,7 +11105,7 @@ lane_handler! {
     /// result written as its own record writes it. An access the general
     /// path must run exits at its record.
     fn lane_f64_update<ARITH: u8, LEFT: bool>(cx, r, ip, i, view) {
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::F64(bits)) = (unsafe {
             view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view))
         }) else {
@@ -11122,7 +11133,7 @@ lane_handler! {
         let store = following(operator);
         // SAFETY: as above.
         let access = unsafe { &*store };
-        // SAFETY: as for `lane_store`.
+        // SAFETY: as for `MemoryView::write`.
         if unsafe {
             view.memory.write(
                 MemoryStore::F64Store,
@@ -11157,7 +11168,7 @@ lane_handler! {
         // SAFETY: the view fuses an operator only with a following store.
         let store = unsafe { &*next };
         let bits = value.float_bits64();
-        // SAFETY: as for `lane_store`.
+        // SAFETY: as for `MemoryView::write`.
         if unsafe {
             view.memory.write(
                 MemoryStore::F64Store,
@@ -11403,27 +11414,6 @@ fn lane_safepoint_writing<H: Host>(
 // no calls.
 
 lane_handler! {
-    fn lane_load<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let load = const {
-            match MemoryLoad::from_direct_op(opcode(OP)) {
-                Some(load) => load,
-                None => panic!("not a direct load"),
-            }
-        };
-        // SAFETY: the view admits direct accesses only through the memory
-        // register, whose bytes `view` holds; see MemoryView.
-        let Some(value) = (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
-        else {
-            return exit(ip);
-        };
-        let Some(value) = lane_encode(view, value) else {
-            return exit(ip);
-        };
-        produce!(cx, r, ip, i.a, value, view)
-    }
-}
-
-lane_handler! {
     /// An i32 shift left by a constant, reading its operand through field
     /// `ACC`, whose result the next record, an i32 add, takes as its left
     /// (`LEFT`) or right operand: a scaled index. Both records run here,
@@ -11472,7 +11462,7 @@ lane_handler! {
         };
         // SAFETY: the view fuses an add only with a following load record.
         let i = unsafe { &*ip };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::I32(selector)) =
             (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
         else {
@@ -11505,7 +11495,7 @@ lane_handler! {
         // SAFETY: the view fuses an add only with a following load record.
         let access = unsafe { &*next };
         let address = u64::from(sum as u32) + u64::from(access.imm());
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(value) = (unsafe { view.memory.read(load, address) }) else {
             return exit(next);
         };
@@ -11669,7 +11659,7 @@ lane_handler! {
         // float operator.
         let access = unsafe { &*load };
         let address = u64::from(sum as u32) + u64::from(access.imm());
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::F64(bits)) =
             (unsafe { view.memory.read(MemoryLoad::F64Load, address) })
         else {
@@ -11804,7 +11794,7 @@ lane_handler! {
                 _ => panic!("not a direct load and store"),
             }
         };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(value) = (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
         else {
             return exit(ip);
@@ -11816,7 +11806,7 @@ lane_handler! {
         let next = following(ip);
         // SAFETY: the view fuses a load only with a following store record.
         let access = unsafe { &*next };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, access, view), value) }
             .is_none()
         {
@@ -11824,6 +11814,19 @@ lane_handler! {
         }
         next!(cx, r, following(next), view)
     }
+}
+
+/// The scalar direct store `store` writes for slot value `value`: registers
+/// hold their static Wasm types, and a value whose bits need a box has none.
+#[inline(always)]
+fn stored_value(store: MemoryStore, value: Value) -> Option<crate::WasmValue> {
+    Some(match store.value_type() {
+        crate::WasmType::I32 => crate::WasmValue::I32(value.wasm_bits32() as i32),
+        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
+        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
+        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
+        _ => return None,
+    })
 }
 
 /// The direct load an instantiation serves.
@@ -11842,7 +11845,7 @@ lane_handler! {
     fn lane_load_load<SECOND: u16, ACC: u8>(cx, r, ip, i, view) {
         let first = const { direct_load(opc::WasmI32Load) };
         let second = const { direct_load(SECOND) };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::I32(pointer)) =
             (unsafe { view.memory.read(first, lane_address::<ACC>(r, i, view)) })
         else {
@@ -11853,7 +11856,7 @@ lane_handler! {
         // SAFETY: the view fuses a load only with a following load reading its value.
         let access = unsafe { &*next };
         let address = u64::from(pointer as u32) + u64::from(access.imm());
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(value) = (unsafe { view.memory.read(second, address) }) else {
             return exit(next);
         };
@@ -11870,7 +11873,7 @@ lane_handler! {
     /// records run here, the value carried as the load carries it.
     fn lane_load_jump_i32_zero<OP: u16, ACC: u8, WHEN_ZERO: bool, BACKWARD: bool>(cx, r, ip, i, view) {
         let load = const { direct_load(OP) };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::I32(value)) =
             (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
         else {
@@ -11899,7 +11902,7 @@ lane_handler! {
         // SAFETY: the view fuses a move only with a following load reading its value.
         let access = unsafe { &*next };
         let address = u64::from(moved.wasm_bits32()) + u64::from(access.imm());
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(value) = (unsafe { view.memory.read(load, address) }) else {
             return exit(next);
         };
@@ -11923,7 +11926,7 @@ lane_handler! {
         let Some(value) = stored_value(store, read::<ACC, ACC_A>(r, i.a, view)) else {
             return exit(ip);
         };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         if unsafe { view.memory.write(store, lane_address::<ACC>(r, i, view), value) }
             .is_none()
         {
@@ -11952,14 +11955,14 @@ lane_handler! {
         let second_ip = following(ip);
         // SAFETY: the view fuses a load only with a following load and operator.
         let second_record = unsafe { &*second_ip };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::I32(first)) =
             (unsafe { view.memory.read(load, lane_address::<ACC_NONE>(r, i, view)) })
         else {
             return exit(ip);
         };
         r.set(i.a, view.integers.encode(first));
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::I32(second)) =
             (unsafe { view.memory.read(load, lane_address::<ACC_NONE>(r, second_record, view)) })
         else {
@@ -12154,7 +12157,7 @@ lane_handler! {
         // SAFETY: the view fuses a comparison jump only with a following plain load.
         let access = unsafe { &*load_ip };
         let address = u64::from(r.get(access.c).wasm_bits32()) + u64::from(access.imm());
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(value) = (unsafe { view.memory.read(load, address) }) else {
             return exit(load_ip);
         };
@@ -12483,7 +12486,7 @@ lane_handler! {
         let Some(value) = stored_value(store, r.get(i.a)) else {
             return exit(ip);
         };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, i, view), value) }
             .is_none()
         {
@@ -12537,40 +12540,6 @@ fn store_move_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     stores!(WasmI32Store, WasmI32Store8, WasmI32Store16)
 }
 
-/// The scalar direct store `store` writes for slot value `value`: registers
-/// hold their static Wasm types, and a value whose bits need a box has none.
-#[inline(always)]
-fn stored_value(store: MemoryStore, value: Value) -> Option<crate::WasmValue> {
-    Some(match store.value_type() {
-        crate::WasmType::I32 => crate::WasmValue::I32(value.wasm_bits32() as i32),
-        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
-        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
-        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
-        _ => return None,
-    })
-}
-
-lane_handler! {
-    fn lane_store<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let store = const {
-            match MemoryStore::from_direct_op(opcode(OP)) {
-                Some(store) => store,
-                None => panic!("not a direct store"),
-            }
-        };
-        let Some(value) = stored_value(store, read::<ACC, ACC_A>(r, i.a, view)) else {
-            return exit(ip);
-        };
-        // SAFETY: as for `lane_load`.
-        if unsafe { view.memory.write(store, lane_address::<ACC>(r, i, view), value) }
-            .is_none()
-        {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
 lane_handler! {
     /// An i32 load, with address field `ACC`, the i32 operator `OP` taking
     /// the loaded value as its left (`LEFT`) or right operand, and the i32
@@ -12585,7 +12554,7 @@ lane_handler! {
                 None => panic!("not an i32 register operator"),
             }
         };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         let Some(crate::WasmValue::I32(loaded)) = (unsafe {
             view.memory.read(MemoryLoad::I32Load, lane_address::<ACC>(r, i, view))
         }) else {
@@ -12604,7 +12573,7 @@ lane_handler! {
         let store = following(combine);
         // SAFETY: as above.
         let access = unsafe { &*store };
-        // SAFETY: as for `lane_store`.
+        // SAFETY: as for `MemoryView::write`.
         if unsafe {
             view.memory.write(
                 MemoryStore::I32Store,
@@ -12672,7 +12641,7 @@ lane_handler! {
         let Some(value) = stored_value(store, constant) else {
             return exit(next);
         };
-        // SAFETY: as for `lane_load`.
+        // SAFETY: as for `MemoryView::read`.
         if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, access, view), value) }
             .is_none()
         {
@@ -20654,21 +20623,15 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     if OP >= 256 && !lane_runs_row(op) && !jumps_by_row(op) {
         return None;
     }
-    let handler: Handler = if MemoryLoad::from_direct_op(op).is_some() {
-        return LaneHandler::producer(lane_load::<H, OP, ACC>);
-    } else if MemoryStore::from_direct_op(op).is_some() {
-        lane_store::<H, OP, ACC>
-    } else {
-        if jumps_by_row(op) {
-            return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD>, produces: false });
-        }
-        if lane_runs_row(op) {
-            return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
-        }
-        match other_handler::<H, BACKWARD, ACC>(op) {
-            Some(handler) => handler,
-            None => return None,
-        }
+    if jumps_by_row(op) {
+        return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD>, produces: false });
+    }
+    if lane_runs_row(op) {
+        return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
+    }
+    let handler: Handler = match other_handler::<H, BACKWARD, ACC>(op) {
+        Some(handler) => handler,
+        None => return None,
     };
     Some(LaneHandler {
         handler,

@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
@@ -111,6 +111,7 @@ pub(crate) mod wasm_step;
 pub(crate) mod wasm_jump;
 pub(crate) use wasm_jump::WasmJump;
 pub(crate) mod wasm_state;
+pub(crate) mod wasm_access;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
@@ -280,7 +281,7 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 pub(crate) const fn row_writes_result(op: Op) -> bool {
     // A Wasm row writes its result register only where its record has one: a store, a global
     // store and a fill define none.
-    if matches!(op.staged(), Some(Decoder::WasmState)) {
+    if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
     }
     !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz)
@@ -456,6 +457,8 @@ pub(crate) enum Operation<W, P> {
     WasmJump(WasmJump),
     /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
     WasmState(wasm_state::WasmStateOperation),
+    /// A Wasm direct load or store of the function's memory (`wasm_access`).
+    WasmAccess(wasm_access::WasmAccessOperation),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -478,6 +481,7 @@ impl<W, P> Operation<W, P> {
             Decoder::WasmInt => Self::decode_wasm_int(instruction),
             Decoder::WasmJump => Self::decode_wasm_jump(instruction),
             Decoder::WasmState => Self::decode_wasm_state(instruction, context),
+            Decoder::WasmMemory => Self::decode_wasm_access(instruction),
         }
     }
 

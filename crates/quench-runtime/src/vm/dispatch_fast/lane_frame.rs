@@ -159,6 +159,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The lane context and the VM's Wasm global load and store, for a staged instance-state row
     /// (`Decoder::WasmState`).
     globals: Option<WasmGlobals>,
+    /// The function's linear memory a direct access row addresses (`Decoder::WasmMemory`): the base
+    /// and length the view resolved (`MemoryView::extent`).
+    memory: Option<(*mut u8, usize)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -195,7 +198,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -219,7 +222,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, reads: Reads::NONE }
     }
 }
 
@@ -481,6 +484,18 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: as for `wasm_global_load`.
         let stored = unsafe { (globals.store)(globals.context, Value::from_bits(binding), Value::from_bits(value)) };
         stored.then_some(())
+    }
+
+    /// The bytes of the function's memory, where the row addresses them directly (`memory`).
+    #[inline(always)]
+    fn direct_memory(&mut self) -> Option<&mut [u8]> {
+        let (bytes, length) = self.memory?;
+        if length == 0 {
+            return Some(Default::default());
+        }
+        // SAFETY: `bytes` is the memory the view resolved in this lane run, `length` bytes long; the
+        // frame holds no other borrow of it.
+        Some(unsafe { std::slice::from_raw_parts_mut(bytes, length) })
     }
 }
 
@@ -848,6 +863,12 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
+        // A direct access addresses the memory its view resolved, as the hand handler did.
+        // SAFETY: the view resolved this memory in the current lane run (`MemoryView::extent`).
+        let memory = unsafe { view.memory.extent() };
+        return LaneFrame::<ACC> { memory: Some(memory), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
         // An instance-state row reads and writes the VM's globals through the lane context.
         let globals = WasmGlobals { context: cx.cast(), load: super::wasm_instance::wasm_global_load::<H>,
@@ -972,6 +993,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::WasmFloat) } { crate::staged::step_wasm_float($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmJump) } { crate::staged::step_wasm_jump($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmState) } { crate::staged::step_wasm_state($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::WasmMemory) } { crate::staged::step_wasm_access($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
@@ -1067,6 +1089,8 @@ lane_handler! {
             Operation::decode_wasm_float(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
             Operation::decode_wasm_state(fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
+            Operation::decode_wasm_access(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
             // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
             // proof is the unit.
