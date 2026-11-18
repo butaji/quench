@@ -17,7 +17,7 @@ const FUNCTION_ALIGN: usize = 16;
 /// code size short of a whole compile; this ceiling only bounds a body whose bytes per IR
 /// instruction land far above the planned rate, so a body near its budget is kept rather than
 /// compiled, refused, planned again and compiled a second time.
-const LANE_BODY_CODE_CEILING: usize = 2 * lane_region::LANE_BODY_MAX_CODE_BYTES;
+const LANE_BODY_CODE_CEILING: usize = 2 * crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES;
 
 /// The code of one function, compiled on the calling thread.
 fn function_code(function: ir::Function, level: super::super::jit_backend::CompileLevel) -> Result<Vec<u8>, super::super::jit_backend::NativeCompileRejection> {

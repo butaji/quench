@@ -24,10 +24,7 @@ enum SetRelationResult {
 impl SetRecord {
     fn size<H: Host>(&self, vm: &Vm<H>) -> f64 {
         match self {
-            Self::Native { set, .. } => match vm.heap.get(*set) {
-                Some(Cell::Set { entries, .. }) => entries.len() as f64,
-                _ => 0.0,
-            },
+            Self::Native { set, .. } => vm.heap.set_entries(*set).map_or(0.0, |entries| entries.len() as f64),
             Self::Like { size, .. } => *size,
         }
     }
@@ -81,7 +78,7 @@ impl<H: Host> Vm<H> {
                 Ok(SetRelationResult::Set) => {
                     let entries = values.into_iter().map(|value| (value, self.same_value_zero_hash(value)));
                     let entries = crate::heap::CollectionEntries::from_hashed(entries).into();
-                    let set = self.heap.alloc(Cell::Set { object: Self::empty_object(self.set_proto), entries });
+                    let set = self.heap.alloc_set(Self::empty_object(self.set_proto), entries);
                     Ok(set)
                 }
                 Err(error) => Err(error),
@@ -97,7 +94,7 @@ impl<H: Host> Vm<H> {
 
     fn get_set_record(&mut self, p: &ResidualProgram, value: Value) -> Result<SetRecord, JsError> {
         let receiver_root = self.heap.root(value);
-        if matches!(self.heap.get(value), Some(Cell::Set { .. })) {
+        if self.heap.is_set(value) {
             return Ok(SetRecord::Native {
                 set: value,
                 root: receiver_root,
@@ -187,9 +184,9 @@ impl<H: Host> Vm<H> {
     where
         F: FnMut(&mut Self, Value) -> Result<bool, JsError>,
     {
-        let values = match self.heap.get(set) {
-            Some(Cell::Set { entries, .. }) => entries.to_vec(),
-            _ => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
+        let values = match self.heap.set_entries(set) {
+            Some(entries) => entries.to_vec(),
+            None => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
         };
         for value in values {
             if !visit(self, value)? {
@@ -226,10 +223,7 @@ impl<H: Host> Vm<H> {
     {
         match other {
             SetRecord::Native { set, .. } => {
-                let values = match self.heap.get(*set) {
-                    Some(Cell::Set { entries, .. }) => entries.to_vec(),
-                    _ => Vec::new(),
-                };
+                let values = self.heap.set_entries(*set).map(|entries| entries.to_vec()).unwrap_or_default();
                 let mut acc = initialize(self)?;
                 for value in values {
                     acc = match step(self, acc, value)? {
@@ -368,9 +362,9 @@ impl<H: Host> Vm<H> {
         values: &mut Vec<Value>,
         roots: &mut Vec<RootId>,
     ) -> Result<SetRelationResult, JsError> {
-        let own_size = match self.heap.get(own) {
-            Some(Cell::Set { entries, .. }) => entries.len() as f64,
-            _ => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
+        let own_size = match self.heap.set_entries(own) {
+            Some(entries) => entries.len() as f64,
+            None => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
         };
         match native {
             Native::SetDifference if own_size <= other.size(self) => {
@@ -382,10 +376,7 @@ impl<H: Host> Vm<H> {
                 })?;
             }
             Native::SetDifference => {
-                let current = match self.heap.get(own) {
-                    Some(Cell::Set { entries, .. }) => entries.to_vec(),
-                    _ => Vec::new(),
-                };
+                let current = self.heap.set_entries(own).map(|entries| entries.to_vec()).unwrap_or_default();
                 for value in current {
                     self.push_set_result(values, roots, value);
                 }
@@ -417,10 +408,7 @@ impl<H: Host> Vm<H> {
                     |vm| {
                         let mut result = Vec::new();
                         let mut result_roots = Vec::new();
-                        let current = match vm.heap.get(own) {
-                            Some(Cell::Set { entries, .. }) => entries.to_vec(),
-                            _ => Vec::new(),
-                        };
+                        let current = vm.heap.set_entries(own).map(|entries| entries.to_vec()).unwrap_or_default();
                         for value in current {
                             vm.push_set_result(&mut result, &mut result_roots, value);
                         }

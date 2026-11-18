@@ -17,7 +17,7 @@ use crate::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd};
 use crate::wasm::integer::I64BinaryOperator as Binary;
 use crate::wasm::V128_BYTES;
 use crate::wasm::simd::SimdKernel;
-use cranelift_codegen::ir::{self, AbiParam, MemFlagsData, Signature, types};
+use cranelift_codegen::ir::{self, MemFlagsData, types};
 use cranelift_frontend::Variable;
 
 impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
@@ -47,9 +47,7 @@ impl<H: Host> WasmSimd for Emitter<'_, '_, H> {
         if let Some(right) = right {
             self.spill_operand(slot, SIMD_KERNEL_RIGHT, right);
         }
-        let mut signature = Signature::new(self.call_conv);
-        signature.params.push(AbiParam::new(types::I64));
-        signature.params.push(AbiParam::new(types::I64));
+        let signature = crate::vm::compiled::call_signature::typed_signature(self.call_conv, &[types::I64, types::I64], &[]);
         let signature = self.body.core.builder.import_signature(signature);
         let target = self.constant(Width::I64, compiled_simd_kernel as *const () as usize as i64);
         let selector = self.constant(Width::I64, i64::from(selector));

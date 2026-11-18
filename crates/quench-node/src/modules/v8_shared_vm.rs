@@ -4,6 +4,7 @@
 //! format holding only its root; the GC profiler and coverage report nothing collected.
 
 use crate::host::NodeHost;
+use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -150,21 +151,12 @@ fn put_number(c: &mut Context<'_>, object: RootId, name: &str, value: f64) -> Re
     put(c, object, name, value)
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn validate_object(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
     let object = c.value_type_rooted(value) == Some(quench_runtime::ValueType::Object) && !c.is_array_rooted(value)?;
     if !object {
         return Err(super::util_shared_vm::argument_type_error(c, value, name, "Object")?);
-    }
-    Ok(())
-}
-
-fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
-    if !c.is_callable_rooted(value)? {
-        return Err(super::util_shared_vm::argument_type_error(c, value, name, "function")?);
     }
     Ok(())
 }

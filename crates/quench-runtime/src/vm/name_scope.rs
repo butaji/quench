@@ -1,5 +1,6 @@
 //! Where a by-name read lands, and what keeps a lane record's answer that it lands on the
 //! global object: the facts an event of the scope chain retires.
+use super::caller_view::CallerView;
 use super::environment::NameLookup;
 use super::*;
 use crate::bitset::BitSet;
@@ -26,7 +27,7 @@ pub(super) struct NameProbe {
 /// What lane records that read a name from the global object past a scope that could have
 /// declared it rely on.
 #[derive(Default)]
-pub(super) struct ScopeNames {
+pub(super) struct DynamicScopeNames {
     /// The names a scope declared dynamically at any time (`Vm::note_dynamic_scope_name`).
     declared: BitSet,
     /// The names whose by-name reads landed on the global object past such a scope
@@ -36,7 +37,7 @@ pub(super) struct ScopeNames {
     pub(super) probe: Option<NameProbe>,
 }
 
-impl ScopeNames {
+impl DynamicScopeNames {
     /// Whether a scope declared `atom` dynamically at any time.
     #[inline(always)]
     pub(super) fn declared(&self, atom: Atom) -> bool {
@@ -94,6 +95,37 @@ impl<H: Host> Vm<H> {
         {
             dispatch_fast::settle_name_record::<H>(view, pc as usize, op, lands);
         }
+    }
+
+    /// The by-name read of `atom` by the activation `caller` past its `with` objects and dynamic
+    /// bindings, which none of them answered: the global read the lane takes
+    /// (`Vm::global_name_read`, its cached field at `site`) where no layer `resolve_name_source`
+    /// searches before the global object binds the name. `None`, before any effect, where one
+    /// does (a named binding of the activation or its closures, its own local, an outer static
+    /// owner, an active global lexical binding) or the global read is not decided in place.
+    pub(super) fn read_past_scopes(&mut self, p: &ResidualProgram, caller: &dyn CallerView, atom: Atom, site: u16) -> Option<Value> {
+        // Once a `with` was entered, a scope the window does not hold may bind the name: the chain
+        // eval code's environment captured (`captured_with_objects_for_function`).
+        if self.with_scope_entered || self.binds_before_global_object(p, &NameLookup::new(caller, atom), caller.function(), atom) {
+            return None;
+        }
+        match self.global_name_read(p, atom, site) {
+            super::field_cache::GlobalNameRead::Value(value, _) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Whether a layer of `lookup`'s search for `atom` by `function` past the dynamic bindings,
+    /// before the global object's, binds the name (`resolve_name_source`,
+    /// `name_value_beyond_bindings`). Each answers as or before the realm's global lexical
+    /// bindings, which `global_name_read` reads first, so the read past them is the general one.
+    fn binds_before_global_object(&self, p: &ResidualProgram, lookup: &NameLookup, function: u32, atom: Atom) -> bool {
+        lookup.named(self).is_some()
+            || self.function_environment_binding(p, function, atom)
+            || p.function(function as usize).global_lexical_atoms().contains(&atom)
+            || self.root_local_var_binding(p, function, atom)
+            || lookup.static_owner(self).is_some()
+            || self.active_global_lexical_value(atom).is_some()
     }
 
     /// Where a by-name read of `atom` in `owner`, the executing activation, lands once no `with`

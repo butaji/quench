@@ -165,8 +165,8 @@ fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value
     let by_layout = vm.heap.array(target).is_none() || (atom != vm.length_atom && !vm.atom_class(atom).contains(crate::vm::object::AtomClass::ARRAY_INDEX));
     let layout = if by_layout { vm.object_data(target).map_or(0, |data| data.layout_id()) } else { 0 };
     let check = TrapCheck { target, atom, access, layout };
-    let depth = vm.lane_stack.activations.len() - 1;
-    if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
+    let depth = vm.lane_stack.activation_count() - 1;
+    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
         script.completion = completion;
     }
     vm.lane_stack.trap_checks.push((depth, check));
@@ -179,7 +179,7 @@ fn owe_invariants<H: Host>(vm: &mut Vm<H>, completion: Completion, target: Value
 /// its frame, so that its pending call checks it (`CallCompletion::Trapped`).
 #[inline(always)]
 pub(super) fn trap_result_needs_general_path<H: Host>(vm: &Vm<H>, activation: Option<&Activation>, value: Value) -> bool {
-    let Some(Activation { kind: ActivationKind::Script(script), .. }) = activation else {
+    let Some(ActivationKind::Script(script)) = activation.map(|activation| activation.kind()) else {
         return false;
     };
     if !matches!(script.completion, Completion::ReadsTrapped | Completion::AssignsTrapped) {

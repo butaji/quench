@@ -66,6 +66,16 @@ impl WasmTable for ConcreteTable<'_> {
     fn signature_accepts(&mut self, reference: u64, signature: u64, expected: u64) -> u64 {
         u64::from(signature == expected || (self.related)(Value::from_bits(reference)))
     }
+
+    #[inline(always)]
+    fn unless_equal(
+        &mut self,
+        signature: u64,
+        expected: u64,
+        otherwise: impl FnOnce(&mut Self) -> Result<u64, Self::Exit>,
+    ) -> Result<u64, Self::Exit> {
+        if signature == expected { Ok(1) } else { otherwise(self) }
+    }
 }
 
 impl WasmInstance for ConcreteInstance<'_> {

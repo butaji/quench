@@ -12,7 +12,7 @@ const WORDS: usize = 8;
 const HALF_WORDS: usize = (u128::BITS / u64::BITS) as usize;
 
 /// A set of registers, one bit each, `u64::BITS * WORDS` wide.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub(crate) struct RegisterSet([u64; WORDS]);
 
 impl RegisterSet {

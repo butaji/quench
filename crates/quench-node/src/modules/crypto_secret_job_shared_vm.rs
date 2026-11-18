@@ -324,11 +324,7 @@ fn get(c: &mut Context<'_>, o: RootId, name: &str) -> Result<RootId, RootedError
     let name = c.string_rooted(name);
     c.get_property_rooted(o, name)
 }
-fn put(c: &mut Context<'_>, o: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let name = c.string_rooted(name);
-    c.define_data_property_rooted(o, name, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn fail(c: &mut Context<'_>, text: &str) -> RootedError {
     match c.type_error_rooted(text) {
         Ok(e) => c.throw(e),

@@ -43,6 +43,7 @@ pub(crate) enum Arguments {
 
 impl Arguments {
     /// How many arguments the call passes.
+    #[inline]
     pub(crate) const fn count(self) -> u16 {
         match self {
             Self::Window { count, .. } | Self::List(RegisterList { count, .. }) => count,
@@ -183,6 +184,7 @@ impl Invocation {
 
     /// Whether the call allocates its callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
+    #[inline(always)]
     pub(crate) fn constructs(&self) -> bool {
         self.receiver == Receiver::Allocated
     }

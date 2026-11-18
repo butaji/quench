@@ -474,6 +474,7 @@ pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
             Branch::Part(index) => Branch::Part(index + 1),
             pc @ Branch::Pc(_) => pc,
         });
+        part.cold = true;
         part
     }).collect();
     fast

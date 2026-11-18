@@ -533,11 +533,7 @@ pub(crate) fn export_ec_private_pkcs8(
     super::buffer_shared_vm::from_bytes(c, &bytes)
 }
 
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let name = c.string_rooted(name);
-    c.define_data_property_rooted(object, name, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn key_detail(
     c: &mut Context<'_>,
     handle: RootId,

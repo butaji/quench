@@ -87,6 +87,9 @@ pub(crate) struct StoreArm {
     pub(crate) slot: u16,
     pub(crate) holds: Option<Type>,
     pub(crate) raw_double: bool,
+    /// Whether the site left the record's storage form open (`Form::Either`): a raw store
+    /// then tests the inline flag at run time, which a proven arena run skips.
+    pub(crate) unformed: bool,
 }
 
 impl StoreArm {
@@ -95,20 +98,20 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub(crate) fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false })
     }
 
     /// `StoreArm::of` for a slot whose arena words are raw doubles where `raw_double`: only a
     /// value whose type the slot's holds, a Number, stores in place, as its binary64 word, and
-    /// only into a shape whose values its `form` proves an arena run (a packed slot holds narrow
-    /// values, whatever its owner's type).
+    /// only into a shape whose values its `form` leaves an arena run (a packed slot holds narrow
+    /// values, whatever its owner's type); an open form is tested when the store runs.
     pub(crate) fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
         let arm = Self::of(at, slot_ty, fact)?;
         if !raw_double { return Some(arm); }
-        (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form == super::Form::Arena)
-            .then_some(Self { raw_double: true, ..arm })
+        (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form != super::Form::Packed)
+            .then_some(Self { raw_double: true, unformed: form == super::Form::Either, ..arm })
     }
 }
 
@@ -318,6 +321,11 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn entry_slot_store(&mut self, _stage: &mut S, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
 
+    /// Whether the slot a loop's entry projected for this store keeps raw doubles: the store
+    /// then hands `entry_slot_store` the value's binary64 word, not its tagged one.
+    #[inline(always)]
+    fn entry_slot_raw(&self) -> bool { false }
+
     /// Continues where the run admits a direct store of the atom the access names (no method
     /// cache names it); a frame whose run changes that between accesses tests it here.
     #[inline(always)]
@@ -421,8 +429,8 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 #[inline(always)]
 fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
-    if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, .. }] = ops {
-        return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *storage_len), miss);
+    if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
+        return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *rep, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest

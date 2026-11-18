@@ -9,7 +9,7 @@ use super::*;
 pub(in crate::vm) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn(u16) -> Option<&'a [NativeFieldLoad]>)
     -> Vec<(u32, u16, Type, bool)> {
     let mut domains: Vec<(u32, u16, Type, bool)> = Vec::new();
-    for instruction in instructions.iter().filter(|instruction| instruction.op().is_field_store()) {
+    for instruction in instructions.iter().filter(|instruction| matches!(crate::vm::compiled::decoded(*instruction), Some(crate::staged::Operation::SetField { .. }))) {
         let Some([field]) = field(instruction.cache_site_index()) else { continue };
         if field.ty == Type::NEVER { continue; }
         match domains.iter_mut().find(|(shape, slot, _, _)| (*shape, *slot) == (field.shape, field.slot)) {

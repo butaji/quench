@@ -339,10 +339,10 @@ impl Lowering<'_, '_> {
     /// or reads the global scope (`global_read`); calls, stores and constructions do not qualify.
     pub(super) fn keeps_stable_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
         match instruction.op().class() {
-            Class::LoadName | Class::LoadNameCall => self.global_reads.contains_key(&pc),
-            Class::GetField => !instruction.writes_current_this(),
-            Class::GetIndex => true,
-            Class::Call => super::native_calls::keeps_arrays(&self.intrinsics, pc),
+            _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. })) => self.global_reads.contains_key(&pc),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => true,
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),
         }

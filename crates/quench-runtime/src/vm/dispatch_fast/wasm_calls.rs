@@ -51,15 +51,15 @@ macro_rules! enter_wasm_function {
         }
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
-        let stack = &mut vm.lane_stack;
+        let stack: &mut LaneStack = &mut vm.lane_stack;
         if let Some(lane_view) = views.get(usize::from($function)).and_then(super::program_store::derived_lane_view)
             && let Some(shape) = lane_view.activation
             && usize::from(shape.registers)
                 .saturating_mul(std::mem::size_of::<Value>())
                 <= crate::stack::GuestCallGuard::remaining_storage_bytes()
                     .saturating_sub(stack.wasm_storage_bytes)
-            && stack.activations.len() < stack.activation_limit.get()
-            && vm.frames.len() + stack.activations.len()
+            && stack.activation_count() < stack.activation_limit.get()
+            && vm.frames.len() + stack.activation_count()
                 < super::dispatch_frame::WASM_ACTIVATION_LIMIT
             && stack.values.room()
                 >= fill_room::<ACTIVATION_FILL_BLOCK>(usize::from(shape.registers))
@@ -91,14 +91,14 @@ macro_rules! enter_wasm_function {
             // SAFETY: capacity holds the activation.
             unsafe {
                 let at = stack.values.as_mut_ptr().wrapping_add(window);
-                stack.push_activation(Activation {
-                    native: crate::vm::compiled::ShadowFrame::EMPTY, function: u32::from($function),
-                    call: ip,
-                    caller_base: (*cx).base,
-                    caller_registers: r,
-                    caller_program: (*cx).program,
-                    kind: ActivationKind::Wasm { memory: view.memory, frame_storage_bytes },
-                }, at);
+                stack.push_activation(Activation::of_parts(
+                    crate::vm::compiled::ShadowFrame::EMPTY, u32::from($function),
+                    ip,
+                    (*cx).base,
+                    r,
+                    (*cx).program,
+                    ActivationKind::Wasm { memory: view.memory, frame_storage_bytes },
+                ), at);
             }
             // A fresh activation's memory register holds no memory until
             // the function's instance binding loads it.
@@ -368,13 +368,13 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     let this = lane_call_this(vm, &target, Value::UNDEFINED)?;
     let instance = unsafe { (*cx).instance };
     let (registers, start) = lane_push_passed::<H, true, false>(cx, r, ip, &target, args.as_ptr(), argc16.min(target.params), this, false);
-    if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
+    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations_mut().last_mut().map(|activation| activation.kind_mut()) {
         script.completion = Completion::ToWasm;
     }
     vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
     unsafe {
         (*cx).inline_calls = false;
-        (*cx).script_calls = true;
+        lane_set_script_calls(cx, true);
         (*cx).instance = Value::DELETED;
     }
     let view = Carried::script(cx);

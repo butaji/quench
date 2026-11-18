@@ -11,28 +11,24 @@ use crate::typed_ir::Type;
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
-/// The `null` or `undefined` a nullish test compares with.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Nullish {
-    Null,
-    Undefined,
+/// The nullish `value` (`null` or `undefined`) a nullish test compares with, where it is one.
+pub(crate) fn nullish_of(value: Value) -> Option<ValueType> {
+    if value == Value::NULL {
+        Some(ValueType::Null)
+    } else if value == Value::UNDEFINED {
+        Some(ValueType::Undefined)
+    } else {
+        None
+    }
 }
 
-impl Nullish {
-    /// The nullish `value`, where it is one.
-    pub(crate) fn of(value: Value) -> Option<Self> {
-        [Self::Null, Self::Undefined].into_iter().find(|nullish| nullish.value() == value)
-    }
-
-    #[inline]
-    fn value(self) -> Value {
-        match self { Self::Null => Value::NULL, Self::Undefined => Value::UNDEFINED }
-    }
-
-    /// The semantic type of the one value.
-    #[inline]
-    fn ty(self) -> Type {
-        Type::language(match self { Self::Null => ValueType::Null, Self::Undefined => ValueType::Undefined })
+/// The value of the nullish language type `kind`.
+#[inline]
+fn nullish_value(kind: ValueType) -> Value {
+    match kind {
+        ValueType::Null => Value::NULL,
+        ValueType::Undefined => Value::UNDEFINED,
+        _ => unreachable!("nullish_value of a type that is not nullish"),
     }
 }
 
@@ -56,7 +52,7 @@ pub(crate) enum Comparison {
     /// `==` or `===` (`strict`), negated for `!=` and `!==`, of the tested operand (the row's
     /// `left`) and `expected`, a constant the tier proved the other operand is: a tag decides it,
     /// and the register's type where it already does.
-    Nullish { expected: Nullish, strict: bool, negated: bool },
+    Nullish { expected: ValueType, strict: bool, negated: bool },
     /// The truth of a bitwise operator's result of two Numbers (`if (flags & MASK)`): its int32
     /// bits are nonzero, so the Number the operator would make is never made.
     Bitwise(NumberBitwise),
@@ -277,26 +273,26 @@ fn bitwise<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [l
 /// register. A heap cell an IsHTMLDDA object may be leaves at the miss edge.
 #[inline(always)]
 fn nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, tested: Operand,
-    (expected, strict): (Nullish, bool), equal_edge: Edge) -> Option<S::Cond> {
+    (expected, strict): (ValueType, bool), equal_edge: Edge) -> Option<S::Cond> {
     let register = tested.register_index()?;
     if let Some(equal) = frame.register_type(register).and_then(|ty| known_equal(ty, expected, strict)) {
         let word = stage.constant(u64::from(equal));
         return Some(stage.ne_imm(word, 0u64));
     }
     let word = frame.tagged(stage, register);
-    let equal = if strict { stage.eq_imm(word, expected.value().to_bits()) } else { loosely_nullish(stage, frame, word)? };
-    frame.refine(register, if strict { expected.ty() } else { Type::NULLISH }, equal_edge);
+    let equal = if strict { stage.eq_imm(word, nullish_value(expected).to_bits()) } else { loosely_nullish(stage, frame, word)? };
+    frame.refine(register, if strict { Type::language(expected) } else { Type::NULLISH }, equal_edge);
     Some(equal)
 }
 
 /// Whether a value of type `ty` is `expected` (loosely, either nullish value) by its type
 /// alone: the nullish types are, and objects, Numbers and Booleans are not.
-fn known_equal(ty: Type, expected: Nullish, strict: bool) -> Option<bool> {
+fn known_equal(ty: Type, expected: ValueType, strict: bool) -> Option<bool> {
     let [null, undefined] = [ValueType::Null, ValueType::Undefined].map(Type::language);
     if ty.is_subtype(null) {
-        Some(!strict || expected == Nullish::Null)
+        Some(!strict || expected == ValueType::Null)
     } else if ty.is_subtype(undefined) {
-        Some(!strict || expected == Nullish::Undefined)
+        Some(!strict || expected == ValueType::Undefined)
     } else {
         (ty.is_direct_object_family() || ty.is_subtype(Type::NUMBER.join(Type::language(ValueType::Boolean)))).then_some(false)
     }

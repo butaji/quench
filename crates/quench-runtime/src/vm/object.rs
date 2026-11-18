@@ -428,12 +428,17 @@ impl<H: Host> Vm<H> {
     /// second wide object of one layout (a 150K-unit string's wrapper, SunSpider tagcloud)
     /// cost time and index memory quadratic in its width.
     fn carry_lookup_index(&mut self, parent: u32, child: u32) {
-        if self.shapes[child as usize].lookup_index.get().is_some() {
-            return;
-        }
+        // The parent's index leaves it either way. Kept on the parent beside a child that
+        // already has one, it stays for good: every later build of the same wide layout
+        // (an object filled key by key each run) strands one more chain-sized index one
+        // shape further up (SunSpider string-unpack-code: +0.23 MB per iteration, peak RSS
+        // linear in the run length). Dropping it keeps at most one index per walk.
         let Some(index) = self.shapes[parent as usize].lookup_index.take() else {
             return;
         };
+        if self.shapes[child as usize].lookup_index.get().is_some() {
+            return;
+        }
         let mut steps = smallvec::SmallVec::<[ShapeTransition; 2]>::new();
         let mut current = child;
         while current != parent {
@@ -1012,7 +1017,7 @@ impl<H: Host> Vm<H> {
         self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
-        self.regexp_object_shapes = None;
+        self.regexp_object_header = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();
@@ -1689,7 +1694,7 @@ impl<H: Host> Vm<H> {
         debug_assert!(self.field_cache_index(site) < self.field_caches.len());
         // SAFETY: `active_field_entries` is re-derived whenever the active program or the
         // table changes, and the active program's layout reserves every compiler-emitted site.
-        unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
+        unsafe { super::site_table::CacheSiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
@@ -2499,6 +2504,7 @@ impl<H: Host> Vm<H> {
     /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
     /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
     /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[allow(dead_code)]
     pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
         self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
@@ -2799,9 +2805,9 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            // Function and iterator records have no cell; their shape answers like the
-            // slot forms' (`shape_property_lookup`).
-            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
+            // Function, iterator and collection records have no cell; their shape answers like
+            // the slot forms' (`shape_property_lookup`).
+            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_) | HeapReference::CollectionRecord(_)) => {
                 let lookup = if self.specialized && p.specialized {
                     self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
                 } else {
@@ -2830,7 +2836,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::PromiseRecord(_)
                 | HeapReference::AwaitRecord(_)
                 | HeapReference::V128Record(_)
-                | HeapReference::EnvironmentRecord(_),
+                | HeapReference::EnvironmentRecord(_)
+                | HeapReference::SymbolRecord(_),
             )
             | None => None,
         };
@@ -3425,14 +3432,8 @@ impl<H: Host> Vm<H> {
                 let value = if native == Native::DataViewByteLengthGetter { length } else { offset };
                 Some(Value::number(value as f64))
             }
-            Native::MapSizeGetter => match self.heap.get(this) {
-                Some(Cell::Map { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
-            Native::SetSizeGetter => match self.heap.get(this) {
-                Some(Cell::Set { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
+            Native::MapSizeGetter => self.heap.map_entries(this).map(|entries| Value::number(entries.len() as f64)),
+            Native::SetSizeGetter => self.heap.set_entries(this).map(|entries| Value::number(entries.len() as f64)),
             _ => None,
         }
     }
@@ -4697,6 +4698,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        function: u32,
     ) -> Result<(), JsError> {
         let key = PropertyKey::string(atom);
         let cacheable = self.specialized && p.specialized && self.field_cache_atom_eligible(atom);
@@ -4726,6 +4728,11 @@ impl<H: Host> Vm<H> {
             && slot == self.shapes[shape as usize].storage_len()
             && let Ok(slot) = u16::try_from(slot)
         {
+            // Once per transition: the add that creates `target_shape` seeds its slot from the
+            // class's declared type; later adds of the shape reuse this entry and its seed.
+            if declared_number_field(p, function, atom) {
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), crate::typed_ir::Type::NUMBER);
+            }
             self.record_field_add_cache(
                 site,
                 FieldAddCache {
@@ -5255,4 +5262,15 @@ impl<H> Vm<H> {
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
         )
     }
+}
+
+/// Whether `atom`, added to an instance of the class whose constructor is `function` of `p`, is a
+/// field declared `number` (`DeclaredTypes::declared_field`): the class's constructor carries the
+/// class's source span, whose start names the class.
+fn declared_number_field(p: &ResidualProgram, function: u32, atom: Atom) -> bool {
+    let Some(declared) = p.declared_types.as_deref() else { return false };
+    let Some(class_start) = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start) else {
+        return false;
+    };
+    declared.declared_field(class_start, &p.atoms[atom as usize]) == Some(1u16 << crate::ValueType::Number as u16)
 }

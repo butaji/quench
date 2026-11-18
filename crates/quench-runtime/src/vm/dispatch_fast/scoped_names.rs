@@ -3,8 +3,9 @@
 //! suspended function has. A function that reaches names this way (`CallPlan::holds_window_scope`) runs
 //! its by-name loads and stores, local stores and closures here instead of in a frame, where
 //! `Vm::find_with_binding`, `Vm::load_name_call` and `Vm::closure_in_realm` make them. A lookup
-//! the shapes of the objects alone do not decide, or that no `with` object or dynamic binding of
-//! the activation answers, leaves the instruction to the general path before any effect.
+//! the shapes of the objects alone do not decide, or that no `with` object, dynamic binding or
+//! global read past every scope (`Vm::read_past_scopes`) answers, leaves the instruction to the
+//! general path before any effect.
 use super::*;
 use super::window_owner::WindowScope;
 use super::with_scopes::WithChain;
@@ -15,19 +16,19 @@ use crate::bytecode::Atom;
 /// instruction a binding site scopes (`Frame::binding_site_pc`). `None` in a frame's run.
 pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, at_site: bool) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    let activation = vm.lane_stack.activations.last()?;
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
+    let activation = vm.lane_stack.activations().last()?;
     let script = activation.script().filter(|script| script.environment)?;
     // SAFETY: the context's program outlives the lane run, and `ip` is a record of the running
     // function's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-    let body = code.function(activation.function as usize);
+    let body = code.function(activation.function() as usize);
     // SAFETY: the activation's window follows its registers (`lane_activate_environment`).
     let entries = unsafe { r.0.add(usize::from(body.registers)) };
     let own = r.get(body.registers + WINDOW_ENVIRONMENT);
     let captured = !own.is_deleted();
     Some(WindowScope {
-        function: activation.function,
+        function: activation.function(),
         program: unsafe { (*cx).program },
         this: unsafe { (*cx).registers }.this(),
         env: if captured { own } else { unsafe { (*cx).registers }.env() },
@@ -46,10 +47,10 @@ pub(super) fn window_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
 /// environment window (`window_scope`) or a frame's run.
 pub(super) fn plain_scope<H: Host>(cx: *mut LaneContext<H>, r: Registers) -> Option<WindowScope> {
     let vm = unsafe { vm(cx) };
-    let activation = vm.lane_stack.activations.last()?;
+    let activation = vm.lane_stack.activations().last()?;
     let script = activation.script().filter(|script| !script.environment)?;
     Some(WindowScope {
-        function: activation.function,
+        function: activation.function(),
         program: unsafe { (*cx).program },
         this: unsafe { (*cx).registers }.this(),
         env: unsafe { (*cx).registers }.env(),
@@ -80,8 +81,10 @@ impl<H: Host> Vm<H> {
 /// The read of `atom` the window activation at `ip` makes by name, as `Vm::load_name_call`
 /// makes it: its value and its call's receiver, the `with` object that has it, else the dynamic
 /// binding it resolves (`Vm::dynamic_binding`): its own, which a direct eval declared in its record's
-/// environment, or an enclosing activation's. `None`, before any effect, leaves it to the general path.
-fn scoped_name_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, atom: Atom) -> Option<(Value, Value)> {
+/// environment, or an enclosing activation's; else, where no scope binds it, the global read
+/// (`Vm::read_past_scopes`, its cached field at `site`), as a direct eval's `eval` or a global's
+/// name is read. `None`, before any effect, leaves it to the general path.
+fn scoped_name_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, atom: Atom, site: u16) -> Option<(Value, Value)> {
     let vm = unsafe { vm(cx) };
     if vm.atom_class(atom).contains(AtomClass::INTERNAL) {
         return None;
@@ -90,7 +93,12 @@ fn scoped_name_read<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, atom
     if let Some((object, value)) = vm.window_with_binding(&scope, atom)? {
         return Some((value, object));
     }
-    vm.dynamic_binding(&scope, atom).filter(|value| !value.is_deleted()).map(|value| (value, Value::UNDEFINED))
+    if let Some(value) = vm.dynamic_binding(&scope, atom) {
+        return (!value.is_deleted()).then_some((value, Value::UNDEFINED));
+    }
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    vm.read_past_scopes(code, &scope, atom, site).map(|value| (value, Value::UNDEFINED))
 }
 
 /// How a store by name of a window activation went among its `with` objects.
@@ -120,7 +128,7 @@ script_handler! {
     /// answer, takes the general path. `KIND` is the load's (`LOAD_NAME`).
     #[inline(never)]
     fn lane_scoped_load_name<KIND: u8>(cx, r, ip, i, view) {
-        let Some((value, receiver)) = scoped_name_read(cx, r, ip, i.imm()) else {
+        let Some((value, receiver)) = scoped_name_read(cx, r, ip, i.imm(), i.c) else {
             return exit(ip);
         };
         r.set(i.a, value);

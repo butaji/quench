@@ -249,7 +249,7 @@ pub(super) fn apply_function(
                 .instructions()
                 .any(|instruction| instruction.addressed_local_slots().any(|local| local == slot))
         {
-            function.arguments_slot = None;
+            (function.arguments_slot, function.rest_alias) = (None, false);
         }
         function.selective_capture_slots = Some(crate::heap::ThinBoxSlice::from_slice(&captured));
         rewrite_local_ownership(function, &captured);

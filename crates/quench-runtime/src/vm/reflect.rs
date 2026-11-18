@@ -47,7 +47,7 @@ impl<H: Host> Vm<H> {
                 let key =
                     self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let receiver = args.get(2).copied().unwrap_or(target);
-                if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+                if self.heap.is_symbol(key) {
                     return self.get_symbol_property_with_receiver(p, target, key, receiver);
                 }
                 let Some(key) = self.heap.string(key).cloned() else {
@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
                 let receiver = args.get(3).copied().unwrap_or(target);
                 let strict_super = native == Native::SuperSet
                     && args.get(4).is_some_and(|flag| self.truthy(*flag));
-                if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+                if self.heap.is_symbol(key) {
                     let succeeded = self.set_symbol_property_with_receiver(
                         p,
                         target,

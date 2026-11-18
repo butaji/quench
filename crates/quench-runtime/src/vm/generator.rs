@@ -59,6 +59,8 @@ impl GeneratorResume {
 /// delegate's result on), or a return.
 pub(super) enum MaterializedStop {
     Yielded { destination: crate::bytecode::Register, delegated_result: Option<Value> },
+    /// An async generator's frame awaiting in place (`Completion::AsyncRequest`).
+    Awaited { destination: crate::bytecode::Register },
     Returned,
 }
 
@@ -88,6 +90,7 @@ impl<H: Host> Vm<H> {
                 }
                 false
             }
+            MaterializedStop::Awaited { .. } => unreachable!("only an async generator's frame awaits in place"),
             MaterializedStop::Returned => {
                 self.finish_frame_scopes(&frame);
                 self.pool_frame(frame);
@@ -144,16 +147,6 @@ impl<H: Host> Vm<H> {
             Native::GeneratorReturn => self.generator_return(p, receiver, args),
             Native::GeneratorThrow => self.generator_throw(p, receiver, args),
             _ => unreachable!(),
-        }
-    }
-
-    pub(super) fn generator_record_mut(
-        &mut self,
-        generator: Value,
-    ) -> Option<&mut GeneratorRecord> {
-        match self.heap.iterator_mut(generator) {
-            Some(IteratorRecord { ext, .. }) => ext.generator.as_deref_mut(),
-            _ => None,
         }
     }
 
@@ -214,7 +207,9 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
+        frame.reserve_suspension_window(function);
         frame.prepare_registers(function.registers, function.initial_register);
+        frame.initialize_promoted_registers(function, args);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until::<true>(
@@ -585,7 +580,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
+    pub(super) fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
         let record = match self.heap.iterator(generator) {
             Some(IteratorRecord { ext, .. }) => ext.generator.as_ref()?,
             _ => return None,
@@ -1326,7 +1321,8 @@ impl<H: Host> Vm<H> {
             return initial_error.map_or(Ok(GeneratorStep::Done(Value::UNDEFINED)), Err);
         }
         let job = JobRoot { object: generator, kind: SuspendKind::Generator };
-        let program = self.job_frame(job).ok_or_else(|| JsError("generator is suspended".into()))?.program;
+        let frame = self.job_frame(job).ok_or_else(|| JsError("generator is suspended".into()))?;
+        let (program, frame) = (frame.program, std::ptr::from_ref(frame));
         if unstarted && let Some(error) = initial_error {
             return self.close_unstarted_generator(generator, error);
         }
@@ -1340,7 +1336,7 @@ impl<H: Host> Vm<H> {
         };
         let previous_program = self.replace_active_program(program);
         let previous_global = self.switch_realm_global(realm);
-        let end = self.run_job(&code, job, how);
+        let end = self.run_job(&code, job, frame, how);
         self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         self.finish_generator_step(generator, end)
@@ -1505,12 +1501,7 @@ impl<H: Host> Vm<H> {
                     self.async_generator_throw_ready(p, generator, request.value, request.promise)?;
                 }
             }
-            if self
-                .generator_record_mut(generator)
-                .is_some_and(|record| record.is_executing())
-            {
-                return Ok(());
-            }
+            // A request that left the generator executing ends the loop at the next pop.
         }
     }
 
@@ -1602,7 +1593,7 @@ impl<H: Host> Vm<H> {
                 None => JobResume::Sends(value),
             };
             let previous_global = vm.switch_realm_global(realm);
-            let resumed = vm.resume_request(generator, promise, how);
+            let resumed = vm.resume_request(p, generator, promise, how);
             vm.switch_realm_global(previous_global);
             resumed?;
             Ok(promise)

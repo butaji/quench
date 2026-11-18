@@ -95,6 +95,12 @@ impl WideInstruction {
         Self { op, a, b, c, imm }
     }
 
+    /// Every field of the instruction as two words, equal exactly where the instructions are
+    /// (`lane_facts::plan_key`).
+    #[inline] pub(crate) const fn words(self) -> (u64, u32) {
+        ((self.op as u16 as u64) | (self.a as u64) << 16 | (self.b as u64) << 32 | (self.c as u64) << 48, self.imm)
+    }
+
     #[inline] pub(crate) const fn op(self) -> Op {
         self.op
     }

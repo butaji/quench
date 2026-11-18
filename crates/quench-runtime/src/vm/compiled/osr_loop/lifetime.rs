@@ -75,10 +75,13 @@ fn array_root(flow: &LoopRegion, values: &Webs, pc: u32, register: Register, vis
     if !visiting.insert((pc, register)) {
         return None;
     }
-    let definitions = values.reaching[(pc - flow.header) as usize].get(&register)?;
+    let definitions = values.reaching((pc - flow.header) as usize, register);
+    if definitions.is_empty() {
+        return None;
+    }
     let mut root = None;
     for definition in definitions {
-        let candidate = definition_root(flow, values, *definition, visiting)?;
+        let candidate = definition_root(flow, values, definition, visiting)?;
         if root.is_some_and(|root| root != candidate) {
             return None;
         }
@@ -117,7 +120,7 @@ fn element_access(instruction: WideInstruction) -> Option<bool> {
 /// Whether every definition of `receiver` reaching `offset` is an element read: a nested array
 /// read, which reads through no entry root.
 fn reads_element_value(flow: &LoopRegion, values: &Webs, offset: usize, receiver: Register) -> bool {
-    values.reaching[offset].get(&receiver).is_some_and(|definitions| {
+    Some(values.reaching(offset, receiver)).is_some_and(|definitions| {
         !definitions.is_empty() && definitions.iter().all(|definition| {
             definition.checked_sub(flow.entry_count())
                 .and_then(|index| flow.instructions.get(index))
@@ -147,7 +150,7 @@ fn canonical_arrays(flow: &LoopRegion, values: &Webs) -> Option<Vec<WideInstruct
 /// The web roots that need an analysis identity: entry values, and the instruction definitions
 /// that define a register (an unused one has none).
 fn analysis_roots(values: &Webs, flow: &LoopRegion) -> Vec<Definition> {
-    let roots: BTreeSet<Definition> = (0..values.parent.len()).map(|definition| values.find(definition)).collect();
+    let roots: BTreeSet<Definition> = (0..values.definitions()).map(|definition| values.find(definition)).collect();
     roots.into_iter().filter(|definition| {
         *definition < flow.entry_count()
             || number_definition(flow.instructions[*definition - flow.entry_count()]).is_some()

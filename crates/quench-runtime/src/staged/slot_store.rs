@@ -62,7 +62,7 @@ pub(crate) fn admitted_payload<S: Stage>(stage: &mut S, record: S::Word, record_
 #[inline(always)]
 pub(crate) fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
     if fact.is_subtype(Type::IMMEDIATE) { return Some(()); }
-    let open = stage.store_gate(super::RecordSpace::Object, record_id, value);
+    let open = stage.store_gate(super::StagedRecordSpace::Object, record_id, value);
     stage.guard(open, miss)
 }
 
@@ -99,6 +99,27 @@ pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id
     stage.guard(flat, miss)?;
     store_flat(stage, payload, slot, (value, rep));
     Some(())
+}
+
+/// Proves the record at `record` of the exact shape `shape` with plain wide flat values in one compare:
+/// its auxiliary word is the shape with no storage-form bit set (`recorded_shape`); `None`, leaving at
+/// `miss`, otherwise. What the access of a receiver known to be a direct object runs (`base_region::proofs`).
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
+pub(crate) fn own_flat_known<S: Stage>(stage: &mut S, record: S::Word, shape: u32, miss: S::Miss) -> Option<()> {
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let shape = stage.site(u64::from(shape));
+    let same = stage.eq_imm(word, shape);
+    stage.guard(same, miss)
+}
+
+/// `value` written at flat `slot` of the record at `record`, which `own_flat_known` proved of the slot's
+/// shape with plain flat values; the value is one the slot's observed type holds, so the store gate does not apply.
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
+pub(crate) fn proved_flat_store<S: Stage>(stage: &mut S, record: S::Word, slot: u16, (value, rep): (S::Word, Representation)) {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    store_flat(stage, payload, slot, (value, rep));
 }
 
 /// `value`, a word in `rep`'s encoding, written at `slot`, a word (the shapes' storage length or a cache
@@ -143,8 +164,6 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::W
 pub(crate) fn store_word<S: Stage>(stage: &mut S, address: S::Word, value: S::Word, rep: Representation) {
     match rep {
         Representation::Float64 => stage.store_f64(Region::ObjectSlots.mutable(), address, 0, value),
-        // Slots never hold Int64 words: a slot's owner projects only Int32, Float64 or Tagged.
-        Representation::Int64 => unreachable!("a slot word is never an Int64"),
-        Representation::Int32 | Representation::Tagged => stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value),
+        Representation::Int32 | Representation::Int64 | Representation::Tagged => stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value),
     }
 }

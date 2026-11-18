@@ -1053,7 +1053,7 @@ impl<H: Host> Vm<H> {
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());
-                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index())?;
+                self.define_field_cached(p, object, i.atom_index(), value, i.cache_site_index(), self.frames[f].function)?;
             }
             Op::DefineComputedField => {
                 let object = self.read(f, i.register_b());
@@ -1061,7 +1061,7 @@ impl<H: Host> Vm<H> {
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
                     _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
-                    Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
+                    _ if self.heap.is_symbol(key) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };
                 self.define_class_field(p, object, key, self.read(f, i.register_a()))?;

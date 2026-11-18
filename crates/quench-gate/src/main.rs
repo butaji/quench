@@ -14,6 +14,7 @@ mod conformance;
 mod cparity;
 mod debug;
 mod ir_budget;
+mod ir_floor;
 mod known_lists;
 mod lint;
 mod no_jit_ir;

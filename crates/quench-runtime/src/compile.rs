@@ -81,7 +81,7 @@ pub(crate) mod program_profile;
 mod register_profile;
 pub(crate) mod replay;
 mod deferred_rewrite; mod function_table; pub(crate) use deferred_rewrite::{FIELD_SITE_WINDOW, SUPERINSTRUCTION_WINDOW, settle_deferred_rewrite};
-mod rewrite;
+mod rewrite; mod rest_alias;
 mod sequence;
 pub(crate) mod stack;
 pub(crate) mod statement_stream;
@@ -768,14 +768,19 @@ impl Engine {
         )
     }
 
+    /// A host script's program. Where `first_call`, the host runs it from its kept form,
+    /// which records the room its first-call chunks append in, so a classic script's
+    /// functions may compile on first call (`ParsedProgramShape::FirstCallScript`).
     pub(crate) fn specialize_host_script(
         source: &str, name: &str, prefix: &dyn AtomPrefix,
-        options: HostScriptOptions, released: ReleasedRecords,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         if options.typescript {
             Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
         } else if options.keep_records {
             Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
+        } else if first_call {
+            Self::specialize_script_shaped(source, name, prefix, ParsedProgramShape::FirstCallScript, released, SourceType::script())
         } else {
             Self::specialize_script_with_atom_prefix(source, name, prefix, released)
         }
@@ -1127,7 +1132,7 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
-        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len());
+        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len(), source_type.is_module());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
         let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
@@ -1222,7 +1227,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
+            ParsedProgramShape::Any | ParsedProgramShape::FirstCallScript | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -2626,7 +2631,7 @@ impl<'a> Compiler<'a> {
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
         #[cfg(feature = "profile-aggregate")]
-        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+        if crate::vm::switches::profile_retain_bytecode() {
             // A function-level profile needs each replayable function's instruction records.
             return;
         }
@@ -3758,12 +3763,13 @@ impl<'a> Compiler<'a> {
         index
     }
 
-    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32) -> u32 {
+    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32, receiver: bool) -> u32 {
         let index = self.regexp_literal_sites.len() as u32;
         self.regexp_literal_sites
             .push(crate::bytecode::RegExpLiteralSite {
                 pattern_constant,
                 flags_constant,
+                receiver,
             });
         index
     }
@@ -3973,18 +3979,18 @@ impl<'a> Compiler<'a> {
             (_, None) => false,
             (_, Some((strict, _))) => strict || unaliased_arguments,
         };
-        // An async body that may suspend keeps its locals in frame slots; one that never
-        // awaits runs to completion as an ordinary body does (`CallPlan::settles_in_loop`).
-        let suspends = async_body && register_local_facts.suspends;
+        // A suspension saves the frame's registers with its locals, so an async or generator
+        // body's locals promote as any other body's do.
         // A body that makes functions keeps its locals for the capture layout to split
         // (`capture_layout`, `frame_registers`), but a parameter none of them names is the
         // body's alone: it arrives in a register as in a body that makes none, where the
         // later passes, which leave parameters in their slots, would keep it in the frame.
-        // An async body keeps its whole frame for its closures (`capture_layout` splits none).
+        // An async or generator body keeps its whole frame for its closures (`capture_layout`
+        // splits none).
         let parameters_only = !async_body && register_local_facts.makes_closures_only()
             && own_arguments.is_some_and(|(_, parameters)| register_local_facts.closures_spare(
                 parameters.iter().map(|atom| &self.atoms[*atom as usize])));
-        if !eligible || suspends || !(register_local_facts.safe || parameters_only) || !arguments_allow_promotion {
+        if !eligible || !(register_local_facts.safe || parameters_only) || !arguments_allow_promotion {
             return PromotedLocalPlan { unaliased_arguments, ..Default::default() };
         }
         let parameter_count = own_arguments.map_or(0, |(_, parameters)| parameters.len());
@@ -4054,7 +4060,8 @@ impl<'a> Compiler<'a> {
         let id = self.functions.reserve();
         let body_lexicals = self.collect_body_lexical_bindings(body);
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
-        let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
+        let rest_alias = rest_alias::rest_alias(&options, (parent.is_none(), streamed.is_some(), expression_body.is_some()), body);
+        let params: Vec<Atom> = params[..params.len().saturating_sub(usize::from(rest_alias.is_some()))].iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         if let Some(formal) = options.defaults {
             for name in FunctionCompiler::parameter_bound_names(formal) {
@@ -4149,7 +4156,6 @@ impl<'a> Compiler<'a> {
             && options.defaults.is_some_and(FunctionCompiler::arguments_promotable_apart);
         let promote_plain_locals = parent.is_some()
             && (direct_parameters || hidden_parameters)
-            && !options.generator
             && !options.derived_constructor
             && !options.class_initializer
             && options.implicit_body.is_none()
@@ -4166,7 +4172,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
-            options.async_function,
+            options.async_function || options.generator,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,
@@ -4221,7 +4227,7 @@ impl<'a> Compiler<'a> {
         function.dynamic_eval = dynamic_eval;
         function.literal_singletons = literal_singletons::Owner { parent, binds_dynamically, options: &options }.declarations(&function.owner.atoms, &params, body);
         if arguments_slot.is_some() && parameter_arguments_slot.is_none() {
-            function.arguments_alias = early::arguments_alias(options.defaults, body);
+            function.arguments_alias = rest_alias.clone().or_else(|| early::arguments_alias(options.defaults, body));
         }
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
@@ -4279,6 +4285,11 @@ impl<'a> Compiler<'a> {
                 .unwrap_or_else(|| function.literal(Constant::Undefined))
         };
         function.emit(Op::Return, result, 0, 0, 0);
+        // Block scopes add locals after the function's own were counted (`FunctionCompiler::new`):
+        // a frame's local count is 16-bit, so one more would wrap it to an empty frame.
+        if function.locals.len() > usize::from(u16::MAX) {
+            function.owner.reject(Span::default(), "function exceeds the local-slot limit");
+        }
         let captures_locals = function
             .code
             .iter()
@@ -4331,8 +4342,9 @@ impl<'a> Compiler<'a> {
             },
             parameter_atoms: parameter_atoms.into(),
             declared_parameters: declared_parameters.into(),
+            // A rest alias's list is no rest list of the function's own (`rest_alias`).
             rest: options.rest_override
-                || options.defaults.is_some_and(|value| value.rest.is_some()),
+                || options.defaults.is_some_and(|value| value.rest.is_some()) != rest_alias.is_some(),
             is_async: options.async_function,
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
@@ -4345,7 +4357,7 @@ impl<'a> Compiler<'a> {
             prototype_unobservable: options.prototype_unobservable,
             class_initializer: options.class_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
-            unaliased_arguments,
+            unaliased_arguments, rest_alias: rest_alias.as_ref().and(arguments_slot).is_some(),
             arguments_slot,
             simple_parameters,
             strict: root_strict,

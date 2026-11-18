@@ -7,10 +7,15 @@ use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
 
+use crate::typed_ir::language_bit;
+
 mod admit;
 mod checked;
+mod enum_folding;
 mod enums;
+mod fields;
 mod imports;
+mod signatures;
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;
 pub(super) use checked::{lookup as checked_parameters, parameter_sites};
@@ -35,7 +40,7 @@ pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Optio
         let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
         let set = if declared & checked == 0 { DECLARED_ANY } else { declared & checked };
         if set != DECLARED_ANY && (item.optional || item.initializer.is_some()) {
-            set | language(crate::ValueType::Undefined)
+            set | language_bit(crate::ValueType::Undefined)
         } else {
             set
         }
@@ -43,34 +48,30 @@ pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Optio
     if parameters.iter().all(|&set| set == DECLARED_ANY) { Vec::new() } else { parameters }
 }
 
-/// No declared fact: every language type.
-pub(crate) const DECLARED_ANY: u16 = u16::MAX;
-
-const fn language(kind: crate::ValueType) -> u16 {
-    1 << kind as u16
-}
+/// No declared fact: every language type (`typed_ir::ANY_LANGUAGES`, the bits of `Type::ANY`).
+pub(crate) const DECLARED_ANY: u16 = crate::typed_ir::ANY_LANGUAGES;
 
 /// The language types a TypeScript type admits at run time, `DECLARED_ANY` where it does not
 /// name a closed set.
 fn declared_language(ty: &TSType<'_>) -> u16 {
     use crate::ValueType as V;
     match ty {
-        TSType::TSNumberKeyword(_) => language(V::Number),
-        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language(V::String),
-        TSType::TSBooleanKeyword(_) => language(V::Boolean),
-        TSType::TSBigIntKeyword(_) => language(V::BigInt),
-        TSType::TSSymbolKeyword(_) => language(V::Symbol),
-        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language(V::Undefined),
-        TSType::TSNullKeyword(_) => language(V::Null),
-        TSType::TSObjectKeyword(_) => language(V::Object) | language(V::Function),
-        TSType::TSArrayType(_) | TSType::TSTupleType(_) => language(V::Object),
-        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language(V::Function),
+        TSType::TSNumberKeyword(_) => language_bit(V::Number),
+        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language_bit(V::String),
+        TSType::TSBooleanKeyword(_) => language_bit(V::Boolean),
+        TSType::TSBigIntKeyword(_) => language_bit(V::BigInt),
+        TSType::TSSymbolKeyword(_) => language_bit(V::Symbol),
+        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language_bit(V::Undefined),
+        TSType::TSNullKeyword(_) => language_bit(V::Null),
+        TSType::TSObjectKeyword(_) => language_bit(V::Object) | language_bit(V::Function),
+        TSType::TSArrayType(_) | TSType::TSTupleType(_) => language_bit(V::Object),
+        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language_bit(V::Function),
         TSType::TSLiteralType(literal) => match &literal.literal {
-            TSLiteral::NumericLiteral(_) => language(V::Number),
-            TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => language(V::String),
-            TSLiteral::BooleanLiteral(_) => language(V::Boolean),
-            TSLiteral::BigIntLiteral(_) => language(V::BigInt),
-            TSLiteral::UnaryExpression(_) => language(V::Number) | language(V::BigInt),
+            TSLiteral::NumericLiteral(_) => language_bit(V::Number),
+            TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => language_bit(V::String),
+            TSLiteral::BooleanLiteral(_) => language_bit(V::Boolean),
+            TSLiteral::BigIntLiteral(_) => language_bit(V::BigInt),
+            TSLiteral::UnaryExpression(_) => language_bit(V::Number) | language_bit(V::BigInt),
         },
         TSType::TSParenthesizedType(inner) => declared_language(&inner.type_annotation),
         TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | declared_language(member)),
@@ -127,7 +128,7 @@ pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span,
 
 #[cfg(test)]
 mod tests {
-    use crate::{Engine, ExecutionMode, Runtime, test_host::TestHost};
+    use crate::{Engine, ExecutionMode, Runtime, bytecode::Op, test_host::TestHost};
 
     #[test]
     fn typescript_annotations_and_assertions_do_not_override_runtime_values() {
@@ -305,6 +306,56 @@ mod tests {
     fn const_enum_reads_are_their_constants() {
         let lines = run_typescript("const enum Dir { Up = 1, Down = Up * 2, Name = \"dir\" }\nconst read = () => Dir.Down + Dir[\"Up\"];\nconsole.log(read() + Dir.Name + read.toString().includes(\"Dir\"));");
         assert_eq!(lines, ["3dirtrue"]);
+    }
+
+    /// The opcodes of the function named `name` in a compiled program.
+    fn function_ops(program: &crate::ResidualProgram, name: &str) -> Vec<Op> {
+        let function = (0..program.functions.len()).filter_map(|index| program.function_get(index))
+            .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some(name)))
+            .unwrap();
+        function.instructions().map(|instruction| instruction.op()).collect()
+    }
+
+    #[test]
+    fn plain_enum_reads_fold_to_their_constants() {
+        let source = "function run() { enum Color { Red, Green = 5, Name = \"n\" } let total = 0; for (let i = 0; i < 3; i++) total += Color.Green; return total + Color.Name; }\nconsole.log(run());";
+        let program = Engine::specialize_typescript(source, "plain-enum.cts").unwrap();
+        assert!(!function_ops(&program, "run").contains(&Op::GetField));
+        assert_eq!(run_typescript(source), ["15n"]);
+    }
+
+    #[test]
+    fn plain_enum_reads_stay_live_when_something_can_change_them() {
+        let source = r#"
+            function written() {
+                enum Color { Red, Green = 5 }
+                for (let i = 0; i < 2; i++) (Color as any).Green = i + 7;
+                return Color.Green;
+            }
+            function passed() {
+                enum Color { Green = 5 }
+                const show = (value: any) => value.Green;
+                let total = 0;
+                for (let i = 0; i < 2; i++) total += show(Color) + Color.Green;
+                return total;
+            }
+            console.log([written(), passed()].join(" "));
+        "#;
+        let control = "function w() { enum Color { Green = 5 } (Color as any).Green = 7; return Color.Green; }";
+        let program = Engine::specialize_typescript(control, "written.cts").unwrap();
+        assert!(function_ops(&program, "w").contains(&Op::GetField));
+        assert_eq!(run_typescript(source), ["8 20"]);
+    }
+
+    #[test]
+    fn exported_plain_enums_stay_live() {
+        let source = "export enum Color { Green = 5 }\n(Color as any).Green = 9;\nconsole.log(Color.Green);";
+        let program = Engine::specialize_typescript_module(source, "exported-enum.mts").unwrap();
+        let host = TestHost::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime.execute(&program).unwrap();
+        assert_eq!(&*view.lines(), &["9"]);
     }
 
     #[test]

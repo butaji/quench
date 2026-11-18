@@ -1,6 +1,6 @@
 use super::*;
 
-mod spelling_tests; mod short_room_tests;
+mod spelling_tests; mod short_room_tests; mod rest_alias_tests;
 
 #[test]
 fn regression_global_var_lowering_checks_instruction_roles_before_slots() {

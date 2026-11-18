@@ -62,14 +62,25 @@ impl Facts {
             contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), rounds: vec![0; blocks], headers: CompoundBitSet::with_capacity(blocks), ..Self::default() }
     }
 
+    /// Room for `rows` rows of types, and of length relations where the run tracks them.
+    fn reserve_rows(&mut self, rows: usize, relations: bool) {
+        // Capped: a unit whose rows outgrow it grows its buffers as before.
+        const MAX_RESERVED_WORDS: usize = 1 << 16;
+        let words = rows.saturating_mul(self.registers).min(MAX_RESERVED_WORDS);
+        self.types.reserve(words);
+        if relations {
+            self.length_of.reserve(words);
+            self.below.reserve(words);
+            self.under.reserve(words);
+        }
+    }
+
     /// The state on entry to the block led by `pc`.
     fn point_at(&self, pc: usize) -> run::Point {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
-        run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
-            relations: { let (length_of, below, under) = (relations(&self.length_of), relations(&self.below), relations(&self.under));
-                let held = [&length_of, &below, &under].iter().any(|rows| rows.iter().any(Option::is_some));
-                Relations { length_of, below, under, held } } }
+        run::Point { types: smallvec::SmallVec::from_slice(&self.types[start..start + self.registers]),
+            relations: Relations::of_rows(relations(&self.length_of), relations(&self.below), relations(&self.under)) }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
@@ -101,7 +112,7 @@ impl Facts {
         written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
-        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = entry.iter().copied().collect();
+        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(entry);
         for (at, instruction) in instructions.iter().enumerate().take(pc).skip(start) {
             if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
                 return Type::ANY;
@@ -412,7 +423,17 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 /// and every backedge must preserve the entry hypothesis. Rejecting one input
 /// removes that assumption from all dependent proofs on the next iteration.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitSet,
+pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
+    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
+    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises, observed)
+}
+
+/// `inductive_int32` for the header contract `required`: an int32, or a Number (an
+/// accumulator that enters as an int32 or a double and every definition keeps a Number).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
@@ -420,15 +441,15 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     // work is bounded by candidate count, without a semantic iteration cap.
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
-        for register in candidates.iter() { inputs[register] = Type::INT32; }
+        for register in candidates.iter() { inputs[register] = required; }
         let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::observing(observed));
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
-            if !facts.backedge().get(register).is_some_and(|ty| ty.is_int32()) { rejected.insert(register); }
+            if !facts.backedge().get(register).is_some_and(|ty| ty.is_subtype(required)) { rejected.insert(register); }
         }
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             let index = usize::from(register);
-            if body.contains(&pc) && candidates.contains(index) && !ty.is_int32() { rejected.insert(index); }
+            if body.contains(&pc) && candidates.contains(index) && !ty.is_subtype(required) { rejected.insert(index); }
         });
         if rejected.is_empty() {
             initial.copy_from_slice(&inputs);

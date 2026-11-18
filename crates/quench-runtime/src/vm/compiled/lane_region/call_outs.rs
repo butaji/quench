@@ -45,7 +45,7 @@ impl Lowering<'_, '_> {
         self.canonicalize(state, pc);
         let cell = self.global_cell(state, pc, &row, miss);
         let site = self.call_out_site(pc, record, cell);
-        if instruction.op().class() != Class::ForInNext {
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::ForInNext { .. })) {
             self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
             state.call_effect();
             return true;
@@ -78,8 +78,7 @@ impl Lowering<'_, '_> {
     pub(super) fn call_out_stop(&mut self) -> ir::Block {
         let builder = &mut self.builder;
         *self.call_out_stop.get_or_insert_with(|| {
-            let block = builder.create_block();
-            builder.set_cold_block(block);
+            let block = super::cold_block(builder);
             builder.append_block_param(block, types::I64);
             block
         })

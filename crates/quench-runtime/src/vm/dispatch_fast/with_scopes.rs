@@ -12,6 +12,7 @@ const WITH_CHAIN_INLINE_OBJECTS: usize = 2;
 impl LaneStack {
     /// The objects of a resumed frame's chain, now the activation at `depth`'s, moved off its
     /// record.
+    #[inline(always)]
     pub(super) fn restore_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
         if !held.is_empty() {
             self.with_objects.extend(held.drain(..).map(|object| (depth, object)));
@@ -20,6 +21,7 @@ impl LaneStack {
 
     /// The chain of the activation at `depth`, the innermost, moved off the stack to the end
     /// of `held`, the suspending frame's (`FrameRecord::with_objects`); usually none.
+    #[inline(always)]
     pub(in crate::vm) fn take_with_objects(&mut self, depth: usize, held: &mut Vec<Value>) {
         if self.with_objects.last().is_some_and(|(owner, _)| *owner >= depth) {
             let first = self.with_objects.partition_point(|(owner, _)| *owner < depth);
@@ -60,6 +62,25 @@ impl LaneStack {
     }
 }
 
+impl<H: Host> Vm<H> {
+    /// A `with` statement entered, in a frame or a lane activation: names resolve through object
+    /// environments from now on (`Vm::with_scope_entered`). Calls activate in the lane after it
+    /// as before: no lane target's function inherits a `with` scope (`CallPlan`), and a function
+    /// of eval code, whose frame takes the chain its environment captured
+    /// (`Vm::captured_with_objects_for_function`), resolves to no target (`Vm::lane_user_target`).
+    /// The first entry retires every target resolved before, on the running lane stack, the
+    /// parked ones and the spares.
+    pub(in crate::vm) fn enter_with_scope(&mut self) {
+        if self.with_scope_entered {
+            return;
+        }
+        self.with_scope_entered = true;
+        self.lane_stack.advance_generation();
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.advance_generation());
+        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.advance_generation());
+    }
+}
+
 /// `with (object)` (`Native::WithEnter`) or the exit of the innermost `with` (`Native::WithExit`)
 /// in the innermost lane activation, which owns the scope: the object joins, or leaves, its
 /// chain. `None`, before any effect, leaves the call to the native, which a frame's run needs
@@ -69,12 +90,12 @@ pub(super) fn lane_with_scope<H: Host>(cx: *mut LaneContext<H>, native: Native, 
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;
     }
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    vm.lane_stack.activations.last().and_then(Activation::script)?;
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
+    vm.lane_stack.activations().last().and_then(Activation::script)?;
     if native == Native::WithEnter {
         let object = args.first().copied().filter(|value| vm.is_object_like(*value))?;
         vm.lane_stack.with_objects.push((depth, object));
-        vm.with_scope_entered = true;
+        vm.enter_with_scope();
     } else {
         vm.lane_stack.with_objects.pop_if(|(owner, _)| *owner == depth)?;
     }

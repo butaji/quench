@@ -1,4 +1,4 @@
-use super::{ArrayObject, AwaitState, FunctionRecord, IteratorRecord, Object, PromiseCell};
+use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -34,9 +34,14 @@ pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
 pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
 pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
+/// Maps and Sets: records of an object and its entries, in a slot when this is full.
+pub(super) type CollectionRecordSpace = RecordSpace<CollectionRecord>;
 /// Environments have no legacy-slot fallback, so their space holds as many records as the
 /// legacy slots do (`MAX_HEAP_CELLS`).
 pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, { super::MAX_HEAP_CELLS }>;
+/// Symbols are immutable and have no legacy-slot fallback, so their space holds as many records
+/// as the legacy slots do (`MAX_HEAP_CELLS`).
+pub(super) type SymbolRecordSpace = RecordSpace<super::SymbolData, { super::MAX_HEAP_CELLS }>;
 /// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
 pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy

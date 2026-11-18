@@ -333,6 +333,6 @@ impl<H: Host> Vm<H> {
         if let Some(atom) = self.string_key_atom(key) {
             return Some(PropertyKey::string(atom));
         }
-        matches!(self.heap.get(key), Some(Cell::Symbol(_))).then_some(PropertyKey::symbol(key))
+        self.heap.is_symbol(key).then_some(PropertyKey::symbol(key))
     }
 }

@@ -13,7 +13,7 @@ use super::*;
 #[inline(always)]
 pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let completion = match vm.lane_stack.activations.last().map(|activation| &activation.kind) {
+    let completion = match vm.lane_stack.activations().last().map(|activation| activation.kind()) {
         Some(ActivationKind::Script(script)) => Some(script.completion),
         _ => None,
     };
@@ -45,18 +45,18 @@ pub(super) fn lane_complete_returning<H: Host>(cx: *mut LaneContext<H>, ip: Ip, 
 #[inline(always)]
 fn lane_complete_trapped_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let top = vm.lane_stack.activations.last();
+    let top = vm.lane_stack.activations().last();
     if proxy_traps::trap_result_needs_general_path(vm, top, value) {
         return Some(Resumed::Exit(lane_frame_return(vm, ip, value)));
     }
     // SAFETY: the call record belongs to the caller's live view.
-    if unsafe { (*top?.call).a } & crate::bytecode::RETURN_REGISTER != 0 {
+    if unsafe { (*top?.call()).a } & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
     let activation = vm.lane_stack.pop_activation()?;
     let (caller_memory, _) = lane_restore_caller(cx, &activation);
-    if activation.caller_program != unsafe { (*cx).program } {
-        lane_enter_program(cx, activation.caller_program);
+    if activation.caller_program() != unsafe { (*cx).program } {
+        lane_enter_program(cx, activation.caller_program());
     }
     Some(lane_resume_after_call(&activation, caller_memory, value))
 }
@@ -145,14 +145,14 @@ pub(super) fn lane_complete_plain_activation<H: Host, const LEAF: u8>(cx: *mut L
 #[inline(always)]
 pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let (outermost, crossed) = returning_chain_outermost(&vm.lane_stack.activations)?;
+    let (outermost, crossed) = returning_chain_outermost(vm.lane_stack.activations())?;
     // Script activations hold no Wasm storage (`LaneStack::pop_activation`), so the inner
     // ones go without its accounting.
-    debug_assert!(vm.lane_stack.activations[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
-    vm.lane_stack.activations.truncate(outermost + 1);
+    debug_assert!(vm.lane_stack.activations()[outermost..].iter().all(|activation| activation.frame_storage_bytes() == 0));
+    vm.lane_stack.activations_mut().truncate(outermost + 1);
     vm.lane_stack.drop_owned_from(outermost + 1);
-    let top = &vm.lane_stack.activations[outermost];
-    let completion = match &top.kind {
+    let top = &vm.lane_stack.activations()[outermost];
+    let completion = match top.kind() {
         ActivationKind::Script(script) => script.completion,
         ActivationKind::Native | ActivationKind::Wasm { .. } | ActivationKind::WasmEntry { .. } => unreachable!("a chain holds script activations"),
     };
@@ -165,7 +165,7 @@ pub(super) fn lane_complete_plain_chain<H: Host>(cx: *mut LaneContext<H>, value:
         return lane_complete_cross_activation(cx, value);
     }
     if crossed {
-        lane_enter_program(cx, top.caller_program);
+        lane_enter_program(cx, top.caller_program());
         unsafe { (*cx).memory = MemoryView::script(cx) };
     }
     lane_complete_plain_activation::<H, NOT_LEAF>(cx, value)
@@ -181,7 +181,7 @@ fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)
     loop {
         index = index.checked_sub(1)?;
         let activation = &activations[index];
-        let ActivationKind::Script(script) = &activation.kind else {
+        let ActivationKind::Script(script) = activation.kind() else {
             return None;
         };
         // A body's callee (`Completion::ReturnsToBody`) ends the run its call started: it is
@@ -194,7 +194,7 @@ fn returning_chain_outermost(activations: &[Activation]) -> Option<(usize, bool)
             return None;
         }
         // SAFETY: the call record belongs to the caller's live view.
-        if unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER == 0 {
+        if unsafe { (*activation.call()).a } & crate::bytecode::RETURN_REGISTER == 0 {
             return Some((index, crossed));
         }
     }
@@ -223,21 +223,21 @@ pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Valu
 #[inline(always)]
 pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    let top: *const Activation = &vm.lane_stack.activations[depth];
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
+    let top: *const Activation = &vm.lane_stack.activations()[depth];
     // SAFETY: `top` is the innermost activation, which nothing else accesses.
-    if !matches!(unsafe { &(*top).kind }, ActivationKind::Script(script) if script.completion == Completion::ReturnsToNative) {
+    if !matches!(unsafe { (*top).kind() }, ActivationKind::Script(script) if script.completion == Completion::ReturnsToNative) {
         return None;
     }
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
     // the next push, so it is read in place, as `lane_return_from` reads a plain one.
-    unsafe { vm.lane_stack.activations.set_len(depth) };
+    unsafe { vm.lane_stack.activations_mut().set_len(depth) };
     vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
     lane_restore_caller(cx, activation);
     vm.lane_completion.set(LaneCompletion::NativeReturned(value));
-    Some(Resumed::Exit(exit(activation.call)))
+    Some(Resumed::Exit(exit(activation.call())))
 }
 
 /// Restore the lane state `activation`'s caller runs with, as its return does: the lane
@@ -253,8 +253,8 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
     // The returning activation's receiver, its window's context word.
     let this = Registers(activation.window_ptr()).this();
     unsafe {
-        (*cx).registers = activation.caller_registers;
-        (*cx).base = activation.caller_base;
+        (*cx).registers = activation.caller_registers();
+        (*cx).base = activation.caller_base();
         (*cx).memory = caller_memory;
     }
     (caller_memory, this)
@@ -265,8 +265,8 @@ pub(super) fn lane_restore_caller<H: Host>(cx: *mut LaneContext<H>, activation: 
 #[inline(always)]
 pub(super) fn lane_resume_after_call(activation: &Activation, memory: MemoryView, value: Value) -> Resumed {
     // SAFETY: the call record belongs to the caller's live view.
-    activation.caller_registers.set(unsafe { (*activation.call).a }, value);
-    lane_resume_at(activation, memory, following(activation.call))
+    activation.caller_registers().set(unsafe { (*activation.call()).a }, value);
+    lane_resume_at(activation, memory, following(activation.call()))
 }
 
 /// The caller of `activation`, restored with `memory`, resumes at the record `at` of its view.
@@ -277,7 +277,7 @@ pub(super) fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip
         integers: crate::value::IntegerEncoding::TAG,
         acc: Slot::of(Value::UNDEFINED),
     };
-    Resumed::At(activation.caller_registers, at, view)
+    Resumed::At(activation.caller_registers(), at, view)
 }
 
 /// Whether the caller a returning call completes in turn with `value` returns from its frame
@@ -286,7 +286,7 @@ pub(super) fn lane_resume_at(activation: &Activation, memory: MemoryView, at: Ip
 /// `then`), or a trap whose result the target's invariants refuse (`proxy_traps::trap_result_needs_general_path`).
 #[inline(always)]
 pub(super) fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value, then: &mut Value) -> bool {
-    match vm.lane_stack.activations.last() {
+    match vm.lane_stack.activations().last() {
         None => true,
         Some(caller) if settling(caller) => match lane_settled_then(vm, value) {
             Some(read) => {
@@ -302,7 +302,7 @@ pub(super) fn lane_caller_returns_in_frame<H: Host>(vm: &mut Vm<H>, value: Value
 /// Whether `activation` settles its call's promise (`Completion::SettlesPromise`).
 #[inline(always)]
 pub(super) fn settling(activation: &Activation) -> bool {
-    matches!(&activation.kind, ActivationKind::Script(script) if script.completion == Completion::SettlesPromise)
+    matches!(activation.kind(), ActivationKind::Script(script) if script.completion == Completion::SettlesPromise)
 }
 
 /// The `then` a settling activation completing with `value` resolves its promise with

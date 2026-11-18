@@ -211,7 +211,10 @@ type Starts = FxHashSet<u32>;
 impl ParsedProgramShape<'_> {
     /// The starts of the function declarations of `program`, of this shape, that may compile
     /// as first-call stubs: an eval's whose functions compile again from their text alone
-    /// (`replayable`), when its root is sloppy and declares no lexical binding.
+    /// (`replayable`), or a large classic script's (`stubbing`), when its root is sloppy and
+    /// declares no lexical binding. A Function-constructor body's declarations are not roots:
+    /// their free names are the body's own bindings, which a root's chunk, compiled as a script,
+    /// would resolve in the global environment. They stub as nested stubs (`nested_stub_captures`).
     pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
         let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
         let lexical = program.body.iter().any(|statement| match statement {
@@ -219,7 +222,8 @@ impl ParsedProgramShape<'_> {
             Statement::ClassDeclaration(_) => true,
             _ => false,
         });
-        if !replayable || !matches!(self, Self::Eval(..)) || strict || lexical {
+        let script = matches!(self, Self::FirstCallScript) && self.stubbing(replayable, program.source_text.len(), program.source_type.is_module()).functions;
+        if !replayable || !(matches!(self, Self::Eval(..)) || script) || strict || lexical {
             return FxHashSet::default();
         }
         TopLevelFunctions::of(program)
@@ -238,7 +242,7 @@ impl ParsedProgramShape<'_> {
             _ => false,
         });
         let shaped = match self {
-            Self::Any => !program.source_type.is_module(),
+            Self::Any | Self::FirstCallScript => !program.source_type.is_module(),
             Self::Eval(..) => !lexical,
             _ => false,
         };
@@ -330,7 +334,7 @@ impl Stubs<'_> {
     /// the source is an indirect eval's, whose captures `free_names` predict.
     pub(super) fn plan(&mut self, shape: ParsedProgramShape<'_>, replayable: bool, program: &Program<'_>, inherited_strict: bool, (free_names, call_only_found): (FreeNames, Vec<(u32, u32)>)) {
         self.roots = shape.first_call_roots(replayable, program, inherited_strict);
-        let stubbing = shape.stubbing(replayable, program.source_text.len());
+        let stubbing = shape.stubbing(replayable, program.source_text.len(), program.source_type.is_module());
         self.streamed_roots = shape.streamed_roots(replayable, program, inherited_strict);
         self.nested_allowed = stubbing.functions;
         self.direct = stubbing.arrows;

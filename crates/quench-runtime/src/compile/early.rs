@@ -497,9 +497,6 @@ pub(super) struct FixedRegisterLocalFacts<'a> {
     closures: Option<ClosureReach<'a>>,
     /// Whether the walk gathered what `closures` reach, rather than only that there are some.
     reached: bool,
-    /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
-    /// counting the functions it makes.
-    pub(super) suspends: bool,
 }
 
 /// What functions and classes nested in a body may reach of its bindings, read without
@@ -569,8 +566,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         /// Whether `closures` gathers what the functions and classes reach, or only that the
         /// body makes one.
         reaches: bool,
-        /// The body itself awaits: an `await`, a `for await` or an `await using`.
-        suspends: bool,
         /// The body itself has a loop.
         loops_seen: bool,
     }
@@ -588,7 +583,6 @@ pub(super) fn fixed_register_local_facts<'a>(
                 last_references: rustc_hash::FxHashMap::default(),
                 closures: None,
                 reaches,
-                suspends: false,
                 loops_seen: false,
             }
         }
@@ -811,7 +805,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         }
 
         fn visit_for_of_statement(&mut self, statement: &oxc_ast::ast::ForOfStatement<'a>) {
-            self.suspends |= statement.r#await;
             self.loops += 1;
             self.loops_seen = true;
             walk::walk_for_of_statement(self, statement);
@@ -858,16 +851,6 @@ pub(super) fn fixed_register_local_facts<'a>(
             walk::walk_unary_expression(self, expression);
         }
 
-        fn visit_await_expression(&mut self, expression: &oxc_ast::ast::AwaitExpression<'a>) {
-            self.suspends = true;
-            walk::walk_await_expression(self, expression);
-        }
-
-        fn visit_variable_declaration(&mut self, declaration: &oxc_ast::ast::VariableDeclaration<'a>) {
-            self.suspends |= declaration.kind == oxc_ast::ast::VariableDeclarationKind::AwaitUsing;
-            walk::walk_variable_declaration(self, declaration);
-        }
-
         fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
             self.make_closure(function.id.as_ref(), |reach| reach.visit_function(function, flags));
         }
@@ -902,7 +885,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         nested_written_names: facts.nested_written_names,
         reached: facts.reaches,
         closures: facts.closures,
-        suspends: facts.suspends,
     }
 }
 

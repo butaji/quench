@@ -1,13 +1,16 @@
 //! How a value is held in machine form.
 #![allow(dead_code)]
 
-use super::{IntRange, Type};
+use crate::typed_ir::{IntRange, Type};
 
 /// How a value is held in machine form. It is also how the word of an arena slot encodes its
 /// value: a static projection of the slot owner's type (`SlotType::rep`), not a fact stored apart
 /// from it. A specializer that proved the owner's type under a dependency reads and writes the
 /// word in this representation with no tag test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+///
+/// The variants are ordered narrowest to widest (`Int32`, `Int64`, `Float64`, `Tagged`), so the
+/// greatest of several representations is the widest one that holds all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Representation {
     /// A `Value` whose tag the owner proved int32; the bits are the tagged word's.
     Int32,

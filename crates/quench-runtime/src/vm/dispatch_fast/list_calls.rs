@@ -35,7 +35,7 @@ pub(super) fn lane_apply_activation<H: Host>(
             vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
             vm.heap.sparse_length(list).is_some(),
             vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
-            vm.lane_stack.activations.len(),
+            vm.lane_stack.activation_count(),
         ));
     }
     let absent = native == Native::FunctionApply && (list.is_undefined() || list.is_null());
@@ -155,7 +155,7 @@ pub(super) fn lane_spread_set_native_call<H: Host>(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if !matches!(vm.heap.get(list), Some(Cell::Set { .. })) {
+    if !vm.heap.is_set(list) {
         return None;
     }
     let native = lane_spread_native(vm, callee)?;
@@ -165,10 +165,7 @@ pub(super) fn lane_spread_set_native_call<H: Host>(
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = match vm.heap.get(list)? {
-        Cell::Set { entries, .. } => entries.to_vec(),
-        _ => return None,
-    };
+    let args = vm.heap.set_entries(list)?.to_vec();
     let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
     Some(lane_native_complete(cx, ip, i, value))
 }

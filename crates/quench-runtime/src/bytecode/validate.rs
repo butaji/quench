@@ -167,10 +167,7 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
     let makes_closures = function.code.iter().any(|instruction| instruction.op() == Op::MakeClosure)
         || function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure);
     let eligible_function = function.parent.is_some()
-        // An async body that never suspends runs to completion as an ordinary one does
-        // (`Compiler::promoted_local_plan`'s `async_body`).
-        && !(function.is_async && function.suspends())
-        && !function.is_generator
+        // A suspension saves the frame's registers, so async and generator bodies promote too.
         && !function.derived_constructor
         // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
         && !(function.class_initializer && !function.is_arrow)
@@ -740,7 +737,7 @@ function.plain_local_slots(&self.superinstructions)
             if function
                 .arguments_slot
                 .is_some_and(|slot| slot >= function.locals)
-                || function.rest && function.simple_parameters
+                || !function.parameter_flags_agree()
             {
                 return Err(format!("function {index} has invalid argument metadata"));
             }
@@ -1180,9 +1177,9 @@ mod tests {
     }
 
     #[test]
-    fn non_suspending_async_promoted_locals_are_validated() {
-        // A non-suspending async body promotes its locals as an ordinary one does; one that
-        // awaits keeps them in frame slots. The validator accepts what the compiler emits, for
+    fn async_promoted_locals_are_validated() {
+        // An async body promotes its locals as an ordinary one does, awaiting or not: a
+        // suspension saves the frame's registers. The validator accepts what the compiler emits, for
         // default and trailing-comma parameter lists too (Test262 async dflt-params-*,
         // params-trailing-comma-*).
         let program = crate::Engine::specialize(
@@ -1206,7 +1203,7 @@ mod tests {
             program.functions.iter().any(|function| function.is_async && function.is_arrow && !function.local_registers.is_empty()),
             "a non-suspending async arrow with defaults and a trailing comma promotes its locals"
         );
-        assert!(!promoted("waits"), "an awaiting body keeps its locals in frame slots");
+        assert!(promoted("waits"), "an awaiting body promotes its locals too");
     }
 
     #[test]
@@ -1335,7 +1332,7 @@ mod tests {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,

@@ -77,7 +77,7 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
 /// in pages before, or the failure word where it cannot grow. The memory's length in the
 /// context is read again after it, the event that changes it; its base never moves, the bytes
 /// being a reservation (`Analysis::callouts` is off for any other memory).
-unsafe extern "C" fn memory_grow_callout<H: Host>(context: *mut CallContext, pages: u64) -> u64 {
+pub(super) unsafe extern "C" fn memory_grow_callout<H: Host>(context: *mut CallContext, pages: u64) -> u64 {
     // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
     // that call.
     let context = unsafe { &mut *context };

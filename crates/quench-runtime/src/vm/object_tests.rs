@@ -1,5 +1,5 @@
 use super::*;
-use super::site_table::SiteTable;
+use super::site_table::CacheSiteTable;
 use crate::Engine;
 use crate::test_host::TestHost;
 use std::{cell::RefCell, rc::Rc};
@@ -1362,12 +1362,12 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
 fn field_cache_invalidation_resets_every_written_site() {
     const SITES: usize = 64;
     let mut vm = Vm::new(TestHost::default());
-    vm.field_caches = SiteTable::with_empty(SITES);
+    vm.field_caches = CacheSiteTable::with_empty(SITES);
     vm.refresh_active_field_entries();
-    vm.megamorphic_field_indices = SiteTable::with_empty(SITES);
-    vm.field_add_indices = SiteTable::with_empty(SITES);
-    vm.inherited_field_indices = SiteTable::with_empty(SITES);
-    vm.accessor_field_indices = SiteTable::with_empty(SITES);
+    vm.megamorphic_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.field_add_indices = CacheSiteTable::with_empty(SITES);
+    vm.inherited_field_indices = CacheSiteTable::with_empty(SITES);
+    vm.accessor_field_indices = CacheSiteTable::with_empty(SITES);
     vm.field_cache_writes = Some(Vec::new());
     let record = |vm: &mut Vm<TestHost>, site: usize| {
         for receiver in 1..=3 {

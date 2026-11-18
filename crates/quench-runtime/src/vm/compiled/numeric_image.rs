@@ -21,7 +21,7 @@ fn lower_numeric_region(program: &ResidualProgram, function_id: u32) -> Option<N
         helpers: LaneHelpers::Numeric, fields: &[],
         global_reads: &Default::default(), facts: VmFacts::STATIC, generic: &[],
         direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa: &*isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
         plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Full,
             completion: lane_region::Completion::Number, views: lane_region::ElementViews::Dense } }
         .specialize(program).ok()?;
@@ -69,7 +69,7 @@ impl NumericImage {
     fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {
         let NumericLowering { function, isa, params, number_result } = lowering;
         let dump = native_dump_directory().map(|_| function.to_string());
-        let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::js_compiled::MAX_CODE_BYTES), |compiled, function| {
+        let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::compiled::tier_policy::JS_COMPILED_MAX_CODE_BYTES), |compiled, function| {
             crate::vm::jit_backend::relocatable_code::RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).ok()?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {

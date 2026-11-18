@@ -173,7 +173,13 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         if callee.lexical { return CallEntry::Helper; }
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
-        let plan = DirectPlan { kind, identity: Identity::Guarded(callee.callee.to_bits()), sloppy: callee.sloppy.map(Value::to_bits),
+        // A callee register the state already holds as this very function (a Stable binding's
+        // read, or an identity an earlier guard proved) needs no check: the identity is folded.
+        let word = callee.callee.to_bits();
+        let proven = matches!(site.callee, crate::staged::forms::Callee::Register(register)
+            if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
+        let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
+        let plan = DirectPlan { kind, identity, sloppy: callee.sloppy.map(Value::to_bits),
             registers: callee.registers, returned: LANE_BODY_RETURNED, bound: None };
         // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
         plan_entry(Some(Resolved { plan, binding: BindingTime::Site, body: None }), self.tiers.lane_body.max_inlined_instructions)
@@ -230,8 +236,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         // A callee that never entered and one that threw both pop the frame, once, in one
         // block; a leave keeps it pushed for the lane to link.
-        let popped = stage.builder.create_block();
-        stage.builder.set_cold_block(popped);
+        let popped = super::cold_block(&mut stage.builder);
         stage.builder.switch_to_block(entered.unfinished);
         let not_entered = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
         let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_THREW));

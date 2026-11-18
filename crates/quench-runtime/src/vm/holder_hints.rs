@@ -129,6 +129,7 @@ impl<H: Host> Vm<H> {
     /// a new one below `limit`. The object is marked (`Heap::mark_own_constant`), so a write to
     /// any of its values or a change of its layout retires the watch and clears the mark; a
     /// site whose hint retired should not make one again (the object is written after all).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn hold_own_constant_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
         self.heap.mark_own_constant(object)?;
         let record = self.heap.object_record_by_id(object.direct_object_index()?);

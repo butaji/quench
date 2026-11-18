@@ -8,11 +8,7 @@ fn get(c: &mut Context<'_>, o: RootId, name: &str) -> Result<RootId, RootedError
     let name = c.string_rooted(name);
     c.get_property_rooted(o, name)
 }
-fn put(c: &mut Context<'_>, o: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let name = c.string_rooted(name);
-    c.define_data_property_rooted(o, name, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn install(c: &mut Context<'_>, binding: RootId) -> Result<(), RootedError> {
     openssl::init();
     // The same constructor/constant values must be available at both SDK ABIs.

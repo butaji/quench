@@ -78,13 +78,15 @@ pub(crate) struct Reached<W, C> {
     pub(crate) word: Option<W>,
     /// The storage-form bits a `GuardLayout` proved: a static input of the slot's layout.
     pub(crate) formed: Option<u32>,
+    /// The record's auxiliary word (exact shape and storage-form bits), where the caller loaded it.
+    pub(crate) auxiliary: Option<W>,
 }
 
 impl<W, C> Reached<W, C> {
     /// A record the read reached with no facts of it held.
     #[inline(always)]
     pub(crate) fn bare(record: W) -> Self {
-        Self { record, shape: None, inline: None, word: None, formed: None }
+        Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None }
     }
 }
 
@@ -272,6 +274,21 @@ pub(crate) fn layout_shape(id: u32) -> u32 {
 /// Every storage-form bit of an auxiliary word.
 pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
 
+/// The `Form` layout `id` names: a fact of the id (its auxiliary word's form bits), so a caller
+/// holding the id at compile time passes it and the stage emits no run-time form test. Plain
+/// inline values are `Packed`, a plain arena run is `Arena`. A narrow run and values with extras
+/// have no `Form` of their own: a formed read takes them from the id (`proved_own_layout`), and
+/// the fallback reads them as `Either`. An id past the table names no layout and reads as `Arena`,
+/// which no guard of a cleared hint admits. Reads the auxiliary word, which bounds its id.
+#[inline(always)]
+pub(crate) fn form_of_layout(id: u32) -> Form {
+    match crate::heap::layouts::auxiliary(id) & FORM_BITS {
+        0 => Form::Arena,
+        bits if bits == OBJECT.inline_form => Form::Packed,
+        _ => Form::Either,
+    }
+}
+
 /// `IcOp::LoadSlot`: the value at `slot` of the reached record.
 #[inline(always)]
 fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
@@ -345,23 +362,31 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     shape: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    // The word proves the shape and, by its storage-form bits, where the values live.
-    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    // An exact shape has no form bits, so the whole word equals it only in the arena form,
-    // whose payload is the run's start: one compare proves the shape and the form.
-    // The caller's contract: an exact shape, so no form bit needs testing.
-    debug_assert_eq!(shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form), 0, "an exact shape has no form bit");
-    let whole = stage.eq_imm(word, u64::from(shape));
-    if stage.known(whole) == Some(true) {
+    own_field(&mut stage, record, shape, slot, ()).map(crate::value_vec::decode_staged_word)
+}
+
+/// The own field of the object record at `record` where its exact shape is `shape`: the interpreter's
+/// `GetField` hit (`concrete_own_field_hit`) and a stencil's inline-cache read (`quench-bjit/stencils/ic_rows.rs`)
+/// alike. The auxiliary word proves the shape and, by its storage-form bits, where the values live, so a flat
+/// run is one test away; `None`, leaving at `miss`, for another shape.
+#[inline(always)]
+pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let expected = stage.site(u64::from(shape));
+    // The word is the shape with no storage-form bit: that shape, its values a wide flat run, on one compare.
+    let exact = stage.eq_imm(word, expected);
+    stage.choose_leaving(exact, #[inline(always)] |stage| {
         let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-        let run = arena_run(&mut stage, payload);
-        let layout = Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
-        return Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Representation::Tagged)));
-    }
-    let at = Reached { shape: Some(recorded_shape(&mut stage, word)), word: Some(word), ..Reached::bare(record) };
-    guard_shape(&mut stage, &at, shape, ())?;
-    let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
-    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Representation::Tagged)))
+        let run = super::object::arena_run(stage, payload);
+        let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
+        Some(read_slot(stage, layout, slot, Representation::Tagged))
+    }, #[inline(always)] |stage| {
+        let recorded = recorded_shape(stage, word);
+        let same = stage.eq_imm(recorded, expected);
+        stage.guard(same, miss)?;
+        let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
+        Some(read_slot(stage, layout, slot, Representation::Tagged))
+    })
 }
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.
@@ -401,7 +426,7 @@ pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &cra
     guard_layout(&mut stage, &at, hint, ())?;
     debug_assert!(form == HINTED_FORM || layout_form(hint) == form, "a fixed form's matched hint names it");
     let bits = if form == HINTED_FORM { layout_form(hint) } else { form };
-    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, Form::Either, usize::from(slot) + 1, ())?;
+    let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, form_of_layout(hint), usize::from(slot) + 1, ())?;
     let word = read_slot(&mut stage, layout, slot, Representation::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,
     // `narrow_read`), so a fixed one of those forms skips the float-slot decode.
@@ -558,7 +583,8 @@ mod tests {
         };
         let (first, second) = (read(5, 1), read(6, 0));
         assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
-        assert_eq!(first.holes, [5, 32, 8]);
-        assert_eq!(second.holes, [6, 0, 0]);
+        // Either form reads through one operand, the flat byte offset (`object::site_offset`).
+        assert_eq!(first.holes, [5, 8]);
+        assert_eq!(second.holes, [6, 0]);
     }
 }

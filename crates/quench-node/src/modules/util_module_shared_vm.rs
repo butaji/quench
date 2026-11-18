@@ -3,6 +3,7 @@
 use crate::host::shared_vm::operation;
 use crate::host::NodeHost;
 use crate::modules::util_inspect_shared_vm::{self as inspect, DefaultOption};
+use crate::modules::util_shared_vm::validate_function;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError, ValueType};
 
 pub(super) type Context<'a> = NativeContext<'a, NodeHost>;
@@ -151,13 +152,6 @@ pub(super) fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
         .borrow()
         .process_module
         .ok_or_else(|| RootedError::host("process is not initialized"))
-}
-
-fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
-    if c.is_callable_rooted(value)? {
-        return Ok(());
-    }
-    Err(super::util_shared_vm::argument_type_error(c, value, name, "function")?)
 }
 
 fn validate_string(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {

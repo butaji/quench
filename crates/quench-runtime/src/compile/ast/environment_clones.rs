@@ -20,6 +20,13 @@ pub(in crate::compile) struct ClonePlans {
     /// The plans `clone_environment_slots` made, by the hash of their slots and scopes, so a
     /// block entered again with the same scopes reuses its plan without comparing every plan.
     lookup: hashbrown::HashTable<u32>,
+    /// The next block scope entered is the body of a loop whose per-iteration clone plan
+    /// this is (`iteration_body`): the body's slots join that plan rather than a clone of
+    /// their own.
+    fresh_iteration_body: Option<usize>,
+    /// The slots the bodies of the enclosing per-iteration loops gave their loop's plans,
+    /// innermost last, which the loop's next-iteration clone makes fresh too.
+    iteration_body_slots: Vec<Vec<u16>>,
 }
 
 impl FunctionCompiler<'_, '_> {
@@ -49,11 +56,62 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    pub(in crate::compile) fn clone_environment_slots(&mut self, mut slots: Vec<u16>) {
+    /// Compiles `body`, a loop body run once per per-iteration clone (plan `cloned`, made at
+    /// the loop head) and returns the slots the body block gave that plan. The body block's
+    /// entry clone would copy the environment the iteration clone has just copied, so its
+    /// slots join the iteration plan as fresh slots instead: the block still initializes them
+    /// on entry (`initialize_tdz_slots`), and a closure capturing them keeps the iteration
+    /// clone observable (`remove_unobservable_clones` looks at fresh slots). That halves the
+    /// copies of a `for (let i...) { let j...; escaping closure }` iteration. The caller
+    /// passes the returned slots to `clone_iteration_environment` at a next-iteration site.
+    pub(in crate::compile) fn iteration_body(&mut self, body: &oxc_ast::ast::Statement<'_>, cloned: Option<usize>) -> Vec<u16> {
+        let joins = cloned.filter(|_| matches!(body, oxc_ast::ast::Statement::BlockStatement(_)));
+        self.clone_plans.fresh_iteration_body = joins;
+        self.clone_plans.iteration_body_slots.push(Vec::new());
+        self.statement(body);
+        self.clone_plans.fresh_iteration_body = None;
+        self.clone_plans.iteration_body_slots.pop().unwrap_or_default()
+    }
+
+    /// The plan of a clone of `slots`, emitted; `None` (and nothing emitted) for no slots.
+    pub(in crate::compile) fn clone_environment_slots(&mut self, slots: Vec<u16>) -> Option<usize> {
+        let index = self.plan_environment_clone(slots)?;
+        self.emit(Op::CloneEnv, 0, 0, 0, index as u32);
+        Some(index)
+    }
+
+    /// The next-iteration clone of a loop whose head scope has `slots` and whose body block
+    /// gave `body` to the head plan (`iteration_body`).
+    pub(in crate::compile) fn clone_iteration_environment(&mut self, mut slots: Vec<u16>, body: &[u16]) {
+        slots.extend_from_slice(body);
+        self.clone_environment_slots(slots);
+    }
+
+    /// The block scope entry clone of `slots`, or, for a loop body block, the slots joined
+    /// to the loop's iteration plan (`iteration_body`).
+    pub(in crate::compile) fn clone_block_environment_slots(&mut self, slots: Vec<u16>) {
+        match self.clone_plans.fresh_iteration_body.take() {
+            Some(plan) => {
+                let fresh = &mut self.clone_plans.slots[plan];
+                fresh.extend_from_slice(&slots);
+                fresh.sort_unstable();
+                fresh.dedup();
+                if let Some(body) = self.clone_plans.iteration_body_slots.last_mut() {
+                    *body = slots;
+                }
+            }
+            None => {
+                self.clone_environment_slots(slots);
+            }
+        }
+    }
+
+    /// The plan for a clone of `slots` at the current site, made or found; `None` for no slots.
+    fn plan_environment_clone(&mut self, mut slots: Vec<u16>) -> Option<usize> {
         slots.sort_unstable();
         slots.dedup();
         if slots.is_empty() {
-            return;
+            return None;
         }
         let scopes = self.active_lexical_slots();
         let plan_hash = |slots: &[u16], scopes: &[u32]| {
@@ -78,7 +136,7 @@ impl FunctionCompiler<'_, '_> {
                 index
             }
         };
-        self.emit(Op::CloneEnv, 0, 0, 0, index as u32);
+        Some(index)
     }
 
     /// Adds a clone plan for `slots`, sited where the lexical scopes `scopes` are active,

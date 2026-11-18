@@ -42,6 +42,7 @@ mod admission;
 mod delete;
 mod decode;
 pub(crate) mod meaning_fast;
+pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
 pub(crate) mod meaning_dispatch;
@@ -50,7 +51,7 @@ pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::{DecodeContext, Fields};
-pub(crate) use compare::{Comparison, Nullish};
+pub(crate) use compare::{nullish_of, Comparison};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
@@ -86,6 +87,8 @@ pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, R
 #[cfg(test)]
 pub(crate) use plan::Bound;
 pub(crate) use invoke::{CallFrame, Entered, Room};
+mod suspend;
+pub(crate) use suspend::Suspension;
 mod allocation;
 pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
@@ -109,6 +112,7 @@ pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
@@ -124,10 +128,25 @@ pub(crate) use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, co
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
+pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+
+/// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
+/// capture access whose scopes the frame does not hold, the walk over the scopes from the
+/// activation's environment (a read) or the store into the scope it finds (a write).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Miss { General, WalkScopes, StoreThroughScopes }
+
+/// The row of `op`'s miss route (`Miss`).
+pub(crate) const fn miss(op: Op) -> Miss {
+    match op {
+        Op::LoadCapture => Miss::WalkScopes,
+        Op::StoreCapture => Miss::StoreThroughScopes,
+        _ => Miss::General,
+    }
+}
 
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
@@ -251,6 +270,9 @@ pub(crate) enum Operation<W, P> {
     SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
     /// Complete the activation with the value of `source` (`invoke::ret`).
     Return { source: Register },
+    /// Suspend the activation (`Suspension`) with the value of `value`, resuming with what it
+    /// receives next in `destination` (`suspend::suspend`).
+    Suspend { kind: Suspension, destination: Register, value: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
@@ -335,6 +357,7 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction),
             _ => Self::Return { source: instruction.register_a() },
         })
     }

@@ -37,17 +37,15 @@ pub(in crate::vm) fn lower_ahead_entry(
         native_entry_signature(isa.pointer_type(), isa.default_call_conv()),
     );
     regions::declare_regions(&mut native);
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
-    let entry = builder.create_block();
-    builder.append_block_params_for_function_params(entry);
-    builder.switch_to_block(entry);
-    let params = builder.block_params(entry).to_vec();
+    let (_, params) = crate::vm::jit_backend::builder::enter(&mut builder);
     let blocks = AheadBlocks::new(&mut builder);
     emit_dispatch(&mut builder, &params, &blocks, targets.body);
     emit_steps(&mut builder, &params, &blocks, count, targets.fallback);
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     Ok(native)
 }
 

@@ -5,7 +5,8 @@
 use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_OBJECT_RECORD_BASE};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S};
 use crate::words::hole64;
-use crate::places::{DEST, LEFT, Places, Rep};
+use crate::places::{DEST, LEFT, Places};
+use crate::typed_ir::Representation;
 use crate::stage::StencilStage;
 use crate::value::ValueLayout;
 use crate::staged::object;
@@ -40,7 +41,7 @@ fn typeof_index_row(s: S) -> Out {
     let word = frame.tagged(&mut stage, LEFT);
     let done = value::immediate_typeof_index(&mut stage, word, ()).map(|index| {
         let boxed = stage.or_imm(index, ValueLayout::INT_TAG);
-        frame.write(&mut stage, DEST, boxed, Rep::Tagged);
+        frame.write(&mut stage, DEST, boxed, Representation::Tagged);
     }).is_some();
     finish_fast(frame, done)
 }
@@ -52,7 +53,7 @@ fn typeof_string_row(s: S) -> Out {
     let mut frame = Places::<MEM, MEM, MEM>::new(s);
     let mut stage = StencilStage::from_hole(0);
     let word = frame.tagged(&mut stage, LEFT);
-    let done = value::immediate_typeof_string(&mut stage, word, hole64::<HOLE_B>(), ()).map(|name| frame.write(&mut stage, DEST, name, Rep::Tagged)).is_some();
+    let done = value::immediate_typeof_string(&mut stage, word, hole64::<HOLE_B>(), ()).map(|name| frame.write(&mut stage, DEST, name, Representation::Tagged)).is_some();
     finish_fast(frame, done)
 }
 
@@ -103,7 +104,7 @@ fn for_in_row(s: S, payload: usize) -> Out {
     let tables = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
     let key = iteration::for_in_next(&mut stage, tables, state, word_at(payload, JS_STEP_EPOCH), ());
     if let Some(key) = key {
-        frame.write(&mut stage, DEST, key, Rep::Tagged);
+        frame.write(&mut stage, DEST, key, Representation::Tagged);
     }
     finish_fast(frame, key.is_some())
 }

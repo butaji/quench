@@ -8,11 +8,7 @@ const TCP_PROTOTYPE: &str = "\0native:TCPPrototype";
 const HANDLE_PROTOTYPE: &str = "\0native:HandleWrapPrototype";
 const SOCKET: u32 = 0;
 const SERVER: u32 = 1;
-fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
-    let k = c.string_rooted(n);
-    c.define_data_property_rooted(o, k, v, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn id(c: &mut Context<'_>, o: RootId) -> Result<u64, RootedError> {
     match super::net_reference_shared_vm::handle_id(c, o) {
         Ok(id) => Ok(id),

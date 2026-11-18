@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
         let value = self.own_plain_data(holder, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(held), .. } = self.heap.function(value)? else { return None };
         let native = *native;
-        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder })
+        (*held == native).then(|| self.native_holder(holder)).flatten().map(|holder| GlobalRead::NativeMember { value, native, holder, folds: false })
     }
 
     /// The PCs of `unit` whose `StoreName` (not a declaration's) or `LoadNameTypeof` reaches the
@@ -186,7 +186,7 @@ impl<H: Host> Vm<H> {
         let value = self.own_plain_data(object, atom)??;
         let crate::heap::FunctionRecord { kind: crate::vm::FunctionKind::Native(native), .. } = self.heap.function(value)? else { return None };
         let native = *native;
-        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)? }))
+        Some((pc + 1, GlobalRead::NativeMember { value, native, holder: self.native_holder(object)?, folds: true }))
     }
 
     /// The exact shape of `holder`, an object whose own native functions code calls inline,

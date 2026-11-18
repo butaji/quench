@@ -8,8 +8,7 @@ use super::*;
 
 /// Iterations per chunk: each column holds this many f64s.
 pub(super) const CHUNK: usize = 256;
-/// The fewest iterations worth a kernel's entry.
-const MIN_TRIP: u64 = 16;
+use crate::vm::compiled::tier_policy::KERNEL_MIN_TRIP;
 /// The shortest chunk a load/store distance may impose.
 const MIN_CHUNK: usize = 16;
 /// Most distinct base arrays a kernel reads or writes.
@@ -244,7 +243,7 @@ impl LoopKernel {
         self.scalars(cx, state, r)?;
         let step = state.steps[usize::from(shape.counter)];
         state.trip = trip_count(start as f64, step as f64, shape.relation, state.scalars[usize::from(shape.bound)]);
-        if state.trip < MIN_TRIP {
+        if state.trip < KERNEL_MIN_TRIP {
             self.declines.set(self.declines.get() + 1);
             return None;
         }
@@ -304,7 +303,7 @@ impl LoopKernel {
             let step = state.steps[usize::from(store.index)];
             limit = limit.min(fits(state.firsts[usize::from(store.index)], step, state.spans[usize::from(store.base)].writable));
         }
-        (limit >= MIN_TRIP).then_some(limit)
+        (limit >= KERNEL_MIN_TRIP).then_some(limit)
     }
 
     /// The chunk length that keeps every load of a stored array from reading an element an

@@ -130,7 +130,7 @@ impl WasmOperation {
                     float: Float::F32,
                 })
             }
-            Class::WasmFloatBinary64 => {
+            Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
                 FloatBinary::from_tag(tag).map(|operator| Self::FloatBinary {
                     operator,
                     float: Float::F64,
@@ -142,7 +142,7 @@ impl WasmOperation {
                     float: Float::F32,
                 })
             }
-            Class::WasmFloatUnary64 => FloatUnary::from_tag(tag).map(|operator| Self::FloatUnary {
+            Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => FloatUnary::from_tag(tag).map(|operator| Self::FloatUnary {
                 operator,
                 float: Float::F64,
             }),
@@ -156,17 +156,17 @@ impl WasmOperation {
     /// The integer operations whose operator is a selector operand.
     fn selected(class: Class, tag: u32) -> Option<Self> {
         match class {
-            Class::WasmI64Binary => Binary::from_tag(tag).map(|operator| Self::Binary {
+            Class::WasmI64Binary | Class::WasmI64BinaryRaw => Binary::from_tag(tag).map(|operator| Self::Binary {
                 operator,
                 width: Width::I64,
                 form: Form::Register,
             }),
-            Class::WasmI64BinaryImmediate => Binary::from_tag(tag).map(|operator| Self::Binary {
+            Class::WasmI64BinaryImmediate | Class::WasmI64BinaryImmediateRaw => Binary::from_tag(tag).map(|operator| Self::Binary {
                 operator,
                 width: Width::I64,
                 form: Form::Short,
             }),
-            Class::WasmI64Unary => Unary::from_tag(tag).map(|operator| Self::Unary {
+            Class::WasmI64Unary | Class::WasmI64UnaryRaw => Unary::from_tag(tag).map(|operator| Self::Unary {
                 operator,
                 width: Width::I64,
             }),

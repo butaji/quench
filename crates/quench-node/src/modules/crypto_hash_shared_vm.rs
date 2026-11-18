@@ -23,11 +23,7 @@ enum Value {
     Hash(HashState),
     Hmac(Option<HmacState>),
 }
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn fail(c: &mut Context<'_>, message: &str) -> RootedError {
     match c.type_error_rooted(message) {
         Ok(root) => c.throw(root),

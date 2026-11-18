@@ -120,6 +120,42 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
     Some(backing)
 }
 
+/// Element `index` of the direct array `base` (among the array records at `record_base`) whose
+/// backing is wide or narrow (`ArrayElements::is_narrow`: a narrow element decodes through the
+/// upper-word table at `upper_words`, `object::decode_narrow_through`); `None` (leaving at `miss`)
+/// for a double backing, past the backing's end or at a hole.
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
+pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word, upper_words: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    let backing = flagged_backing(stage, record_base, base, miss)?;
+    backing_element(stage, backing, index, upper_words, miss)
+}
+
+/// `record_element` past the backing's loads (`flagged_backing`).
+#[inline(always)]
+fn backing_element<S: Stage>(stage: &mut S, backing: Backing<S::Word>, index: S::Word, upper_words: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN};
+    let double = stage.and_imm(backing.length, u64::from(DOUBLE_LEN));
+    let wide_or_narrow = stage.eq_imm(double, 0u32);
+    stage.guard(wide_or_narrow, miss)?;
+    let length = stage.and_imm(backing.length, u64::from(!ENCODED_LEN));
+    let in_bounds = stage.ult(index, length);
+    stage.guard(in_bounds, miss)?;
+    let flag = stage.and_imm(backing.length, u64::from(NARROW_LEN));
+    let narrow = stage.ne_imm(flag, 0u32);
+    let value = stage.choose(narrow, |stage| {
+        let offset = stage.mul_imm(index, std::mem::size_of::<u32>() as u64);
+        let address = stage.add(backing.values, offset);
+        let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
+        super::object::decode_narrow_through(stage, narrow, upper_words)
+    }, |stage| loaded_element(stage, backing.values, index).1);
+    let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
+    stage.guard(present, miss)?;
+    Some(value)
+}
+
 /// `array_backing` up to the length load: the backing with its length word's flags
 /// (`ENCODED_LEN`) left in.
 #[inline(always)]
