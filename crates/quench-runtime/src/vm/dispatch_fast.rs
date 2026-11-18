@@ -130,6 +130,14 @@ pub(super) struct LaneInstruction {
 /// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
 /// polymorphic), so one keeps an entry at 32 bytes instead of 112.
 const INLINE_SITE_TARGETS: usize = 1;
+/// `LaneStack::noted` entries.
+const NOTED_SITE_CALLEES: usize = 64;
+
+/// The `LaneStack::noted` entry of a link address and callee function.
+#[inline(always)]
+fn noted_slot(address: usize, function: u32) -> usize {
+    ((address >> 1) ^ (function as usize).wrapping_mul(0x9E37)) & (NOTED_SITE_CALLEES - 1)
+}
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
@@ -2217,6 +2225,13 @@ pub(super) struct LaneStack {
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
+    /// Pairs of a call record's link address and a callee its `call_sites` record holds, direct-mapped
+    /// (`noted_slot`): a polymorphic site's steady state re-notes the callees it alternates between, and
+    /// a hit here skips the map. Any callee leaving a record empties it.
+    noted: Box<[std::cell::Cell<Option<(usize, super::compiled::CallTarget)>>; NOTED_SITE_CALLEES]>,
+    /// `noted` for the script-target entries a link resolved (`Vm::note_linked_callee`): a link address and
+    /// the callee its record holds as `CalleeBinding::Identity`, by link address and entry index.
+    linked: Box<[std::cell::Cell<(usize, Value)>; NOTED_SITE_CALLEES]>,
     values: LaneValues,
     pub(in crate::vm) activations: LaneActivations,
     /// Wasm activation payload represented by `values` before lane materialization.
@@ -2340,6 +2355,8 @@ impl Default for LaneStack {
             activations: LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
+            noted: Box::new([const { std::cell::Cell::new(None) }; NOTED_SITE_CALLEES]),
+            linked: Box::new([const { std::cell::Cell::new((0, Value::UNDEFINED)) }; NOTED_SITE_CALLEES]),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
@@ -2492,12 +2509,26 @@ impl LaneStack {
     /// first seen. The link names the latest callee, so a callee already recorded changes
     /// nothing: a polymorphic site's steady state only reads its record.
     fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
+        let address = std::ptr::from_ref(link).addr();
+        let noted = &self.noted[noted_slot(address, target.function)];
+        if noted.get() == Some((address, target)) {
+            return;
+        }
         let mut sites = self.call_sites.borrow_mut();
-        let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
+        let site = sites.entry(address).or_default();
         if !site.contains(&target) {
-            if site.len() == super::compiled::tier_policy::POLYMORPHISM { site.remove(0); }
+            if site.len() == super::compiled::tier_policy::POLYMORPHISM {
+                site.remove(0);
+                self.forget_noted();
+            }
             site.push(target);
         }
+        noted.set(Some((address, target)));
+    }
+
+    fn forget_noted(&self) {
+        self.noted.iter().for_each(|noted| noted.set(None));
+        self.linked.iter().for_each(|linked| linked.set((0, Value::UNDEFINED)));
     }
 
     /// Drops the callees a collection swept from the sites' records before any allocation
@@ -2506,6 +2537,7 @@ impl LaneStack {
         self.wasm_export = None;
         self.js_import = None;
         self.bound_call = None;
+        self.forget_noted();
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
@@ -14058,9 +14090,7 @@ impl<H: Host> Vm<H> {
             };
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
-            if self.tier_may_run(crate::jit_mode::Tier::ANY) {
-                self.note_linked_callee(link, index);
-            }
+            self.note_linked_callee(link, index);
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
@@ -14084,13 +14114,32 @@ impl<H: Host> Vm<H> {
         self.relink_closure(callee, linked)
     }
 
-    /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`).
+    /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`) where a tier may
+    /// run. A polymorphic site's steady state re-notes the callees it alternates between: one compare of
+    /// `LaneStack::linked` finds them noted, as the interpreter's own link test costs.
+    #[inline(always)]
+    fn note_linked_callee(&self, link: &std::cell::Cell<u16>, index: usize) {
+        if self.execution_mode != super::ExecutionMode::Compiled {
+            return;
+        }
+        let address = std::ptr::from_ref(link).addr();
+        // SAFETY: the caller resolved `index` within the cache.
+        let callee = unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) }.callee;
+        if self.lane_stack.linked[noted_slot(address, index as u32)].get() != (address, callee) {
+            self.note_linked_callee_slow(address, link, index);
+        }
+    }
+
     #[cold]
     #[inline(never)]
-    fn note_linked_callee(&self, link: &std::cell::Cell<u16>, index: usize) {
+    fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
         let current = &self.lane_stack.script_targets.entries[index];
-        self.note_site_callee(link, super::compiled::CallTarget {
-            callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
+        // Where no tier runs, no region reads the record: the pair is marked only.
+        if self.tier_may_run(crate::jit_mode::Tier::ANY) {
+            self.note_site_callee(link, super::compiled::CallTarget {
+                callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
+        }
+        self.lane_stack.linked[noted_slot(address, index as u32)].set((address, current.callee));
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose

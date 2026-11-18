@@ -7749,6 +7749,7 @@ impl<H: Host> Vm<H> {
     /// Whether any of `tiers` runs: compiled execution under a memory policy
     /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
     /// interpreted work exactly.
+    #[inline]
     pub(super) fn tier_may_run(&self, tiers: &[crate::jit_mode::Tier]) -> bool {
         !cfg!(quench_profiled)
             && self.execution_mode == ExecutionMode::Compiled
