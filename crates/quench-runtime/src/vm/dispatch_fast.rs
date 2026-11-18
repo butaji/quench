@@ -21,6 +21,18 @@
 //! or leaves the lane where a collection is due or termination requested. A due
 //! collection zeroes the fuel, so the next safepoint jump leaves; a termination request
 //! from another thread raises the floor, read within one batch.
+/// `body` with `$l` the const leaf form `leaf` names (`LeafForm`, 0..=4), chosen by `if const` so a
+/// const generic argument can name a leaf form a const expression computes.
+macro_rules! by_leaf {
+    ($leaf:expr, |$l:ident| $body:expr) => {{
+        if const { $leaf == 0 } { const $l: u8 = 0; $body }
+        else if const { $leaf == 1 } { const $l: u8 = 1; $body }
+        else if const { $leaf == 2 } { const $l: u8 = 2; $body }
+        else if const { $leaf == 3 } { const $l: u8 = 3; $body }
+        else { const $l: u8 = 4; $body }
+    }};
+}
+
 
 use crate::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
 use super::compiled::tier_policy::Tiers;
@@ -1284,13 +1296,6 @@ fn requicken<H: Host>(ip: Ip, handler: Handler) {
         }
         (*ip.cast_mut()).handler = handler as *const ();
     }
-}
-
-/// Whether the record at `ip` runs `handler` now.
-#[inline(always)]
-fn handler_is<H: Host>(ip: Ip, handler: Handler) -> bool {
-    // SAFETY: as `requicken`, reading only.
-    unsafe { (*ip).handler == handler as *const () }
 }
 
 /// The context words below register 0 (`staged::frame`, the one source of the frame layout).
@@ -2840,19 +2845,6 @@ impl LaneStack {
     /// new closure took: its depth-0 captures would read the dead closure's storage.
     pub(super) fn retire_after_collection(&mut self, key: (u64, Value)) {
         self.enter_generation(key);
-    }
-
-    fn enter_generation(&mut self, key: (u64, Value)) {
-        if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
-            self.generation = self.generation.wrapping_add(1);
-            if self.generation == NO_SCRIPT_GENERATION {
-                // A wrapped number could name entries of a generation long past.
-                self.clear_script_targets();
-                self.generation = NO_SCRIPT_GENERATION + 1;
-            }
-            self.generation_key = key;
-            self.admission = Admission(Admission::new(self.generation, self.admission.program()).0 | self.refused);
-        }
     }
 
     /// Notes the program the lane now runs (`Vm::activate_program`).
@@ -4598,7 +4590,7 @@ fn requicken_typed<H: Host>(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
     let Some(index) = kind.and_then(crate::staged::typed_elements::native_kind_index) else { return };
     // SAFETY: `ip` is a live element record of the view; an element record's operand holds no
     // loop site or call target, so its immediate is free for the kind.
-    unsafe { (*ip).operand.imm = index };
+    unsafe { (*ip.cast_mut()).operand.imm = index };
     let handler = if read { element_typed_read_row::<H>() } else { element_typed_write_row::<H>() };
     requicken::<H>(ip, handler);
 }
@@ -5580,9 +5572,10 @@ fn general_handler<H: Host>(base: u16) -> Handler {
 }
 
 /// The VM's general read of `atom` of `object` through cache `site`, as the row's host path
-/// (`LaneFrame::field_get_host`): a register's hint answers first (`primary_record_holder_field_hit`,
+/// (`lane_row`'s `GENERAL_*` answer): a register's hint answers first (`primary_record_holder_field_hit`,
 /// `proved_inherited_field_hit`), then the caches' probe (`lane_field_step`), with `record` the
 /// instruction's address for a private name's site. `None` leaves to `row_get_field_general`.
+#[inline(always)]
 pub(super) fn general_field_read<H: Host>(context: *mut (), record: usize, register: bool, object: Value, atom: u32,
     site: u16) -> Option<Value> {
     let cx = context.cast::<LaneContext<H>>();
@@ -5655,7 +5648,7 @@ pub(super) const fn sink_site(site: u8) -> bool { site == SINK_SITE }
 
 /// The store `(atom, cache)` of the sinking read `i` (`SINK_SITE`): its site's sink.
 #[inline(always)]
-pub(super) fn sink_operands<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<(crate::bytecode::Atom, u16)> {
+pub(in crate::vm::dispatch_fast) fn sink_operands<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<(crate::bytecode::Atom, u16)> {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     code.field_sites.get(i.imm() as usize)?.sink
@@ -8978,7 +8971,7 @@ impl<H: Host> Vm<H> {
     /// that record's state as a frame, which a call waiting for its callee's view would do. The
     /// innermost is the caller deciding; a window further out only tunes when a callee lowers.
     pub(in crate::vm) fn lane_runs_windows(&self) -> bool {
-        self.lane_stack.activations.last().and_then(Activation::script).is_some_and(|script| !script.record.is_null())
+        self.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| !script.record.is_null())
     }
 
     /// Whether `callee` is a native that runs beside a lane's activations
@@ -16260,8 +16253,8 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
         return lane_returning::<H, RETURNING_FIELD_PRIVATE, LEAF>;
     }
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
-        single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, LEAF) }>,
-            generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, LEAF) }>, lane_returning::<H, RETURNING_FIELD, LEAF>)
+        by_leaf!(LEAF, |L| single_base_handler(i.b, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
+            lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>, lane_returning::<H, RETURNING_FIELD, L>))
     } else if lane_field_site_tier(vm, code, i) == FieldSiteTier::Nested {
         lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>
     } else {

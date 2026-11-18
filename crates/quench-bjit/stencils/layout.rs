@@ -233,6 +233,9 @@ pub(crate) mod words {
     pub(crate) const DIRECT_ARRAY_TAG: u64 = 0x7ffc400000000000;
     pub(crate) const DIRECT_OBJECT_TAG: u64 = 0x7ffc800000000000;
     pub(crate) const DIRECT_FUNCTION_TAG: u64 = 0x7ffcc00000000000;
+    pub(crate) const DIRECT_PROMISE_TAG: u64 = 0x7ffc200000000000;
+    pub(crate) const DIRECT_ITERATOR_TAG: u64 = 0x7ffca00000000000;
+    pub(crate) const DIRECT_COLLECTION_TAG: u64 = 0x7ffcb00000000000;
     pub(crate) const HEAP_FAMILY_MASK: u64 = 0xfffff00000000000;
     pub(crate) const DIRECT_STRING_TAG: u64 = 0x7ffce00000000000;
     pub(crate) const TAG_SHIFT: u32 = 48;
@@ -302,7 +305,7 @@ pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 184;
 pub(crate) const JS_STEP_EPOCH: usize = 336;
 /// The string record range's base, which a string `length` read finds the record from.
 pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = 376;
-/// What a store into a function's own properties reads (`RecordSpace::Function`): the function
+/// What a store into a function's own properties reads (`StagedRecordSpace::Function`): the function
 /// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
 /// empty string's word, which a function's inferred name replaces (`staged::naming`).
 pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = 416;

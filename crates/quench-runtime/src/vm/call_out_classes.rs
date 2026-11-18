@@ -12,7 +12,9 @@ impl<H: Host> Vm<H> {
             ClassStep::DefineField { atom, site } => {
                 let object = second.expect("a field definition names its object");
                 let value = first.expect("a field definition names its value");
-                self.define_field_cached(p, object, atom, value, site)?;
+                let frame = self.own_frame();
+                let function = self.frames[frame].function;
+                self.define_field_cached(p, object, atom, value, site, function)?;
                 Ok(None)
             }
             ClassStep::DefineComputedField { key } => {
@@ -23,7 +25,7 @@ impl<H: Host> Vm<H> {
                 let key = self.to_property_key(p, key)?;
                 let key = match self.heap.get(key).cloned() {
                     _ if let Some(atom) = self.string_key_atom(key) => PropertyKey::string(atom),
-                    Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
+                    _ if self.heap.is_symbol(key) => PropertyKey::symbol(key),
                     _ => return Err(JsError::validation("invalid class field key".into())),
                 };
                 self.define_class_field(p, object, key, value)?;

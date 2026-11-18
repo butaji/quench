@@ -131,10 +131,11 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         }
         return;
     }
-    let value = match Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY) {
-        _ if crate::staged::loads_constant(instruction.op()) => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
-        Some(Operation::Move { .. }) => values.get(usize::from(instruction.register_b())).copied().flatten(),
-        Some(Operation::Number(NumberOperation::IncDec { .. })) => {
+    let value = match () {
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
+            program.constants.get(instruction.constant_index()).and_then(facts::immediate),
+        _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
+        _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
                 .zip(instruction.boolean_flag()).map(|(value, decrement)| Value::number(if decrement { value - 1.0 } else { value + 1.0 }))
         }

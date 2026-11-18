@@ -371,6 +371,11 @@ fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value)
     crate::staged::value::number_word(&mut object_slots::emit(builder), number)
 }
 
+/// The int32 a double converts to exactly, and whether it does (`staged::value::exact_int32`).
+fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> (ir::Value, ir::Value) {
+    crate::staged::value::exact_int32(&mut object_slots::emit(builder), number)
+}
+
 fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     use crate::staged::machine::{Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());

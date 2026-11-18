@@ -65,6 +65,8 @@ pub(crate) mod typed_ir {
 }
 
 pub(crate) mod value {
+    /// 2^63, the first double past `i64` (`number_conversion::EXACT_I64_TRUNCATION_LIMIT`).
+    pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
     use crate::layout::words;
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
     pub(crate) const LOWER_WORD: u64 = words::LOWER_WORD;
@@ -83,6 +85,9 @@ pub(crate) mod value {
         pub(crate) const HEAP_TAG: u64 = words::HEAP_TAG;
         pub(crate) const DIRECT_ARRAY_TAG: u64 = words::DIRECT_ARRAY_TAG;
         pub(crate) const DIRECT_OBJECT_TAG: u64 = words::DIRECT_OBJECT_TAG;
+        pub(crate) const DIRECT_PROMISE_TAG: u64 = words::DIRECT_PROMISE_TAG;
+        pub(crate) const DIRECT_ITERATOR_TAG: u64 = words::DIRECT_ITERATOR_TAG;
+        pub(crate) const DIRECT_COLLECTION_TAG: u64 = words::DIRECT_COLLECTION_TAG;
         pub(crate) const DIRECT_FUNCTION_TAG: u64 = words::DIRECT_FUNCTION_TAG;
         pub(crate) const HEAP_FAMILY_MASK: u64 = words::HEAP_FAMILY_MASK;
         pub(crate) const DIRECT_STRING_TAG: u64 = words::DIRECT_STRING_TAG;

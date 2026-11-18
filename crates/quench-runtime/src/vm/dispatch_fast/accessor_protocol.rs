@@ -93,7 +93,7 @@ impl<H: Host> AccessorCall<H> {
             // takes the kind its first run would.
             // SAFETY: as `lane_call_read`; the context's program outlives the lane run.
             let (entry, code) = unsafe { ((*target.view).records(), &*(*self.cx).code) };
-            if unsafe { (*entry).handler } == lane_returning_field_first::<H, NOT_LEAF> as *const () {
+            if unsafe { (*entry).handler } == row_returning_field_first::<H, NOT_LEAF> as *const () {
                 requicken::<H>(entry, returning_field_first_kind::<H, NOT_LEAF>(unsafe { vm(self.cx) }, code, unsafe { &*entry }));
             }
         } else if !target.entry.answered_by_read() {
