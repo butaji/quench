@@ -964,7 +964,7 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::EnvironmentLoad => super::lane_load_local::<H>,
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
-        crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
+        crate::staged::Miss::StoreNameFirst => super::store_name_first_miss::<H>,
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
         crate::staged::Miss::Binary => super::lane_binary_general::<H>,
         crate::staged::Miss::WasmMemoryLoad => super::lane_wasm_memory_load::<H>,

@@ -132,7 +132,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A by-name store in such a function (`lane_store_name_first`): to the `with` object that
+    /// A by-name store in such a function (`store_name_first_miss`): to the `with` object that
     /// has the name (`scoped_store`); any other store takes the general path.
     #[inline(never)]
     fn lane_scoped_store_name<>(cx, r, ip, i, view) {

@@ -13457,12 +13457,12 @@ script_handler! {
     /// A `StoreName` row's miss (`Miss::StoreNameFirst`), the name's first-run resolution: an
     /// assignment to a name the global object answers whenever no global lexical binding
     /// shadows it (as `lane_name_resolution` decides for a read) takes
-    /// `lane_store_global_name_miss`, a `var`'s initializer too, which stores as one: the
+    /// `store_global_name_miss`, a `var`'s initializer too, which stores as one: the
     /// declaration made the property, and a lexical binding is never hinted. The record stays
     /// on its row, which stores through the hint this arm sets. Any other store always takes
     /// the general path.
     #[inline(never)]
-    fn lane_store_name_first<>(cx, r, ip, i, view) {
+    fn store_name_first_miss<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -13471,7 +13471,7 @@ script_handler! {
             && code.function_get(function as usize).is_some_and(|function| function.names_resolve_statically(code))
             && vm.programs.names_are_global(unsafe { (*cx).program });
         if global {
-            sibling!(lane_store_global_name_miss::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(store_global_name_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
             requicken::<H>(ip, scoped_names::scoped_store_name::<H>());
@@ -13488,7 +13488,7 @@ script_handler! {
     /// (`Vm::global_name_hintable`); any other store takes the general path, a shadowed name's
     /// from then on.
     #[inline(never)]
-    fn lane_store_global_name_miss<>(cx, r, ip, i, view) {
+    fn store_global_name_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (atom, globals) = (i.imm(), vm.realm.globals);
         // A lexical declaration of the name is never withdrawn, so its stores always take the
