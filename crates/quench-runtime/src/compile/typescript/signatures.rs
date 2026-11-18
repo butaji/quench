@@ -183,7 +183,7 @@ mod tests {
     use crate::{Engine, ValueType as V};
 
     fn bit(kind: V) -> u16 {
-        1_u16 << kind as u16
+        crate::typed_ir::Languages::of(kind).bits()
     }
 
     fn declared_of(source: &str, name: &str) -> DeclaredTypes {

@@ -58,7 +58,7 @@ pub(crate) struct DeclaredField {
     /// The field's name: a non-computed identifier key, or a constructor parameter property's
     /// parameter name. Private `#name` keys are not recorded.
     pub(crate) name: Box<str>,
-    /// Language bits (`1 << ValueType as u16`) the declared type admits for the field's value.
+    /// Language bits (`typed_ir::Languages`) the declared type admits for the field's value.
     pub(crate) languages: u16,
     /// `static` class member (a static field is not an instance field).
     pub(crate) is_static: bool,

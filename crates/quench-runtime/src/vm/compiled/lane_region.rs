@@ -1046,18 +1046,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn conform_language(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
         use crate::ValueType::{Boolean, Function, Null, Object, Undefined};
         use crate::staged::Stage;
+        use crate::typed_ir::Languages;
         use crate::staged::value::{is_boolean, is_direct_function, is_direct_object, is_null, is_undefined};
         let index = usize::from(register);
         let kinds = [Boolean, Undefined, Null, Object, Function];
         let bits = kinds.into_iter().filter(|kind| Type::language(*kind).is_subtype(ty))
-            .fold(0u16, |bits, kind| bits | (1u16 << kind as u16));
+            .fold(Languages::EMPTY, |set, kind| set | Languages::of(kind)).bits();
         if !scalar::checkable(bits) || Type::languages(bits) != ty || state.values[index].value.ty.is_subtype(ty) { return; }
         let value = self.tagged(state, register);
         let exit = self.guard_exit(state, target as u32);
         let member = {
             let stage = &mut super::object_slots::emit(&mut self.builder);
             let mut member: Option<ir::Value> = None;
-            for kind in kinds.into_iter().filter(|kind| bits & (1u16 << *kind as u16) != 0) {
+            for kind in kinds.into_iter().filter(|kind| Languages::from_bits(bits).contains(*kind)) {
                 let test = match kind {
                     Boolean => is_boolean(stage, value),
                     Undefined => is_undefined(stage, value),

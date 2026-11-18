@@ -166,7 +166,7 @@ mod tests {
             .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some(name)))
             .map(|function| function.declared_parameters.to_vec());
         use crate::ValueType as V;
-        let bit = |kind: V| 1_u16 << kind as u16;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
         assert_eq!(declared("add").unwrap(), vec![bit(V::Number), super::DECLARED_ANY,
             bit(V::Number) | bit(V::BigInt), super::DECLARED_ANY, bit(V::String) | bit(V::Undefined)]);
         assert_eq!(declared("g").unwrap(), Vec::<u16>::new());
@@ -183,7 +183,7 @@ mod tests {
             super::ParameterSite { formals_start: start("(p)"), parameters: vec![start("p)")] },
         ]);
         use crate::ValueType as V;
-        let bit = |kind: V| 1_u16 << kind as u16;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
         // What a checker answers: the alias is a number, the callback parameter is a number,
         // and its `string` answer for `label` agrees with the annotation.
         let mut checked = super::CheckedParameters::default();

@@ -18,15 +18,54 @@ pub(crate) enum TypeKind {
     FunctionBody(u32),
 }
 
-/// The language bit of `kind` in a language set: the one owner of the bit map that
-/// `Type::language`, `Type::languages` and declared TypeScript types share.
-pub(crate) const fn language_bit(kind: ValueType) -> u16 {
-    1 << kind as u16
-}
-
 /// Every language type: the set `Type::ANY` holds, and the declared set of a type with no
 /// closed set of language types.
 pub(crate) const ANY_LANGUAGES: u16 = u16::MAX;
+
+/// A set of language types as a bit map: bit `kind as u16` names `kind`. The one owner of the
+/// bit map that `Type::language`, `Type::languages` and declared TypeScript types share.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[repr(transparent)]
+pub struct Languages(pub u16);
+
+impl Languages {
+    pub const EMPTY: Self = Self(0);
+    pub const ANY: Self = Self(ANY_LANGUAGES);
+
+    /// The set holding only `kind`.
+    pub const fn of(kind: ValueType) -> Self {
+        Self(1 << kind as u16)
+    }
+
+    pub const fn bits(self) -> u16 {
+        self.0
+    }
+
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
+
+    pub const fn contains(self, kind: ValueType) -> bool {
+        self.0 & Self::of(kind).0 != 0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl core::ops::BitOr for Languages {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        self.union(other)
+    }
+}
+
+/// The language bit of `kind` in a language set: `Languages::of(kind).bits()`.
+pub(crate) const fn language_bit(kind: ValueType) -> u16 {
+    Languages::of(kind).bits()
+}
 
 /// A set of language types, with an optional semantic refinement.
 /// Reserved bits in ANY also cover internal markers: a TDZ/hole is not Number.
@@ -37,12 +76,12 @@ impl Type {
     pub(crate) const NEVER: Self = Self(TypeKind::Language(0));
     pub(crate) const ANY: Self = Self(TypeKind::Language(ANY_LANGUAGES));
     pub(crate) const NULLISH: Self = Self(TypeKind::Language(
-        (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
+        Languages::of(ValueType::Null).union(Languages::of(ValueType::Undefined)).bits()));
     /// The types whose values name no heap record (a Number, a Boolean, `null`, `undefined`):
     /// the tag layout's non-reference words, which a store writes with no barrier.
     pub(crate) const IMMEDIATE: Self = Self(TypeKind::Language(
-        (1 << ValueType::Number as u16) | (1 << ValueType::Boolean as u16)
-            | (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
+        (Languages::of(ValueType::Number) | Languages::of(ValueType::Boolean)
+            | Languages::of(ValueType::Null) | Languages::of(ValueType::Undefined)).bits()));
     pub(crate) const NUMBER: Self = Self::language(ValueType::Number);
     /// The integers of the whole int32 span, the widest range an int32-represented value holds.
     pub(crate) const INT32: Self = Self(TypeKind::Int(IntRange::FULL));
@@ -68,11 +107,11 @@ impl Type {
     pub(super) const fn kinds(self) -> u16 {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
-            TypeKind::Int(_) => 1 << ValueType::Number as u16,
-            TypeKind::DirectObjectFamily => 1 << ValueType::Object as u16,
-            TypeKind::DirectObjectShape { nullish, .. } => (1 << ValueType::Object as u16) | nullish,
-            TypeKind::NullableDirectObjectFamily(nullish) => (1 << ValueType::Object as u16) | nullish,
-            TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => 1 << ValueType::Function as u16,
+            TypeKind::Int(_) => language_bit(ValueType::Number),
+            TypeKind::DirectObjectFamily => language_bit(ValueType::Object),
+            TypeKind::DirectObjectShape { nullish, .. } => language_bit(ValueType::Object) | nullish,
+            TypeKind::NullableDirectObjectFamily(nullish) => language_bit(ValueType::Object) | nullish,
+            TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => language_bit(ValueType::Function),
         }
     }
 
