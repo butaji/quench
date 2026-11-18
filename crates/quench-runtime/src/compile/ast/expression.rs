@@ -287,6 +287,14 @@ impl FunctionCompiler<'_, '_> {
         lexical.unwrap_or(atom)
     }
 
+    /// Whether names bound by enclosing functions resolve statically here: no direct eval in
+    /// this function can add a var that shadows them. A strict function's eval code is strict
+    /// and so keeps its vars to itself (ECMA-262 19.2.1.1), which leaves a strict direct eval
+    /// harmless; only a sloppy one forces by-name resolution.
+    pub(super) fn outer_names_static(&self) -> bool {
+        !self.dynamic_eval || self.strict
+    }
+
     /// Loads a reference that resolves statically to a promoted register, a frame local or a
     /// closure capture; `None` leaves it to by-name resolution.
     pub(super) fn static_atom_reference(&mut self, atom: Atom) -> Option<Register> {
@@ -320,7 +328,7 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
             }
             Some(dst)
-        } else if (compiler_binding || (self.with_depth == 0 && !self.dynamic_eval))
+        } else if (compiler_binding || (self.with_depth == 0 && self.outer_names_static()))
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
             Some(self.capture_read(atom, depth, slot))
@@ -450,7 +458,7 @@ impl FunctionCompiler<'_, '_> {
                 );
             }
         } else if (self.with_depth == 0 || initializing)
-            && (!self.dynamic_eval || compiler_binding)
+            && (self.outer_names_static() || compiler_binding)
             && let Some((depth, slot)) = self.scopes.find(atom)
         {
             self.emit(
