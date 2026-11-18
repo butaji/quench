@@ -7,7 +7,7 @@ use oxc_ast_visit::{Visit, walk};
 
 use crate::bytecode::DeclaredTypes;
 use crate::typed_ir::language_bit;
-use super::{DECLARED_ANY, declared_language};
+use super::{DECLARED_ANY, declared_language, element_languages};
 
 /// Record each annotated instance and static field of every class in `program`, and each
 /// annotated parameter property of a constructor (an instance field named by its parameter).
@@ -52,11 +52,12 @@ impl Collect<'_> {
         let PropertyKey::StaticIdentifier(identifier) = &property.key else { return };
         let Some(annotation) = &property.type_annotation else { return };
         let mut languages = declared_language(&annotation.type_annotation);
+        let elements = element_languages(&annotation.type_annotation);
         if property.optional {
             languages |= language_bit(crate::ValueType::Undefined);
         }
-        if languages != DECLARED_ANY {
-            self.declarations.declare_field(class_start, identifier.name.as_str(), languages, property.r#static);
+        if languages != DECLARED_ANY || elements != DECLARED_ANY {
+            self.declarations.declare_field(class_start, identifier.name.as_str(), languages, elements, property.r#static);
         }
     }
 
@@ -68,8 +69,9 @@ impl Collect<'_> {
         }
         let (Some(name), Some(annotation)) = (parameter.pattern.get_identifier_name(), &parameter.type_annotation) else { return };
         let languages = declared_language(&annotation.type_annotation);
-        if languages != DECLARED_ANY {
-            self.declarations.declare_field(class_start, &name.to_string(), languages, false);
+        let elements = element_languages(&annotation.type_annotation);
+        if languages != DECLARED_ANY || elements != DECLARED_ANY {
+            self.declarations.declare_field(class_start, &name.to_string(), languages, elements, false);
         }
     }
 }
@@ -96,6 +98,17 @@ mod tests {
             ("y".to_string(), bit(V::String) | bit(V::Undefined), false),
             ("z".to_string(), bit(V::Boolean), false),
         ]);
+    }
+
+    #[test]
+    fn array_field_element_types_are_declared() {
+        let source = "class P { v: Array<number> = []; w: readonly string[] = []; }";
+        let program = Engine::specialize_typescript(source, "elements.cts").unwrap();
+        let declared: &DeclaredTypes = program.declared_types.as_deref().unwrap();
+        let p = source.find("class P").unwrap() as u32;
+        assert_eq!(declared.declared_field_elements(p, "v"), Some(crate::typed_ir::Languages::of(V::Number).bits()));
+        assert_eq!(declared.declared_field_elements(p, "w"), Some(crate::typed_ir::Languages::of(V::String).bits()));
+        assert_eq!(declared.declared_field(p, "v"), None);
     }
 
     #[test]

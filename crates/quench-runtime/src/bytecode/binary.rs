@@ -1815,6 +1815,7 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u32(field.class_start);
         out.string(&field.name);
         out.u16(field.languages);
+        out.u16(field.elements);
         out.u8(u8::from(field.is_static));
     }
     out.u32(declared.signatures.len() as u32);
@@ -1829,6 +1830,7 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u32(local.function);
         out.string(&local.name);
         out.u16(local.languages);
+        out.u16(local.elements);
     }
     out.u32(declared.members.len() as u32);
     for member in &declared.members {
@@ -1867,12 +1869,13 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         let class_start = input.u32()?;
         let name = input.string()?.into_boxed_str();
         let languages = input.u16()?;
+        let elements = input.u16()?;
         let is_static = match input.u8()? {
             0 => false,
             1 => true,
             _ => return Err("invalid declared field static flag".to_string()),
         };
-        Ok(super::declared_types::DeclaredField { class_start, name, languages, is_static })
+        Ok(super::declared_types::DeclaredField { class_start, name, languages, elements, is_static })
     })?;
     let signatures = input.list(|input| {
         Ok(super::DeclaredSignature {
@@ -1883,7 +1886,12 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         })
     })?;
     let locals = input.list(|input| {
-        Ok(super::DeclaredLocal { function: input.u32()?, name: input.string()?.into_boxed_str(), languages: input.u16()? })
+        Ok(super::DeclaredLocal {
+            function: input.u32()?,
+            name: input.string()?.into_boxed_str(),
+            languages: input.u16()?,
+            elements: input.u16()?,
+        })
     })?;
     let members = input.list(|input| {
         Ok(super::DeclaredMember {

@@ -15,7 +15,7 @@ use rustc_hash::FxHashMap;
 use crate::bytecode::{DeclaredSignature, DeclaredTypes};
 use crate::compile::class::class_method_source_span;
 use crate::typed_ir::language_bit;
-use super::{DECLARED_ANY, declared_language};
+use super::{DECLARED_ANY, declared_language, element_languages};
 
 /// The function a local is declared in when it is top-level code of a script or module.
 const TOP_LEVEL: u32 = u32::MAX;
@@ -227,11 +227,13 @@ impl<'a> Collect<'a, '_> {
     }
 
     /// Record a local binding of a plain identifier with a type annotation, in the innermost function.
+    /// An array annotation is recorded for its element types even where its own languages are open.
     fn local(&mut self, name: Option<&str>, annotation: Option<&TSTypeAnnotation<'_>>) {
         let (Some(function), Some(name), Some(annotation)) = (self.function, name, annotation) else { return };
         let languages = declared_language(&annotation.type_annotation);
-        if languages != DECLARED_ANY {
-            self.declarations.declare_local(function, name, languages);
+        let elements = element_languages(&annotation.type_annotation);
+        if languages != DECLARED_ANY || elements != DECLARED_ANY {
+            self.declarations.declare_local(function, name, languages, elements);
         }
     }
 }
@@ -265,18 +267,7 @@ fn rest_of(params: &FormalParameters<'_>) -> u16 {
     let Some(annotation) = params.rest.as_ref().and_then(|rest| rest.type_annotation.as_deref()) else {
         return DECLARED_ANY;
     };
-    match &annotation.type_annotation {
-        TSType::TSArrayType(array) => declared_language(&array.element_type),
-        TSType::TSTypeReference(reference) => match (&reference.type_name, reference.type_arguments.as_deref()) {
-            (TSTypeName::IdentifierReference(name), Some(arguments))
-                if name.name.as_str() == "Array" && arguments.params.len() == 1 =>
-            {
-                declared_language(&arguments.params[0])
-            }
-            _ => DECLARED_ANY,
-        },
-        _ => DECLARED_ANY,
-    }
+    element_languages(&annotation.type_annotation)
 }
 
 #[cfg(test)]
@@ -306,6 +297,19 @@ mod tests {
         assert_eq!(declared.declared_local(f, "s"), Some(bit(V::String)));
         assert_eq!(declared.declared_local(f, "a"), None);
         assert_eq!(declared.declared_local(u32::MAX, "x"), None);
+    }
+
+    #[test]
+    fn array_annotations_record_element_types() {
+        let source = "let xs: number[] = []; function f() { const ys: readonly string[] = []; let zs: Array<boolean> = []; }";
+        let declared = declared_of(source, "arrays.cts");
+        let f = source.find("function f").unwrap() as u32;
+        assert_eq!(declared.declared_local_elements(u32::MAX, "xs"), Some(bit(V::Number)));
+        assert_eq!(declared.declared_local(u32::MAX, "xs"), Some(bit(V::Object)));
+        assert_eq!(declared.declared_local_elements(f, "ys"), Some(bit(V::String)));
+        assert_eq!(declared.declared_local_elements(f, "zs"), Some(bit(V::Boolean)));
+        assert_eq!(declared.declared_local(f, "zs"), None);
+        assert_eq!(declared.declared_local_elements(f, "missing"), None);
     }
 
     #[test]

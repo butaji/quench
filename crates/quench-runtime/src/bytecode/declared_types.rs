@@ -3,6 +3,8 @@
 //! keeps it with its code, so the fact store and every tier read the same declarations.
 //! A declaration is a seed, not a proof: TypeScript is unsound.
 
+use crate::typed_ir::ANY_LANGUAGES;
+
 /// What a declaration of the declared environment is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -60,6 +62,9 @@ pub(crate) struct DeclaredField {
     pub(crate) name: Box<str>,
     /// Language bits (`typed_ir::Languages`) the declared type admits for the field's value.
     pub(crate) languages: u16,
+    /// Language bits the elements of an array-typed field's value admit (`DECLARED_ANY` where the
+    /// type is not an array or its element type is open).
+    pub(crate) elements: u16,
     /// `static` class member (a static field is not an instance field).
     pub(crate) is_static: bool,
 }
@@ -88,6 +93,9 @@ pub(crate) struct DeclaredLocal {
     pub(crate) name: Box<str>,
     /// Language bits the binding's annotation admits.
     pub(crate) languages: u16,
+    /// Language bits the elements of an array-typed binding admit (`DECLARED_ANY` where the
+    /// annotation is not an array or its element type is open).
+    pub(crate) elements: u16,
 }
 
 /// A property a parameter's type literal declares (`function f(p: {x: number}) {}` declares
@@ -138,16 +146,16 @@ impl DeclaredTypes {
         self.declared.push(Declared { kind, name: name.map(Box::from), start: span.start, end: span.end });
     }
 
-    pub(crate) fn declare_field(&mut self, class_start: u32, name: &str, languages: u16, is_static: bool) {
-        self.fields.push(DeclaredField { class_start, name: Box::from(name), languages, is_static });
+    pub(crate) fn declare_field(&mut self, class_start: u32, name: &str, languages: u16, elements: u16, is_static: bool) {
+        self.fields.push(DeclaredField { class_start, name: Box::from(name), languages, elements, is_static });
     }
 
     pub(crate) fn declare_signature(&mut self, signature: DeclaredSignature) {
         self.signatures.push(signature);
     }
 
-    pub(crate) fn declare_local(&mut self, function: u32, name: &str, languages: u16) {
-        self.locals.push(DeclaredLocal { function, name: Box::from(name), languages });
+    pub(crate) fn declare_local(&mut self, function: u32, name: &str, languages: u16, elements: u16) {
+        self.locals.push(DeclaredLocal { function, name: Box::from(name), languages, elements });
     }
 
     pub(crate) fn declare_member(&mut self, function: u32, parameter: u16, name: &str, languages: u16) {
@@ -181,16 +189,38 @@ impl DeclaredTypes {
     /// (`u32::MAX` for the top level), when the program declares one (the last declaration wins).
     pub(crate) fn declared_local(&self, function: u32, name: &str) -> Option<u16> {
         self.locals.iter().rev()
-            .find(|local| local.function == function && &*local.name == name)
+            .find(|local| local.function == function && &*local.name == name && local.languages != ANY_LANGUAGES)
             .map(|local| local.languages)
+    }
+
+    /// The declared element language types of local `name` of the function starting at `function`
+    /// (`u32::MAX` for the top level), when its annotation is an array type with a closed element
+    /// set (the last declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the tiers read array element types next"))]
+    pub(crate) fn declared_local_elements(&self, function: u32, name: &str) -> Option<u16> {
+        self.locals.iter().rev()
+            .find(|local| local.function == function && &*local.name == name && local.elements != ANY_LANGUAGES)
+            .map(|local| local.elements)
     }
 
     /// The declared language types of instance field `name` of the class starting at
     /// `class_start`, when the program declares one (the last declaration wins).
     pub(crate) fn declared_field(&self, class_start: u32, name: &str) -> Option<u16> {
         self.fields.iter().rev()
-            .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name)
+            .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name
+                && field.languages != ANY_LANGUAGES)
             .map(|field| field.languages)
+    }
+
+    /// The declared element language types of instance field `name` of the class starting at
+    /// `class_start`, when its annotation is an array type with a closed element set (the last
+    /// declaration wins).
+    #[cfg_attr(not(test), allow(dead_code, reason = "the object model reads array element types next"))]
+    pub(crate) fn declared_field_elements(&self, class_start: u32, name: &str) -> Option<u16> {
+        self.fields.iter().rev()
+            .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name
+                && field.elements != ANY_LANGUAGES)
+            .map(|field| field.elements)
     }
 
     /// The declared language types of property `name` of parameter `parameter` of the function

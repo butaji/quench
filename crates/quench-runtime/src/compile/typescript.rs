@@ -79,6 +79,26 @@ fn declared_language(ty: &TSType<'_>) -> u16 {
     }
 }
 
+/// The language types of the elements an array type holds: `T[]`, `readonly T[]`, `Array<T>` and
+/// `ReadonlyArray<T>` hold `T`s. Any other type, or an array of an open type, is `DECLARED_ANY`.
+pub(super) fn element_languages(ty: &TSType<'_>) -> u16 {
+    match ty {
+        TSType::TSArrayType(array) => declared_language(&array.element_type),
+        TSType::TSTypeOperatorType(operator) if operator.operator == TSTypeOperatorOperator::Readonly => {
+            element_languages(&operator.type_annotation)
+        }
+        TSType::TSTypeReference(reference) => match (&reference.type_name, reference.type_arguments.as_deref()) {
+            (TSTypeName::IdentifierReference(name), Some(arguments))
+                if matches!(name.name.as_str(), "Array" | "ReadonlyArray") && arguments.params.len() == 1 =>
+            {
+                declared_language(&arguments.params[0])
+            }
+            _ => DECLARED_ANY,
+        },
+        _ => DECLARED_ANY,
+    }
+}
+
 /// What admission leaves without a run-time meaning yet: decorators.
 pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span, &'static str)> {
     #[derive(Default)]
