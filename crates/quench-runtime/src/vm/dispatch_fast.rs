@@ -7933,7 +7933,7 @@ script_handler! {
     /// `lane_get_length`.
     fn lane_get_length_typed<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(length) = vm.typed_array_geometry_read(r.get(i.b), vm.length_atom) else {
+        let Some(length) = vm.typed_array_geometry_read_inline(r.get(i.b), vm.length_atom) else {
             sibling!(lane_get_length::<H>, r, ip, view)
         };
         r.set(i.a, length);

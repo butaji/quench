@@ -289,10 +289,11 @@ k09_reduce 0.7 Vm::run_user_frame
 k09_reduce 0.6 Vec::spec_extend
 k09_reduce 0.5 RecordSpace::prepare_minor
 k10_f64_sum 386.0 lane_loop_kernel
-k10_f64_sum 222.0 Vm::typed_array_getter_value
-k10_f64_sum 214.0 Vm::typed_array_geometry_read
+k10_f64_sum 214.0 Vm::typed_array_getter_value
 k10_f64_sum 194.0 LoopKernel::columns
 k10_f64_sum 144.0 LoopKernel::write_back
+k10_f64_sum 113.0 lane_get_length_typed
+k10_f64_sum 106.0 Vm::typed_array_geometry_read
 k10_f64_sum 102.0 trip_count
 k10_f64_sum 101.0 Fold::run
 k10_f64_sum 93.0 Vm::typed_array_span
@@ -306,7 +307,6 @@ k10_f64_sum 21.0 NativeView::kind
 k10_f64_sum 20.0 Heap::array_storage_span
 k10_f64_sum 20.0 LoopKernel::chunk_length
 k10_f64_sum 19.0 LoopKernel::stores_present
-k10_f64_sum 17.0 lane_get_length_typed
 k10_f64_sum 16.0 Vm::own_array_length_general
 k10_f64_sum 14.0 Recurrence::columns
 k10_f64_sum 14.0 floor
@@ -316,13 +316,12 @@ k10_f64_sum 6.0 lane_load_const
 k10_f64_sum 6.0 stride
 k10_f64_sum 3.0 Recurrence::side
 k10_f64_sum 2.0 charge_work
-k11_saxpy 2040.0 Vm::typed_array_geometry_read
+k11_saxpy 1887.0 lane_get_length_typed
 k11_saxpy 1260.0 lane_get_index_typed_kind<11>
 k11_saxpy 658.0 lane_operator_constant_left<10>
 k11_saxpy 588.0 lane_set_index_typed_kind<11>
 k11_saxpy 528.0 lane_operator_numbers<8>
 k11_saxpy 368.0 lane_inc_dec_jump<false, true>
-k11_saxpy 289.0 lane_get_length_typed
 k11_saxpy 205.0 lane_jump_binary_false_registers<false, 4>
 k11_saxpy 176.0 lane_move_pair<false, false>
 k11_saxpy 176.0 lane_require_object_coercible
@@ -330,11 +329,12 @@ k11_saxpy 51.0 geometry_slot
 k11_saxpy 25.0 lane_inc_dec_loop<false, 4, true>
 k11_saxpy 6.0 lane_load_const
 k12_copy 920.0 lane_loop_kernel
-k12_copy 240.0 Vm::typed_array_geometry_read
 k12_copy 186.0 Vm::typed_array_span
 k12_copy 176.0 LoopKernel::columns
 k12_copy 172.0 LoopKernel::chunk_length
 k12_copy 125.0 LoopKernel::write_back
+k12_copy 111.0 lane_get_length_typed
+k12_copy 109.0 Vm::typed_array_geometry_read
 k12_copy 102.0 trip_count
 k12_copy 96.0 LoopKernel::limit
 k12_copy 59.0 LoopKernel::finals
@@ -345,7 +345,6 @@ k12_copy 31.0 lane_get_index_typed_kind<6>
 k12_copy 29.0 Recurrence::run
 k12_copy 25.0 lane_inc_dec_loop<false, 4, true>
 k12_copy 24.0 lane_operator_integer_constant<19>
-k12_copy 17.0 lane_get_length_typed
 k12_copy 16.0 Vm::own_array_length_general
 k12_copy 15.0 lane_operator_int32<8, false>
 k12_copy 14.0 NativeView::kind
@@ -372,21 +371,20 @@ k13_matmul 23.0 lane_operator_double_constant<10>
 k13_matmul 0.8 lane_safepoint
 k14_bsearch 186.7 lane_get_index_typed_kind<6>
 k14_bsearch 160.6 lane_jump_binary_false_registers<false, 4>
-k14_bsearch 120.0 Vm::typed_array_geometry_read
 k14_bsearch 114.4 lane_operator<8>
+k14_bsearch 111.0 lane_get_length_typed
 k14_bsearch 96.4 lane_operator_integer_constant<16>
 k14_bsearch 47.5 lane_operator_integer_constant<8>
 k14_bsearch 39.7 lane_then_jump<false, true>
 k14_bsearch 26.7 lane_jump_always<true>
 k14_bsearch 25.0 lane_inc_dec_loop<false, 4, true>
 k14_bsearch 22.0 lane_operator_integer_constant<10>
-k14_bsearch 17.0 lane_get_length_typed
 k14_bsearch 15.0 lane_operator_int32<8, false>
 k14_bsearch 12.0 lane_operator_integer_constant<19>
 k14_bsearch 6.0 lane_load_const
 k14_bsearch 3.0 geometry_slot
 k15_isort 1309.8 lane_get_index_typed_kind<6>
-k15_isort 960.0 Vm::typed_array_geometry_read
+k15_isort 888.0 lane_get_length_typed
 k15_isort 787.5 lane_set_index_typed_kind<6>
 k15_isort 392.7 lane_inc_dec_small_loop<true, 7>
 k15_isort 352.0 lane_operator_integer_constant<10>
@@ -396,7 +394,6 @@ k15_isort 232.0 lane_operator_integer_constant<8>
 k15_isort 209.0 lane_inc_dec_small_loop<false, 4>
 k15_isort 161.0 lane_inc_dec_jump<false, true>
 k15_isort 152.0 lane_operator<8>
-k15_isort 136.0 lane_get_length_typed
 k15_isort 112.0 lane_operator_integer_constant<9>
 k15_isort 108.0 lane_operator_integer_constant<19>
 k15_isort 97.0 lane_jump_binary_false_registers<false, 4>
@@ -481,11 +478,10 @@ k19_gcd 15.0 lane_operator_int32<8, false>
 k19_gcd 12.0 lane_operator_integer_constant<19>
 k19_gcd 7.0 lane_move<0>
 k19_gcd 6.0 lane_load_const
-k20_switch 2040.0 Vm::typed_array_geometry_read
+k20_switch 1887.0 lane_get_length_typed
 k20_switch 496.0 lane_get_index_typed_kind<0>
 k20_switch 376.0 lane_jump_binary_false_small<false, 3, false>
 k20_switch 368.0 lane_inc_dec_jump<false, true>
-k20_switch 289.0 lane_get_length_typed
 k20_switch 205.0 lane_jump_binary_false_registers<false, 4>
 k20_switch 134.3 lane_operator_integer_constant_numbers<17>
 k20_switch 112.0 lane_move<0>
