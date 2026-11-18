@@ -229,6 +229,9 @@ pub(crate) trait Frame<S: Stage> {
     /// binding is not one only kept values answer.
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+    /// The element `index` (a word) of the arguments binding in local `slot`, where the frame holds
+    /// its kept values (a keeping activation's); `None` leaves it to the row's miss.
+    fn argument(&mut self, _stage: &mut S, _slot: u16, _index: S::Word) -> Option<(S::Word, Self::Fact)> { None }
 
     /// The function the running activation runs (its self binding's value), as a word and the fact
     /// the frame keeps of it; `None` where the frame does not hold it, leaving the read to the

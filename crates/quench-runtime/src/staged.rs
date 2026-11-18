@@ -143,6 +143,9 @@ pub(crate) enum Miss {
     /// An `arguments` count the frame does not hold: the binding's own count, read from the
     /// frame or window that holds it.
     ArgumentsBinding,
+    /// An `arguments` element the frame does not hold: the binding's element, read from the frame or
+    /// window that holds it (`lane_frame_arguments` with its element flag).
+    ArgumentsElement,
     /// An environment read the frame holds no storage for (an uncaptured or root frame, a
     /// mapped `arguments`, an environment window): the lane's local read (`load_local_miss`).
     EnvironmentLoad,
@@ -222,6 +225,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::LoadCapture => Miss::WalkScopes,
         Op::StoreCapture => Miss::StoreThroughScopes,
         Op::ArgumentsLength => Miss::ArgumentsBinding,
+        Op::ArgumentGet => Miss::ArgumentsElement,
         Op::LoadEnvLocal => Miss::EnvironmentLoad,
         Op::StoreEnvLocal => Miss::EnvironmentStore,
         Op::StoreName => Miss::StoreNameFirst,
@@ -445,6 +449,9 @@ pub(crate) const FUSED_TARGET: u8 = 4;
 /// The opcode whose row answers an arguments binding's count (`Miss::ArgumentsBinding`), which a
 /// tier names to give the row a fact it proved at view time.
 pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
+/// The opcode whose row answers an `arguments` element (`Frame::argument`), which the lane's record
+/// names its register base for (`LaneFrame::kept`).
+pub(crate) const ARGUMENT_GET_ROW: u16 = Op::ArgumentGet as u16;
 
 /// The opcode whose row answers a `Unary` record: `+x`, `-x`, `!x`, `~x` and the index form of
 /// `typeof` decode here; a `typeof` test of a name runs the general step.
@@ -837,6 +844,9 @@ pub(crate) enum Operation<W, P> {
     StoreEnvLocal { source: Register, slot: u16, result: Option<Register>, initialize: bool },
     /// Define `destination` with the length of the arguments binding in local `slot`.
     ArgumentsLength { destination: Register, slot: u16 },
+    /// Define `destination` with element `index` of the arguments binding in local `slot`: a keeping
+    /// activation's kept value, else the frame's or the VM's read (`CallOut::ArgumentGet`).
+    ArgumentGet { destination: Register, index: Register, slot: u16 },
     /// Clone the running activation's environment by environment clone plan `plan`: a frame's own
     /// environment, or an environment window's (`CallOut::CloneEnv`). Defines no register.
     CloneEnv { plan: u32 },

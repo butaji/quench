@@ -42,6 +42,7 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
             slot: slot()?, result: instruction.optional_register_b(),
             initialize: instruction.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false) },
         Op::ArgumentsLength => Operation::ArgumentsLength { destination: destination(), slot: slot()? },
+        Op::ArgumentGet => Operation::ArgumentGet { destination: destination(), index: instruction.register_b(), slot: slot()? },
         Op::LoadNameTypeof => Operation::GlobalTypeof { destination: destination(), atom: instruction.atom_index(), site: instruction.cache_site_index() },
         Op::StoreName => Operation::GlobalWrite { source: instruction.register_a(), atom: instruction.atom_index(),
             site: instruction.cache_site_index(),
@@ -93,6 +94,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::StoreEnvLocal { source, slot, result, initialize } =>
             store_environment(stage, frame, (source, slot, initialize), result),
         Operation::ArgumentsLength { destination, slot } => arguments_length(stage, frame, destination, slot),
+        Operation::ArgumentGet { destination, index, slot } => argument_get(stage, frame, destination, index, slot),
         Operation::GlobalTypeof { destination, atom, site } => global_typeof(stage, frame, destination, (atom, site)),
         Operation::GlobalWrite { source, atom, site, initialize } =>
             global_write(stage, frame, source, (atom, site, initialize)),
@@ -148,6 +150,17 @@ fn arguments_length<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
     match frame.arguments_length(stage, slot) {
         Some(length) => defined(stage, frame, destination, Some(length)),
         None => calling(stage, frame, CallOut::ArgumentsLength { slot }, Some(destination)),
+    }
+}
+
+/// `ArgumentGet`: the frame's own kept element at `index`, else the VM's read of the binding.
+#[inline(always)]
+fn argument_get<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    index: Register, slot: u16) -> Step<S::Word, F::Control> {
+    let word = frame.tagged(stage, index);
+    match frame.argument(stage, slot, word) {
+        Some(read) => defined(stage, frame, destination, Some(read)),
+        None => calling(stage, frame, CallOut::ArgumentGet { index, slot }, Some(destination)),
     }
 }
 

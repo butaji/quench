@@ -96,6 +96,12 @@ impl<H: Host> Vm<H> {
                 let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
                 self.read_arguments_binding(p, frame, binding, None).map(Some)
             }
+            // The element at `value` (the index operand), as `Op::ArgumentGet` reads it.
+            CallOut::ArgumentGet { slot, .. } => {
+                let frame = self.own_frame();
+                let binding = self.load_local_binding(p, VarOwner::Frame(frame), usize::from(slot), None)?;
+                self.read_arguments_binding(p, frame, binding, Some(value)).map(Some)
+            }
             CallOut::GlobalWrite { atom, site, initialize, .. } => {
                 self.at_binding_site(owner, resume, |vm| vm.store_name(p, owner, atom, value, site, initialize))?;
                 Ok(None)

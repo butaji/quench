@@ -25,6 +25,7 @@ pub(crate) const TAG_SUPER_CALL: u8 = 13;
 pub(crate) const TAG_DECIDE: u8 = 14;
 pub(crate) const TAG_ENUMERATED_GET: u8 = 15;
 pub(crate) const TAG_CLONE_ENV: u8 = 16;
+pub(crate) const TAG_ARGUMENT_GET: u8 = 17;
 
 /// A VM operation and the registers and immediates it reads: plain data, whose tag byte
 /// (`repr(u8)`) and fields a helper-call row passes as immediates.
@@ -52,6 +53,8 @@ pub(crate) enum CallOut {
     StoreEnvLocal { source: Register, slot: u16, initialize: bool } = TAG_STORE_ENV_LOCAL,
     /// The length of the arguments binding in local `slot`.
     ArgumentsLength { slot: u16 } = TAG_ARGUMENTS_LENGTH,
+    /// The element `index` of the arguments binding in local `slot` (the VM's read, by the binding rules).
+    ArgumentGet { index: Register, slot: u16 } = TAG_ARGUMENT_GET,
     /// `source` to the global name `atom` through cache `site`, `initialize` for a declaration.
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool } = TAG_GLOBAL_WRITE,
     /// The `typeof` name of the global `atom` through cache `site`.
@@ -140,6 +143,7 @@ impl CallOut {
             Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
+            Self::ArgumentGet { index, .. } => [Some(index), None],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
             Self::LoadEnvLocal { .. } | Self::ArgumentsLength { .. } | Self::GlobalTypeof { .. } | Self::LoadName { .. }
                 | Self::CloneEnv { .. } => [None, None],
@@ -177,6 +181,7 @@ impl<W, P> Operation<W, P> {
             Self::StoreEnvLocal { source, slot, result, initialize } =>
                 (CallOut::StoreEnvLocal { source, slot, initialize }, result),
             Self::ArgumentsLength { destination, slot } => (CallOut::ArgumentsLength { slot }, Some(destination)),
+            Self::ArgumentGet { destination, index, slot } => (CallOut::ArgumentGet { index, slot }, Some(destination)),
             Self::CloneEnv { plan } => (CallOut::CloneEnv { plan }, None),
             Self::GlobalWrite { source, atom, site, initialize } =>
                 (CallOut::GlobalWrite { source, atom, site, initialize }, None),

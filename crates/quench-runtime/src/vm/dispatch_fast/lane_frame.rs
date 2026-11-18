@@ -173,6 +173,9 @@ struct YieldSuspension {
     /// The running function's `arguments` count in a local slot (`arguments_count`), read only
     /// by the row that asks for it.
     arguments: Option<(*mut (), unsafe fn(*mut (), u16) -> Option<Value>)>,
+    /// The register a keeping activation's kept values follow its registers from (`ArgumentGet`'s
+    /// record `c`, the running function's register count), read by `Frame::argument`.
+    kept: u16,
     /// The running frame's captured environment, for a staged environment row (`Decoder::Names`).
     environment: Option<EnvironmentReads>,
     /// The global object's own data field a global-name store writes through the record's hint,
@@ -312,7 +315,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -336,7 +339,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
     }
 }
 
@@ -584,6 +587,20 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let (context, count) = self.arguments?;
         // SAFETY: the running lane's context, live for the row's step.
         Some((unsafe { count(context, slot) }?.to_bits(), Boxing::Value))
+    }
+
+    /// The kept value at `index` of a keeping activation's `arguments` binding in local `slot`: the
+    /// value after the running function's registers (`kept`), in range of the activation's count.
+    #[inline(always)]
+    fn argument(&mut self, _stage: &mut Concrete, slot: u16, index: u64) -> Option<(u64, Boxing)> {
+        let (context, count) = self.arguments?;
+        // SAFETY: the running lane's context, live for the row's step.
+        let count = unsafe { count(context, slot) }?.as_int()?;
+        let index = Value::from_bits(index).as_int().and_then(|index| u16::try_from(index).ok())?;
+        if i32::from(index) >= count {
+            return None;
+        }
+        Some((self.registers.get(self.kept + index).to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -1113,7 +1130,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         };
         // The iterator cleanup stack of the running lane (`iterator_push_in_lane`, `iterator_pop_in_lane`).
         let cleanups = IteratorCleanups { context: cx.cast(), push: iterator_push_in_lane::<H>, pop: iterator_pop_in_lane::<H> };
-        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store, names: Some((cx.cast(), names)),
+        // An element read names the running function's register count, which its kept values follow.
+        let kept = if const { OP == crate::staged::ARGUMENT_GET_ROW } { i.c } else { 0 };
+        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), global_store, names: Some((cx.cast(), names)),
             clones, cleanups: Some(cleanups), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
@@ -1255,6 +1274,8 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::store_outer_capture_miss::<H>,
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
+        crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
+        crate::staged::Miss::ArgumentsElement => super::lane_frame_arguments::<H, true>,
         crate::staged::Miss::EnvironmentLoad => super::load_local_miss::<H>,
         crate::staged::Miss::EnvironmentStore => super::store_local_miss::<H>,
         crate::staged::Miss::StoreNameFirst => super::store_name_first_miss::<H>,

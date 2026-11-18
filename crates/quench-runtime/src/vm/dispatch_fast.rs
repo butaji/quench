@@ -12566,56 +12566,6 @@ unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<Activa
     Some(ActivationArguments::Kept(values, usize::from(script.argc)))
 }
 
-script_handler! {
-    /// `LoadLocal` of a forwarded `arguments` binding (`CallPlan::forwards_arguments`): a
-    /// frameless activation's is unmaterialized, as a frame's starts; a frame's binding is
-    /// read as the general path reads it.
-    fn lane_load_forwarded_arguments<>(cx, r, ip, i, view) {
-        let value = if unsafe { (*cx).registers }.env().is_deleted() {
-            // SAFETY: validated bytecode bounds the slot by Function.locals.
-            unsafe { vm(cx).read_validated_local((*cx).frame(), i.imm() as usize) }
-        } else {
-            Value::UNMATERIALIZED_ARGUMENTS
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `LoadLocal` of an `arguments` binding a keeping activation makes at its last read
-    /// (`KeptArguments::Passes`): the object made from the values it kept, as its frame
-    /// makes one on entry, whose binding a frame's run reads.
-    #[inline(never)]
-    fn lane_load_kept_arguments_object<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let value = if unsafe { (*cx).registers }.env().is_deleted() {
-            // SAFETY: validated bytecode bounds the slot by Function.locals.
-            unsafe { vm.read_validated_local((*cx).frame(), i.imm() as usize) }
-        } else {
-            let Some((function, Some(script))) =
-                vm.lane_stack.activations.last().map(|activation| (activation.function, activation.script()))
-            else {
-                return exit(ip);
-            };
-            // SAFETY: the context's program outlives the lane run.
-            let body = unsafe { &*(*cx).code }.function(function as usize);
-            // A keeping activation's values follow its registers (`lane_activate_keeping`).
-            let kept = (0..script.argc)
-                .map(|index| r.get(body.registers + index))
-                .collect::<smallvec::SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
-            let context = CallContext::user_function(function, script.callee);
-            let Ok(arguments) = vm.activation_arguments_object(body, context, &kept) else {
-                return exit(ip);
-            };
-            note_allocation(vm);
-            arguments
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// The values the running function kept for its unmaterialized `arguments` binding, in the
 /// local slot `slot` (`lane_kept_arguments`): `None` where a frame's binding was
 /// materialized, which the general path then reads.
@@ -12653,43 +12603,6 @@ unsafe fn lane_keeping_activation<H: Host>(cx: *mut LaneContext<H>) -> Option<(u
     let activation = unsafe { vm(cx) }.lane_stack.activations.last()?;
     let script = activation.script().filter(|script| script.forwards)?;
     Some((script.argc, activation.function))
-}
-
-script_handler! {
-    /// `lane_argument_get_general` in a keeping activation at an integer index it kept: the
-    /// value after its registers, saving no registers.
-    fn lane_argument_get<>(cx, r, ip, i, view) {
-        if let Some((argc, function)) = unsafe { lane_keeping_activation(cx) }
-            && let Some(index) = r.get(i.b).as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)
-        {
-            // The record carries the running function's register count (`derive_lane_view`).
-            let _ = function;
-            r.set(i.a, r.get(i.c + index));
-            next!(cx, r, following(ip), view)
-        }
-        sibling!(lane_argument_get_general::<H>, r, ip, view)
-    }
-}
-
-script_handler! {
-    /// `ArgumentGet` of such a binding at an integer index it holds: the kept value, as the
-    /// object made on entry holds it. Any other key takes the general path, which
-    /// materializes the object (`Vm::read_arguments_binding`). `lane_argument_get` answers a
-    /// keeping activation first.
-    #[inline(never)]
-    fn lane_argument_get_general<>(cx, r, ip, i, view) {
-        let Some((values, count)) = (unsafe { lane_unmaterialized_arguments(cx, i.imm() as usize) })
-        else {
-            return exit(ip);
-        };
-        let Some(index) = r.get(i.b).as_int().and_then(|index| usize::try_from(index).ok()).filter(|index| *index < count)
-        else {
-            return exit(ip);
-        };
-        // SAFETY: `values` holds `count` kept values, and the index is below it.
-        r.set(i.a, unsafe { *values.add(index) });
-        next!(cx, r, following(ip), view)
-    }
 }
 
 script_handler! {
@@ -13494,7 +13407,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_arguments_length<H: Host>(_vm: 
 }
 
 /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
-/// unmaterialized binding holds (`lane_argument_get`); any other key leaves at the record.
+/// unmaterialized binding holds (`Miss::ArgumentsElement`); any other key leaves at the record.
 pub(in crate::vm) unsafe extern "C" fn lane_body_argument_get<H: Host>(_vm: u64, _residual: u64, context: u64, slot: u64, index: u64) -> u64 {
     if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext<H>;
@@ -17325,27 +17238,13 @@ fn derive_lane_view<'live, H: Host>(
                 // The count of the function's kept arguments: its row with that fact (`row_near`).
                 let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
                 row.map(|row| LaneHandler { handler: row_near::<H, ARGUMENTS_COUNT>(row.handler as *const ()).unwrap_or(row.handler), ..row })
-            } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain | Class::ArgumentGet)
+            } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
-                && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
+                && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
             {
-                let forwards = decoded.get(pc + 1).is_some_and(|next| {
-                    next.op().is_call_forwarding_arguments()
-                        && next.call_window().last() == Some(instruction.result_register())
-                });
-                Some(LaneHandler {
-                    handler: match op.class() {
-                        Class::ArgumentGet => lane_argument_get::<H> as Handler,
-                        _ if kept == crate::bytecode::KeptArguments::Passes && !forwards => {
-                            lane_load_kept_arguments_object::<H> as Handler
-                        }
-                        _ => lane_load_forwarded_arguments::<H> as Handler,
-                    },
-                    produces: false,
-                })
-            } else if op.reads_arguments() && !lane_runs_row(op) {
-                // `ArgumentGet`; the count runs its row (`arguments_count`).
-                Some(LaneHandler { handler: lane_frame_arguments::<H, true> as Handler, produces: false })
+                // The binding a keeping activation may leave unmaterialized is read by the local read's
+                // binding rules (`Miss::LocalLoad`), which materialize it or forward its marker.
+                Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
             } else if op.is_call() && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {
@@ -17409,8 +17308,8 @@ fn derive_lane_view<'live, H: Host>(
                 a: instruction.a(),
                 b: instruction.b(),
                 // A kept argument read finds the values after the function's registers, whose
-                // count its unused field carries (`lane_argument_get`).
-                c: if handler == lane_argument_get::<H> as Handler as *const () {
+                // count its unused field carries (`ARGUMENT_GET_ROW`).
+                c: if op as u16 == crate::staged::ARGUMENT_GET_ROW {
                     function.registers as u16
                 } else {
                     instruction.c()
