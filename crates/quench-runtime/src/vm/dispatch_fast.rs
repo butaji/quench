@@ -5206,13 +5206,26 @@ script_handler! {
         if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION)
             && let Some((left, left_int)) = r.number_kind(i.b)
             && let Some((right, right_int)) = r.number_kind(i.c)
-            && let Some(number) = super::operations::number_operator::<OP>(left, right)
         {
-            let value = Value::number(number);
-            // SAFETY: an arithmetic record of the running view; only two int32 can widen.
-            if left_int && right_int { unsafe { note_widened(cx, ip, value) } }
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
+            // Two int32 again, as a site that met a double once mostly sees afterwards
+            // (`-a + i` after its one `-0`): the checked int32 step, which widens itself,
+            // in place of the round trip through doubles. Only two int32 can widen.
+            if left_int && right_int {
+                let value = if OP == DIVISION {
+                    super::operations::number_operator::<OP>(left, right).map(Value::number)
+                } else {
+                    super::operations::integer_pair_operator::<OP>(r.i32(i.b), r.i32(i.c))
+                };
+                if let Some(value) = value {
+                    // SAFETY: an arithmetic record of the running view.
+                    unsafe { note_widened(cx, ip, value) };
+                    r.set(i.a, value);
+                    next!(cx, r, following(ip), Carried::script_in(cx, view))
+                }
+            } else if let Some(number) = super::operations::number_operator::<OP>(left, right) {
+                r.set(i.a, Value::number(number));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
         }
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
         else {

@@ -370,12 +370,13 @@ pub fn run(config: &Config) -> Verdict {
         return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{report}", measured.len()));
     }
     let grown = ratchet(config, &measured, &mut rows, &recorded, ops.is_empty());
+    // A failing run records nothing: a ceiling it lowered would hide the trade it made.
+    if !grown.is_empty() {
+        return Err(format!("{}\n\n{report}", grown.join("\n")));
+    }
     let after = render(&header(&before), &rows);
     if after != before {
         fs::write(&path, &after).map_err(|error| format!("{}: {error}", path.display()))?;
-    }
-    if !grown.is_empty() {
-        return Err(format!("{}\n\n{report}", grown.join("\n")));
     }
     if !ops.is_empty() {
         return Ok(format!("{} ops within their Ir ceilings; {over} over budget (a subset: ceilings and the split are recorded by a run of every op)\n{report}", measured.len()));

@@ -3,7 +3,7 @@
 arr_length 32.0 lane_get_length
 arr_length 25.0 lane_inc_dec_loop<false, 4, true>
 arr_length 19.0 lane_operator<8>
-arr_load_dbl 34.5 lane_operator_numbers<8>
+arr_load_dbl 29.0 lane_operator_numbers<8>
 arr_load_dbl 25.0 lane_inc_dec_loop<false, 4, true>
 arr_load_dbl 21.0 lane_get_index_proved
 arr_load_dbl 12.0 lane_operator_integer_constant<19>
@@ -73,8 +73,8 @@ cmp_int 7.5 lane_inc_dec<false>
 dbl_add 25.0 lane_inc_dec_loop<false, 4, true>
 dbl_add 21.2 lane_operator_double_constant<8>
 dbl_div 44.0 lane_operator_constant_left<11>
-dbl_div 30.0 lane_operator_numbers<8>
 dbl_div 25.0 lane_inc_dec_loop<false, 4, true>
+dbl_div 24.0 lane_operator_numbers<8>
 dbl_mul 25.0 lane_inc_dec_loop<false, 4, true>
 dbl_mul 19.0 lane_operator_double_constant<10>
 empty 25.0 lane_inc_dec_loop<false, 4, true>
@@ -115,8 +115,8 @@ int_mod 15.0 lane_operator_int32<8, false>
 int_mod_var 28.0 lane_operator<12>
 int_mod_var 25.0 lane_inc_dec_loop<false, 4, true>
 int_mod_var 15.0 lane_operator_int32<8, false>
-int_mul 36.6 lane_operator_numbers<8>
 int_mul 33.0 lane_operator_integer_constant_numbers<17>
+int_mul 32.3 lane_operator_numbers<8>
 int_mul 25.0 lane_inc_dec_loop<false, 4, true>
 int_mul 18.7 lane_operator_integer_constant<10>
 int_mul_ovf 89.4 lane_operator_integer_constant_numbers<12>
@@ -240,9 +240,9 @@ k_nbody_pair 448.0 lane_get_field_own_bound<false, 0>
 k_nbody_pair 258.0 lane_set_object_field_own<false>
 k_nbody_pair 192.0 lane_operator_pair<10, 8, true, false>
 k_nbody_pair 144.0 lane_operator_pair<10, 9, true, false>
-k_nbody_pair 99.0 lane_operator_numbers<9>
+k_nbody_pair 84.0 lane_operator_numbers<9>
 k_nbody_pair 73.0 lane_get_field_math_call<0>
-k_nbody_pair 60.0 lane_operator_numbers<10>
+k_nbody_pair 48.0 lane_operator_numbers<10>
 k_nbody_pair 42.0 lane_move<0>
 k_nbody_pair 42.0 lane_operator_pair<10, 8, true, true>
 k_nbody_pair 36.0 lane_operator_numbers_raw<10>
@@ -367,12 +367,12 @@ math_round 25.0 lane_inc_dec_loop<false, 4, true>
 math_round 22.1 lane_operator_double_constant<10>
 math_round 19.0 lane_operator<8>
 math_sqrt 77.0 lane_get_field_math_call<0>
-math_sqrt 30.0 lane_operator_numbers<8>
 math_sqrt 28.0 lane_load_name_bound<0, 2>
 math_sqrt 25.0 lane_inc_dec_loop<false, 4, true>
+math_sqrt 24.0 lane_operator_numbers<8>
 mixed_int_dbl 47.0 lane_operator_constant_pair<10, 8, true>
 mixed_int_dbl 25.0 lane_inc_dec_loop<false, 4, true>
-neg_op 46.0 lane_operator_numbers<8>
+neg_op 37.0 lane_operator_numbers<8>
 neg_op 25.0 lane_inc_dec_loop<false, 4, true>
 neg_op 14.0 lane_unary_number<1>
 neg_op 12.0 lane_operator_integer_constant<17>
@@ -515,7 +515,7 @@ str_concat_acc 1.7 Vm::collect_inner
 str_concat_acc 1.0 RecordSpace::load_free_word
 str_concat_acc 0.9 RecordSpace::claim_slow
 str_concat_acc 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>
-str_concat_acc 0.5 Vec::spec_extend
+str_concat_acc 0.6 Vec::spec_extend
 str_concat_acc 0.5 RecordSpace::prepare_minor
 str_index 81.5 lane_jump_strict_constant_contents<false>
 str_index 81.0 Vm::string_element
@@ -545,7 +545,7 @@ str_to_num 15.0 lane_operator_int32<8, false>
 str_to_num 14.0 lane_unary_number<0>
 to_uint32 91.7 lane_operator_constant_numbers<12>
 to_uint32 41.0 lane_operator_integer_constant_numbers<16>
-to_uint32 35.3 lane_operator_numbers<8>
+to_uint32 30.9 lane_operator_numbers<8>
 to_uint32 25.0 lane_inc_dec_loop<false, 4, true>
 to_uint32 22.0 lane_operator_double_constant<10>
 to_uint32 9.0 NumberBitwise::from_operator
