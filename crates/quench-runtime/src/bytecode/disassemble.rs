@@ -460,3 +460,12 @@ impl fmt::Display for DisplayOperand {
         }
     }
 }
+
+impl WideInstruction {
+    /// The instruction as `QUENCH_TRACE=bytecode` prints it (the lane plan's column).
+    pub(crate) fn text(self) -> String {
+        let mut output = String::new();
+        let _ = write_instruction(&mut output, self);
+        output
+    }
+}

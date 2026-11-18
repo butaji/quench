@@ -185,13 +185,13 @@ pub fn lower(listing: &str, current: &Measures) -> (String, Vec<String>) {
 
 /// The rule a measure is born with: `--update` records the first baseline of such a measure that
 /// the list has never held, where any other new measure fails until it is fixed.
-const BORN_WITH_RULE: &str = "native_";
+const BORN_WITH_RULE: &[&str] = &["native_", "concept_"];
 
 /// Adds the measures of a newly born rule that the baseline has never recorded to `baseline`.
 pub fn first_baseline(found: &Measures, recorded: &Measures, baseline: &mut Measures) {
     found
         .iter()
-        .filter(|(subject, _)| subject.starts_with(BORN_WITH_RULE) && !recorded.contains_key(*subject))
+        .filter(|(subject, _)| BORN_WITH_RULE.iter().any(|rule| subject.starts_with(rule)) && !recorded.contains_key(*subject))
         .for_each(|(subject, count)| {
             baseline.insert(subject.clone(), *count);
         });
@@ -215,6 +215,8 @@ fn remedy(subject: &str) -> &'static str {
         "a dense id indexes a flat array; pack frequent flags into the index's high bits"
     } else if subject.starts_with("dod-cache ") {
         "a cache hides a slow core path: make the core path cheap and delete the cache"
+    } else if subject.starts_with("concept_") {
+        "one concept, one definition: call the concept's home (`quench-lint/src/concepts.rs`) or read the fact computed once"
     } else if subject.starts_with("hot-") {
         "hot paths do O(1) work and allocate nothing: decide earlier, index a flat array, reuse a buffer"
     } else {

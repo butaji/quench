@@ -106,6 +106,7 @@ impl Heap {
         read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
         read_records(reader, &mut heap.small_strings, |reader| Ok(small_strings::SmallParts::written(JsString::read_snapshot(reader)?)))?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
+        heap.refresh_store_watch();
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
             let array = reader.value()?;

@@ -147,10 +147,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let active_handles =
         context.host_function(crate::host::shared_vm::operation!("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
-    let hrtime = context.host_function_named(crate::host::shared_vm::operation!("processHrtime"), "hrtime")?;
-    let bigint = context.host_function_named(crate::host::shared_vm::operation!("processHrtimeBigint"), "bigint")?;
-    install(context, hrtime, "bigint", bigint)?;
-    install(context, process, "hrtime", hrtime)?;
+    install_clocks(context, process)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
     // The active domain (`node:domain`), none until one is entered.
@@ -310,6 +307,19 @@ pub(crate) fn refresh_identity(context: &mut NativeContext<'_, NodeHost>) -> Res
         let key = context.string_rooted(name);
         let stream = context.get_property_rooted(process, key)?;
         install_terminal(context, stream, fd)?;
+    }
+    Ok(())
+}
+
+/// `process.hrtime` with its `bigint`, and `process.__irMark` under `QUENCH_DEV=ir-mark`.
+fn install_clocks(context: &mut NativeContext<'_, NodeHost>, process: RootId) -> Result<(), RootedError> {
+    let hrtime = context.host_function_named(crate::host::shared_vm::operation!("processHrtime"), "hrtime")?;
+    let bigint = context.host_function_named(crate::host::shared_vm::operation!("processHrtimeBigint"), "bigint")?;
+    install(context, hrtime, "bigint", bigint)?;
+    install(context, process, "hrtime", hrtime)?;
+    if quench_runtime::trace::Dev::IrMark.on() {
+        let mark = context.host_function(crate::host::shared_vm::operation!("processIrMark"))?;
+        install(context, process, "__irMark", mark)?;
     }
     Ok(())
 }
@@ -627,6 +637,24 @@ fn install(
             "cannot install process binding {name}"
         )))
     }
+}
+
+/// Profiling boundary for the per-primitive instruction budget: it does nothing, and callgrind
+/// started with `--dump-before=quench_ir_mark` writes the counts since the previous mark.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn quench_ir_mark() {
+    std::hint::black_box(());
+}
+
+/// `process.__irMark()` (`QUENCH_DEV=ir-mark`): one profiling boundary, `quench_ir_mark`.
+pub(crate) fn ir_mark(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    quench_ir_mark();
+    Ok(context.undefined())
 }
 
 pub(crate) fn uptime(

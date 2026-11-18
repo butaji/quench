@@ -1210,33 +1210,25 @@ impl<H: Host> Vm<H> {
             }
         }
         let object = self.json_object();
-        let object_root = self.heap.root(object);
-        if let Some(data) = self.object_data_mut(object) {
-            data.set_proto(Value::NULL);
-            data.set_raw_json();
-        }
-        let raw_atom = self.intern_atom("rawJSON");
-        let raw_text_value = self.heap.alloc_string(text);
-        let raw_text_root = self.heap.root(raw_text_value);
-        let result = (|| {
-            let key = self
-                .heap
-                .alloc_string(self.atom_name(raw_atom).into());
-            let raw_text = self.heap.root_value(raw_text_root).unwrap();
-            let descriptor = PropertyDescriptorRecord {
-                writable: Some(false),
-                configurable: Some(false),
-                ..PropertyDescriptorRecord::data(raw_text)
-            };
-            let object = self.heap.root_value(object_root).unwrap();
-            self.define_own_property_record(p, object, key, descriptor)?;
-            let object = self.heap.root_value(object_root).unwrap();
-            self.object_prevent_extensions(p, &[object])
-        })();
-        let object = self.heap.root_value(object_root).unwrap();
-        self.heap.release_root(raw_text_root);
-        self.heap.release_root(object_root);
-        result.map(|_| object)
+        self.with_call_roots([object], |vm| {
+            if let Some(data) = vm.object_data_mut(object) {
+                data.set_proto(Value::NULL);
+                data.set_raw_json();
+            }
+            let raw_atom = vm.intern_atom("rawJSON");
+            let raw_text_value = vm.heap.alloc_string(text);
+            vm.with_call_roots([raw_text_value], |vm| {
+                let key = vm.heap.alloc_string(vm.atom_name(raw_atom).into());
+                let descriptor = PropertyDescriptorRecord {
+                    writable: Some(false),
+                    configurable: Some(false),
+                    ..PropertyDescriptorRecord::data(raw_text_value)
+                };
+                vm.define_own_property_record(p, object, key, descriptor)?;
+                vm.object_prevent_extensions(p, &[object])
+            })
+            .map(|_| object)
+        })
     }
 
     pub(super) fn json_is_raw_json(&self, args: &[Value]) -> Result<Value, JsError> {
@@ -1270,15 +1262,12 @@ impl<H: Host> Vm<H> {
         let value = self.parse_json_value(&parsed)?;
         let reviver_root = self.heap.root(reviver);
         let holder = self.json_object();
-        let holder_root = self.heap.root(holder);
         let empty = self.intern_atom("");
-        let result = (|| {
-            self.set_property(holder, empty, value)?;
-            let holder = self.heap.root_value(holder_root).unwrap();
+        let result = self.with_call_roots([holder], |vm| {
+            vm.set_property(holder, empty, value)?;
             let key = JsString::from_str("");
-            self.json_internalize(p, holder, &key, Some(&parsed), reviver_root)
-        })();
-        self.heap.release_root(holder_root);
+            vm.json_internalize(p, holder, &key, Some(&parsed), reviver_root)
+        });
         self.heap.release_root(reviver_root);
         result
     }
@@ -1430,21 +1419,18 @@ impl<H: Host> Vm<H> {
         key: &JsString,
         value: Value,
     ) -> Result<(), JsError> {
-        let value_root = self.heap.root(value);
-        let key = self.heap.alloc_string(key.clone());
-        let key_root = self.heap.root(key);
-        let holder = self.heap.root_value(holder).unwrap();
-        let key = self.heap.root_value(key_root).unwrap();
-        let value = self.heap.root_value(value_root).unwrap();
-        let result = if value.is_undefined() {
-            self.object_delete_property(p, &[holder, key]).map(|_| ())
-        } else {
-            self.define_own_property_record(p, holder, key, PropertyDescriptorRecord::data(value))
-                .map(|_| ())
-        };
-        self.heap.release_root(key_root);
-        self.heap.release_root(value_root);
-        result
+        self.with_call_roots([value], |vm| {
+            let key = vm.heap.alloc_string(key.clone());
+            vm.with_call_roots([key], |vm| {
+                let holder = vm.heap.root_value(holder).unwrap();
+                if value.is_undefined() {
+                    vm.object_delete_property(p, &[holder, key]).map(|_| ())
+                } else {
+                    vm.define_own_property_record(p, holder, key, PropertyDescriptorRecord::data(value))
+                        .map(|_| ())
+                }
+            })
+        })
     }
 
     pub(super) fn json_stringify(
@@ -1461,10 +1447,7 @@ impl<H: Host> Vm<H> {
             return Ok(result);
         }
         let (replacer, property_list) = self.json_replacer(p, replacer)?;
-        let space_root = self.heap.root(space);
-        let gap = self.json_gap(p, space);
-        self.heap.release_root(space_root);
-        let gap = gap?;
+        let gap = self.with_call_roots([space], |vm| vm.json_gap(p, space))?;
         let mut state = JsonSerialization {
             replacer,
             property_list,
@@ -1477,12 +1460,11 @@ impl<H: Host> Vm<H> {
             steps: 0,
         };
         let holder = self.json_object();
-        let holder_root = self.heap.root(holder);
         let empty = self.intern_atom("");
-        self.set_property(holder, empty, value)?;
-        let holder = self.heap.root_value(holder_root).unwrap_or(holder);
-        let serialized = self.json_serialize_property(p, holder, JsonKey::Name(empty), &mut state);
-        self.heap.release_root(holder_root);
+        let serialized = self.with_call_roots([holder], |vm| {
+            vm.set_property(holder, empty, value)?;
+            vm.json_serialize_property(p, holder, JsonKey::Name(empty), &mut state)
+        });
         if !serialized? {
             return Ok(Value::UNDEFINED);
         }
@@ -1501,38 +1483,29 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) || !self.is_array(p, value)? {
             return Ok((None, None));
         }
-        let array_root = self.heap.root(value);
-        let result = (|| {
-            let array = self.heap.root_value(array_root).unwrap_or(value);
-            let length = self.array_like_length(p, array)?;
+        self.with_call_roots([value], |vm| {
+            let length = vm.array_like_length(p, value)?;
             let mut names = Vec::new();
             for index in 0..length {
-                let array = self.heap.root_value(array_root).unwrap_or(value);
-                let item = self.get_index(p, array, Value::number(index as f64))?;
-                let item_root = self.heap.root(item);
-                let item = self.heap.root_value(item_root).unwrap_or(item);
-                let accepted = item.as_number().is_some()
-                    || self.heap.is_string(item)
-                    || self.json_boxed_string_or_number(item).is_some();
-                if accepted {
-                    let name = match self.coerce_js_string(p, item) {
-                        Ok(name) => name,
-                        Err(error) => {
-                            self.heap.release_root(item_root);
-                            return Err(error);
-                        }
-                    };
-                    let name = self.intern_js_atom(&name);
-                    if !names.contains(&name) {
-                        names.push(name);
+                let item = vm.get_index(p, value, Value::number(index as f64))?;
+                let name = vm.with_call_roots([item], |vm| -> Result<Option<Atom>, JsError> {
+                    let accepted = item.as_number().is_some()
+                        || vm.heap.is_string(item)
+                        || vm.json_boxed_string_or_number(item).is_some();
+                    if !accepted {
+                        return Ok(None);
                     }
+                    let name = vm.coerce_js_string(p, item)?;
+                    Ok(Some(vm.intern_js_atom(&name)))
+                })?;
+                if let Some(name) = name
+                    && !names.contains(&name)
+                {
+                    names.push(name);
                 }
-                self.heap.release_root(item_root);
             }
             Ok((None, Some(names)))
-        })();
-        self.heap.release_root(array_root);
-        result
+        })
     }
 
     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
@@ -1905,27 +1878,23 @@ impl<H: Host> Vm<H> {
         state: &mut JsonSerialization,
     ) -> Result<(), JsError> {
         self.json_push_ancestor(p, array, state)?;
-        let array_root = self.heap.root(array);
-        let result = (|| {
-            let array = self.heap.root_value(array_root).unwrap_or(array);
-            let length = self.array_like_length(p, array)?;
+        let result = self.with_call_roots([array], |vm| {
+            let length = vm.array_like_length(p, array)?;
             state.output.push(b'[');
             state.depth += 1;
             for index in 0..length {
-                let array = self.heap.root_value(array_root).unwrap_or(array);
                 state.begin_member(index);
-                let element = self
+                let element = vm
                     .present_dense_elements(array, index..index + 1)
                     .map(|element| element[0]);
-                if !self.json_member(p, array, JsonKey::Index(index), element, state)? {
+                if !vm.json_member(p, array, JsonKey::Index(index), element, state)? {
                     state.output.append_bytes(b"null");
                 }
             }
             state.depth -= 1;
             state.end_container(length, b']');
             Ok(())
-        })();
-        self.heap.release_root(array_root);
+        });
         state.ancestors.pop();
         result
     }
@@ -1937,11 +1906,9 @@ impl<H: Host> Vm<H> {
         state: &mut JsonSerialization,
     ) -> Result<(), JsError> {
         self.json_push_ancestor(p, object, state)?;
-        let object_root = self.heap.root(object);
-        let result = (|| {
-            let object = self.heap.root_value(object_root).unwrap_or(object);
+        let result = self.with_call_roots([object], |vm| {
             let plan = if state.property_list.is_none() && state.replacer.is_none() {
-                self.json_object_plan(object, state)
+                vm.json_object_plan(object, state)
             } else {
                 None
             };
@@ -1950,7 +1917,7 @@ impl<H: Host> Vm<H> {
                 Some(_) => super::object_keys::EnumerableKeys::new(),
                 None => match &state.property_list {
                     Some(property_list) => property_list.iter().copied().collect(),
-                    None => self.json_enumerable_keys(p, object)?,
+                    None => vm.json_enumerable_keys(p, object)?,
                 },
             };
             let count = plan.as_ref().map_or(keys.len(), |plan| plan.len());
@@ -1958,7 +1925,6 @@ impl<H: Host> Vm<H> {
             state.depth += 1;
             let mut written = 0;
             for index in 0..count {
-                let object = self.heap.root_value(object_root).unwrap_or(object);
                 // The member is written before its value is known; an omitted value
                 // takes it back.
                 let member = state.output.len();
@@ -1969,19 +1935,19 @@ impl<H: Host> Vm<H> {
                         plan[index].key
                     }
                     None => {
-                        self.write_json_key(keys[index], &mut state.output);
+                        vm.write_json_key(keys[index], &mut state.output);
                         keys[index]
                     }
                 };
                 state.output.append_bytes(if state.gap.is_empty() { b":" } else { b": " });
                 // A plan read for this object holds while no member took the property steps.
                 let planned = plan.as_ref().filter(|_| state.steps == planned_steps).and_then(|plan| {
-                    self.heap
+                    vm.heap
                         .ordinary_object(object)
-                        .and_then(|data| self.heap.property_get(data, plan[index].slot))
+                        .and_then(|data| vm.heap.property_get(data, plan[index].slot))
                 });
-                let value = planned.or_else(|| self.plain_named_get(object, key));
-                if self.json_member(p, object, JsonKey::Name(key), value, state)? {
+                let value = planned.or_else(|| vm.plain_named_get(object, key));
+                if vm.json_member(p, object, JsonKey::Name(key), value, state)? {
                     written += 1;
                 } else {
                     state.output.truncate(member);
@@ -1990,8 +1956,7 @@ impl<H: Host> Vm<H> {
             state.depth -= 1;
             state.end_container(written, b'}');
             Ok(())
-        })();
-        self.heap.release_root(object_root);
+        });
         state.ancestors.pop();
         result
     }
@@ -2027,52 +1992,38 @@ impl<H: Host> Vm<H> {
         if let Some(keys) = self.shape_enumerable_keys(object) {
             return Ok(keys);
         }
-        let object_root = self.heap.root(object);
-        let mut keys_root = None;
-        let result = (|| {
-            let object = self.heap.root_value(object_root).unwrap();
-            let keys = self.object_own_keys(p, object)?;
-            let keys_handle = self.heap.root(keys);
-            keys_root = Some(keys_handle);
-            let length = self
-                .heap
-                .array_elements(keys)
-                .map(|elements| elements.len())
-                .expect("OwnPropertyKeys projects an array");
-            let mut names = super::object_keys::EnumerableKeys::new();
-            for index in 0..length {
-                let keys = self.heap.root_value(keys_handle).unwrap();
-                let key = self
+        self.with_call_roots([object], |vm| {
+            let keys = vm.object_own_keys(p, object)?;
+            vm.with_call_roots([keys], |vm| {
+                let length = vm
                     .heap
                     .array_elements(keys)
-                    .map(|elements| elements.get(index).expect("rooted own-key projection"))
-                    .expect("rooted own-key projection");
-                if !self.heap.is_string(key) {
-                    continue;
-                }
-                let key_root = self.heap.root(key);
-                let current = (|| {
-                    let key = self.heap.root_value(key_root).unwrap();
-                    let object = self.heap.root_value(object_root).unwrap();
-                    let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-                    if self.descriptor_flag(descriptor, self.runtime_atoms.enumerable) {
-                        let key = self.heap.root_value(key_root).unwrap();
-                        if let Some(name) = self.heap.string(key).cloned() {
-                            names.push(self.intern_js_atom(&name));
-                        }
+                    .map(|elements| elements.len())
+                    .expect("OwnPropertyKeys projects an array");
+                let mut names = super::object_keys::EnumerableKeys::new();
+                for index in 0..length {
+                    let key = vm
+                        .heap
+                        .array_elements(keys)
+                        .map(|elements| elements.get(index).expect("rooted own-key projection"))
+                        .expect("rooted own-key projection");
+                    if !vm.heap.is_string(key) {
+                        continue;
                     }
-                    Ok(())
-                })();
-                self.heap.release_root(key_root);
-                current?;
-            }
-            Ok(names)
-        })();
-        self.heap.release_root(object_root);
-        if let Some(root) = keys_root {
-            self.heap.release_root(root);
-        }
-        result
+                    let current = vm.with_call_roots([key], |vm| -> Result<(), JsError> {
+                        let descriptor = vm.object_get_own_property_descriptor(p, &[object, key])?;
+                        if vm.descriptor_flag(descriptor, vm.runtime_atoms.enumerable)
+                            && let Some(name) = vm.heap.string(key).cloned()
+                        {
+                            names.push(vm.intern_js_atom(&name));
+                        }
+                        Ok(())
+                    });
+                    current?;
+                }
+                Ok(names)
+            })
+        })
     }
 }
 

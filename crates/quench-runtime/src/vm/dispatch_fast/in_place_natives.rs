@@ -67,7 +67,7 @@ const fn in_place_families(native: Native) -> u16 {
     // `Vm::steady_native_value`.
     if matches!(native, Native::ArrayPush | Native::ArrayPop | Native::StringCharCodeAt | Native::StringCharAt
         | Native::MapGet | Native::MapHas | Native::SetHas | Native::WeakMapGet | Native::WeakMapHas | Native::WeakSetHas
-        | Native::MapSet | Native::ArrayIsArray | Native::JsonStringify)
+        | Native::MapSet | Native::ArrayIsArray | Native::JsonStringify | Native::DateNow)
     {
         families |= STEADY;
     }

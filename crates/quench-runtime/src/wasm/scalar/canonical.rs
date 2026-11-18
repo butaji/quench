@@ -37,15 +37,43 @@ enum Canonical {
 }
 
 impl Canonical {
-    /// Whether the type a new entry would hold is this one.
+    /// Whether the type a new entry would hold is this one. An embedder's signature is the
+    /// final function type alone in its group with no supertype (`WasmTypes::implicit_function`),
+    /// so it and such a declaration are one type.
     fn is(&self, declaration: Option<(&WasmTypes, u32)>, shape: &WasmSignature) -> bool {
         match (self, declaration) {
             (Self::Declared(types, index), Some((other, other_index))) => {
                 types.equivalent(*index as usize, other, other_index as usize)
             }
             (Self::Embedded(signature), None) => signature == shape,
-            _ => false,
+            (Self::Declared(types, index), None) => types.matches_implicit_function(*index as usize, shape),
+            (Self::Embedded(signature), Some((other, other_index))) => {
+                other.matches_implicit_function(other_index as usize, signature)
+            }
         }
+    }
+}
+
+/// The bucket of a type: the fingerprint of its declaration (`WasmTypes::fingerprint`), or, for
+/// an embedder's signature and the declarations that are one with it, the hash of its value
+/// types, so the two meet in one bucket.
+fn bucket_key(declaration: Option<(&WasmTypes, u32)>, shape: &WasmSignature) -> (bool, u64) {
+    use std::hash::{Hash, Hasher};
+    let implicit = |params: &mut dyn Iterator<Item = wasmparser::ValType>, results: &mut dyn Iterator<Item = wasmparser::ValType>| {
+        let mut hasher = rustc_hash::FxHasher::default();
+        params.collect::<Vec<_>>().hash(&mut hasher);
+        results.collect::<Vec<_>>().hash(&mut hasher);
+        (true, hasher.finish())
+    };
+    match declaration {
+        Some((types, index)) => match types.implicit_function(index as usize) {
+            Some((params, results)) => implicit(&mut params.iter().copied(), &mut results.iter().copied()),
+            None => (false, types.fingerprint(index as usize).unwrap_or(0)),
+        },
+        None => implicit(
+            &mut shape.params.iter().map(|ty| ty.value_type()),
+            &mut shape.results.iter().map(|ty| ty.value_type()),
+        ),
     }
 }
 
@@ -54,7 +82,7 @@ impl Canonical {
 #[derive(Default)]
 struct CanonicalSignatures {
     types: Vec<Canonical>,
-    by_fingerprint: FxHashMap<Option<u64>, Vec<u32>>,
+    by_fingerprint: FxHashMap<(bool, u64), Vec<u32>>,
 }
 
 impl CanonicalSignatures {
@@ -63,7 +91,7 @@ impl CanonicalSignatures {
         declaration: Option<(&WasmTypes, u32)>,
         shape: &WasmSignature,
     ) -> Option<CanonicalSignature> {
-        let key = declaration.and_then(|(types, index)| types.fingerprint(index as usize));
+        let key = bucket_key(declaration, shape);
         let bucket = self.by_fingerprint.entry(key).or_default();
         let same = bucket
             .iter()
@@ -148,12 +176,15 @@ mod tests {
     }
 
     #[test]
-    fn an_implicit_type_is_not_its_declared_namesake_but_each_accepts_the_other() {
+    fn an_implicit_type_is_its_declared_namesake() {
+        // An embedder's signature is the final function type alone in its group: one type, so
+        // one id, which native code compares as one word (TOD-1790 follow-up: the eight
+        // compiled indirect-call tests fell back to the VM on the two ids).
         let (types, declaration) = declared(&[ValType::I32], &[ValType::I32]);
         let from_module = pool(&types, declaration);
         let implicit = embedded(&[WasmType::I32], &[WasmType::I32]);
         let from_embedder = pool(&WasmTypes::default(), implicit);
-        assert_ne!(
+        assert_eq!(
             from_module.defined_canonical(0),
             from_embedder.defined_canonical(0)
         );

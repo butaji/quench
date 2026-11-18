@@ -97,11 +97,14 @@ mod tests {
             (heap.alloc_string(JsString::from_str("")), 0),
             (heap.alloc_string(JsString::from_str("hello")), 5),
             (heap.alloc_string(JsString::from_str(&long)), long.len()),
-            (heap.alloc_string(JsString::from_units(&[0x61, 0x20ac])), 2),
         ];
         for (value, units) in forms {
-            assert_eq!(length(&heap, value), Some(Value::length(units)));
+            assert_eq!(length(&heap, value), Some(Value::length(units)), "the length of a {units}-unit string");
         }
+        // A UTF-16 string is held shared (`Repr::Shared`, so a rope can flatten in place), never
+        // as a flat `Wide` record, so the row leaves for it and the caller reads its units.
+        let wide = heap.alloc_string(JsString::from_units(&[0x61, 0x20ac]));
+        assert_eq!(length(&heap, wide), None, "a UTF-16 string has no flat record");
         assert_eq!(length(&heap, Value::integer(3)), None, "no string");
     }
 

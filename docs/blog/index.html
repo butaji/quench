@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Quench blog: building a JavaScript, TypeScript and WebAssembly engine in Rust</title>
+<meta name="description" content="Engineering notes from Quench: interpreter design, copy-and-patch and Cranelift JITs, AOT compilation, garbage collection, and measuring a JavaScript engine against C." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/blog/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="application/atom+xml" title="Quench blog" href="https://quench.run/blog/feed.xml" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/blog/" />
+<meta property="og:title" content="Quench blog: building a JavaScript, TypeScript and WebAssembly engine in Rust" />
+<meta property="og:description" content="Engineering notes from Quench: interpreter design, copy-and-patch and Cranelift JITs, AOT compilation, garbage collection, and measuring a JavaScript engine against C." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "Blog", "name": "Quench blog", "url": "https://quench.run/blog/", "blogPost": [{"@type": "BlogPosting", "headline": "Where Quench stands: JetStream 3 with the JIT off", "url": "https://quench.run/blog/where-quench-stands/", "datePublished": "2026-11-17"}, {"@type": "BlogPosting", "headline": "3 × C + 6: an instruction budget for every JavaScript operation", "url": "https://quench.run/blog/an-instruction-budget-for-every-operation/", "datePublished": "2026-11-17"}, {"@type": "BlogPosting", "headline": "The JIT compiled the code and then never ran it", "url": "https://quench.run/blog/compiled-but-never-entered/", "datePublished": "2026-11-17"}, {"@type": "BlogPosting", "headline": "Entry cells, exit descriptors and a collector without stack maps", "url": "https://quench.run/blog/entry-cells-exits-and-gc-without-stack-maps/", "datePublished": "2026-11-15"}, {"@type": "BlogPosting", "headline": "JavaScript that looks like C should cost what C costs", "url": "https://quench.run/blog/javascript-that-looks-like-c/", "datePublished": "2026-11-14"}, {"@type": "BlogPosting", "headline": "One interpreter, four outputs: Futamura projections in a JavaScript engine", "url": "https://quench.run/blog/one-interpreter-four-outputs/", "datePublished": "2026-11-12"}, {"@type": "BlogPosting", "headline": "A 17.6% regression that was four deleted globals", "url": "https://quench.run/blog/a-17-percent-regression-from-four-deleted-globals/", "datePublished": "2026-11-08"}, {"@type": "BlogPosting", "headline": "AOT without a second compiler", "url": "https://quench.run/blog/aot-without-a-second-compiler/", "datePublished": "2026-11-07"}, {"@type": "BlogPosting", "headline": "Most optimizations do not survive measurement", "url": "https://quench.run/blog/most-optimizations-do-not-survive/", "datePublished": "2026-11-05"}, {"@type": "BlogPosting", "headline": "Interpreter against interpreter: eight for eight, and the JIT that was not ready", "url": "https://quench.run/blog/interpreter-against-interpreter/", "datePublished": "2026-10-28"}, {"@type": "BlogPosting", "headline": "Your peak RSS depends on which CPU you ran on", "url": "https://quench.run/blog/your-rss-depends-on-which-cpu-you-ran-on/", "datePublished": "2026-10-27"}, {"@type": "BlogPosting", "headline": "One 64-bit word, two narrow slots and three loads per field", "url": "https://quench.run/blog/objects-values-and-three-loads/", "datePublished": "2026-10-12"}, {"@type": "BlogPosting", "headline": "The day we deleted 405,013 lines", "url": "https://quench.run/blog/the-day-we-deleted-405013-lines/", "datePublished": "2026-10-08"}, {"@type": "BlogPosting", "headline": "We deleted our benchmark-specific fast paths", "url": "https://quench.run/blog/deleting-our-benchmark-wins/", "datePublished": "2026-08-27"}, {"@type": "BlogPosting", "headline": "35,000 commits in a month", "url": "https://quench.run/blog/thirty-five-thousand-commits/", "datePublished": "2026-08-16"}, {"@type": "BlogPosting", "headline": "4,367 class tests in two days, and what a skip list hides", "url": "https://quench.run/blog/test262-and-the-skip-list/", "datePublished": "2026-07-23"}, {"@type": "BlogPosting", "headline": "Quench started as a TypeScript-to-Rust transpiler", "url": "https://quench.run/blog/a-transpiler-that-wanted-to-be-an-engine/", "datePublished": "2026-06-11"}]}</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/blog/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z"/></svg>Blog</a>
+<a class="badge" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+</nav>
+</header>
+<main>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>ENGINEERING</span><span>NOTES</span></div></div>
+<div class="tile title">
+<p class="mono meta">quench.run / blog</p>
+<h1>Building a JavaScript engine in the open.</h1>
+<p class="lead">How Quench went from a first commit to a TypeScript, JavaScript and WebAssembly runtime with an interpreter, two JITs and AOT. Measurements, diagrams, dead ends and what we learned.</p>
+<p class="actions"><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Subscribe</a></p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<section class="frame cols-2" aria-label="Posts">
+<a class="tile card wide feature" href="/blog/where-quench-stands/">
+<span class="mono meta"><time datetime="2026-11-17">17 November 2026</time> · status · 4 min</span>
+<h2>Where Quench stands: JetStream 3 with the JIT off</h2>
+<p>Against Node and Bun with all JITs disabled, Quench sits between them on speed and well below both on memory. The full picture, including the tests where its memory is far too high.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/an-instruction-budget-for-every-operation/">
+<span class="mono meta"><time datetime="2026-11-17">17 November 2026</time> · measurement · 4 min</span>
+<h2>3 × C + 6: an instruction budget for every JavaScript operation</h2>
+<p>Every primitive operation in Quench&#x27;s interpreter now has a ceiling on the machine instructions it may execute, derived from the same operation written in C and enforced by a gate that only lets the number go down.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/compiled-but-never-entered/">
+<span class="mono meta"><time datetime="2026-11-17">17 November 2026</time> · jit · 4 min</span>
+<h2>The JIT compiled the code and then never ran it</h2>
+<p>On 33 of 44 primitive operations our optimizing JIT was no faster than the interpreter. For many of them the reason was simple and embarrassing: the native code existed and nothing ever jumped to it.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/entry-cells-exits-and-gc-without-stack-maps/">
+<span class="mono meta"><time datetime="2026-11-15">15 November 2026</time> · internals · 4 min</span>
+<h2>Entry cells, exit descriptors and a collector without stack maps</h2>
+<p>Three small contracts decide how compiled JavaScript is called, how it gives up, and how the garbage collector finds its roots. Quench&#x27;s versions are unusual, and this is the reasoning behind each.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/javascript-that-looks-like-c/">
+<span class="mono meta"><time datetime="2026-11-14">14 November 2026</time> · performance · 4 min</span>
+<h2>JavaScript that looks like C should cost what C costs</h2>
+<p>We wrote eight small kernels twice, once in JavaScript and once in C, and counted. The results set the standard Quench&#x27;s compiled code is now held to, and showed one benchmark that had never been compiled at all.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/one-interpreter-four-outputs/">
+<span class="mono meta"><time datetime="2026-11-12">12 November 2026</time> · architecture · 5 min</span>
+<h2>One interpreter, four outputs: Futamura projections in a JavaScript engine</h2>
+<p>Quench writes the meaning of each JavaScript operation once and derives the interpreter, a copy-and-patch JIT, an optimizing JIT and an AOT compiler from it. How that works, and an honest count of how far the code is from the design.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/a-17-percent-regression-from-four-deleted-globals/">
+<span class="mono meta"><time datetime="2026-11-08">8 November 2026</time> · debugging · 4 min</span>
+<h2>A 17.6% regression that was four deleted globals</h2>
+<p>Thirty hours of running JetStream 3 every ninety minutes took the interpreter from 0.61 to 0.90 of the best competing engine, then lost a sixth of it overnight. The bisect led somewhere unexpected.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/aot-without-a-second-compiler/">
+<span class="mono meta"><time datetime="2026-11-07">7 November 2026</time> · aot · 4 min</span>
+<h2>AOT without a second compiler</h2>
+<p>We built a closed-world JavaScript-to-native compiler, measured it, and threw it away. Quench&#x27;s ahead-of-time mode is the interpreter specialized to what is known at build time, and this is why.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/most-optimizations-do-not-survive/">
+<span class="mono meta"><time datetime="2026-11-05">5 November 2026</time> · performance · 4 min</span>
+<h2>Most optimizations do not survive measurement</h2>
+<p>Notes from a ledger of rejected changes. Superinstructions, inline allocation, tail-call conventions and a 33% win on one benchmark, all turned down, and the rule that turned them down.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/interpreter-against-interpreter/">
+<span class="mono meta"><time datetime="2026-10-28">28 October 2026</time> · performance · 3 min</span>
+<h2>Interpreter against interpreter: eight for eight, and the JIT that was not ready</h2>
+<p>With every engine&#x27;s JIT turned off, Quench&#x27;s interpreter led all eight classic V8 benchmarks. The same week its JIT trailed Node and Bun by 2 to 24 times. Both results are worth showing.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/your-rss-depends-on-which-cpu-you-ran-on/">
+<span class="mono meta"><time datetime="2026-10-27">27 October 2026</time> · measurement · 3 min</span>
+<h2>Your peak RSS depends on which CPU you ran on</h2>
+<p>The same binary reported peak memory anywhere from 2,436 to 2,824 KiB across 20 runs. Four things we learned about measuring a JavaScript engine&#x27;s memory before we could trust a single number.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/objects-values-and-three-loads/">
+<span class="mono meta"><time datetime="2026-10-12">12 October 2026</time> · internals · 4 min</span>
+<h2>One 64-bit word, two narrow slots and three loads per field</h2>
+<p>How Quench represents values and objects, why an object reference is an index and not a pointer, and what that choice costs every time you read a field.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/the-day-we-deleted-405013-lines/">
+<span class="mono meta"><time datetime="2026-10-08">8 October 2026</time> · architecture · 3 min</span>
+<h2>The day we deleted 405,013 lines</h2>
+<p>Quench&#x27;s second runtime replaced the first in a single commit that removed 405,013 lines. This is how the rewrite was staged so that the cutover was boring.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/deleting-our-benchmark-wins/">
+<span class="mono meta"><time datetime="2026-08-27">27 August 2026</time> · performance · 2 min</span>
+<h2>We deleted our benchmark-specific fast paths</h2>
+<p>Our Richards score was good because the engine recognised the workload. We removed every path like that, took the lower numbers, and wrote the rule into the repository.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/thirty-five-thousand-commits/">
+<span class="mono meta"><time datetime="2026-08-16">16 August 2026</time> · process · 3 min</span>
+<h2>35,000 commits in a month</h2>
+<p>In August 2026 the repository took 35,083 commits, 4,217 of them in one day. Here is what that much parallel work built, what it broke, and what we changed so it could keep going.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/test262-and-the-skip-list/">
+<span class="mono meta"><time datetime="2026-07-23">23 July 2026</time> · conformance · 3 min</span>
+<h2>4,367 class tests in two days, and what a skip list hides</h2>
+<p>Driving one test262 directory from 44 passing tests to all 4,367 taught us more about denominators than about classes.</p>
+<span class="mono more">read →</span>
+</a><a class="tile card" href="/blog/a-transpiler-that-wanted-to-be-an-engine/">
+<span class="mono meta"><time datetime="2026-06-11">11 June 2026</time> · history · 3 min</span>
+<h2>Quench started as a TypeScript-to-Rust transpiler</h2>
+<p>The first commit was a compiler driver, not a JavaScript engine. Four names, one embedded engine and one deleted interpreter later, the project admitted what it was becoming.</p>
+<span class="mono more">read →</span>
+</a>
+</section>
+<section class="frame cols-3 cta-frame" aria-label="Get involved">
+<div class="tile orange"><h2>Try it</h2><p>Quench builds from source with Cargo and runs TypeScript, JavaScript and WebAssembly.</p><a class="btn" href="/#start">Build and run</a></div>
+<div class="tile"><h2>Work on it</h2><p>Interpreter, JIT, AOT, GC, Node APIs. Every claim on this blog has a measurement you can rerun.</p><a class="btn" href="/#contribute">Where to start</a></div>
+<div class="tile"><h2>Follow it</h2><p>New posts land here as the engine moves. Star the repository or subscribe to the feed.</p><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Feed</a></div>
+</section>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/blog/">blog</a> · <a href="/blog/feed.xml">feed</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>

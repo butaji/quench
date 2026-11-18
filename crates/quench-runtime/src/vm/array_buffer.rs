@@ -327,24 +327,7 @@ impl<H: Host> Vm<H> {
         if self.well_known_symbols.get(WellKnownSymbol::ToStringTag).is_some() {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.native_with_realm(Native::ArrayBufferSpecies, Value::NULL, global);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(constructor, species, getter)?;
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::symbol(species),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
+        self.install_species(constructor, |vm| vm.native_with_realm(Native::ArrayBufferSpecies, Value::NULL, global))
     }
 
     pub(super) fn array_buffer_detached(&self, buffer: Value) -> bool {

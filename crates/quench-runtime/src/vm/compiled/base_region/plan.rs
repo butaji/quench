@@ -263,6 +263,8 @@ pub(super) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, varian
 fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), [(dst, dst_hole), (a, a_hole), (b, b_hole)]: [(Place, u64); 3]) -> Result<Planned, String> {
     let polls = decoded.target.is_some_and(|target| target <= pc) && decoded.kind == Kind::Jump;
     let kind = if polls { layout.ending.poll() } else { decoded.kind };
+    let ((kind, [dst, a, b]), holes_in) = folded(kind, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
+    let [dst_hole, a_hole, b_hole] = holes_in;
     let (row, stencil) = chosen_row(kind, [dst, a, b], variant, general)?;
     let interrupt = std::mem::offset_of!(super::super::CallContext, interrupt) as u64;
     let exits = polls || !matches!(kind, Kind::Jump | Kind::Move) || holds_number(dst);
@@ -270,6 +272,22 @@ fn number_plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
     let counter = [std::mem::offset_of!(super::super::CallContext, adapter_payload) as u64, std::mem::offset_of!(super::super::JsStepDispatch, loop_entry) as u64];
     let holes = padded_holes(if polls { [interrupt, counter[0], counter[1]] } else { [dst_hole, a_hole, b_hole] });
     Ok(Planned { node: Some(Node::Number(numeric::library::canonical(row.code()))), ..Planned::single(stencil, holes, decoded.target, exits.then_some(pc)) })
+}
+
+/// A number row partially evaluated on its immediate operand, the way the C compiler treats the same
+/// expression: a commutative operation takes its immediate second (the form a row encodes into its
+/// instruction), and an operation whose immediate is its neutral element (`x | 0`, `x + 0`) over an
+/// int32 operand into an int32 home is the move of that operand. Only where the library has the
+/// folded row: otherwise the row as decoded.
+fn folded(kind: Kind, [dst, a, b]: [(Place, u64); 3]) -> ((Kind, [Place; 3]), [u64; 3]) {
+    let int32 = |place: Place| matches!(place, Place::Pin(_) | Place::MemInt);
+    let (a, b) = if kind.commutes() && a.0 == Place::Imm && b.0 != Place::Imm { (b, a) } else { (a, b) };
+    let neutral = b.0 == Place::Imm && kind.neutral() == Some(b.1 as u32 as i32);
+    let moved = (Kind::Move, [dst.0, a.0, Place::Mem]);
+    if neutral && int32(a.0) && int32(dst.0) && numeric::stencil(numeric::Row { kind: Kind::Move, dst: dst.0, a: a.0, b: Place::Mem, speculate: true }).is_ok() {
+        return (moved, [dst.1, a.1, 0]);
+    }
+    ((kind, [dst.0, a.0, b.0]), [dst.1, a.1, b.1])
 }
 
 /// Whether `place` holds a number the row reads or writes in a register or as an int32 in memory, not a tagged word.

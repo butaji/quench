@@ -142,6 +142,9 @@ pub(crate) trait Stage {
     fn load_f32(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
     /// A binary64 element: an `f64` word (the IEEE bits in an interpreter's word).
     fn load_f64(&mut self, at: Access, base: Self::Word, offset: i32) -> Self::Word;
+    /// The `Value` bits of an `f64` word, as `Value::number` makes them: an integral double in
+    /// int32 range is an int32, NaN is the canonical NaN, any other double its own bits.
+    fn box_number(&mut self, number: Self::Word) -> Self::Word;
     /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
     fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
@@ -260,15 +263,6 @@ pub(crate) trait Stage {
         word
     }
 
-    /// Runs `cold` on the path where `cond` holds and nothing is produced (a counter bump, a
-    /// poll): out of line for a specializer, run only when the interpreter's `cond` holds.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn cold_when(&mut self, cond: Self::Cond, cold: impl FnOnce(&mut Self)) {
-        if self.known(cond) == Some(true) {
-            cold(self);
-        }
-    }
 }
 
 /// The process tables an operation addresses from a base.

@@ -80,7 +80,9 @@ setting! {
         StorageCensus = "storage-census",
         Shapes = "shapes",
         Rewrite = "rewrite",
-        /// Every loaded program's finished bytecode, printed at exit.
+        /// Every loaded program's finished bytecode, printed at exit; `bytecode=lanes` prints
+        /// each function's lane view instead (`Vm::report_lane_plan`), the static input of the
+        /// instruction-count predictor (`quench-gate --only ir-predict`).
         Bytecode = "bytecode",
         JsJit = "js-jit",
         /// BaseJIT region exits by instruction, most frequent first (printed at exit).
@@ -122,8 +124,6 @@ setting! {
         /// Array backings take the double element kind (`heap::array_elements::DOUBLE_LEN`):
         /// for the readers that consume it while compiled tiers do not guard its flag yet.
         DoubleElements = "double-elements",
-        /// The lane prologue specializes declined functions into frameless lane bodies.
-        JsLaneMethods = "js-lane-methods",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
         /// instruction counts then see the code a run installs.
         SyncCompile = "sync-compile",
@@ -171,5 +171,9 @@ setting! {
         /// Lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`):
         /// `=off` builds them, `=verify` builds them as well and prints where the verdicts differ.
         Recognize = "recognize",
+        /// `process.__irMark()` exists and calls `quench_ir_mark`, where callgrind splits its
+        /// counts (`--dump-before=quench_ir_mark`): the per-primitive instruction budget
+        /// (`quench-gate`'s `ir-budget` step) measures each primitive between two marks.
+        IrMark = "ir-mark",
     }
 }

@@ -26,7 +26,7 @@ mod encoding_bench;
 mod distinct_heap;
 pub(crate) use distinct_heap::DistinctHeapPair;
 mod number_conversion;
-pub use number_conversion::number_to_u32;
+pub use number_conversion::{number_to_i32, number_to_u32, number_to_uint8_clamp};
 pub(crate) use number_conversion::EXACT_I64_TRUNCATION_LIMIT;
 use number_conversion::truncate_to_i32;
 /// The tags occupy one contiguous range of tag-field values, so a tag test
@@ -757,11 +757,16 @@ impl Value {
         if self.0 & !(Self::TRUE.0 ^ Self::FALSE.0) == Self::FALSE.0 {
             return Some(self == Self::TRUE);
         }
-        if let Some(number) = self.as_number() {
-            return Some(crate::vm::number_is_truthy(number));
+        // An integer's truth is its bits' (`if (i & 3)`), without the double conversion.
+        if let Some(integer) = self.as_int() {
+            return Some(integer != 0);
         }
+        // An object or array record before the double decode (`if (o)`).
         if self.is_heap() {
             return self.is_record().then_some(true);
+        }
+        if let Some(number) = self.as_number() {
+            return Some(crate::vm::number_is_truthy(number));
         }
         Some(!(self.is_null() || self.is_undefined() || self.is_deleted() || self == Self::FALSE))
     }

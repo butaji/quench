@@ -158,7 +158,7 @@ fn an_arguments_length_defines_the_count_or_declines() {
 }
 
 #[test]
-fn a_global_store_passes_its_value_and_a_typeof_defines_its_name() {
+fn a_global_store_passes_its_value_and_a_typeof_load_defines_its_value() {
     let mut frame = Probe::new(2);
     frame.registers[1] = Value::number(2.0).to_bits();
     assert!(matches!(run(&mut frame, Row::GlobalWrite { source: 1, atom: 8, site: 3, initialize: true }), Step::Value(_)));

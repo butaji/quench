@@ -5032,11 +5032,7 @@ mod tests {
             .code
             .iter()
             .map(|packed| {
-                if packed.is_wide() {
-                    invalid.function(0).wide[packed.wide_index()]
-                } else {
-                    packed.as_wide()
-                }
+                invalid.function(0).widened(*packed)
             })
             .find(|instruction| instruction.op().is_wasm_memory_address())
             .unwrap();
@@ -5638,7 +5634,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions.iter().any(|instruction| {
@@ -6039,7 +6035,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions

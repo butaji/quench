@@ -779,27 +779,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_realm_builtin_named(program, promise, name, native, method_realm)?;
         }
-        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.realm_native_value(
-                Native::PromiseSpeciesGetter,
-                global,
-                method_realm.is_none(),
-            );
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(promise, species, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                promise,
-                property_key::PropertyKey::symbol(species),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
+        self.install_species(promise, |vm| vm.realm_native_value(Native::PromiseSpeciesGetter, global, method_realm.is_none()))?;
         self.set_builtin_value_named(global, "Promise", promise)
     }
 

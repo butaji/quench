@@ -191,6 +191,7 @@ pub(crate) struct UniqueElements(ArrayElements);
 
 impl ArrayElements {
     /// No values, in the shared empty header.
+    #[inline(always)]
     pub(crate) fn new() -> Self {
         Self {
             header: NonNull::from(&EMPTY),
@@ -572,6 +573,7 @@ impl ArrayElements {
     }
 
     /// The bytes the values take (capacity times the value width: 4 narrow, 8 wide).
+    #[inline]
     pub(crate) fn value_bytes(&self) -> usize {
         self.capacity() * if self.is_narrow() { size_of::<u32>() } else { size_of::<Value>() }
     }
@@ -808,6 +810,12 @@ impl ArrayElements {
 /// (`ArrayObject`): the word an `ArrayElements` is, owned by whoever holds it.
 const _: () = assert!(size_of::<ArrayElements>() == size_of::<u64>());
 
+/// The raw word (`ArrayElements::into_raw`) of the shared empty header, which no array owns.
+#[inline(always)]
+pub(super) fn empty_header_word() -> u64 {
+    std::ptr::addr_of!(EMPTY) as usize as u64
+}
+
 impl ArrayElements {
     /// The header pointer as a raw word, which takes over this owner (`from_raw`). Its upper
     /// 16 bits are clear, so it is never an object's extras word (`EXTRAS_TAG`).
@@ -967,6 +975,12 @@ impl UniqueElements {
             // SAFETY: the range is within the length of this unique backing.
             unsafe { self.0.values().add(index).write(value) };
         }
+    }
+
+    /// The values in reverse order; the count of other values is unchanged.
+    pub(crate) fn reverse(&mut self) {
+        // SAFETY: a unique backing is wide; its first `len` values are initialized.
+        unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }.reverse();
     }
 
     /// `values` at the indices from `start`.

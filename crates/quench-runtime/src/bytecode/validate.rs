@@ -408,6 +408,7 @@ fn immediate_domains_in_bounds(
                 || matches!(instruction.unary_operator(), super::UNARY_TO_STRING_PRIMITIVE | super::UNARY_ADD_OPERAND_STRING)
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
+                || super::array_pattern_test(instruction.unary_operator()).is_some()
         }
         super::ImmediateRole::FunctionNamePrefix => {
             instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER
@@ -611,12 +612,8 @@ impl ResidualProgram {
                 .then_some(self.module_link_plan.as_ref())
                 .flatten()
                 .map(|plan| (plan, &self.module_imports[..]));
-            let script_root = matches!(self.kind, super::ProgramKind::Script | super::ProgramKind::Eval)
-                && index == 0
-                && function.parent.is_none();
-            let script_root = script_root.then_some(self.kind == super::ProgramKind::Eval);
             if let Some(captured) = &function.selective_capture_slots
-                && ((module_body.is_none() && script_root.is_none() && (index == 0 || function.parent.is_none()))
+                && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
                     || captured.iter().any(|slot| *slot >= function.locals)
                     || captured.windows(2).any(|pair| pair[0] >= pair[1]))
             {
@@ -626,7 +623,7 @@ impl ResidualProgram {
             }
             if function.selective_capture_slots.is_some()
                 && (selective_capture_scope_unsafe[index]
-                    || !selective_capture_layout_is_eligible(function, index, module_body, script_root, &self.atoms))
+                    || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
             {
                 return Err(format!(
                     "function {index} has an ineligible selective capture layout"
@@ -1081,7 +1078,6 @@ fn selective_capture_layout_is_eligible(
     function: &super::Function,
     index: usize,
     module_body: Option<(&super::ModuleLinkPlan, &[super::ModuleImportBinding])>,
-    script_root: Option<bool>,
     atoms: &super::AtomTable,
 ) -> bool {
     let has_closure = function
@@ -1114,14 +1110,9 @@ fn selective_capture_layout_is_eligible(
             .is_none_or(|slot| captured.binary_search(&slot).is_ok());
 
     // A module body (`module_body` given: its link plan and imports) splits whether or not it makes closures, keeping
-    // its module-scope bindings in the module environment; a Script's or eval's root
-    // without dynamic name resolution splits keeping its global declarations in its
-    // environment; a nested function splits only around closures.
-    let activation_splits = if let Some(eval) = script_root {
-        !function.has_dynamic_scope_access()
-            && function.binding_sites.is_empty()
-            && function.global_declaration_slots(eval).all(|slot| captured.binary_search(&slot).is_ok())
-    } else if let Some((plan, imports)) = module_body {
+    // its module-scope bindings in the module environment; a nested function splits only
+    // around closures.
+    let activation_splits = if let Some((plan, imports)) = module_body {
         function
             .module_environment_slots(plan, imports, |atom| {
                 usize::try_from(atom).ok().filter(|atom| *atom < atoms.len()).map(|atom| &atoms[atom])
@@ -1144,6 +1135,17 @@ fn selective_capture_layout_is_eligible(
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
+
+    #[test]
+    fn for_of_pattern_marks_are_validated() {
+        // A value-only array pattern sets RequireIteratorResult's flag; the layout declares it.
+        let program = crate::Engine::specialize(
+            "let t = 0; for (const [k, v] of new Map([[1, 2]])) t += k + v; for (const x of [1]) t += x; for (const [a, ...r] of [[1, 2]]) t += a;",
+            "for-of-pattern.js",
+        )
+        .unwrap();
+        assert_eq!(program.validate(), Ok(()));
+    }
 
     #[test]
     fn rest_list_closure_layouts_are_validated() {
@@ -1306,6 +1308,7 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
+            declared_parameters: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,

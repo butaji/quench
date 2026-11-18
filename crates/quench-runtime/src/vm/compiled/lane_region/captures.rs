@@ -96,7 +96,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
         return emit(builder).raw_const(Lane::I64, 0);
     };
     let (payload, helpers) = reach;
-    let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
     let slot = emit(builder).raw_const(Lane::I64, i64::from(at.1));
     let helper = helpers.address(builder, LaneHelper::FunctionCapture);
     let read = emit_lane_call(builder, helper, &[vm, callee, slot]);

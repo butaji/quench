@@ -37,11 +37,11 @@ const MAX_DEPTH: u32 = 160;
 /// The names a function reads from outside itself.
 pub(crate) struct Skimmed<'a> {
     pub(crate) free_names: Vec<&'a str>,
-    /// The parameters are plain names, so no default shares the function's scope.
-    pub(crate) names_exact: bool,
     /// The directives of the skimmed function's own body, as the start of each, the end of its
     /// string and the end of its statement; none has an escape.
     pub(crate) directives: Vec<(u32, u32, u32)>,
+    /// A skimmed method's body, or an arrow inside it, names its `super`.
+    pub(crate) names_super: bool,
 }
 
 struct Skim<'p, 'a, C: Config> {
@@ -64,6 +64,8 @@ struct Skim<'p, 'a, C: Config> {
     /// The directives of the first function body read, which is the skimmed function's own.
     directives: Vec<(u32, u32, u32)>,
     directives_read: bool,
+    /// `super` of the skimmed method was read (`FnCtx::home`).
+    names_super: bool,
 }
 
 /// Whether a function is a generator, and whether it is `async`.
@@ -80,14 +82,16 @@ pub(crate) enum LazyForm {
     /// An arrow function, which uses the `this`, `arguments`, `new.target` and `super` of the code
     /// around it.
     Arrow,
-    /// A class's method, getter or setter: a plain function whose `super` is not decided.
+    /// A class's method, getter or setter: a plain function whose `super.x` reads its home
+    /// object, which the class around it decides (`Skimmed::names_super`).
     Method,
 }
 
 impl LazyForm {
     fn ctx(self) -> FnCtx {
         match self {
-            Self::Plain | Self::Method => FnCtx::PLAIN,
+            Self::Plain => FnCtx::PLAIN,
+            Self::Method => FnCtx { super_property: true, home: true, ..FnCtx::PLAIN },
             Self::Arrow => FnCtx::ARROW,
         }
     }
@@ -110,10 +114,12 @@ struct FnCtx {
     /// `arguments`, `new.target` and `super` belong to the code around the arrow, which the
     /// skim does not see, so none is decided.
     lexical: bool,
+    /// `super` is the skimmed method's own: in its body, or an arrow inside it.
+    home: bool,
 }
 
 impl FnCtx {
-    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false, is_async: false, field_init: false, lexical: false };
+    const PLAIN: Self = Self { super_property: false, super_call: false, generator: false, is_async: false, field_init: false, lexical: false, home: false };
     const ARROW: Self = Self { lexical: true, ..Self::PLAIN };
 
     fn function(flavor: Flavor) -> Self {
@@ -155,9 +161,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             ctx: form.ctx(),
             directives: Vec::new(),
             directives_read: false,
+            names_super: false,
         };
         skim.scopes.enter(true);
-        let names_exact = names.is_some();
         match names {
             Some(names) => {
                 for name in names {
@@ -168,7 +174,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             None => skim.function_from_head(form == LazyForm::Arrow)?,
         }
         skim.scopes.exit();
-        Some(Skimmed { free_names: skim.scopes.take_free_names(), names_exact, directives: skim.directives })
+        Some(Skimmed { free_names: skim.scopes.take_free_names(), directives: skim.directives, names_super: skim.names_super })
     }
 
     /// The names of `params` when each is a plain identifier: no pattern, default, rest or

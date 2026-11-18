@@ -53,6 +53,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<Value, JsError> {
+        // A direct array whose elements are ordinary and all present: every HasProperty, Get
+        // and Set below reads or writes an own data element and observes nothing, so the
+        // steps reduce to reversing the backing. Moving values within one array stores no
+        // new reference, which the write barrier passes.
+        if self.heap.record_array(this).is_some_and(|array| {
+            array.holds_ordinary_elements() && !array.elements().iter().any(|value| value.is_deleted())
+        }) && let Some(array) = self.heap.record_array_store_mut(this, Value::UNDEFINED)
+        {
+            super::index::mutable_array_elements(array.elements_mut()).reverse();
+            return Ok(this);
+        }
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
         let (mut lower, mut upper) = (0, length.saturating_sub(1));
@@ -531,7 +542,11 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
             let mut next = 0usize;
             for item in std::iter::once(source).chain(args.iter().copied()) {
-                let spreadable = if vm.is_object_like(item) {
+                let spreadable = if vm.concat_spreadable_absent(item, spreadable_atom) {
+                    // An Array no `@@isConcatSpreadable` reaches: the Get reads `undefined`
+                    // and IsArray holds.
+                    true
+                } else if vm.is_object_like(item) {
                     let value = vm.get_index(p, item, spreadable_atom)?;
                     if value.is_undefined() {
                         vm.is_array(p, item)?
@@ -650,25 +665,6 @@ impl<H: Host> Vm<H> {
         if self.heap.grow_array_elements(array, |elements| elements.extend_from_slice(values)).is_none() {
             unreachable!("matched an array above");
         }
-        true
-    }
-
-    /// CreateDataPropertyOrThrow of `values` at indices `0..` of `array`, a dense array
-    /// (`dense_array_length`) of exactly their count holding only holes, as ArrayCreate
-    /// makes one: each definition fills its hole. `false` leaves `array` untouched.
-    pub(super) fn fill_dense_holes(&mut self, array: Value, values: &[Value]) -> bool {
-        if self.dense_array_length(array) != Some(values.len())
-            || !self
-                .heap
-                .array(array)
-                .is_some_and(|object| object.elements().iter().all(|value| value.is_deleted()))
-        {
-            return false;
-        }
-        let Some(object) = self.heap.array_mut(array) else {
-            unreachable!("matched an array above");
-        };
-        super::index::mutable_array_elements(object.elements_mut()).copy_from(0, values);
         true
     }
 
@@ -969,14 +965,16 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        let result = self.array_species_create(p, object, count)?;
-        if let Some(values) = self.present_dense_elements(object, start..end).map(|values| values.into_owned())
-            && self.fill_dense_holes(result, &values)
+        // ArraySpeciesCreate is this realm's ArrayCreate and every element of the range is a
+        // present own data element: the result is a new array of those values, made at once
+        // instead of holes that each CreateDataPropertyOrThrow fills.
+        if self.array_species_is_array_create(object)
+            && let Some(values) = self.present_dense_elements(object, start..end)
+                .map(|values| smallvec::SmallVec::<[Value; 16]>::from_slice(&values))
         {
-            // Each CreateDataPropertyOrThrow filled a hole; the final `length` Set still runs.
-            self.set_array_like_length(p, result, count)?;
-            return Ok(result);
+            return Ok(self.array_of(&values));
         }
+        let result = self.array_species_create(p, object, count)?;
         // `result` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([result], |vm| {
             for (destination, source) in (start..end).enumerate() {
@@ -1071,6 +1069,51 @@ impl<H: Host> Vm<H> {
         self.object_data(prototype)
             .and_then(|data| self.heap.property_get(data, proof.constructor_slot))
             .is_some_and(|constructor| self.realm_array_constructor(constructor) && self.has_intrinsic_species_getter(constructor))
+    }
+
+    /// Whether `item` is an ordinary Array of this realm that no `@@isConcatSpreadable` reaches:
+    /// neither its own shape nor `Array.prototype` nor `Object.prototype` (the whole chain) has
+    /// the key. Then `Get(item, @@isConcatSpreadable)` reads `undefined` without running guest
+    /// code and IsArray holds, so `concat` spreads it. A proof for the item's shape holds while
+    /// the prototype layout epoch does: any change to either prototype's shape or prototype
+    /// advances it.
+    pub(super) fn concat_spreadable_absent(&mut self, item: Value, symbol: Value) -> bool {
+        let Some(array) = self.heap.array(item) else {
+            return false;
+        };
+        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
+            return false;
+        }
+        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
+        if self.concat_spreadable_proof == Some((shape, epoch)) {
+            return true;
+        }
+        self.prove_concat_spreadable_absent(shape, symbol, epoch)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn prove_concat_spreadable_absent(&mut self, shape: u32, symbol: Value, epoch: u64) -> bool {
+        let key = PropertyKey::symbol(symbol);
+        if self.shape_is_dictionary(shape) || self.property_shape_slot(shape, key).is_some() {
+            return false;
+        }
+        let (array_proto, object_proto) = (self.array_proto, self.object_proto);
+        let lacks = |vm: &Self, holder: Value, parent: Value| {
+            vm.object_data(holder).is_some_and(|data| {
+                data.proto() == parent && !vm.shape_is_dictionary(data.shape()) && vm.property_shape_slot(data.shape(), key).is_none()
+            })
+        };
+        if !lacks(self, array_proto, object_proto) || !lacks(self, object_proto, Value::NULL) {
+            return false;
+        }
+        self.heap.mark_prototype(array_proto);
+        self.heap.mark_prototype(object_proto);
+        // Marking an object that was no prototype yet leaves the epoch where it was.
+        if crate::heap::prototype_layout_epoch() == epoch {
+            self.concat_spreadable_proof = Some((shape, epoch));
+        }
+        true
     }
 
     /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.

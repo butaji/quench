@@ -288,6 +288,7 @@ impl FunctionCompiler<'_, '_> {
         }
         match target {
             AssignmentTarget::ArrayAssignmentTarget(array) => {
+                let by_index = self.array_assignment_by_index(array, value);
                 let iterator = self.binding_iterator(value);
                 let (protected_start, error_atom) =
                     self.begin_binding_iterator_protection(iterator);
@@ -310,6 +311,9 @@ impl FunctionCompiler<'_, '_> {
                     }
                 }
                 self.end_binding_iterator_protection(iterator, protected_start, error_atom);
+                if let Some(done) = by_index {
+                    self.patch(done);
+                }
             }
             AssignmentTarget::ObjectAssignmentTarget(object) => {
                 self.require_object_coercible(value);
@@ -636,6 +640,7 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             BindingPattern::ArrayPattern(array) => {
+                let by_index = self.array_pattern_by_index(array, value);
                 let iterator = self.binding_iterator(value);
                 let (protected_start, error_atom) =
                     self.begin_binding_iterator_protection(iterator);
@@ -650,6 +655,9 @@ impl FunctionCompiler<'_, '_> {
                     self.bind_pattern(&rest.argument, rest_value);
                 }
                 self.end_binding_iterator_protection(iterator, protected_start, error_atom);
+                if let Some(done) = by_index {
+                    self.patch(done);
+                }
             }
             BindingPattern::AssignmentPattern(assignment) => {
                 let selected = self.reg();
@@ -779,6 +787,84 @@ impl FunctionCompiler<'_, '_> {
         let error = self.reg();
         self.emit(Op::Construct, error, constructor, argument, 1);
         self.emit(Op::Throw, error, 0, 0, 0);
+    }
+
+    /// The by-index form of array binding pattern `array` of `value`, ahead of its iterator
+    /// form: a `UNARY_ARRAY_PATTERN` test, and where it holds each element read as `value[i]`
+    /// and bound, then a jump past the iterator form, whose start the failed test lands on.
+    /// Returns that jump to patch. Only patterns of plain local names (and holes) without a
+    /// rest take it: binding one runs no guest code, so nothing between the test and the last
+    /// read can change what the test proved. `None` emits nothing.
+    fn array_pattern_by_index(&mut self, array: &oxc_ast::ast::ArrayPattern<'_>, value: Register) -> Option<usize> {
+        let count = array.elements.len() as u32;
+        if array.rest.is_some() || count == 0 || count > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS {
+            return None;
+        }
+        let mut names = Vec::with_capacity(array.elements.len());
+        for element in &array.elements {
+            match element {
+                None => names.push(None),
+                Some(BindingPattern::BindingIdentifier(id)) => {
+                    let atom = self.owner.atom(id.name.as_str());
+                    self.local_slot(atom)?;
+                    names.push(Some(atom));
+                }
+                Some(_) => return None,
+            }
+        }
+        let holds = self.reg();
+        self.emit(Op::Unary, holds, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + count - 1);
+        let iterate = self.emit(Op::JumpFalse, holds, 0, 0, 0);
+        for (index, name) in names.into_iter().enumerate() {
+            let Some(atom) = name else { continue };
+            let key = self.literal(Constant::Number(index as f64));
+            let element = self.reg();
+            self.emit(Op::GetIndex, element, value, key, 0);
+            self.initialize_atom(atom, element);
+        }
+        let done = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(iterate);
+        Some(done)
+    }
+
+    /// `array_pattern_by_index` of an array assignment pattern: only plain local names (and
+    /// holes) without defaults or a rest. Storing to one runs no guest code; a store that
+    /// throws (a constant, an uninitialized binding) throws where the iterator form's would,
+    /// and that form's close then finds no `return` either.
+    fn array_assignment_by_index(&mut self, array: &oxc_ast::ast::ArrayAssignmentTarget<'_>, value: Register) -> Option<usize> {
+        let count = array.elements.len() as u32;
+        if array.rest.is_some() || count == 0 || count > crate::bytecode::ARRAY_PATTERN_MAX_ELEMENTS {
+            return None;
+        }
+        let mut targets = Vec::with_capacity(array.elements.len());
+        for element in &array.elements {
+            match element {
+                None => targets.push(None),
+                Some(element) => {
+                    let simple = element.as_assignment_target()?.as_simple_assignment_target()?;
+                    let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = simple else {
+                        return None;
+                    };
+                    let atom = self.owner.atom(identifier.name.as_str());
+                    self.local_slot(atom)?;
+                    targets.push(Some(simple));
+                }
+            }
+        }
+        let holds = self.reg();
+        self.emit(Op::Unary, holds, value, 0, crate::bytecode::UNARY_ARRAY_PATTERN + count - 1);
+        let iterate = self.emit(Op::JumpFalse, holds, 0, 0, 0);
+        for (index, target) in targets.into_iter().enumerate() {
+            let Some(target) = target else { continue };
+            let reference = self.prepare_assignment_reference(target);
+            let key = self.literal(Constant::Number(index as f64));
+            let element = self.reg();
+            self.emit(Op::GetIndex, element, value, key, 0);
+            self.store_assignment_reference(reference, element);
+        }
+        let done = self.emit(Op::Jump, 0, 0, 0, 0);
+        self.patch(iterate);
+        Some(done)
     }
 
     fn binding_iterator(&mut self, source: Register) -> BindingIterator {

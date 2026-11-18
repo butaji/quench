@@ -245,7 +245,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// reader may resolve a live direct Value through this base and its record ID, but it must
     /// keep the Value rooted and must not carry a record or payload pointer across a VM
     /// safepoint. In particular, a record's owned suballocations may change when the VM runs.
-    #[inline]
+    #[inline(always)]
     pub(super) fn base_ptr(&self) -> Option<*const T> {
         self.is_reserved()
             .then(|| self.base.as_ptr().cast::<T>().cast_const())

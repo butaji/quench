@@ -29,7 +29,6 @@ pub(crate) enum OperandClass {
     Any,
 }
 
-#[allow(dead_code)]
 impl OperandKinds {
     /// A site that never declined its int32 handler.
     pub(crate) const NONE: Self = Self(0);
@@ -78,18 +77,8 @@ impl OperandKinds {
         }
     }
 
-    /// Whether an int32 speculation at the site has failed: it met a double, an int32 result
-    /// out of range, or an operand other than a Number.
-    pub(crate) const fn declined_int32(self) -> bool {
-        matches!(self.class(), OperandClass::Number | OperandClass::Any)
-    }
-
     pub(crate) const fn has_string(self) -> bool {
         self.contains(Self::STRING)
-    }
-
-    pub(crate) const fn has_bigint(self) -> bool {
-        self.contains(Self::BIGINT)
     }
 
     /// The kind of one operand: int32 and double by their tags, a string or record by its handle's
@@ -175,16 +164,17 @@ pub(super) unsafe fn note_number_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip)
     cell.set(OperandKinds(cell.get()).union(OperandKinds::INT32).union(OperandKinds::DOUBLE).0);
 }
 
-/// Adds the BigInt kind to the feedback byte of the record at `ip`: what `note_operands`
-/// adds for two BigInt operands, without classifying them again.
+/// Adds `kind` to the feedback byte of the record at `ip`: what `note_operands` adds for an
+/// operand pair already known to be of that kind (two BigInts, two strings), without
+/// classifying them again.
 ///
 /// # Safety
 /// As `note_operands`.
 #[inline(always)]
-pub(super) unsafe fn note_bigint_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
+pub(super) unsafe fn note_kind<H: Host>(cx: *mut LaneContext<H>, ip: Ip, kind: OperandKinds) {
     // SAFETY: as the function's own.
     let cell = unsafe { feedback_cell((*cx).base, ip) };
-    let kinds = OperandKinds(cell.get()).union(OperandKinds::BIGINT);
+    let kinds = OperandKinds(cell.get()).union(kind);
     if kinds.0 != cell.get() {
         cell.set(kinds.0);
     }

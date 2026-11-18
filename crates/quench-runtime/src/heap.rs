@@ -32,6 +32,7 @@ pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, Environm
 mod external;
 mod float_slots;
 #[cfg(test)] mod float_slot_tests;
+#[cfg(test)] mod access_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -606,6 +607,10 @@ pub(crate) struct Heap {
     narrow_pass: (usize, u32),
     /// Whether old records keep reference counts (`rc`, `QUENCH_DEV=rc-gc`).
     rc_active: bool,
+    /// Whether any store gate input is on: a concurrent cycle's snapshot barrier, reference
+    /// counts, or the arena's slot observation (`Heap::refresh_store_watch`). Off, a store of a
+    /// value naming no heap record passes the gate on this byte and the value's tag alone.
+    store_watched: bool,
     /// Old records whose count is 0, to try freeing at the next minor collection, and the
     /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
     rc_zero: Vec<Value>,
@@ -1694,23 +1699,30 @@ impl Heap {
     /// `alloc(Cell::Iterator(..))` without boxing the iterator first: an iterator record
     /// while one is free.
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
+        self.alloc_object_record(iterator, |iterator| &iterator.object, |heap, iterator| heap.iterator_records.try_insert(iterator),
+            Value::direct_iterator, |iterator| Cell::Iterator(Box::new(iterator)))
+    }
+
+    /// Allocates `record`, an object kind with its own record space: admitted and charged as one
+    /// allocation with no payload or external bytes, inserted by `insert` (its handle `direct`),
+    /// or as the legacy `cell` where the space is full or allocations are being profiled.
+    #[inline(always)]
+    fn alloc_object_record<T>(&mut self, record: T, object: impl Fn(&T) -> &Object,
+        insert: impl FnOnce(&mut Self, T) -> Result<u32, T>, direct: impl FnOnce(u32) -> Value, cell: impl FnOnce(T) -> Cell) -> Value {
         if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Iterator(Box::new(iterator)));
+            return self.alloc(cell(record));
         }
-        self.admit_object_contents(&iterator.object);
-        self.mark_prototype(iterator.object.proto());
-        // An iterator's weight is one allocation, and it holds no payload or external bytes.
+        self.admit_object_contents(object(&record));
+        self.mark_prototype(object(&record).proto());
         self.allocated += 1;
-        match self.iterator_records.try_insert(iterator) {
+        match insert(self, record) {
             Ok(record_id) => {
-                let value = Value::direct_iterator(record_id);
+                let value = direct(record_id);
                 #[cfg(feature = "profile-memory")]
                 self.profile_allocation(value);
                 value
             }
-            Err(iterator) => {
-                self.alloc_in_slot(Cell::Iterator(Box::new(iterator)), self.tracks_young_cells())
-            }
+            Err(record) => self.alloc_in_slot(cell(record), self.tracks_young_cells()),
         }
     }
 
@@ -1721,24 +1733,8 @@ impl Heap {
     }
 
     pub(crate) fn alloc_promise(&mut self, promise: PromiseCell) -> Value {
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Promise(Box::new(promise)));
-        }
-        self.admit_object_contents(&promise.object);
-        self.mark_prototype(promise.object.proto());
-        // A promise's weight is one allocation, and it holds no payload or external bytes.
-        self.allocated += 1;
-        match self.promise_records.try_insert(promise) {
-            Ok(record_id) => {
-                let value = Value::direct_promise(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            Err(promise) => {
-                self.alloc_in_slot(Cell::Promise(Box::new(promise)), self.tracks_young_cells())
-            }
-        }
+        self.alloc_object_record(promise, |promise| &promise.object, |heap, promise| heap.promise_records.try_insert(promise),
+            Value::direct_promise, |promise| Cell::Promise(Box::new(promise)))
     }
 
     /// The slot part of `alloc`, for a cell no record space takes.
@@ -2008,6 +2004,7 @@ impl Heap {
     /// `layouts` (`register_shape_layouts`), from what live objects hold.
     pub(crate) fn track_slot_representations(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {
         self.properties.track();
+        self.refresh_store_watch();
         self.register_shape_layouts(layouts);
     }
 
@@ -2849,6 +2846,10 @@ impl Heap {
                 // forgotten, as a young array whose elements its young cycle takes back is.
                 let sparse = self.sparse_arrays.is_some();
                 let dispose = |record_id: RecordId, array: &ArrayObject| {
+                    // An empty array without extras releases nothing (`ArrayObject::owns_nothing`).
+                    if !sparse && array.owns_nothing() && !cfg!(feature = "profile-memory") {
+                        return false;
+                    }
                     *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
                     #[cfg(feature = "profile-memory")]
                     memory_profile.freed_record_cell(Value::direct_array(record_id), properties.len(array.properties()));
@@ -4050,17 +4051,7 @@ impl Heap {
     /// As for `property_get_flat`, where the shape matches.
     #[inline(always)]
     pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
-        // The common form first, as `GuardShape, LoadSlot` reads it: a plain object's arena run,
-        // whose start is the payload itself, so neither the extras tag nor the start mask is
-        // decoded. Packed inline values and extras take the staged reading.
-        // An exact shape has no form bits, so the whole auxiliary word equals it only in the
-        // arena form, whose payload is the start (`Object::formed_plain_start`).
-        if let Some(start) = object.formed_plain_start(shape) {
-            // SAFETY: the caller's: the shape matched, so its run holds `slot`.
-            let value = unsafe { *self.properties.values_base().add(start + usize::from(slot)) };
-            debug_assert_eq!(Some(value), unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) });
-            return Some(value);
-        }
+        // SAFETY: the caller's; the staged hit takes the arena form first, on one compare.
         unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
     }
     /// `own_field_hit` through a lane record's own-field hint (`Object::hint_shape`): `None`
@@ -4086,12 +4077,6 @@ impl Heap {
         }
         // SAFETY: as the caller guarantees.
         unsafe { self.property_get_flat(holder, slot) }
-    }
-    /// The arena's value base, which the interpreter's staged reads address runs from
-    /// (`staged::Table::PropertyValues`).
-    #[cfg(test)]
-    pub(crate) fn property_values_base(&self) -> *const Value {
-        self.properties.values_base()
     }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {

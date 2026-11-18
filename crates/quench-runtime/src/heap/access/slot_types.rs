@@ -13,6 +13,17 @@ impl Heap {
         !widened && !self.properties.holds_raw_doubles(shape, slot)
     }
 
+    /// `admit_slot_writes` for a writer that stores a slot of raw doubles as raw doubles where
+    /// `raw_double` (the lane's `StoreArm::raw_double`): it admits a Number domain over a slot that
+    /// still holds raw doubles once the domain joins in, which a tagged writer never is.
+    pub(crate) fn admit_slot_writes_as(&mut self, shape: u32, slot: usize, writes: crate::typed_ir::Type, raw_double: bool) -> bool {
+        if !raw_double { return self.admit_slot_writes(shape, slot, writes); }
+        if slot >= self.properties.shape_length(shape) || !writes.is_subtype(crate::typed_ir::Type::NUMBER) { return false; }
+        let widened = self.properties.note_slot_type(shape, slot, writes);
+        self.settle_widened();
+        !widened && self.properties.holds_raw_doubles(shape, slot)
+    }
+
     /// Whether the word of `slot` of an object of `shape` is a raw double (`ValueArena::holds_raw_doubles`).
     pub(crate) fn slot_holds_raw_doubles(&self, shape: u32, slot: usize) -> bool {
         self.properties.holds_raw_doubles(shape, slot)

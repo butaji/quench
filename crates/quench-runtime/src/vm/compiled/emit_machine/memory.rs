@@ -94,7 +94,7 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
     }
 
     fn call_words(&mut self, target: ir::Value, arguments: &[ir::Value]) -> ir::Value {
-        let parameters = vec![Lane::I64; arguments.len()];
+        let parameters = smallvec::SmallVec::<[Lane; 8]>::from_elem(Lane::I64, arguments.len());
         self.call_lanes(target, (&parameters[..], Lane::I64), arguments)
     }
 
@@ -103,7 +103,7 @@ impl<'b, B: Builds<'b>> MachineAccess for B {
         let mut signature = Signature::new(builder.func.signature.call_conv);
         signature.params.extend(parameters.iter().map(|lane| AbiParam::new(machine_type(*lane))));
         signature.returns.push(AbiParam::new(machine_type(result)));
-        let signature = builder.import_signature(signature);
+        let signature = crate::vm::jit_backend::signature_ref(builder.func, signature);
         self.call_signature(signature, target, arguments)[0]
     }
 

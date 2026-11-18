@@ -55,7 +55,7 @@ impl<'a> BodyCall<'a> {
         // runs (`native_frames::in_innermost_frame`).
         let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).registers.this()) };
         let body = code.function(function as usize);
-        let site = Invocation::of(decoded_instruction(body, body.code[call_pc as usize]), DecodeContext::of(code))?;
+        let site = Invocation::of(body.widened(body.code[call_pc as usize]), DecodeContext::of(code))?;
         let list = match site.arguments {
             Arguments::List(list) => list.registers(&code.method_arguments),
             Arguments::Window { .. } => &[],

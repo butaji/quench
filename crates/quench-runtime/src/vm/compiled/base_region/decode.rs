@@ -5,32 +5,37 @@ mod fields;
 use fields::{field_row, field_store_row};
 pub(super) use fields::stores_field;
 
-/// The row kind of a binary operator, from one table for arithmetic, bitwise and relational
-/// operators.
-pub(super) const OPERATORS: [(BinaryOperator, Kind); 18] = [
-    (BinaryOperator::Addition, Kind::Add),
-    (BinaryOperator::Subtraction, Kind::Sub),
-    (BinaryOperator::Multiplication, Kind::Mul),
-    (BinaryOperator::Division, Kind::Div),
-    (BinaryOperator::BitwiseAnd, Kind::And),
-    (BinaryOperator::BitwiseOR, Kind::Or),
-    (BinaryOperator::BitwiseXOR, Kind::Xor),
-    (BinaryOperator::ShiftLeft, Kind::Shl),
-    (BinaryOperator::ShiftRight, Kind::Shr),
-    (BinaryOperator::ShiftRightZeroFill, Kind::UShr),
-    (BinaryOperator::LessThan, Kind::Lt),
-    (BinaryOperator::LessEqualThan, Kind::Le),
-    (BinaryOperator::GreaterThan, Kind::Gt),
-    (BinaryOperator::GreaterEqualThan, Kind::Ge),
-    (BinaryOperator::Equality, Kind::Eq),
-    (BinaryOperator::StrictEquality, Kind::Eq),
-    (BinaryOperator::Inequality, Kind::Ne),
-    (BinaryOperator::StrictInequality, Kind::Ne),
-];
-
+/// The row kind of a binary operator: the shared operation rows decide which Number operation an
+/// operator is (`vm::operations::number_rows`, the table every tier consumes), and the row
+/// vocabulary names each operation once. A relational jump takes only a relation, a `Binary` only an
+/// arithmetic or bitwise operation.
 pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
-    let found = OPERATORS.iter().find(|(candidate, _)| *candidate as u32 == operator)?.1;
-    (relational == (found >= Kind::Lt)).then_some(found)
+    use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
+    if relational {
+        return NumberRelation::from_operator(operator).map(|relation| match relation {
+            NumberRelation::LessThan => Kind::Lt,
+            NumberRelation::LessEqual => Kind::Le,
+            NumberRelation::GreaterThan => Kind::Gt,
+            NumberRelation::GreaterEqual => Kind::Ge,
+            NumberRelation::Equal => Kind::Eq,
+            NumberRelation::NotEqual => Kind::Ne,
+        });
+    }
+    let arithmetic = NumberArithmetic::from_operator(operator).map(|operation| match operation {
+        NumberArithmetic::Add => Kind::Add,
+        NumberArithmetic::Subtract => Kind::Sub,
+        NumberArithmetic::Multiply => Kind::Mul,
+        NumberArithmetic::Divide => Kind::Div,
+    });
+    let remainder = (operator == crate::vm::operations::REMAINDER).then_some(Kind::Rem);
+    arithmetic.or(remainder).or_else(|| NumberBitwise::from_operator(operator).map(|operation| match operation {
+        NumberBitwise::And => Kind::And,
+        NumberBitwise::Or => Kind::Or,
+        NumberBitwise::Xor => Kind::Xor,
+        NumberBitwise::ShiftLeft => Kind::Shl,
+        NumberBitwise::ShiftRight => Kind::Shr,
+        NumberBitwise::ShiftRightUnsigned => Kind::UShr,
+    }))
 }
 
 /// An operand: a register of the activation or a constant `Value` word.
@@ -247,9 +252,10 @@ fn capture_arm(facts: Facts, heap: Heap, result: Option<Register>, value: Option
     }
 }
 
-/// The row of a depth-0 capture read, which a loop region that makes calls leaves for the captures its entry copied.
+/// The row of a depth-0 capture read: the activation's slots, which a region that makes calls
+/// reads live (`osr_lane::bind_captures`), as the interpreter's `lane_load_capture` does.
 fn capture_load_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
-    (instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }))
+    (instruction.capture_depth() == 0)
         .then(|| capture_arm(facts, Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None))
 }
 

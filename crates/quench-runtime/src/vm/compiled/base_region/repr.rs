@@ -100,7 +100,7 @@ fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
         Kind::Neg => Repr::Double,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Repr::Double,
-        Kind::Add | Kind::Sub | Kind::Mul => if widened || operands == Repr::Double { Repr::Double } else { Repr::Int },
+        Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Repr::Double { Repr::Double } else { Repr::Int },
         _ if widened => Repr::Tagged,
         _ => Repr::Int,
     }
