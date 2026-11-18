@@ -101,7 +101,7 @@ pub(super) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads
         .and_then(|(pc, instruction)| {
             let callee = instruction.register_b();
             let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
-            let GlobalRead::NativeMember { value, native, holder } = global_reads.get(&defined)? else { return None };
+            let GlobalRead::NativeMember { value, native, holder, .. } = global_reads.get(&defined)? else { return None };
             let inline = Inline::of(*native)?;
             (crate::bytecode::ImmediateLayout::argument_count(instruction.imm()) == inline.arguments())
                 .then_some((*value, inline, *holder))
