@@ -12,67 +12,25 @@ pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
         allocate @ Operation::Allocate { .. } => allocation_step(stage, frame, allocate),
         define @ Operation::DefineElement { .. } => element_define_step(stage, frame, define),
         helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
+        site @ (Operation::AddSite { .. } | Operation::NamingSite { .. }) => site_step(stage, frame, site),
         index => index_step(stage, frame, index),
     }
 }
 
-/// An allocation row over a frame's heap.
+/// The property-add and naming sites over the frame's miss edge: a hit defines the written word, a
+/// decline leaves the record to the VM (`add::site_add`, `naming::site_name`).
 #[inline(always)]
-fn allocation_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+fn site_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    let value = match operation {
-        Operation::Allocate { destination, allocation, proof } =>
-            frame.allocate_value(stage, destination, allocation, proof),
-        _ => None,
+    let (word, done) = match operation {
+        Operation::AddSite { records, object, edge, link, form, value } =>
+            (value, add::site_add(stage, records, object, (edge, link), form, value, frame.miss())),
+        Operation::NamingSite { records, function, naming, form, name } =>
+            (name, naming::site_name(stage, records, function, naming, form, name, frame.miss())),
+        _ => return Step::Unresolved,
     };
-    match value {
-        Some(value) => Step::Value(value),
+    match done {
+        Some(()) => Step::Value(word),
         None => Step::Unresolved,
     }
 }
-
-/// An array literal's element definition over a frame's definer (`Frame::define_element`).
-#[inline(always)]
-fn element_define_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    let Operation::DefineElement { array, index, value } = operation else { return Step::Unresolved };
-    let array = frame.tagged(stage, array);
-    let value = frame.tagged(stage, value);
-    match frame.define_element(stage, array, index, value) {
-        Some(()) => Step::Value(value),
-        None => Step::Unresolved,
-    }
-}
-
-/// A host helper callout (the element store's helper) over the frame's proof.
-#[inline(always)]
-fn helper_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::IndexSetHelper { base, key, value, proof } =>
-            match frame.index_set_helper(stage, base, key, value, proof) {
-                Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
-        Operation::FieldStoreMiss { object, atom, site, value, proof } =>
-            match frame.field_store_miss(stage, object, atom, site, value, proof) {
-                Some(()) => Step::Value(value),
-                None => Step::Unresolved,
-            },
-        _ => Step::Unresolved,
-    }
-}
-
-/// A dense element write over a frame's view proof.
-#[inline(always)]
-fn index_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    match operation {
-        Operation::IndexWrite { index, value, proof } => match frame.index_write(stage, index, value, proof) {
-            Some(()) => Step::Value(value),
-            None => Step::Unresolved,
-        },
-        _ => Step::Unresolved,
-    }
-}
-

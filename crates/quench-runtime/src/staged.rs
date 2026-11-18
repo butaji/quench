@@ -955,6 +955,16 @@ pub(crate) enum Operation<W, P> {
     WasmAccess(wasm_access::WasmAccessOperation),
     /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
     WasmVector(wasm_simd::VectorOperation),
+    /// A property add of `value` to the object at the record table `records`, through a site's
+    /// transition `edge` (and the prototype `link` a chained site must hold), storing it in `form`
+    /// (`add::site_add`). The tier names the object word and the site's words: a register's or the
+    /// activation's receiver, so one variant serves the register and `this` add rows. No opcode
+    /// decodes to it; a stencil row builds it. Leaves at the miss edge where the add declines.
+    AddSite { records: W, object: W, edge: add::Edge<W>, link: Option<W>, form: Form, value: W },
+    /// A function's inferred name `name` written to the function word `function`'s empty name slot
+    /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
+    /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
+    NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
