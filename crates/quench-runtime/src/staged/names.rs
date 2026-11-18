@@ -101,8 +101,10 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             global_write(stage, frame, source, (atom, site, initialize)),
         Operation::LoadName { destination, atom, site, receiver, proof } =>
             load_name(stage, frame, (destination, receiver), (atom, site), proof),
-        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(destination), operands }
-            if let Some(read) = frame.rest_view(stage, get, fixed, operands[0]) => defined(stage, frame, destination, Some(read)),
+        // A frame's in-place rest read answers the value; its runner defines the destination, as
+        // for every names row's value (`lane_row`).
+        Operation::Protocol { step: Protocol::RestView { get, fixed, .. }, destination: Some(_), operands }
+            if let Some((value, _)) = frame.rest_view(stage, get, fixed, operands[0]) => Step::Value(value),
         Operation::Protocol { step, destination, operands } =>
             calling(stage, frame, CallOut::Protocol { step, operands }, destination),
         Operation::ForInNext { destination, state } => for_in_next(stage, frame, destination, state),

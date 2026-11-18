@@ -2338,10 +2338,14 @@ impl Object {
         u64::from(self.layout)
     }
 
+    /// What a lane record's own-field hint and a call memo's step hold: the record's layout id
+    /// (`layout_id`), so that one compare of the record's own word, with no table load, proves
+    /// its exact shape, storage form, prototype link and flags. The auxiliary word a hint names
+    /// is `heap::layouts::auxiliary(hint)`.
     #[inline(always)]
     pub(crate) fn hint_shape(&self) -> u32 {
         debug_assert_eq!(self.aux() & crate::value_vec::STORAGE_FORM, self.storage_form());
-        self.aux()
+        self.layout
     }
 
     /// The storage-form bits of the auxiliary word (`value_vec::STORAGE_FORM`) the header's
@@ -2375,19 +2379,28 @@ impl Object {
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
     }
-    /// `formed_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
-    /// where the whole auxiliary word equals `hint`, a narrow form without inline storage or
-    /// extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
+    /// `hinted_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
+    /// where the layout id equals `hint` (`hint_shape`), a narrow form without inline storage
+    /// or extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
     #[inline(always)]
     pub(crate) fn formed_narrow_start(&self, hint: u32) -> Option<usize> {
         use crate::value_vec::{NARROW_FORM, STORAGE_FORM};
-        let narrow = hint & STORAGE_FORM == NARROW_FORM && self.aux() == hint && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
+        let narrow = self.layout == hint && super::layouts::auxiliary(hint) & STORAGE_FORM == NARROW_FORM
+            && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
         narrow.then_some(self.payload as u32 as usize)
     }
 
 
-    /// The arena storage start of an object whose auxiliary word is `hint` whole, a lane
-    /// record's own-field hint (`hint_shape`) of the arena form; `None` for any other word or form.
+    /// The arena storage start of an object whose layout's form a hint proved the arena form
+    /// (`staged::ic::layout_form` 0): its payload word.
+    #[inline(always)]
+    pub(crate) fn proved_arena_start(&self) -> usize {
+        debug_assert_eq!(self.plain_arena_start(), Some(self.payload as usize));
+        self.payload as usize
+    }
+
+    /// The arena storage start of an object whose auxiliary word is `shape` whole, an exact
+    /// shape, which only the arena form's word equals; `None` for any other word or form.
     #[inline(always)]
     pub(crate) fn formed_plain_start(&self, hint: u32) -> Option<usize> {
         // The arena form (`STORAGE_FORM` clear) has neither inline storage nor extras, so the

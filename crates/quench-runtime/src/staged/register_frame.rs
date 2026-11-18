@@ -122,7 +122,8 @@ pub(crate) trait Frame<S: Stage> {
 
     /// A rest view's read (`Protocol::RestView`): `rest.length` (`get` false) or `rest[key]`
     /// of the values its activation kept past its first `fixed` parameters; `None` where the
-    /// frame keeps none of its own or `key` is no index they hold.
+    /// frame keeps none of its own or `key` is no index they hold. The row answers the value and
+    /// its runner defines the destination.
     #[inline(always)]
     fn rest_view(&mut self, _stage: &mut S, _get: bool, _fixed: usize, _key: Option<Register>) -> Option<(S::Word, Self::Fact)> { None }
 

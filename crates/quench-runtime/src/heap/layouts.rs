@@ -94,6 +94,18 @@ pub(crate) fn word(id: u32) -> u64 {
     unsafe { *table_base().add(id as usize) }
 }
 
+/// The auxiliary word (shape and storage form) of layout `id`: the low half of its header word
+/// (`NATIVE_OBJECT_AUXILIARY_OFFSET`). A specializer reads it at compile time from an id it
+/// guards, so the residual tests none of its bits. A word past the table (a cleared hint's
+/// sentinel) names no layout: its auxiliary word is 0.
+#[inline(always)]
+pub(crate) fn auxiliary(id: u32) -> u32 {
+    if id as usize >= LAYOUT_CAPACITY {
+        return 0;
+    }
+    word(id) as u32
+}
+
 /// The layout id of the header `word`.
 #[inline(always)]
 pub(crate) fn intern(word: u64) -> u32 {

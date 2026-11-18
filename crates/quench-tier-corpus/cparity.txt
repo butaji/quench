@@ -7,11 +7,11 @@ fib b-jit none
 fib u-jit none
 matmul b-jit 119 4 13 0 1 1 2 5
 matmul u-jit 12 0 0 0 0 0 0 0
-nbody b-jit 17 4 2 0 0 0 0 0
-nbody u-jit 251 0 6 47 0 0 0 1
+nbody b-jit 17 3 0 0 0 0 0 0
+nbody u-jit 134 0 6 4 0 0 0 0
 qsort b-jit 43 2 5 0 1 1 1 1
 qsort u-jit 14 0 2 1 0 0 0 1
 structs b-jit 19 4 2 0 0 0 0 0
-structs u-jit 301 4 9 60 0 0 0 1
+structs u-jit 110 4 9 0 0 0 0 0
 sum b-jit kernel
 sum u-jit 7 0 0 0 0 0 0 0

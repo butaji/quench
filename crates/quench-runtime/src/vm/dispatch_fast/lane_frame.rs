@@ -175,7 +175,8 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let host = self.host?;
         // SAFETY: the reader was made for the lane context this frame runs in.
         let (argc, first) = unsafe { (host.kept_values)(host.cx) }?;
-        let fixed = u16::try_from(fixed).ok()?;
+        // A rest view's fixed parameters are a function's (`Function::params`), a `u16`.
+        let fixed = fixed as u16;
         let length = argc.saturating_sub(fixed);
         if !get {
             return Some((Value::integer(i32::from(length)).to_bits(), Boxing::Value));

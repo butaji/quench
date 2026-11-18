@@ -1108,9 +1108,9 @@ impl LaneView {
         }
     }
 
-    /// The own-field hint of the field record at `pc`, as the whole auxiliary word
-    /// (`Object::hint_shape`) of the receiver it last answered: what a specializer guards in
-    /// one compare to read the record's storage form with no test (`NativeFieldLoad::formed`).
+    /// The own-field hint of the field record at `pc`, as the layout id (`Object::hint_shape`)
+    /// of the receiver it last answered: what a specializer guards in one compare to read the
+    /// record's storage form with no test (`NativeFieldLoad::formed`).
     /// `None` where the record holds no own hint, or is no hinted field record.
     pub(super) fn own_field_hint(&self, pc: usize) -> Option<u32> {
         let pc = u32::try_from(pc).ok()?;
@@ -7486,6 +7486,8 @@ fn own_entry_hit<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, object: Value,
 /// reads untested.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
     use crate::staged::TAGGED_SLOTS;
+    // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
+    let hint = crate::heap::layouts::auxiliary(hint);
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     // A narrow run's hint names neither inline values nor extras: those tests fold away and
     // the read takes the run's halves. Packed and narrow slots never hold a raw double; the
@@ -9346,7 +9348,7 @@ script_handler! {
                 set_field_hint(ip, hint);
                 // A narrow run's site stores in place from now on (`lane_set_field_narrow`); a
                 // narrow site whose object is no longer narrow goes back to the own store.
-                let narrow = hint.receiver & crate::value_vec::STORAGE_FORM == crate::value_vec::NARROW_FORM;
+                let narrow = crate::heap::layouts::auxiliary(hint.receiver) & crate::value_vec::STORAGE_FORM == crate::value_vec::NARROW_FORM;
                 if !vm.heap.tracks_slot_representations() {
                     if narrow {
                         requicken::<H>(ip, lane_set_field_narrow::<H, THIS>);
