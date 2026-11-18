@@ -141,6 +141,15 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     let record = object as *const crate::heap::Object as u64;
     // The word proves the shape and, by its storage-form bits, where the values live.
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    // An exact shape has no form bits, so the whole word equals it only in the arena form,
+    // whose payload is the run's start: one compare proves the shape and the form.
+    let whole = stage.eq_imm(word, u64::from(shape));
+    if shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0 && stage.known(whole) == Some(true) {
+        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+        let run = arena_run(&mut stage, payload);
+        let layout = Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
+        return Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)));
+    }
     let at = Reached { record, shape: Some(recorded_shape(&mut stage, word)), inline: None };
     guard_shape(&mut stage, &at, shape, ())?;
     let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
