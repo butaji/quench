@@ -1,8 +1,10 @@
 //! Receivers kept as their field values: a construction by a plan of fields passed or constant
 //! (`compiled::ScalarConstructPlan`) whose result only has its fields read, as in
-//! `const p = new Pair(i, 1); s += p.x + p.y`, allocates nothing. The body tests that the plan
-//! holds where the construction would run, keeps each argument in a variable, and answers a
-//! read of a field with its value. The receiver is allocated, by the same plan, only where the
+//! `const p = new Pair(i, 1); s += p.x + p.y`, allocates nothing. The body takes the plan as a
+//! code dependency: it holds the callee's and the prototype's shapes (`hold_holder`), so a
+//! change to either retires the body, and it tests nothing per construction but the callee's
+//! identity and whether a construction may run (`ConstructReady`). It keeps each argument in a
+//! variable, and answers a read of a field with its value. The receiver is allocated, by the same plan, only where the
 //! code needs it as an object: before an instruction the kept values cannot answer, before a
 //! block ends with the register live, and in every leave that finds it live, so the
 //! interpreter resumes with the object the construction would have made. Between the
@@ -54,9 +56,11 @@ impl Lowering<'_, '_> {
         (result < self.unit.registers && self.is_live(pc + 1, result)).then_some(plan)
     }
 
-    /// The construction at `pc` by `plan`, kept as its field values: the callee is the plan's
-    /// and the plan holds, else it leaves before any effect; the result register holds no
-    /// object until one is needed (`materialize_virtuals`).
+    /// The construction at `pc` by `plan`, kept as its field values: the callee is the plan's, else
+    /// it leaves before any effect. The plan is a dependency, not a test: the body holds the shapes
+    /// the plan's proof read (`ScalarConstructPlan::holders`), so a change to any retires the body
+    /// and the code leaves at its next invalidation point, where a retired plan can no longer be
+    /// used. The result register holds no object until one is needed (`materialize_virtuals`).
     pub(super) fn virtual_construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, plan: ScalarConstructPlan) -> bool {
         let crate::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return false };
         let exit = self.guard_exit(state, pc as u32);
@@ -64,10 +68,13 @@ impl Lowering<'_, '_> {
         let expected = self.identity_constant(plan.callee);
         let same = self.raw_compare(Relation::Equal, callee, expected);
         emit_js_guard(&mut self.builder, same, exit);
+        for holder in plan.holders {
+            self.hold_holder(state, exit, holder);
+        }
         let payload = self.payload;
-        let holds = self.helper_call(LaneHelper::ConstructPlanHolds, &[payload, expected]);
-        let held = self.raw_compare_imm(Relation::NotEqual, holds, 0);
-        emit_js_guard(&mut self.builder, held, exit);
+        let ready = self.helper_call(LaneHelper::ConstructReady, &[payload]);
+        let ready = self.raw_compare_imm(Relation::NotEqual, ready, 0);
+        emit_js_guard(&mut self.builder, ready, exit);
         let mut arguments = smallvec::SmallVec::new();
         let mut types = smallvec::SmallVec::<[Type; 8]>::new();
         for register in window.base..window.base + window.count {

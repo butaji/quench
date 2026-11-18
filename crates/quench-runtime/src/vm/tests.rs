@@ -1053,6 +1053,42 @@ fn forwarded_construct_plans_retire_when_their_prototype_or_method_changes() {
 }
 
 #[test]
+fn kept_constructions_follow_a_prototype_setter_defined_mid_loop() {
+    // A loop keeps each `new Point(i, i + 1)` as its field values while its plan holds. A setter
+    // for `y` defined on `Point.prototype` in the middle of the loop changes what the constructor's
+    // `this.y = y` does (it stores `v * 10` under `yy`), so from that iteration on `p.y` reads
+    // 10 * (i + 1). The sum is 2i + 1 for the first five iterations (25) and 11i + 10 after (435).
+    let source = r#"
+      function Point(x, y) { this.x = x; this.y = y; }
+      function run(n, at) {
+        var s = 0;
+        for (var i = 0; i < n; i++) {
+          if (i === at) Object.defineProperty(Point.prototype, 'y', {
+            configurable: true,
+            get: function () { return this.yy; },
+            set: function (v) { this.yy = v * 10; }
+          });
+          var p = new Point(i, i + 1);
+          s += p.x + p.y;
+        }
+        return s;
+      }
+      function warm() { for (var k = 0; k < 40; k++) { run(300, -1); } }
+      var out = [];
+      warm();
+      out.push(run(10, -1));
+      out.push(run(10, 5));
+      out.push(run(10, -1));
+      print(out.join());
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "kept-constructions-prototype-setter.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["100,460,595"]);
+}
+
+#[test]
 fn hot_bodies_construct_through_forwarded_initializers_that_do_more_than_store() {
     // A hot function builds objects through a forwarding constructor whose initializer calls
     // a function and returns an object: the construction yields the receiver whatever the

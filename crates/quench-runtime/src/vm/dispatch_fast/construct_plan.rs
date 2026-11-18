@@ -350,7 +350,7 @@ pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -
 /// # Safety
 /// `arguments` are the body's `argc` registers.
 pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if vm.construct_target.is_some() || vm.heap.should_collect() {
+    if !construction_ready(vm) {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.
@@ -455,15 +455,21 @@ pub(in crate::vm) fn scalar_construct_plan<H: Host>(vm: &Vm<H>, callee: Value) -
         })),
         _ => None,
     }).collect::<Option<_>>()?;
-    Some(ScalarConstructPlan { callee, shape: plan.shape, fields })
+    let holders = [watched_shape(vm, callee)?, watched_shape(vm, plan.prototype)?];
+    Some(ScalarConstructPlan { callee, shape: plan.shape, fields, holders })
 }
 
-/// Whether `callee`'s plan holds now (`holding_construct_plan_index`) and an allocation by it
-/// would not refuse (`lane_body_construction`): no construction under way, no collection due.
-/// A body that keeps a receiver as its field values (`compiled::ScalarConstructPlan`) tests it
-/// where the construction would run, so the receiver a leave allocates is the plan's.
-pub(in crate::vm) fn construct_plan_holds<H: Host>(vm: &Vm<H>, callee: Value) -> bool {
-    vm.construct_target.is_none() && !vm.heap.should_collect() && holding_construct_plan_index(vm, callee).is_some()
+/// Whether a construction may build its receiver now (`lane_body_construction`'s refusals): no
+/// construction under way and no collection due. Per execution, unlike a plan, which a body
+/// holds as a code dependency (`compiled::ScalarConstructPlan::holders`).
+pub(in crate::vm) fn construction_ready<H: Host>(vm: &Vm<H>) -> bool {
+    vm.construct_target.is_none() && !vm.heap.should_collect()
+}
+
+/// The exact shape `watch_construct_plan` subscribes for `object`, the callee or its prototype.
+fn watched_shape<H: Host>(vm: &Vm<H>, object: Value) -> Option<u32> {
+    vm.heap.function(object).map(|function| function.object.exact_shape())
+        .or_else(|| vm.heap.object(object).map(|data| data.exact_shape()))
 }
 
 /// The construct plan cache index of `callee`'s plan while it holds (`holding_construct_plan`).
@@ -498,9 +504,7 @@ pub(super) fn watch_construct_plan<H: Host>(vm: &mut Vm<H>, index: usize, renew:
     let code: Rc<dyn DependentCode> = watch.clone();
     for &object in objects {
         vm.heap.mark_prototype(object);
-        let shape = vm.heap.function(object).map(|function| function.object.exact_shape())
-            .or_else(|| vm.heap.object(object).map(|data| data.exact_shape()));
-        if !shape.is_some_and(|shape| crate::heap::subscribe_prototype_values(shape, &code)) {
+        if !watched_shape(vm, object).is_some_and(|shape| crate::heap::subscribe_prototype_values(shape, &code)) {
             watch.retire();
         }
     }

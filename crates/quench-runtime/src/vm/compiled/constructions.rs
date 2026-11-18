@@ -13,13 +13,7 @@ pub(super) unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, 
     let (vm, residual, dispatch) = unsafe {
         (&mut *(vm as *mut Vm<H>), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
     };
-    // A lane run's frame decides as its context says; a linked region's, as its dispatch does
-    // for the general loop's in-place constructions.
-    let constructs = if dispatch.lane_context == 0 {
-        dispatch.allow_inline_calls
-    } else {
-        unsafe { super::dispatch_fast::lane_context_constructs::<H>(dispatch.lane_context as *mut ()) }
-    };
+    let constructs = frame_constructs::<H>(dispatch);
     let built = constructs.then(|| unsafe {
         super::dispatch_fast::lane_body_construction(vm, residual, Value::from_bits(callee), arguments as *const Value, argc as u16)
     }).flatten();
@@ -32,19 +26,24 @@ pub(super) unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, 
     built.unwrap_or(Value::DELETED).to_bits()
 }
 
-/// Whether a construction of `callee` here would build its receiver by its plan
-/// (`dispatch_fast::construct_plan_holds`), the frame constructing in place as `lane_construct`
-/// asks: 1, else 0. A body keeping the receiver as its field values tests it where the
-/// construction would run (`lane_region::virtual_objects`).
-pub(super) unsafe extern "C" fn lane_construct_plan_holds<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64) -> u64 {
-    // SAFETY: the body passes its own VM and dispatch; the test changes nothing.
-    let (vm, dispatch) = unsafe { (&*(vm as *const Vm<H>), &*(payload as *const JsStepDispatch)) };
-    let constructs = if dispatch.lane_context == 0 {
+/// Whether the frame of `dispatch` constructs in place: a lane run's as its context says, a
+/// linked region's as its dispatch does for the general loop's in-place constructions.
+fn frame_constructs<H: Host>(dispatch: &JsStepDispatch) -> bool {
+    if dispatch.lane_context == 0 {
         dispatch.allow_inline_calls
     } else {
         unsafe { super::dispatch_fast::lane_context_constructs::<H>(dispatch.lane_context as *mut ()) }
-    };
-    u64::from(constructs && super::dispatch_fast::construct_plan_holds(vm, Value::from_bits(callee)))
+    }
+}
+
+/// Whether a construction may build its receiver here (`dispatch_fast::construction_ready`) in a
+/// frame that constructs in place: 1, else 0. Only per-execution facts are tested here. The plan a
+/// body's kept receiver takes is not: the body holds its shapes as a code dependency
+/// (`lane_region::virtual_objects`), so retiring the plan retires the body.
+pub(super) unsafe extern "C" fn lane_construct_ready<H: Host>(vm: u64, _residual: u64, payload: u64) -> u64 {
+    // SAFETY: the body passes its own VM and dispatch; the test changes nothing.
+    let (vm, dispatch) = unsafe { (&*(vm as *const Vm<H>), &*(payload as *const JsStepDispatch)) };
+    u64::from(frame_constructs::<H>(dispatch) && super::dispatch_fast::construction_ready(vm))
 }
 
 /// The receiver a body's construction through forwarding constructor `callee` passes its
