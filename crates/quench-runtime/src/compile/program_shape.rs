@@ -91,8 +91,10 @@ const DIRECT_EVAL_STUB_BYTES: usize = 4 << 20;
 /// compile cache unused / warm: babel-wtb (5.6 MB) first -16.7% / +4.3% (a warm load
 /// compiled nothing), steady -10.1% / -9.8%. Scripts under a megabyte mostly run their code:
 /// stubbed, chai-wtb (530 KB) went +0.3% / +8.4% first, +0.7% / +3.6% steady; postcss-wtb
-/// (1.2 MB) +0.8% / +1.4% steady; espree and source-map within 2%.
-const FIRST_CALL_SCRIPT_BYTES: usize = 2 << 20;
+/// (1.2 MB) +0.8% / +1.4% steady; espree and source-map within 2%. typescript (4.6 MB, a
+/// compiler that runs most of its bundle) went +1.8% first, +4.8% steady at a 2 MiB threshold,
+/// so the threshold stays above it until stubbing weighs how much of a script runs.
+const FIRST_CALL_SCRIPT_BYTES: usize = 5 << 20;
 
 /// Which functions of a source compile on first call.
 #[derive(Clone, Copy)]
