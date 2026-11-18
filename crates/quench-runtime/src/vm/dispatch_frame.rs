@@ -1,5 +1,4 @@
 use super::*;
-use crate::bytecode::index;
 mod interpreter_frame;
 mod loop_stack;
 pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
@@ -1888,7 +1887,7 @@ impl<H: Host> Vm<H> {
                     .and_then(|function| function.instructions().nth(pc))
                 {
                     super::lane_exits::record(instruction.op());
-                    if matches!(instruction.op() as u16, index::Call | index::Construct) {
+                    if crate::staged::calls(instruction.op()) || crate::staged::Operation::<u64, ()>::is_construction(instruction) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
@@ -1940,7 +1939,7 @@ impl<H: Host> Vm<H> {
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
-                    if crate::staged::Operation::<u64, ()>::is_return(instruction) && pending_calls.is_empty() {
+                    if crate::staged::returns(instruction.op()) && pending_calls.is_empty() {
                         let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
                         let described = match starter.and_then(|callable| self.heap.function(callable)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
@@ -2193,13 +2192,13 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                 }
-                index::LoadCapture => {
+                _ if crate::staged::reads_capture(ins.op()) => {
                     if let Some(value) = self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
                 }
-                index::JumpBinaryFalse => {
+                _ if crate::staged::compare_jump(ins.op()) => {
                     let operator = ins.binary_operator_field();
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
@@ -2240,8 +2239,8 @@ impl<H: Host> Vm<H> {
                 }
                 // Number arithmetic on register or constant operands runs no guest code,
                 // allocates nothing and cannot throw.
-                index::Binary | index::NumericAdd | index::NumericMultiply
-                    if !ins.returns_from_frame()
+                _ if crate::staged::computes_arithmetic(ins.op())
+                    && !ins.returns_from_frame()
                         && let (Some(left), Some(right)) = (
                             self.inert_operand(frame, ins.operand_b()),
                             self.inert_operand(frame, ins.operand_c()),
@@ -2267,8 +2266,8 @@ impl<H: Host> Vm<H> {
                 }
                 // Equality decided without conversion, and instanceof reduced to a prototype
                 // walk, run no guest code either.
-                index::Binary
-                    if !ins.returns_from_frame()
+                _ if crate::staged::computes_binary(ins.op())
+                    && !ins.returns_from_frame()
                         && ins.numeric_local_target().is_none()
                         && let (Some(left), Some(right)) = (
                             self.inert_operand(frame, ins.operand_b()),
@@ -2290,8 +2289,8 @@ impl<H: Host> Vm<H> {
                 // A field cache hit reads a data slot, and an array's length is an own data
                 // property: neither allocates nor throws. Anything else takes the general path.
                 // `this` is a base once the activation fixed it, as for `SetThisField`.
-                index::GetField
-                    if ins.result_flags() == 0
+                _ if crate::staged::reads_named_field(ins.op())
+                    && ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
                             atom,
                             base,
@@ -2321,8 +2320,8 @@ impl<H: Host> Vm<H> {
                 // A present dense array element is a data property (accessor indices are
                 // stored as holes): reading it, or replacing it in an array without indexed
                 // descriptors or frozen state, runs no guest code and cannot throw.
-                index::GetIndex
-                    if let (Some(base), Some(key)) = (
+                _ if crate::staged::reads_element(ins.op())
+                    && let (Some(base), Some(key)) = (
                         self.inert_operand(frame, ins.operand_b()),
                         self.inert_operand(frame, ins.operand_c()),
                     ) && let Some(value) = self.dense_array_element(base, key) =>
@@ -2330,7 +2329,7 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                index::SetIndex => {
+                _ if crate::staged::writes_element(ins.op()) => {
                     let (object, key) = (
                         self.read(frame, ins.register_b()),
                         self.read(frame, ins.register_c()),
@@ -2345,8 +2344,8 @@ impl<H: Host> Vm<H> {
                 }
                 // Number increments and conversions of Numbers run no guest code, allocate
                 // nothing and cannot throw.
-                index::IncDec
-                    if let Some(value) = super::dispatch::number_increment(
+                _ if crate::staged::increments(ins.op())
+                    && let Some(value) = super::dispatch::number_increment(
                         self.read(frame, ins.register_b()),
                         ins.boolean_flag().expect("validated boolean immediate"),
                     ) =>
@@ -2354,7 +2353,7 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                index::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                _ if crate::staged::converts_numeric(ins.op()) && self.read(frame, ins.register_b()).as_number().is_some() => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2363,7 +2362,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // A back edge collects only once the allocation threshold is reached.
-                index::Jump if !self.heap.should_collect() => {
+                _ if crate::staged::jumps(ins.op()) && !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2386,7 +2385,7 @@ impl<H: Host> Vm<H> {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 _ if let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(ins) => Ok(StepResult::Return(self.read(frame, source))),
-                index::Call if allow_inline_calls => {
+                _ if crate::staged::calls(ins.op()) && allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {
