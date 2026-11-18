@@ -2467,6 +2467,15 @@ impl<H: Host> Vm<H> {
         self.heap.held_other_receiver(object)
     }
 
+    /// The layout id (`Object::hint_shape`) of any receiver with an object part a hint reads
+    /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
+    /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
+    /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
+        self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
+    }
+
     /// Makes `value`, which the immediate prototype of the direct object or array `object`
     /// answered for a read of `atom`, a record's hint (`hold_prototype_hint`); `None` for
     /// another receiver.

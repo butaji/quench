@@ -85,7 +85,8 @@ impl Cell {
 
 impl super::Heap {
     /// The object part of a builtin whose named properties are all ordinary: a collection,
-    /// date, regexp, promise or iterator. No proxy, exotic or integer-indexed object.
+    /// date, regexp, promise, iterator, DataView, buffer, weak ref or finalization registry.
+    /// No proxy, exotic or integer-indexed object.
     #[inline(never)]
     pub(crate) fn ordinary_builtin_object(&self, value: crate::Value) -> Option<&Object> {
         // A record family reads its record at once, past `object`'s tests of the others.
@@ -98,8 +99,12 @@ impl super::Heap {
             return Some(&unsafe { self.promise_records.get_live(record_id) }.object);
         }
         let cell = self.get(value)?;
+        // A DataView's and a buffer's geometry is accessors of their prototypes, so their own
+        // names are their shape's too. A typed array is not here: every canonical numeric
+        // string, not only an index, is its own element.
         matches!(cell, Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. }
-            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_))
+            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_)
+            | Cell::DataView { .. } | Cell::ArrayBuffer { .. } | Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. })
             .then(|| cell.object()).flatten()
     }
 }
