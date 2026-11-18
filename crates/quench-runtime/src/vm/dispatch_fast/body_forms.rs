@@ -48,14 +48,24 @@ impl<'a> BodyCall<'a> {
     ///
     /// # Safety
     /// `cx` is the running lane's context and `call_pc` a record of the running body's function.
+    #[inline(always)]
     pub(super) unsafe fn at<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> Option<Self> {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         // SAFETY: the context names the running activation, which a native callee's frame is while its helper
         // runs (`native_frames::in_innermost_frame`).
         let (registers, base, function, this) = unsafe { ((*cx).registers, (*cx).base, lane_running_function(cx), (*cx).registers.this()) };
-        let body = code.function(function as usize);
-        let site = Invocation::of(body.widened(body.code[call_pc as usize]), DecodeContext::of(code))?;
+        // The form of this record, decoded once per run: the run's code fixes it.
+        let site = match unsafe { (*cx).body_site } {
+            Some((decoded_code, decoded_function, decoded_pc, site))
+                if std::ptr::eq(decoded_code, code) && decoded_function == function && decoded_pc == call_pc => site,
+            _ => {
+                let body = code.function(function as usize);
+                let site = Invocation::of(body.widened(body.code[call_pc as usize]), DecodeContext::of(code))?;
+                unsafe { (*cx).body_site = Some((std::ptr::from_ref(code), function, call_pc, site)) };
+                site
+            }
+        };
         let list = match site.arguments {
             Arguments::List(list) => list.registers(&code.method_arguments),
             Arguments::Window { .. } => &[],
