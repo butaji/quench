@@ -837,6 +837,27 @@ fn lane_polymorphic_field_hints_keep_lookup_semantics() {
 }
 
 #[test]
+fn eval_vars_bound_by_nested_rest_elements_collide_with_lexicals() {
+    // A direct eval's `var` may not redeclare its caller's lexical binding (ECMA-262
+    // EvalDeclarationInstantiation step 3), including a name a nested rest element binds.
+    let source = r#"
+      const out = [];
+      let x = 1;
+      try { eval("var [...x] = [2]"); out.push("none"); } catch (e) { out.push(e.name); }
+      function g() { let y = 1; try { eval("var {...y} = {}"); out.push("none"); } catch (e) { out.push(e.name); } }
+      g();
+      function h() { eval("var [a, ...z] = [3, 4]"); return z[0]; }
+      out.push(h(), x);
+      print(out.join(" "));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "eval-rest-collisions.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["SyntaxError SyntaxError 4 1"]);
+}
+
+#[test]
 fn lane_global_undefined_reads_keep_binding_semantics() {
     // A static global read of `undefined` answers its value in the lane, while a direct
     // eval's `var undefined` and a `with` object's property still shadow it, and neither an

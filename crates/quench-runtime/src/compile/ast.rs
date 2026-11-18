@@ -626,30 +626,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     fn collect_binding_names(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
-        match pattern {
-            BindingPattern::BindingIdentifier(identifier) => {
-                names.push(identifier.name.to_string());
-            }
-            BindingPattern::AssignmentPattern(pattern) => {
-                Self::collect_binding_names(&pattern.left, names);
-            }
-            BindingPattern::ArrayPattern(pattern) => {
-                for element in pattern.elements.iter().flatten() {
-                    Self::collect_binding_names(element, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-            BindingPattern::ObjectPattern(pattern) => {
-                for property in &pattern.properties {
-                    Self::collect_binding_names(&property.value, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-        }
+        super::early::collect_pattern_names(pattern, names);
     }
 
     pub(super) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {

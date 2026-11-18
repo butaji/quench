@@ -1649,13 +1649,20 @@ pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut im
     pattern_names(pattern, &mut |name| names.extend(std::iter::once(name.to_string())));
 }
 
-/// Calls `name` with each name `pattern` binds, borrowed from the source.
-fn pattern_names<'a>(pattern: &BindingPattern<'a>, name: &mut impl FnMut(&'a str)) {
+/// Calls `name` with each name `pattern` binds, borrowed from the source, in source order:
+/// a nested rest element (`[...a]`, `{...r}`) binds its name too.
+pub(super) fn pattern_names<'a>(pattern: &BindingPattern<'a>, name: &mut impl FnMut(&'a str)) {
     match pattern {
         BindingPattern::BindingIdentifier(identifier) => name(identifier.name.as_str()),
         BindingPattern::AssignmentPattern(pattern) => pattern_names(&pattern.left, name),
-        BindingPattern::ArrayPattern(pattern) => pattern.elements.iter().flatten().for_each(|element| pattern_names(element, name)),
-        BindingPattern::ObjectPattern(pattern) => pattern.properties.iter().for_each(|property| pattern_names(&property.value, name)),
+        BindingPattern::ArrayPattern(pattern) => {
+            pattern.elements.iter().flatten().for_each(|element| pattern_names(element, name));
+            if let Some(rest) = &pattern.rest { pattern_names(&rest.argument, name); }
+        }
+        BindingPattern::ObjectPattern(pattern) => {
+            pattern.properties.iter().for_each(|property| pattern_names(&property.value, name));
+            if let Some(rest) = &pattern.rest { pattern_names(&rest.argument, name); }
+        }
     }
 }
 
