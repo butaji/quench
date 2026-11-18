@@ -1414,6 +1414,8 @@ pub struct Function {
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `maker_bindings_read`; never serialized.
     pub(crate) maker_bindings: std::cell::OnceCell<bool>,
+    /// Lazily derived `arrow_chain_reads_implicit_bindings` of this function; never serialized.
+    pub(crate) arrow_reads: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
@@ -2186,6 +2188,11 @@ impl Function {
     /// (`activation_bindings_observable` counts every arrow it makes): an arrow chain that reads
     /// none (`arrow_chain_reads_implicit_bindings`), as `xs.map(x => x * 2)` does, needs no
     /// `this` kept for it.
+    /// `arrow_chain_reads_implicit_bindings` of this function, `id` of `code`, cached.
+    pub(crate) fn arrow_reads_implicit_bindings(&self, code: &ResidualProgram, id: u32) -> bool {
+        *self.arrow_reads.get_or_init(|| arrow_chain_reads_implicit_bindings(code, id))
+    }
+
     pub(crate) fn maker_bindings_read(&self, code: &ResidualProgram) -> bool {
         *self.maker_bindings.get_or_init(|| {
             self.activation_binding_reads(code)

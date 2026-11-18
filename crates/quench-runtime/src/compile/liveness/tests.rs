@@ -56,7 +56,7 @@ fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::
         binding_sites: vec![].into(), source_positions: Default::default(), environment_clones: vec![].into(), code,
         wide: vec![], registers, dispatch: crate::bytecode::DispatchClass::General, decoded: Default::default(),
         plain_locals: Default::default(), declared_atom_sets: Default::default(),
-        activation_bindings: Default::default(), maker_bindings: Default::default(), live_parameter_reflection: Default::default(),
+        activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(), live_parameter_reflection: Default::default(),
         static_name_scope: Default::default(), dynamic_scope_access: Default::default(),
         js_tier_candidate: Default::default(), call_plan: Default::default(), initializer: Default::default(),
         handlers: handlers.into(), register_roots: Default::default(), undefined_register: None,
