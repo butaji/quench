@@ -36,11 +36,35 @@ pub(super) struct FactTables {
     instanceofs: std::collections::BTreeMap<u64, crate::code_dependencies::InstanceofFact>,
     stable_shapes: std::collections::BTreeSet<u32>,
     names: std::collections::BTreeMap<(u16, Atom), (crate::staged::add_plan::Transition, u64)>,
+    /// The own members of constant-marked objects the VM holds, by atom (`Vm::own_constants`).
+    own_constants: std::collections::BTreeMap<Atom, OwnConstant>,
+    /// By (function, PC) of each construction of the unit, the scalar plan its callee builds by
+    /// (`OnlineFacts::construct_plans`).
+    construct_plans: std::collections::BTreeMap<(u32, u32), ScalarConstructPlan>,
+}
+
+/// The (function, PC) each construction of `unit` is recorded at: the caller's own PC, or the
+/// inlined callee's (`Lowering::virtual_construct_plan`).
+fn construction_sites(unit: &lane_unit::Unit, function: u32) -> impl Iterator<Item = (u32, u32)> + '_ {
+    unit.instructions.iter().enumerate()
+        .filter(|(_, instruction)| instruction.op().class() == crate::bytecode::Class::Construct)
+        .filter_map(move |(pc, _)| match unit.origins.get(pc).copied()? {
+            lane_unit::Origin::Caller(record) => Some((function, record)),
+            lane_unit::Origin::Inlined { frame, pc } => Some((unit.frames[frame].target.function, pc)),
+        })
+}
+
+/// The scalar plans of `unit`'s constructions that `plan` answers, by (function, PC).
+pub(super) fn construction_plans(unit: &lane_unit::Unit, function: u32, plan: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>)
+    -> std::collections::BTreeMap<(u32, u32), ScalarConstructPlan> {
+    construction_sites(unit, function).filter_map(|site| Some((site, plan(site.0, site.1)?))).collect()
 }
 
 impl FactTables {
-    fn of<H: Host>(vm: &Vm<H>, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
-        global_reads: &crate::vm::global_facts::GlobalReads) -> Self {
+    /// What `vm` answers now to the questions `function`'s lowering of `unit` may ask;
+    /// `construct` names a construction's scalar plan.
+    fn of<H: Host>(vm: &Vm<H>, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
+        global_reads: &crate::vm::global_facts::GlobalReads, construct: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>) -> Self {
         use crate::vm::global_facts::GlobalRead;
         let mut tables = Self::default();
         let read_values = (0..unit.instructions.len()).filter_map(|pc| match global_reads.get(&pc)? {
@@ -64,7 +88,17 @@ impl FactTables {
                 if let Some(name) = vm.native_function_name(key.0, key.1) { tables.names.insert(key, name); }
             }
         }
+        tables.own_constants = vm.own_constants();
+        tables.construct_plans = construction_plans(unit, function, construct);
         tables
+    }
+
+    fn own_constant(&self, atom: Atom) -> Option<OwnConstant> {
+        self.own_constants.get(&atom).copied()
+    }
+
+    fn construct_plan(&self, function: u32, pc: u32) -> Option<ScalarConstructPlan> {
+        self.construct_plans.get(&(function, pc)).cloned()
     }
 
     fn instanceof(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
@@ -128,11 +162,11 @@ impl LoweringJob<'_> {
         let instanceofs = |constructor: Value| self.tables.instanceof(constructor);
         let names = |site: u16, atom| self.tables.name(site, atom);
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
+        let own_constant = |atom: Atom| self.tables.own_constant(atom);
+        let construct_plans = |function: u32, pc: u32| self.tables.construct_plan(function, pc);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            // TODO(merge): wyc2t0's own-constant fold and the scalar construct plans read the VM
-            // live; they need FactTables entries before the off-thread lowering can answer them.
-            names: Some(&names), own_constant: &|_| None }), ..self.facts };
+            names: Some(&names), own_constant: &own_constant }), construct_plans: Some(&construct_plans), ..self.facts };
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads)
     }
@@ -334,12 +368,13 @@ impl<H: Host> Vm<H> {
         generic: &[LaneExit], budget: usize, entry: Option<u32>,
         arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)], gate: &PlanGate<'_, H>) -> Option<(LanePlan, ir::Function)> {
         let LanePrepared { unit, fields, global_reads, direct, direct_sites, closed, entry, entry_left, left_at } =
-            self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, gate)?;
+            self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, None, gate)?;
         // The body folds Stable facts under its own invalidation word, which its publication
         // sets when one changes (`ProgramStore::publish_lane_method`).
         let invalidation = crate::code_dependencies::Invalidation::default();
+        let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Running(program), function, &unit, &fields, global_reads, direct_sites,
-            captures, invalidation.address(), (entry, entry_left, &left_at), arrays);
+            captures, invalidation.address(), (entry, entry_left, &left_at), arrays, &construct);
         let mut lowered = job.run().or_else(|| { plan_miss(self, Miss::PlanNothingNative); None })?;
         if lowered.region.native == 0 { plan_miss(self, Miss::PlanNothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
@@ -352,7 +387,7 @@ impl<H: Host> Vm<H> {
     #[allow(clippy::too_many_arguments)]
     fn prepare_lane_plan(&mut self, program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>,
         trips: &dyn Fn(u32, u32) -> Option<u64>, direct: &[DirectCandidates], generic: &[LaneExit], budget: usize, entry: Option<u32>,
-        gate: &PlanGate<'_, H>) -> Option<LanePrepared> {
+        view: Option<&super::super::dispatch_fast::LaneView>, gate: &PlanGate<'_, H>) -> Option<LanePrepared> {
         let unit = self.lane_plan_unit(program, function, targets, trips, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
@@ -375,13 +410,13 @@ impl<H: Host> Vm<H> {
     fn lowering_job<'p>(&self, program: LoweringProgram<'p>, function: u32, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
         global_reads: crate::vm::global_facts::GlobalReads, direct_sites: lane_region::DirectSites, captures: &dyn Fn(Value) -> (usize, usize),
         invalidation: usize, (entry, entry_left, left_at): (Option<usize>, bool, &[usize]),
-        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)]) -> LoweringJob<'p> {
+        arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)], construct: &dyn Fn(u32, u32) -> Option<ScalarConstructPlan>) -> LoweringJob<'p> {
         let frame_captures: Vec<(usize, usize)> = unit.frames.iter()
             .map(|frame| frame.target.identity().map_or((0, 0), captures)).collect();
         let active = self.active_program;
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, &*program))
             .map_or(Vec::new(), |_| self.programs.constants(active).to_vec());
-        let tables = FactTables::of(self, unit, fields, &global_reads);
+        let tables = FactTables::of(self, function, unit, fields, &global_reads, construct);
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(unit))).chain(self.adding_stores(unit)).collect();
         let number_reads = super::osr_compile::observed_reads(&program, unit, arrays, &[], left_at);
         LoweringJob { function, unit: unit.clone(), fields: fields.to_vec(), global_reads, direct_sites, frame_captures,
@@ -469,7 +504,7 @@ impl<H: Host> Vm<H> {
         // plan took (`LoweringJob`) and runs with the code generation on the code generator's
         // thread, while the program runs on.
         self.host.before_native_compilation();
-        let prepared = self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, &gate);
+        let prepared = self.prepare_lane_plan(program, function, targets, trips, direct, generic, budget, entry, Some(caller), &gate);
         self.host.after_native_compilation();
         match stopped.into_inner() {
             Some(Unstarted::Short) => { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
@@ -493,8 +528,9 @@ impl<H: Host> Vm<H> {
         // The functions the lowering reads: its own, its inlined callees' and its direct callees'.
         let functions: Vec<u32> = std::iter::once(function).chain(unit.frames.iter().map(|frame| frame.target.function))
             .chain(direct.iter().map(|callee| callee.target.function)).collect();
+        let construct = |function: u32, pc: u32| self.construct_plan_of(targets, function, pc);
         let job = self.lowering_job(LoweringProgram::Detached(program.detached(&functions)), function, &unit, &fields,
-            global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays);
+            global_reads.clone(), direct_sites, captures, invalidation.address(), (entry_at, entry_left, &left_at), arrays, &construct);
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), left_at };
         let plan_us = u64::try_from(plan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let census = self.programs.js_jit_diagnostics_enabled().then(|| Census {
@@ -598,12 +634,27 @@ impl<H: Host> Vm<H> {
     /// method cache naming an atom `lowered` stores in place.
     fn lowering_holds(&self, program: &ResidualProgram, pending: &PendingLaneMethod, lowered: &lane_region::LoweredLane) -> bool {
         let (plan, taken) = (&pending.plan, &*pending.taken);
-        FactTables::of(self, &plan.unit, &plan.fields, &taken.global_reads) == taken.tables
+        // A construction's plan is asked of the callee it was planned for: its code tests the
+        // callee, so another callee at the site only leaves.
+        let construct = |function: u32, pc: u32| taken.tables.construct_plans.get(&(function, pc))
+            .and_then(|plan| super::super::dispatch_fast::scalar_construct_plan(self, plan.callee));
+        // A field's formed layout id (the view's own-field hint) is guarded where the code reads
+        // it, so a hint that moved since only leaves: the fields compare without it.
+        let unformed = |fields: &[Option<Vec<NativeFieldLoad>>]| fields.iter()
+            .map(|loads| loads.as_ref().map(|loads| loads.iter().map(|load| NativeFieldLoad { formed: None, ..*load }).collect::<Vec<_>>())).collect::<Vec<_>>();
+        FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads, &construct) == taken.tables
             && self.lane_global_reads(program, plan.function, &plan.unit) == taken.global_reads
-            && self.lane_unit_fields(program, &plan.unit, &taken.left_at) == plan.fields
+            && unformed(&self.lane_unit_fields(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
             && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.lane_callee_captures(callee)))
                 .eq(taken.frame_captures.iter().copied())
             && lowered.region.stable.atoms.iter().all(|atom| !self.method_cache_atoms.bits().contains(*atom as usize))
+    }
+
+    /// The scalar plan the construction at `pc` of `function` builds its receiver by: that of
+    /// the one callee its site named (`dispatch_fast::scalar_construct_plan`).
+    fn construct_plan_of(&self, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>, function: u32, pc: u32) -> Option<ScalarConstructPlan> {
+        targets(function, pc).first().and_then(|target| target.identity())
+            .and_then(|callee| super::super::dispatch_fast::scalar_construct_plan(self, callee))
     }
 }
 

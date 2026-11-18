@@ -209,6 +209,18 @@ impl<H: Host> Vm<H> {
     /// constant-marked object it holds, its exact shape, which a write to the object retires
     /// (`Object::note_constant_write`), and the value the member held. A lane body folds the read
     /// under an identity guard on the object, so a hint for another object only costs the guard.
+    /// Every atom's answer from `own_constant_of` that holds now, by atom: what a lowering off
+    /// the program's thread may fold (`FactTables`).
+    pub(super) fn own_constants(&self) -> std::collections::BTreeMap<Atom, super::compiled::OwnConstant> {
+        let mut constants = std::collections::BTreeMap::new();
+        for hint in self.holder_hints.own.iter().filter(|hint| hint.watch.is_published()) {
+            if !constants.contains_key(&hint.atom) && let Some(constant) = self.own_constant_of(hint.atom) {
+                constants.insert(hint.atom, constant);
+            }
+        }
+        constants
+    }
+
     pub(super) fn own_constant_of(&self, atom: Atom) -> Option<super::compiled::OwnConstant> {
         let hint = self.holder_hints.own.iter().find(|hint| hint.atom == atom && hint.watch.is_published())?;
         let shape = self.heap.object(hint.holder)?.exact_shape();

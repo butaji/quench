@@ -108,6 +108,9 @@ struct LoopFacts {
     int_captures: Vec<u16>,
     frame_captures: Vec<(usize, usize)>,
     entry_bounds: bool,
+    /// By (function, PC) of each construction of the plans' units, the scalar plan its callee
+    /// builds by (`Observation::construct_plans`).
+    construct_plans: std::collections::BTreeMap<(u32, u32), super::ScalarConstructPlan>,
 }
 
 /// Everything a loop region's lowering reads, owned: it reads nothing of the VM, so it runs on
@@ -132,12 +135,13 @@ impl LoopJob {
     /// compiles its code; `None` where none lowers.
     fn run(&self) -> Option<LoopLowered> {
         let held = self.held.as_ref().map(|(names, invalidation)| super::HeldAtoms { names, invalidation: *invalidation });
+        let construct_plans = |function: u32, pc: u32| self.facts.construct_plans.get(&(function, pc)).cloned();
         let (index, lowered) = self.plans.iter().enumerate().find_map(|(index, plan)| {
             super::lane_region::RegionSpecializer {
                 number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers,
                 typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures,
                 function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
-                global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, ..VmFacts::STATIC }, generic: &plan.generic,
+                global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, construct_plans: Some(&construct_plans), ..VmFacts::STATIC }, generic: &plan.generic,
                 direct: &plan.sites, frame_captures: &self.facts.frame_captures, isa: &*self.isa,
                 entry_fields: &plan.entry_fields,
                 plan: super::lane_region::RegionPlan { entry_bounds: self.facts.entry_bounds,
@@ -523,7 +527,9 @@ pub(in crate::vm) fn start_osr_region(
         .chain(directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.target.function))).collect();
     let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: observation.double_registers.to_vec(),
         typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
-        frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds };
+        frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds,
+        construct_plans: observation.construct_plans.map(|plan| plans.iter()
+            .flat_map(|input| super::lane_compile::construction_plans(&input.unit, function_id, plan)).collect()).unwrap_or_default() };
     let job = LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
         held: stores.map(|names| (names.clone(), invalidation.address())) };
     let code = super::super::jit_backend::OffThread::guarded(job, |job| job.run());
