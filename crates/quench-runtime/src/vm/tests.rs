@@ -20848,7 +20848,7 @@ const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
   Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
   Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
   Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
-  Cell.prototype.drive = function (n, other) {
+  Cell.prototype.drive = function drive(n, other) {
     let total = 0;
     for (let i = 0; i < n; i++) {
       const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
