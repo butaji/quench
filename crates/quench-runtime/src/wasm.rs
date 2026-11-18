@@ -47,39 +47,12 @@ pub(crate) mod i31;
 pub(crate) mod integer;
 pub(crate) mod numeric;
 pub(crate) mod reference;
+mod trap;
+pub use trap::WasmTrap;
 use control::{Control, Reachability};
 use conversion::ScalarConversionOperator;
 use float::{F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator};
 use integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
-
-/// A WebAssembly trap, distinct from a JavaScript throw or invalid residual.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WasmTrap {
-    Unreachable,
-    CallStackExhausted,
-    IntegerDivideByZero,
-    IntegerOverflow,
-    InvalidConversionToInteger,
-    OutOfBoundsMemory,
-    UnalignedAtomic,
-    WaitOnUnsharedMemory,
-    TooManyWaiters,
-    OutOfBoundsTable,
-    OutOfBoundsArray,
-    UndefinedElement,
-    UninitializedElement,
-    NullReference,
-    NullFunctionReference,
-    NullI31Reference,
-    NullStructReference,
-    NullArrayReference,
-    NullExceptionReference,
-    NullDescriptorReference,
-    ArrayTooLarge,
-    CastFailure,
-    DescriptorCastFailure,
-    IndirectCallTypeMismatch,
-}
 
 impl std::fmt::Display for WasmTrap {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

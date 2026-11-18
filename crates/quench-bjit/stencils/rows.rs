@@ -45,8 +45,12 @@ mod places;
 mod stage;
 mod staged;
 mod supernode_rows;
+#[cfg(fixed_rows)]
+mod wasm;
 mod words;
 pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
+#[cfg(fixed_rows)]
+pub(crate) use wasm::{WasmTrap, WasmType};
 
 use numeric::{Out, S};
 

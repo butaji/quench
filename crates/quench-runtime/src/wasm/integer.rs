@@ -1,13 +1,18 @@
 //! Integer rules have one declaration; width-specific selectors and execution
 //! are macro-derived. Selector order is the residual ABI, not a Wasm opcode.
 
-use super::{WasmTrap, WasmValue};
+use super::WasmTrap;
+#[cfg(not(stencil_build))]
+use super::WasmValue;
 
 #[cfg(test)]
 use super::numeric::NumericResult;
 use super::numeric::selectors;
+#[cfg(not(stencil_build))]
 use crate::staged::ConcreteWasm;
+#[cfg(not(stencil_build))]
 use crate::staged::machine::MachineStage;
+#[cfg(not(stencil_build))]
 use crate::staged::wasm::{Width, binary_result, integer_binary, unary_result};
 
 macro_rules! binary_family {
@@ -124,6 +129,7 @@ integer_unary_operators! { Signed, value;
 }
 
 /// Wide arithmetic has its own multi-register lowering ahead of scalar operators.
+#[cfg(not(stencil_build))]
 pub(super) fn wide_integer(op: &wasmparser::Operator<'_>) -> bool {
     matches!(
         op,
@@ -134,6 +140,7 @@ pub(super) fn wide_integer(op: &wasmparser::Operator<'_>) -> bool {
     )
 }
 
+#[cfg(not(stencil_build))]
 impl super::Lowering<'_> {
     /// Wide results are two ordinary stack values, not a separate numeric payload.
     pub(super) fn wide_integer_operator(
@@ -220,6 +227,7 @@ impl super::Lowering<'_> {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl I32BinaryOperator {
     /// `apply` as a raw i32 payload, comparisons yielding 0 or 1: the interpreter's execution
     /// of the operator, through the staged rules (`staged::wasm`).
@@ -236,6 +244,7 @@ impl I32BinaryOperator {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl I64BinaryOperator {
     /// `apply` through the staged rules (`staged::wasm`).
     #[inline(always)]
@@ -256,6 +265,7 @@ impl I64BinaryOperator {
 
 impl I32UnaryOperator {
     /// `apply` as a raw i32 payload, through the staged rules (`staged::wasm`).
+    #[cfg(not(stencil_build))]
     #[inline(always)]
     pub(crate) fn evaluate(self, value: i32) -> i32 {
         ConcreteWasm.operate_unary(self.widen(), Width::I32, u64::from(value as u32)) as i32
@@ -274,6 +284,7 @@ impl I32UnaryOperator {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl I64UnaryOperator {
     /// `apply` through the staged rules (`staged::wasm`).
     #[inline(always)]
@@ -291,9 +302,11 @@ impl I64UnaryOperator {
 macro_rules! i32_direct_operators {
     ($($name:ident => $register:ident, $immediate:ident;)+) => {
         impl I32BinaryOperator {
+            #[cfg(not(stencil_build))]
             pub(crate) const fn register_op(self) -> crate::bytecode::Op {
                 match self { $(Self::$name => crate::bytecode::Op::$register,)+ }
             }
+            #[cfg(not(stencil_build))]
             pub(crate) const fn immediate_op(self) -> crate::bytecode::Op {
                 match self { $(Self::$name => crate::bytecode::Op::$immediate,)+ }
             }
@@ -302,9 +315,11 @@ macro_rules! i32_direct_operators {
             pub(crate) const fn widen(self) -> I64BinaryOperator {
                 match self { $(Self::$name => I64BinaryOperator::$name,)+ }
             }
+            #[cfg(not(stencil_build))]
             pub(crate) const fn from_register_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$register => Some(Self::$name),)+ _ => None }
             }
+            #[cfg(not(stencil_build))]
             pub(crate) const fn from_immediate_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$immediate => Some(Self::$name),)+ _ => None }
             }
@@ -343,18 +358,22 @@ i32_direct_operators! {
 macro_rules! i32_comparison_jumps {
     ($($name:ident => $jump:ident, $immediate:ident, $negation:ident;)+) => {
         impl I32BinaryOperator {
+            #[cfg(not(stencil_build))]
             pub(crate) const fn jump_op(self) -> Option<crate::bytecode::Op> {
                 match self { $(Self::$name => Some(crate::bytecode::Op::$jump),)+ _ => None }
             }
+            #[cfg(not(stencil_build))]
             pub(crate) const fn immediate_jump_op(self) -> Option<crate::bytecode::Op> {
                 match self { $(Self::$name => Some(crate::bytecode::Op::$immediate),)+ _ => None }
             }
             pub(crate) const fn negated_comparison(self) -> Option<Self> {
                 match self { $(Self::$name => Some(Self::$negation),)+ _ => None }
             }
+            #[cfg(not(stencil_build))]
             pub(crate) const fn from_jump_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$jump => Some(Self::$name),)+ _ => None }
             }
+            #[cfg(not(stencil_build))]
             pub(crate) const fn from_immediate_jump_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$immediate => Some(Self::$name),)+ _ => None }
             }
@@ -376,6 +395,7 @@ i32_comparison_jumps! {
 
 /// A bit-field extraction: `(value >>> shift) & mask`, the shared semantics of
 /// the fused `WasmI32ShiftRightUnsignedAndImmediate`.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn shift_right_unsigned_and(value: i32, shift: i32, mask: i32) -> i32 {
     let shifted = I32BinaryOperator::ShiftRightUnsigned
