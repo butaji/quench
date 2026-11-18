@@ -333,7 +333,8 @@ mod tests {
         };
         let (first, second) = (read(5, 1), read(6, 0));
         assert_eq!(first.ops, second.ops, "the trace never depends on a site value");
-        assert_eq!(first.holes, [5, 32, 8]);
-        assert_eq!(second.holes, [6, 0, 0]);
+        // Either form reads through one operand, the flat byte offset (`object::site_offset`).
+        assert_eq!(first.holes, [5, 8]);
+        assert_eq!(second.holes, [6, 0]);
     }
 }

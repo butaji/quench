@@ -112,15 +112,13 @@ fn stores_number(ty: crate::typed_ir::Type) -> bool {
     crate::typed_ir::Type::NUMBER.is_subtype(ty) || ty.is_subtype(crate::typed_ir::Type::NUMBER)
 }
 
-/// The one own load cache `site` proves, unless it recorded the receiver's values inline: what an
+/// The one own load cache `site` proves: what an
 /// inline-cache row (`Heap::IcGet`, `Heap::IcSet`) patches into its code.
 fn own_flat_load(known: Known, site: u16) -> Option<crate::vm::compiled::object_slots::NativeFieldLoad> {
     let loads = known.reads?(site);
     let [load] = loads[..] else { return None };
-    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape
-        // A site that recorded no form may meet either; the row tests the form, and a packed
-        // receiver misses into the site row behind it (`plan::ic_plan`).
-        && load.storage != Some(crate::heap::PlainPropertyStorage::PackedInline)).then_some(load)
+    // The row reads and writes either storage form, as the record's inline flag says.
+    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape).then_some(load)
 }
 
 /// An inline-cache row's entry operands in one word: the exact shape below 32 bits, the slot's byte

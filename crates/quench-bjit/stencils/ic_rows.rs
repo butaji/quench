@@ -2,7 +2,8 @@
 //! as the shared staged IC (`staged/ic.rs`, `staged/slot_store.rs`) run on `StencilStage`. One
 //! row is one cache entry; a site of several entries is a chain of rows (`CHAINED`).
 //!
-//! Holes. A get: 0 is the destination frame offset, 1 the receiver's frame offset, then the
+//! Holes. A get: 0 is the destination frame offset with the receiver's above it (`SITE_OBJECT_AT`),
+//! 1 the upper-word table a packed reference decodes through, then the
 //! entry's operands in the order the staged ops name them: the receiver shape (2) and the slot's
 //! byte offset (3); a prototype-held read (`IC_GET_HOLDER_ROW`) names the holder's shape between
 //! them (2, 3 and the slot offset 4). A store: 0 is the receiver's frame offset, 1 the value
@@ -32,7 +33,7 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW};
+use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, SITE_OBJECT_AT};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_METHOD_CACHE_ATOMS, JS_STEP_METHOD_CACHE_ATOM_WORDS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
@@ -44,9 +45,11 @@ use crate::staged::object::Rep;
 use crate::staged::slot_store::own_flat_store;
 use crate::staged::Stage;
 use crate::typed_ir::Type;
-use crate::words::hole;
+use crate::words::{hole, hole64};
 
-/// The hole the receiver's frame offset is in, for a get (operand 1) and a store (operand 0).
+/// The hole the receiver's frame offset is in: for a get, the upper half of hole 0, whose lower half
+/// is the destination's (hole 1 is the narrow decode's upper-word table, `NarrowLayout::upper_words`,
+/// as a site row's); for a store, operand 0.
 const GET_RECEIVER: u8 = HOLE_A;
 const SET_RECEIVER: u8 = 0;
 /// The first hole of an entry's own operands: the two before it are the row's frame operands.
@@ -56,16 +59,19 @@ const WORD_SHIFT: u32 = u64::BITS.trailing_zeros();
 const WORD_BITS: u64 = u64::BITS as u64;
 
 /// The receiver's record id, address and the record table, proved: the frame word at hole `H`
-/// is a direct object and the VM has an object table.
+/// (for a get, above the destination's offset in hole 0, as a site row's) is a direct object and
+/// the VM has an object table.
 #[inline(always)]
 fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Option<(u64, u64, u64)> {
-    let bits = word_at(s.frame, hole::<H>());
+    let offset = if H == GET_RECEIVER { (hole64::<0>() >> SITE_OBJECT_AT) as usize } else { hole::<H>() };
+    let bits = word_at(s.frame, offset);
     let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
     let (id, record) = direct_object_record(stage, bits, records, ())?;
     Some((id, record, records))
 }
 
-/// The word the entry's ops read from the receiver: its own flat slot, or the slot of its
+/// The word the entry's ops read from the receiver: its own slot, packed or flat as its inline flag
+/// says (one operand, the flat byte offset, serves both: `object::site_offset`), or the slot of its
 /// prototype, which keeps its values in the arena (`IcOp::LoadPrototypeSlot`).
 #[inline(always)]
 fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
@@ -76,7 +82,7 @@ fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         ic::run(&mut stage, &ops, at, Some(records), ())
     } else {
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Arena, storage_len: 1 }];
+        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }];
         ic::run(&mut stage, &ops, at, None, ())
     }
 }
@@ -129,7 +135,8 @@ fn store_admitted(stage: &mut StencilStage, payload: u64) -> Option<()> {
     stage.guard(unnamed, ())
 }
 
-/// The store of the Number in the value place into the receiver's flat slot; a slot of int32
+/// The store of the Number in the value place into the receiver's flat slot (a packed receiver
+/// misses into the site row, which repacks or widens it); a slot of int32
 /// type (`INT`) takes int32 words only, so no compiled read of the slot's type is widened.
 #[inline(always)]
 fn write<const INT: bool, const A: u8>(s: &S, payload: usize) -> Option<()> {

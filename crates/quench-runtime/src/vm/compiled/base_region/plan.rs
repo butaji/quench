@@ -153,7 +153,7 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::IcGet => { let ic = decoded.ic.unwrap_or_default(); [dst_hole, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        Heap::IcGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
         Heap::IcSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
