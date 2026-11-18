@@ -35,6 +35,8 @@ use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
 use crate::bytecode::index as opc;
 use crate::bytecode::{Class, RegisterList, Traits};
 use crate::staged::Allocation;
+use crate::staged::wasm_float::{Float, float_binary, is_float_comparison};
+use crate::staged::ConcreteWasm;
 use crate::bytecode::{
     FieldLayout, FieldStore, Function, ImmediateLayout, ImmediateRole, InstructionField, StoreReceiver, WideInstruction,
 };
@@ -8219,21 +8221,35 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
     })
 }
 
+/// The staged operator of an arithmetic index: the lane's tag names it, the
+/// staged f64 row (`staged::wasm_float::float_binary`) decides it.
+#[inline(always)]
+const fn float_operator(arith: u8) -> F64BinaryOperator {
+    match arith {
+        FLOAT_ADD => F64BinaryOperator::Add,
+        FLOAT_SUBTRACT => F64BinaryOperator::Subtract,
+        FLOAT_MULTIPLY => F64BinaryOperator::Multiply,
+        FLOAT_DIVIDE => F64BinaryOperator::Divide,
+        FLOAT_EQUAL => F64BinaryOperator::Equal,
+        FLOAT_NOT_EQUAL => F64BinaryOperator::NotEqual,
+        FLOAT_LESS => F64BinaryOperator::Less,
+        FLOAT_GREATER => F64BinaryOperator::Greater,
+        FLOAT_LESS_EQUAL => F64BinaryOperator::LessEqual,
+        _ => F64BinaryOperator::GreaterEqual,
+    }
+}
+
 /// The f64 operator `ARITH` over two operands, as `lane_float_arithmetic`
-/// applies it: the hardware result, or a comparison's truth value.
+/// applies it: the hardware result, or a comparison's truth value. The
+/// semantics are the staged row's; this only names the operator.
 #[inline(always)]
 fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
-    match arith {
-        FLOAT_ADD => Ok(left + right),
-        FLOAT_SUBTRACT => Ok(left - right),
-        FLOAT_MULTIPLY => Ok(left * right),
-        FLOAT_DIVIDE => Ok(left / right),
-        FLOAT_EQUAL => Err(left == right),
-        FLOAT_NOT_EQUAL => Err(left != right),
-        FLOAT_LESS => Err(left < right),
-        FLOAT_GREATER => Err(left > right),
-        FLOAT_LESS_EQUAL => Err(left <= right),
-        _ => Err(left >= right),
+    let operator = float_operator(arith);
+    let word = float_binary(&mut ConcreteWasm, operator, Float::F64, left.to_bits(), right.to_bits());
+    if is_float_comparison(operator) {
+        Err(word != 0)
+    } else {
+        Ok(f64::from_bits(word))
     }
 }
 
