@@ -6,9 +6,9 @@
 #   dispatch allowance per iteration for the loop's backward jump).
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
-alloc_class 146 444
-alloc_ctor 143 435
-alloc_literal 143 435
+alloc_class 146 444 461.6
+alloc_ctor 143 435 362.1
+alloc_literal 143 435 435
 arr_length 4 18 76.1
 arr_load_dbl 5 21 92.6
 arr_load_int 5 21 73.1
@@ -35,14 +35,14 @@ field_store 3 15 79.1
 inc_local 5 21 57.1
 int_add 4 18 39.2
 int_add_noor 8 30 55.2
-int_div 7 27 119
-int_mod 16 54 66.9
-int_mod_var 7 27 68.1
+int_div 7 27 118.2
+int_mod 16 54 66.2
+int_mod_var 7 27 67.2
 int_mul 5 21 112.6
-int_mul_ovf 18 60 119.4
+int_mul_ovf 18 60 118.8
 int_sub 4 18 39.2
 k_dispatch 14 48 348.6
-k_json 812 2442 4991
+k_json 812 2442 4981.5
 k_nbody_pair 21.1 70 1395.1
 k_regexp 40.2 127 1359.6
 k_str_build 14.1 49 1369.7
