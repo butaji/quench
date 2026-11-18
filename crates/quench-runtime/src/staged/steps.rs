@@ -181,6 +181,8 @@ pub(crate) enum RowStep {
     Generic,
     /// The Wasm i32 and i64 integer operators (`Decoder::WasmInt`, `wasm_int::step`).
     WasmInt,
+    /// Wasm float, float conversion and select operations (`wasm_float`).
+    WasmFloat,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -194,6 +196,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Names) | Some(Decoder::Proved) => RowStep::Names,
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
+        Some(Decoder::WasmFloat) => RowStep::WasmFloat,
         Some(Decoder::Generic) => if matches!(op, Op::Unary) { RowStep::Full } else { RowStep::Generic },
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
@@ -220,7 +223,7 @@ pub(crate) fn step_flow<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
     match operation {
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
-        Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Nop => register_step(stage, frame, operation),
+        Operation::Move { .. } | Operation::LoadConst { .. } => register_step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }
@@ -268,6 +271,16 @@ pub(crate) fn step_property<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
 #[inline(always)]
 pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     keyed_step(stage, frame, operation)
+}
+
+/// `step` of a Wasm float row (`RowStep::WasmFloat`) on the interpreter's stage and frame; any
+/// other operation is unresolved.
+#[inline(always)]
+pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+    match operation {
+        Operation::WasmFloat(operation) => super::wasm_float::step(stage, frame, operation),
+        _ => Step::Unresolved,
+    }
 }
 
 /// `step` of a generic row (`RowStep::Generic`).

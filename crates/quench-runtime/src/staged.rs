@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
@@ -122,7 +122,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step; for a capture
 /// access whose scopes the frame does not hold, the walk over the scopes from the activation's
@@ -425,6 +425,9 @@ pub(crate) enum Operation<W, P> {
     LoadCapture { destination: Register, depth: u16, slot: u16, root: bool },
     /// Store `source` to the capture `slot`, `depth` scopes out (`Frame::store_capture`).
     StoreCapture { source: Register, depth: u16, slot: u16 },
+    /// A Wasm float, float conversion or select (`wasm_float`); the frame's Wasm words decide it, and
+    /// a trap or an operand the frame does not hold leaves at the miss edge.
+    WasmFloat(wasm_float::WasmFloatOperation),
     /// `left` compared with `right` (`Comparison`), jumping to the target when the comparison
     /// holds, or fails where `negate` (`JumpBinaryFalse`); otherwise continue after it.
     CompareJump { comparison: Comparison, left: Operand, right: Operand, negate: bool },
@@ -447,6 +450,7 @@ impl<W, P> Operation<W, P> {
             Decoder::Element => Self::decode_element(instruction),
             Decoder::Call => Self::decode_call(instruction, context),
             Decoder::Names => names::decode(instruction),
+            Decoder::WasmFloat => Self::decode_wasm_float(instruction),
             Decoder::Proved => None,
             Decoder::WasmInt => Self::decode_wasm_int(instruction),
         }

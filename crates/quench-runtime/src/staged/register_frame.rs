@@ -22,6 +22,19 @@ impl Constant {
     }
 }
 
+/// The representation a Wasm scalar takes in a register frame (`Frame::wasm_read`, `Frame::wasm_write`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum WasmRep {
+    /// An i32 or f32: its 32 bits, zero-extended; a register holds them as an encoded integer.
+    Int32,
+    /// An i64 or a boxed f64: its 64 bits in place, where the value is untagged.
+    Bits64,
+    /// A raw f64: its 64 bits as the register's machine word, never boxed or canonicalized.
+    RawBits64,
+    /// The register's tagged word as it is (a select's copy).
+    Tagged,
+}
+
 /// A register frame: each register's word and the static fact the stage keeps about it. A
 /// stage with no register facts uses `()`.
 pub(crate) trait Frame<S: Stage> {
@@ -115,6 +128,16 @@ pub(crate) trait Frame<S: Stage> {
     /// names; `None` where the frame has no numeric completion.
     #[inline(always)]
     fn ret(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
+
+    /// `register`'s Wasm scalar word in the representation `rep` names (zero-extended integer or
+    /// IEEE bits); `None` where the frame does not hold it so, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_read(&mut self, _stage: &mut S, _register: Register, _rep: WasmRep) -> Option<S::Word> { None }
+
+    /// Define `register` with the Wasm scalar `word` in the representation `rep` names, returning
+    /// its tagged word; `None` where the frame cannot make that value in place.
+    #[inline(always)]
+    fn wasm_write(&mut self, _stage: &mut S, _register: Register, _word: S::Word, _rep: WasmRep) -> Option<S::Word> { None }
 
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.

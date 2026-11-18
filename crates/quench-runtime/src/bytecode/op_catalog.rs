@@ -170,6 +170,9 @@ pub(crate) enum Decoder {
     Proved,
     /// A Wasm i32 or i64 register or immediate operator (`staged::wasm_int`).
     WasmInt,
+    /// The float and conversion operators of Wasm (`staged::wasm_float`): the scalar operators a
+    /// `WasmFloat` record names, with `WasmSelect` as its word copy.
+    WasmFloat,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the
