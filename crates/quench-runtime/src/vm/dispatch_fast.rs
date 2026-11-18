@@ -600,6 +600,10 @@ pub(super) const WINDOW_SLOTS: u16 = 1;
 pub(super) const WINDOW_CAPTURED: u16 = 2;
 pub(super) const WINDOW_STORAGE: u16 = 3;
 pub(super) const WINDOW_LOCALS: u16 = WINDOW_STORAGE + crate::heap::IN_PLACE_SLOTS_WORDS as u16;
+/// The words a VM frame's register file keeps spare past its environment window for the windows of the
+/// callees a loop region inlines (`base_region::function::inline_base`), which start past that window:
+/// the stitch policy's window and the context words around it.
+pub(in crate::vm) const INLINED_WINDOW_ROOM: usize = 64;
 
 /// What a function's body fixes about a frameless call target of it
 /// (`Vm::frameless_call_target`): its entry apart from a kept `arguments`, and whether `new`
@@ -10814,7 +10818,7 @@ unsafe fn lane_region_run<H: Host>(
     }
     if !lane_region_admits(cx, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
-        let grown = !unsafe { lane_context_locals_in_window::<H>(cx as usize) } && lane_room_prepare(cx, code.calls.recovery_space());
+        let grown = lane_frame_holds_window(cx, &code.calls) && lane_room_prepare(cx, code.calls.recovery_space());
         return RegionRun::own(if grown { LaneExit::At(region.header as usize) } else { LaneExit::Entry });
     }
     // SAFETY: the caller's contract.
@@ -10828,7 +10832,21 @@ unsafe fn lane_region_run<H: Host>(
 #[inline(always)]
 fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> bool {
     let room = code.calls.recovery_space();
-    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !unsafe { lane_context_locals_in_window::<H>(cx as usize) })
+    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && lane_frame_holds_window(cx, &code.calls))
+}
+
+/// Whether the running activation's register storage holds the windows of the callees `calls` inlines,
+/// which start past the function's environment window (`base_region::function::inline_base`): a lane
+/// activation's value stack has the room `lane_room_admits` proved (`CallCode::recovery_space` covers
+/// the reach); a VM frame's register file, sized to its own words, needs that much capacity past its
+/// registers (`INLINED_WINDOW_ROOM`, which an environment window reserves).
+#[inline(always)]
+fn lane_frame_holds_window<H: Host>(cx: *mut LaneContext<H>, calls: &super::compiled::CallCode) -> bool {
+    let vm = unsafe { vm(cx) };
+    if vm.lane_stack.activations.last().is_some() {
+        return true;
+    }
+    vm.frames.get(unsafe { (*cx).frame() }).is_some_and(|frame| frame.registers.capacity() >= usize::from(calls.caller_registers()) + calls.window())
 }
 
 
@@ -18298,7 +18316,8 @@ fn lane_body_inlined_activation<H: Host>(
 ) -> (Registers, Ip, Carried) {
     let frames = run.frames;
     if run.framed {
-        Vm::<H>::lane_adopt_window(r.0.cast_const(), usize::from(run.caller_registers));
+        // Only the frames' own reach: the scratch window may be wider (another code's), past this storage.
+        Vm::<H>::lane_adopt_window(r.0.cast_const(), usize::from(run.caller_registers), super::compiled::window_width(frames, run.caller_registers));
     }
     let mut chain = vec![frame];
     while let Some(parent) = frames[*chain.last().expect("a chain has a frame")].parent {

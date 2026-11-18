@@ -4074,12 +4074,12 @@ impl<H: Host> Vm<H> {
     /// Copies the registers that follow the first `from` of the activation at `registers`, where a
     /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
     /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
-    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize, width: usize) {
         let frame = lane_frame();
         // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
-            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+            for (at, slot) in (*frame).scratch.iter_mut().take(width).enumerate() {
                 *slot = registers.add(from + at).read();
             }
         }
