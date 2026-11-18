@@ -3311,7 +3311,6 @@ mod window_bodies;
 pub(super) use window_bodies::body_locals;
 use window_bodies::window_storage;
 mod lane_reads;
-use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
@@ -4734,51 +4733,8 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `Binary` of a comparison (`LAST_COMPARISON_OPERATOR`) on a register and a register
-    /// (`CONSTANT` false: the operator stays in the immediate) or a constant (`CONSTANT`
-    /// true: the operator moves to `c`), decoded when the view was derived
-    /// (`specialize_register_operands`): the boolean of Number comparison of two integers
-    /// (`integer_relation`). Any other pair takes `lane_relation_value_other`.
-    fn lane_relation_value<CONSTANT: bool>(cx, r, ip, i, view) {
-        let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        let Some(holds) = super::operations::integer_relation(operator, left, right) else {
-            sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
-script_handler! {
-    /// `lane_relation_value` of operands other than two integers: the relations the lane
-    /// decides without guest code (`lane_relation`); any other takes the general path. Out
-    /// of line, so the integer case keeps few values live.
-    #[inline(never)]
-    fn lane_relation_value_other<CONSTANT: bool>(cx, r, ip, i, view) {
-        let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        // SAFETY: the record is a comparison record of the running view.
-        unsafe { note_operands(cx, ip, left, right) };
-        let Some(holds) = lane_relation::<H>(operator, left, right) else {
-            return exit(ip);
-        };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
-/// A `lane_relation_value` record's operator and operands.
-#[inline(always)]
-fn lane_relation_operands<const CONSTANT: bool>(
-    r: Registers,
-    i: &LaneInstruction,
-) -> (u32, Value, Value) {
-    if CONSTANT {
-        (u32::from(i.c), r.get(i.b), i.constant())
-    } else {
-        (i.imm(), r.get(i.b), r.get(i.c))
-    }
-}
 
 script_handler! {
     /// `lane_operator` at a site that has met operands other than two integers: any Numbers,
@@ -4894,29 +4850,7 @@ fn lane_number_operator<const OP: u32>(left: Value, right: Value) -> Option<Valu
     super::operations::number_value_operator::<OP>(left, right)
 }
 
-script_handler! {
-    /// `lane_operator` whose right operand is a constant, carried in the record.
-    fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), i.constant())
-        else {
-            sibling!(lane_operator_constant_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
-script_handler! {
-    /// `lane_operator_constant`'s first operand other than an integer, out of line, as
-    /// `lane_operator_first_miss`.
-    #[inline(never)]
-    fn lane_operator_constant_first_miss<OP: u32>(cx, r, ip, i, view) {
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_first_miss(cx, ip, r.get(i.b), i.constant()) };
-        requicken::<H>(ip, lane_operator_constant_numbers::<H, OP>);
-        sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `lane_operator_constant` of an integer constant, which the view proved when it chose
@@ -5839,13 +5773,6 @@ script_handler! {
 }
 
 
-/// The handler of a `Unary` record whose operator the view decides once
-/// (`specialize_register_operands`): `typeof` of a value (`lane_unary`), which the row does not
-/// decode. `None` keeps the plain `Unary` row, which answers the operators it decodes (logical
-/// not, the `typeof` tests and index, Number negation and plus) itself.
-fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
-    (operator == super::coercion::TYPEOF).then_some(lane_unary::<H> as Handler)
-}
 
 /// The direct write of `value` to the running function's own capture `slot` through its dense
 /// slots, where they admit every store (`CAPTURE_STORES`) and the slot holds an initialized
@@ -8415,35 +8342,7 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `lane_jump_binary_false` of `instanceof` with register operands, decoded when the view
-    /// was derived (`specialize_register_operands`), as `lane_instanceof_value` decides it.
-    fn lane_jump_instanceof_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_jump_instanceof_false_walk::<H, BACKWARD>, r, ip, Carried::script_in(cx, view))
-        };
-        // `instanceof` is a JavaScript record, which carries the script state.
-        if !holds {
-            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
-script_handler! {
-    /// `lane_jump_instanceof_false` that its steady case leaves: the whole ordinary walk, out
-    /// of line so the steady case calls nothing.
-    #[inline(never)]
-    fn lane_jump_instanceof_false_walk<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
-            return exit(ip);
-        };
-        if !holds {
-            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `lane_jump_binary_false` with register operands, decoded when the view was derived
@@ -8653,36 +8552,7 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `lane_jump_binary_false` of a register under strict (in)equality against a heap
-    /// constant (a string or BigInt), both decoded when the view was derived
-    /// (`specialize_register_operands`): equal exactly when identical or of equal contents
-    /// (`Vm::strict_equal`), with no Number or `instanceof` test on the way: the staged equality
-    /// decides identity, and `lane_jump_strict_constant_contents` the contents.
-    fn lane_jump_strict_constant_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let operands = [RecordOperand::Register(i.b), RecordOperand::Constant(i.c)];
-        let Some(edge) = lane_frame::staged_record_jump::<H>(cx, r, view, u32::from(i.a), operands) else {
-            sibling!(lane_jump_strict_constant_contents::<H, BACKWARD>, r, ip, Carried::script(cx))
-        };
-        jump_on_edge!(cx, r, ip, BACKWARD, edge)
-    }
-}
 
-script_handler! {
-    /// `lane_jump_strict_constant_false` of a value the words leave (identity and two integers
-    /// decide the rest): a heap value of equal contents to the heap constant
-    /// (`Vm::heap_values_strictly_equal`) is equal, any other is not.
-    #[inline(never)]
-    fn lane_jump_strict_constant_contents<BACKWARD: bool>(cx, r, ip, i, view) {
-        let value = r.get(i.b);
-        // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the
-        // view was derived with `c` indexing one.
-        let constant = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(i.c)) };
-        let negated = u32::from(i.a) == STRICT_INEQUALITY_OPERATOR;
-        let equal = constant.is_heap() && value.is_heap() && unsafe { vm(cx) }.heap_values_strictly_equal(value, constant);
-        jump_on_edge!(cx, r, ip, BACKWARD, holds_edge(equal != negated), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `StringCaseIndex`: the case a string `switch` selects (`Vm::string_case_index`) among
@@ -8701,24 +8571,7 @@ script_handler! {
 /// The strict operators `lane_jump_strict_constant_false` decides.
 const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
 
-/// Whether `value` is strictly equal to `constant`, a constant that is no Number: a boolean,
-/// null or undefined is equal only to itself, a heap constant (a string or BigInt) also to
-/// a value of equal contents (`Vm::heap_values_strictly_equal`).
-#[inline(always)]
-fn strictly_equal_constant<H: Host>(vm: &Vm<H>, value: Value, constant: Value) -> bool {
-    value == constant || vm.heap_values_strictly_equal(value, constant)
-}
 
-lane_handler! {
-    /// `lane_relation_value` under strict (in)equality against a constant that is no Number,
-    /// carried in the record with the operator in `c` (`strictly_equal_constant`).
-    fn lane_strict_constant_value<>(cx, r, ip, i, view) {
-        let equal = strictly_equal_constant(unsafe { vm(cx) }, r.get(i.b), i.constant());
-        let holds = equal != (u32::from(i.c) == STRICT_INEQUALITY_OPERATOR);
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), view)
-    }
-}
 
 /// The nullish test of a `lane_jump_nullish_false` instantiation (`NULLISH`): strict
 /// identity with `null` or with `undefined`, or loose equality with either.
@@ -8748,69 +8601,8 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `lane_jump_binary_false` of a register under strict equality against a boolean
-    /// constant (`specialize_register_operands`), the `x !== false` truthiness test of
-    /// compiled code: a boolean strictly equals only itself, which has one encoding, so the
-    /// test is the register's identity with the instantiation's constant (`TRUE`).
-    fn lane_jump_boolean_false<BACKWARD: bool, NEGATED: bool, TRUE: bool>(cx, r, ip, i, view) {
-        let comparison = crate::staged::Comparison::Boolean { expected: TRUE, negated: NEGATED };
-        let operands = [RecordOperand::Register(i.b), RecordOperand::Immediate(Value::boolean(TRUE))];
-        let edge = lane_frame::staged_comparison_jump::<H>(cx, r, view, comparison, operands)
-            .expect("identity with a Boolean always decides");
-        jump_on_edge!(cx, r, ip, BACKWARD, edge, Carried::script_in(cx, view))
-    }
-}
 
-script_handler! {
-    /// `lane_jump_binary_false` of two registers under `===` (`!==` where `NEGATED`)
-    /// (`specialize_register_operands`): strict equality runs no guest code, so the lane
-    /// decides every pair (`Vm::strict_equal`) without the general relation chain. Values
-    /// outside the heap compare as numbers or by identity, and a heap value equals only
-    /// itself among them, inline; two distinct heap values, which may be equal strings or
-    /// BigInts, take `lane_jump_strict_equal_cells`.
-    fn lane_jump_strict_equal_false<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        // Equal words are strictly equal but for NaN, tested first: about half of a symbol-
-        // comparing program's compares (V8-v7 Boyer) are of one value with itself.
-        // Two distinct heap words, the common unequal case of reference-comparing code, are
-        // decided by their families first, without decoding either word as a Number.
-        let equal = if left == right { left.as_number().is_none_or(|number| !number.is_nan()) } else if !(left.is_heap() && right.is_heap()) {
-            matches!((left.as_number(), right.as_number()), (Some(left), Some(right)) if left == right)
-        } else {
-            // Two distinct heap values are equal only as strings or BigInts, which their
-            // handles' families name; a slot cell that is no BigInt (a Symbol) is not.
-            match left.distinct_heap_pair(right) {
-                crate::value::DistinctHeapPair::Unequal => false,
-                crate::value::DistinctHeapPair::Strings => {
-                    sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script_in(cx, view))
-                }
-                crate::value::DistinctHeapPair::Slots => {
-                    if matches!(unsafe { vm(cx) }.heap.get(left), Some(crate::heap::Cell::BigInt(_))) {
-                        sibling!(lane_jump_strict_equal_cells::<H, BACKWARD, NEGATED>, r, ip, Carried::script_in(cx, view))
-                    }
-                    false
-                }
-            }
-        };
-        if equal == NEGATED {
-            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
-script_handler! {
-    /// `lane_jump_strict_equal_false` of two distinct strings or BigInts (`Vm::distinct_heap_values_equal`); out
-    /// of line, so the common tests make no call.
-    #[inline(never)]
-    fn lane_jump_strict_equal_cells<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.distinct_heap_values_equal(r.get(i.b), r.get(i.c)) == NEGATED {
-            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `lane_jump_nullish_false`'s loose test of a heap value outside the records, which only
@@ -20202,7 +19994,7 @@ fn derive_lane_view<'live, H: Host>(
             reads_accumulator[pc] = true;
             accumulator_registers[pc] = moving.b();
         }
-    specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
+    specialize_returning_binaries::<H>(&decoded, constants, &mut records);
     specialize_updated_index_reads::<H>(&mut records);
     specialize_updated_index_operators::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
@@ -20503,153 +20295,18 @@ fn install_loop_sites<'live, H: Host>(
     (sites, rejections)
 }
 
-/// The relation jump against the integer constant `index`, and the operand `record.c` holds:
-/// the value itself where it fits 16 bits, else its constant-table index.
-fn integer_constant_relation_jump<H: Host>(constants: &[Value], operator: u32, index: u16, backward: bool) -> Option<(Handler, u16)> {
-    let constant = *constants.get(usize::from(index))?;
-    let Some(value) = constant.as_int() else {
-        // Another Number (`x < 0.5`) reads from the table too: its integer test declines
-        // once, and the site moves to the Number test (`requicken_number_relation`).
-        constant.as_number()?;
-        return Some((relation_jump_table_handler::<H>(operator, backward), index));
-    };
-    Some(match i16::try_from(value) {
-        Ok(small) => (relation_jump_handler::<H, true>(operator, backward), small as u16),
-        Err(_) => (relation_jump_table_handler::<H>(operator, backward), index),
-    })
-}
 
-/// Gives each lane record whose operands are registers the handler for that operand shape,
-/// with the decoded registers in its fields, so it decodes no operand kinds: `Binary` of a
-/// specialized operator (`operator_handler`), also with a constant right operand carried in
-/// the record, `GetIndex` and `JumpBinaryFalse`, also with a small integer constant right
-/// operand carried in the record.
-fn specialize_register_operands<H: Host>(
-    decoded: &[WideInstruction],
-    kind: crate::bytecode::ProgramKind,
-    constants: &[Value],
-    records: &mut [LaneInstruction],
-) {
-    // A Wasm view's `GetIndex` (a multi-value result's read) keeps the general handler: the
-    // register form reaches its context through a JavaScript view (`script_handler!`).
-    let get_index = if kind == crate::bytecode::ProgramKind::Wasm {
-        std::ptr::null()
-    } else {
-        lane_get_index::<H> as Handler as *const ()
-    };
-    let forward_test = jump_row::<H, { crate::staged::COMPARE_JUMP_ROW }>(false) as *const ();
-    let backward_test = jump_row::<H, { crate::staged::COMPARE_JUMP_ROW }>(true) as *const ();
+
+/// Gives each `Binary` record that a `Return` consumes its returning form
+/// (`specialize_returning_operator`, the calls thread's). Every other record keeps the handler
+/// its generated row or jump row gave it: operand kinds and operators are the rows' own decode
+/// (`Binary`, `JumpBinaryFalse`, `Unary`), not handler choices made here.
+fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction]) {
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
-        let record = &mut records[pc];
-        if record.handler == returning_binary {
-            specialize_returning_operator::<H>(instruction, constants, record);
-            continue;
+        if records[pc].handler == returning_binary {
+            specialize_returning_operator::<H>(instruction, constants, &mut records[pc]);
         }
-        if is_row::<H, { crate::staged::UNARY_ROW }>(record.handler) {
-            if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
-                record.handler = handler as *const ();
-            }
-            continue;
-        }
-        // A `Binary` record runs its generated row, which decodes its operand kinds and operator.
-        if is_row::<H, { crate::staged::BINARY_ROW }>(record.handler) {
-            continue;
-        }
-        if ![get_index, forward_test, backward_test].contains(&record.handler) {
-            continue;
-        }
-        let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        use crate::bytecode::OperandKind::{Constant, Register};
-        let (Some(Register), Some(right_kind)) = (left.kind(), right.kind()) else {
-            continue;
-        };
-        let backward = record.handler == backward_test;
-        if record.handler != get_index
-            && u32::from(instruction.a()) == INSTANCEOF_OPERATOR
-            && right_kind == Register
-        {
-            let handler: Handler = if backward {
-                lane_jump_instanceof_false::<H, true>
-            } else {
-                lane_jump_instanceof_false::<H, false>
-            };
-            record.handler = handler as *const ();
-            record.b = left.payload();
-            record.c = right.payload();
-            continue;
-        }
-        let equality = (record.handler != get_index)
-            .then(|| super::operations::equality_operator(u32::from(instruction.a())))
-            .flatten();
-        let constant = (right_kind == Constant)
-            .then(|| constants.get(usize::from(right.payload())).copied())
-            .flatten();
-        let nullish = equality.zip(constant).and_then(|((strict, negated), constant)| {
-            let test = match constant {
-                Value::NULL | Value::UNDEFINED if !strict => NULLISH_LOOSE,
-                Value::NULL => NULLISH_NULL,
-                Value::UNDEFINED => NULLISH_UNDEFINED,
-                _ => return None,
-            };
-            Some(match test {
-                NULLISH_NULL => equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_NULL>, backward, negated),
-                NULLISH_UNDEFINED => {
-                    equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_UNDEFINED>, backward, negated)
-                }
-                _ => equality_test_handler!(lane_jump_nullish_false::<H, NULLISH_LOOSE>, backward, negated),
-            })
-        });
-        let boolean = equality.zip(constant).and_then(|((strict, negated), constant)| match constant {
-            Value::TRUE if strict => Some(equality_test_handler!(lane_jump_boolean_false::<H, true>, backward, negated)),
-            Value::FALSE if strict => Some(equality_test_handler!(lane_jump_boolean_false::<H, false>, backward, negated)),
-            _ => None,
-        });
-        if let Some(handler) = nullish.or(boolean) {
-            record.handler = handler as *const ();
-            record.b = left.payload();
-            continue;
-        }
-        if right_kind == Constant
-            && record.handler != get_index
-            && super::operations::equality_operator(u32::from(instruction.a()))
-                .is_some_and(|(strict, _)| strict)
-            && constants
-                .get(usize::from(right.payload()))
-                .is_some_and(|constant| constant.is_heap())
-        {
-            let handler: Handler = if backward {
-                lane_jump_strict_constant_false::<H, true>
-            } else {
-                lane_jump_strict_constant_false::<H, false>
-            };
-            record.handler = handler as *const ();
-            record.b = left.payload();
-            record.c = right.payload();
-            continue;
-        }
-        if right_kind == Constant
-            && record.handler != get_index
-            && let Some((handler, operand)) = integer_constant_relation_jump::<H>(constants, u32::from(instruction.a()), right.payload(), backward)
-        {
-            record.handler = handler as *const ();
-            record.b = left.payload();
-            record.c = operand;
-            continue;
-        }
-        if right_kind != Register {
-            continue;
-        }
-        let handler: Handler = if record.handler == get_index {
-            lane_get_index_registers::<H>
-        } else if let Some((true, negated)) = equality {
-            equality_test_handler!(lane_jump_strict_equal_false::<H>, backward, negated)
-        } else {
-            relation_jump_handler::<H, false>(u32::from(instruction.a()), backward)
-        };
-        record.handler = handler as *const ();
-        record.b = left.payload();
-        record.c = right.payload();
     }
 }
 
@@ -21197,37 +20854,7 @@ fn lane_integer_comparison(operator: u32, left: Value, right: Value) -> Option<c
         .then_some(crate::staged::Comparison::Relation { relation, domain: crate::staged::Domain::Int32 })
 }
 
-/// The integer jump test handler of `operator` (`SMALL`: against a small constant, else two
-/// registers) that branches `backward` or not: a comparison's own instantiation, which
-/// decides it with no dispatch on the operator, else the one reading the record's.
-fn relation_jump_handler<H: Host, const SMALL: bool>(operator: u32, backward: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            match (SMALL, backward) {
-                (true, true) => lane_jump_binary_false_small::<H, true, { $op }, false> as Handler,
-                (true, false) => lane_jump_binary_false_small::<H, false, { $op }, false> as Handler,
-                (false, true) => lane_jump_binary_false_registers::<H, true, { $op }> as Handler,
-                (false, false) => lane_jump_binary_false_registers::<H, false, { $op }> as Handler,
-            }
-        };
-    }
-    relation_operators!(operator, pick)
-}
 
-/// `relation_jump_handler` against an integer constant outside the record's 16 bits, read from
-/// the program's constants (`lane_small_constant`).
-fn relation_jump_table_handler<H: Host>(operator: u32, backward: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            if backward {
-                lane_jump_binary_false_small::<H, true, { $op }, true> as Handler
-            } else {
-                lane_jump_binary_false_small::<H, false, { $op }, true> as Handler
-            }
-        };
-    }
-    relation_operators!(operator, pick)
-}
 
 /// `requicken_number_relation` of a small-constant jump test, whose out-of-line case reads
 /// the operator from the record: the operator instantiation `relation_jump_handler` gave it.
@@ -21288,38 +20915,7 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
     }
 }
 
-fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {
-    macro_rules! pick {
-        ($op:expr) => {
-            if CONSTANT { lane_operator_constant::<H, { $op }> as Handler } else { lane_operator::<H, { $op }> as Handler }
-        };
-    }
-    arithmetic_operators!(operator, pick)
-}
 
-/// The handler of an arithmetic operator whose right operand is `constant`, with the operand
-/// its record carries: an integer as the immediate, its tag proved here once
-/// (`lane_operator_integer_constant`); any other value as the constant.
-fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<(Handler, LaneOperand)> {
-    let Some(integer) = constant.as_int() else {
-        macro_rules! double {
-            ($($op:ident),*) => {
-                match operator {
-                    $($op => lane_operator_double_constant::<H, $op> as Handler,)*
-                    _ => operator_handler::<H, true>(operator)?,
-                }
-            };
-        }
-        let handler = if constant.as_number().is_some() { fused_arithmetic!(double) } else { operator_handler::<H, true>(operator)? };
-        return Some((handler, LaneOperand { constant }));
-    };
-    macro_rules! pick {
-        ($op:expr) => {
-            lane_operator_integer_constant::<H, { $op }> as Handler
-        };
-    }
-    Some((arithmetic_operators!(operator, pick)?, LaneOperand { imm: integer as u32 }))
-}
 
 /// Whether some loop of `function`, from a backward jump's target through the jump, has no
 /// instruction the lane exits at.

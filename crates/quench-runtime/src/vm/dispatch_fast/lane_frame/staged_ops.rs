@@ -33,25 +33,7 @@ pub(in crate::vm::dispatch_fast) fn staged_compare_jump<H: Host>(cx: *mut LaneCo
     staged_comparison_jump::<H>(cx, r, view, comparison, [RecordOperand::Register(left), RecordOperand::Register(right)])
 }
 
-/// The comparison `operator` makes of the observed `values`: two Numbers decide a relation as
-/// binary64 (the static arm the handler selects), and any other relation is no Number relation,
-/// which the handler's cold path decides.
-#[inline(always)]
-fn observed(operator: u32, [left, right]: [Value; 2]) -> Comparison {
-    match Comparison::of_operator(operator).by_vm() {
-        Comparison::Relation { .. } if left.as_number().is_none() || right.as_number().is_none() => Comparison::Operator(operator),
-        comparison => comparison,
-    }
-}
 
-/// The edge the staged jump of `operator` over the record's `operands` takes: the comparison the
-/// observed operands select (`observed`), or `None` where the interpreter's cold path decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_record_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, operator: u32,
-    operands: [RecordOperand; 2]) -> Option<Edge> {
-    let values = [operands[0].value(cx, r)?, operands[1].value(cx, r)?];
-    staged_comparison_jump::<H>(cx, r, view, observed(operator, values), operands)
-}
 
 /// The edge the staged jump of `comparison` over the record's `operands` takes, or `None` where
 /// the interpreter's own path decides it.

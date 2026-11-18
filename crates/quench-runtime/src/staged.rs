@@ -352,8 +352,8 @@ pub(crate) const FUSED_TARGET: u8 = 4;
 /// tier names to give the row a fact it proved at view time.
 pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
 
-/// The opcode whose row answers a `Unary` record (`specialize_register_operands` recognizes the
-/// plain row by it).
+/// The opcode whose row answers a `Unary` record: `+x`, `-x`, `!x`, `~x` and the index form of
+/// `typeof` decode here; a `typeof` test of a name runs the general step.
 pub(crate) const UNARY_ROW: u16 = Op::Unary as u16;
 /// The opcode whose row stores a global name (`GlobalFrame::global_write`), which a tier names to
 /// give the row its record's hint.
@@ -378,8 +378,8 @@ pub(crate) const STORE_LOCAL_PLAIN_ROW: u16 = Op::StoreLocalPlain as u16;
 /// The opcode whose row makes a closure (`Operation::Allocate` over `Allocation::Closure`).
 pub(crate) const MAKE_CLOSURE_ROW: u16 = Op::MakeClosure as u16;
 
-/// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
-/// it by this, the hand handler being the fallback for the operands the row does not decode).
+/// The opcode whose row answers a `Binary` record: a register pair without result flags decodes
+/// here (`decode_binary`); any other record runs the general step.
 pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
 /// The opcode of a conditional jump on a comparison of two operands (`Operation::CompareJump`),
 /// the record the default comparison handler and its register forms are told apart by.
