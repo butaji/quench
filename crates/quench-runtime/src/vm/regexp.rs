@@ -150,6 +150,9 @@ enum LegacyRegExpMatch {
         input: JsString,
         matcher: Rc<quench_regexp::Regex>,
         start: usize,
+        /// Where `input`'s ASCII bytes live and how many, where they are a shared allocation
+        /// (`pending_storage`): held by `input`, so no other text has them while this is.
+        storage: Option<(usize, usize)>,
     },
     Invalid,
 }
@@ -2850,7 +2853,7 @@ impl<H: Host> Vm<H> {
     /// Finds a pending legacy match (`LegacyRegExpMatch::Pending`) again, so the statics
     /// read its captures.
     fn resolve_regexp_legacy_match(&mut self) {
-        let Some(LegacyRegExpMatch::Pending { input, matcher, start }) = self
+        let Some(LegacyRegExpMatch::Pending { input, matcher, start, .. }) = self
             .realm
             .intrinsics
             .regexp_intrinsics
@@ -2888,29 +2891,31 @@ impl<H: Host> Vm<H> {
         matcher: Rc<quench_regexp::Regex>,
         start: usize,
     ) -> Result<(), JsError> {
-        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
+        let storage = pending_storage(&input);
+        self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start, storage })
     }
 
     /// Whether the legacy statics already hold the pending match that
-    /// `record_regexp_legacy_pending` would record for `this`: the same matcher over the same
-    /// input storage from the same start, as a loop testing one regexp on one string records.
-    pub(super) fn regexp_legacy_pending_holds(&self, this: Value, input: &JsString, matcher: &Rc<quench_regexp::Regex>, start: usize) -> bool {
-        let Some(Cell::RegExp { meta, .. }) = self.heap.get(this) else {
-            return false;
-        };
+    /// `record_regexp_legacy_pending` would record for the RegExp of `meta` over the ASCII
+    /// `bytes`: the same matcher over the same input storage from the same start, as a loop
+    /// testing one regexp on one string records.
+    #[inline(always)]
+    pub(super) fn regexp_legacy_pending_holds(&self, meta: &crate::heap::RegExpMeta, bytes: &[u8], matcher: &Rc<quench_regexp::Regex>, start: usize) -> bool {
         let Some(state) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
             return false;
         };
-        let enabled = matches!(meta.legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if owner == state.constructor);
-        let LegacyRegExpMatch::Pending { input: held, matcher: held_matcher, start: held_start } = &state.legacy.last else {
+        let LegacyRegExpMatch::Pending { input: held, matcher: held_matcher, start: held_start, storage } = &state.legacy.last else {
             return false;
         };
-        // Short text has no storage to share: the same units are the same input.
-        let same_input = held.existing_flat().zip(input.existing_flat()).is_some_and(|(held, input)| match (held, input) {
-            (FlatUnits::Short(_), FlatUnits::Short(_)) => matches!((held.view(), input.view()), (super::wtf16::Units::Ascii(left), super::wtf16::Units::Ascii(right)) if left == right),
-            _ => held.same_storage(input),
-        });
-        enabled && state.legacy.input_override.is_none() && *held_start == start && Rc::ptr_eq(held_matcher, matcher) && same_input
+        let enabled = matches!(meta.legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if owner == state.constructor);
+        if !enabled || state.legacy.input_override.is_some() || *held_start != start || !Rc::ptr_eq(held_matcher, matcher) {
+            return false;
+        }
+        match storage {
+            Some(storage) => *storage == (bytes.as_ptr() as usize, bytes.len()),
+            // Other text, short text above all, is the same input where its units are the same.
+            None => matches!(held.existing_units(), Some(super::wtf16::Units::Ascii(held)) if held == bytes),
+        }
     }
 
     fn record_regexp_legacy(
@@ -3510,4 +3515,17 @@ impl crate::snapshot::Snap for RegExpIntrinsics {
 pub(super) enum PatternValidity {
     EarlyChecked,
     Unchecked,
+}
+
+/// Where the ASCII bytes of `input` live and how many, where they are an immutable shared
+/// allocation (`FlatUnits::Ascii`, `AsciiSlice`) that `input` keeps: `None` for any other text.
+fn pending_storage(input: &JsString) -> Option<(usize, usize)> {
+    let flat = input.existing_flat()?;
+    if !matches!(flat, FlatUnits::Ascii(_) | FlatUnits::AsciiSlice(_)) {
+        return None;
+    }
+    match flat.view() {
+        super::wtf16::Units::Ascii(bytes) => Some((bytes.as_ptr() as usize, bytes.len())),
+        super::wtf16::Units::Wide(_) => None,
+    }
 }
