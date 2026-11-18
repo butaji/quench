@@ -359,6 +359,7 @@ fn lane_body_call_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, calle
 /// `lane_activate`; by the keeping form where it keeps or gathers values or is passed more than it
 /// has parameters; by the environment form. A frame or a settling entry takes the lane's own
 /// call, which is `None`.
+#[inline]
 fn lane_call_activation(target: &ScriptCallTarget, argc: u16) -> Option<LaneActivation> {
     match target.entry {
         entry if entry.activates() && argc <= target.params.min(FIXED_ARGUMENT_COPIES) => Some(LaneActivation::Plain),
@@ -410,6 +411,7 @@ fn lane_warm_callee<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: 
 }
 
 /// The `this` a callee's body is entered with: the deleted marker where it reads a lexical one.
+#[inline]
 fn lane_body_this(target: &ScriptCallTarget, this: Value) -> Value {
     if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this }
 }

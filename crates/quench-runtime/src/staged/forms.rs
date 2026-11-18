@@ -43,6 +43,7 @@ pub(crate) enum Arguments {
 
 impl Arguments {
     /// How many arguments the call passes.
+    #[inline]
     pub(crate) const fn count(self) -> u16 {
         match self {
             Self::Window { count, .. } | Self::List(RegisterList { count, .. }) => count,

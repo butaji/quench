@@ -986,6 +986,7 @@ impl LaneView {
     }
 
     /// The specialized frameless body, if there is one.
+    #[inline]
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
         // execution or recovery can reenter and change the view's publication.
@@ -1082,6 +1083,7 @@ impl LaneView {
 
 
     /// Whether its body left too often and specializes again at its next entry.
+    #[inline]
     fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
@@ -2713,6 +2715,9 @@ struct LaneContext<H: Host> {
     /// form, which the run's code fixes, so a loop's repeated call or construction decodes
     /// its instruction once per run.
     body_site: Option<(*const ResidualProgram, u32, u64, crate::staged::Invocation)>,
+    /// The call record whose caller's late calls last counted past the threshold
+    /// (`lane_note_late_call`), which counts nothing more for it in this run.
+    late_settled: Ip,
     /// What this run proved about the storage of the arrays its loops index
     /// (`ArrayStorageProofs`), which the proved element records read
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
