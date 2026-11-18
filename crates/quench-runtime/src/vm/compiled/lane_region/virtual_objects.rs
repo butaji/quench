@@ -47,6 +47,9 @@ impl Lowering<'_, '_> {
         // The register must be read as an object by nothing before its first field read: a
         // construction whose result is live into its own next instruction as anything else
         // allocates there anyway.
+        // A construction that ends its block (`inner = new P(..)` as a branch's last
+        // instruction) would carry the kept receiver into a join, where no state keeps it.
+        if self.blocks.get(pc + 1).is_some_and(Option::is_some) { return None; }
         let result = instruction.result_register();
         (result < self.unit.registers && self.is_live(pc + 1, result)).then_some(plan)
     }

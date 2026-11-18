@@ -24008,3 +24008,25 @@ fn an_own_constant_hint_answers_for_its_object_until_the_object_is_written() {
     assert!(!vm.own_constant_hint_live(index), "a write to the object retires the hint");
     assert_eq!(vm.own_constant_hint_hit(index, green, color), None);
 }
+
+#[test]
+fn a_construction_that_ends_a_branch_builds_the_receiver_its_join_reads() {
+    // `inner = new P(..)` as the last instruction of a branch, joined with `inner = null`,
+    // then passed on (JetStream earley-boyer's `rewrite_args_nboyer`): the join reads the
+    // object the construction made, never a receiver kept as its fields.
+    let source = r#"
+      function P(car, cdr) { this.car = car; this.cdr = cdr; }
+      function ra(lst) { if (lst === null) return null; var l2 = lst.cdr; var inner;
+        if (l2 === null) inner = null; else inner = new P(l2.car, ra(l2.cdr)); return new P(lst.car, inner); }
+      function list(n) { var l = null; for (var i = n; i > 0; i--) l = new P(i, l); return l; }
+      function sum(l) { var s = 0; while (l !== null) { s += l.car; l = l.cdr; } return s; }
+      var total = 0;
+      for (var k = 0; k < 3000; k++) total += sum(ra(list(7)));
+      print(total);
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "branch-construct.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["84000"]);
+}

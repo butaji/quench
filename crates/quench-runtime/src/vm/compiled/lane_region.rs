@@ -897,6 +897,11 @@ impl<'a, 'f> Lowering<'a, 'f> {
     }
 
     fn continue_at(&mut self, state: &mut State, pc: usize) {
+        // No block's entry state keeps a receiver as its fields (`virtual_objects`): the
+        // instruction that ends a block allocates any live one first, so one reaching an
+        // edge is a lowering this code does not make.
+        if state.virtuals.iter().any(|kept| self.is_live(pc, kept.register)) { self.valid = false; }
+        state.virtuals.clear();
         if !self.coverage.lowered(pc) {
             self.exit(state, pc as u32);
             return;
