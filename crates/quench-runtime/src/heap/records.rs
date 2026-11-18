@@ -250,6 +250,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.is_reserved()
             .then(|| self.base.as_ptr().cast::<T>().cast_const())
     }
+
+    /// `base_ptr` untested: the table a live record id indexes, which exists wherever a value
+    /// names one (`get_live`).
+    #[inline(always)]
+    pub(super) fn live_base(&self) -> *const T {
+        self.base.as_ptr().cast::<T>().cast_const()
+    }
 }
 
 // Native JIT/AOT guards read `marked` using offsets exported from this layout.

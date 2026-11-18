@@ -748,6 +748,13 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// `object_record_base` untested, for a read that proves its receiver a direct object before
+    /// it addresses the table (`object_record_by_id`'s contract).
+    #[inline(always)]
+    pub(crate) fn live_object_records(&self) -> *const Object {
+        self.object_records.live_base()
+    }
+
     /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
     pub(crate) fn function_record_base(&self) -> Option<*const FunctionRecord> {
         self.function_records.base_ptr()

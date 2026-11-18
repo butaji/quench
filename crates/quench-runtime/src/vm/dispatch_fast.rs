@@ -3394,7 +3394,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, OtherRecord, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -7400,20 +7400,7 @@ fn is_single_field_base(base: u16) -> bool {
 
 use crate::staged::HINTED_FORM;
 
-script_handler! {
-    /// `GetField` of a register or `this`: the site's primary own entry inline. Any other
-    /// read goes through `lane_get_field_miss`, which may move the record to a fitting
-    /// handler.
-    fn lane_get_field_own<THIS: bool>(cx, r, ip, i, view) {
-        if unsafe { (*cx).binding.object_base.is_null() } {
-            sibling!(lane_get_field_own_refresh::<H, THIS, false>, r, ip, Carried::script_in(cx, view))
-        }
-        requicken::<H>(ip, lane_get_field_own_bound::<H, THIS, HINTED_FORM>);
-        sibling!(lane_get_field_own_bound::<H, THIS, HINTED_FORM>, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-/// The value the bound own-field read of record `i` answers (`lane_get_field_own_bound`), `None`
+/// The value the bound own-field read of record `i` answers (the own-field read the math call fusions make, `own_formed_handler`), `None`
 /// where its hint misses.
 #[inline(always)]
 fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
@@ -7456,20 +7443,7 @@ fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneCont
 }
 
 script_handler! {
-    /// The record range is fixed for the owning heap's lifetime; only this value's type
-    /// and shape vary. Each resolved record borrow ends before the next instruction.
-    fn lane_get_field_own_bound<THIS: bool, FORM: u32>(cx, r, ip, i, view) {
-        let value = own_bound_value::<H, THIS, FORM>(cx, r, i);
-        let Some(value) = value else {
-            sibling!(lane_get_field_own_refresh::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_own` past its record's hint: the site's primary own entry, whose hit
+    /// the own-field row (`own_formed_handler`) past its record's hint: the site's primary own entry, whose hit
     /// becomes the hint; any other read goes through `lane_get_field_miss`.
     #[inline(never)]
     fn lane_get_field_own_refresh<THIS: bool, BOUND: bool>(cx, r, ip, i, view) {
@@ -7488,7 +7462,7 @@ script_handler! {
         // The hit proved the entry an own one of the receiver's shape.
         let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
         set_field_hint(ip, hint);
-        requicken::<H>(ip, own_formed_handler::<H, THIS>(hint.receiver));
+        requicken::<H>(ip, own_formed_handler::<H, THIS>(Some(hint.receiver)));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -7512,30 +7486,106 @@ fn own_entry_hit<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, object: Value,
     vm.own_field_hint_hit::<HINTED_FORM>(vm.form_hint(entry, object), receiver)
 }
 
-/// The bound own-field read (`lane_get_field_own_bound`) for the storage form the hint word
-/// `hint`'s bits name: an arena run, extras or packed inline values, whose layout it then
-/// reads untested.
-fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
+/// The opcode of the catalog's field leaf read (`Traits::FIELD_LEAF`), whose generated row
+/// (`lane_row`) an own-field read's record runs once its hint is bound (`own_formed_handler`).
+const FIELD_LEAF_READ: u16 = {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) if op.traits().has(crate::bytecode::Traits::FIELD_LEAF) => break index as u16,
+            Some(_) => index += 1,
+            None => panic!("the catalog names a field leaf read"),
+        }
+    }
+};
+
+/// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
+/// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
+/// `HINTED_FORM` reads the hint layout's own bits.
+const OWN_FORMS: [u32; 9] = {
     use crate::staged::TAGGED_SLOTS;
-    // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
-    let hint = crate::heap::layouts::auxiliary(hint);
+    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
+    [HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
+        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS]
+};
+
+/// The site fact (`lane_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose
+/// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
+const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }
+
+/// The site facts of a generated read through a prototype hint (`IcOp::Held`), of `this` and of
+/// a register: past every own-field site.
+pub(super) const HELD_SITE_THIS: u8 = own_site(true, OWN_FORMS.len());
+pub(super) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
+
+/// The site facts of the held read of a receiver other than a direct object (an array, function
+/// or ordinary builtin, as `a.push` or `f.call`), which a held site's miss takes: its object part
+/// is resolved out of line (`RecordPlan::other`).
+pub(super) const HELD_OTHER_THIS: u8 = own_site(true, OWN_FORMS.len() + 1);
+pub(super) const HELD_OTHER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 1);
+
+/// Whether site `site` is a read through a prototype hint.
+pub(super) const fn held_site(site: u8) -> bool {
+    site == HELD_SITE_THIS || site == HELD_SITE_REGISTER || held_other_site(site)
+}
+
+/// Whether held site `site` reads any receiver's object part, not a direct object's alone.
+pub(super) const fn held_other_site(site: u8) -> bool { site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER }
+
+/// Whether own-field or held site `site` reads `this`.
+pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
+
+/// The storage form own-field site `site` fixes (`OWN_FORMS`); `HINTED_FORM` for none.
+pub(super) const fn own_site_form(site: u8) -> u32 {
+    let index = (site.wrapping_sub(1) / 2) as usize;
+    if index < OWN_FORMS.len() { OWN_FORMS[index] } else { HINTED_FORM }
+}
+
+/// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
+/// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
+pub(super) const fn own_site_decodes(site: u8) -> bool {
+    if held_site(site) { return false; }
+    let form = own_site_form(site);
+    form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
+        && form != crate::value_vec::NARROW_FORM)
+}
+
+/// Every generated own-field read: `$each!(site)` for each site, `this` and register alike.
+macro_rules! own_sites {
+    ($each:ident) => {
+        [$each!(own_site(true, 0)), $each!(own_site(false, 0)), $each!(own_site(true, 1)), $each!(own_site(false, 1)),
+            $each!(own_site(true, 2)), $each!(own_site(false, 2)), $each!(own_site(true, 3)), $each!(own_site(false, 3)),
+            $each!(own_site(true, 4)), $each!(own_site(false, 4)), $each!(own_site(true, 5)), $each!(own_site(false, 5)),
+            $each!(own_site(true, 6)), $each!(own_site(false, 6)), $each!(own_site(true, 7)), $each!(own_site(false, 7)),
+            $each!(own_site(true, 8)), $each!(own_site(false, 8))]
+    };
+}
+
+/// The generated own-field read (`lane_row` at an `own_site`) for the base `THIS` names and the
+/// storage form the layout id `hint`'s form bits name: an arena run, extras or packed inline values,
+/// whose layout it then reads untested; `None` for the form of no particular hint.
+fn own_formed_handler<H: Host, const THIS: bool>(hint: Option<u32>) -> Handler {
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     // A narrow run's hint names neither inline values nor extras: those tests fold away and
     // the read takes the run's halves. Packed and narrow slots never hold a raw double; the
     // other forms skip the decode where float slots are off for the process.
-    if hint & NARROW_FORM != 0 {
-        return lane_get_field_own_bound::<H, THIS, NARROW_FORM>;
-    }
     let tagged = !crate::vm::switches::float_slots();
-    match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
-        (0, true) => lane_get_field_own_bound::<H, THIS, TAGGED_SLOTS>,
-        (0, false) => lane_get_field_own_bound::<H, THIS, 0>,
-        (EXTRAS_FORM, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | TAGGED_SLOTS }>,
-        (EXTRAS_FORM, false) => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
-        (INLINE_FORM, _) => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
-        (_, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS }>,
-        (_, false) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
-    }
+    // The hint is a layout id; its form bits are its entry's (`layouts::auxiliary`).
+    let form = match hint.map(crate::heap::layouts::auxiliary) {
+        None => 0,
+        Some(hint) if hint & NARROW_FORM != 0 => 5,
+        Some(hint) => match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
+            (0, true) => 6,
+            (0, false) => 1,
+            (EXTRAS_FORM, true) => 7,
+            (EXTRAS_FORM, false) => 2,
+            (INLINE_FORM, _) => 3,
+            (_, true) => 8,
+            (_, false) => 4,
+        },
+    };
+    macro_rules! row { ($site:expr) => { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { $site }> as Handler } }
+    own_sites!(row)[form * 2 + usize::from(!THIS)]
 }
 
 /// Makes the own field entry `entry` the hint of the field read/store record at `ip`
@@ -7596,6 +7646,18 @@ fn holds_loop_site(ip: Ip) -> bool {
     // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
     (unsafe { i.operand.field.shape }) == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
+}
+
+/// The object part of a receiver other than a direct object, an array, function or ordinary
+/// builtin whose prototype a held read reads through (`RecordPlan::other`): its address, or 0.
+///
+/// # Safety
+/// `machine` is the live `Vm<H>` the lane runs.
+#[cold]
+#[inline(never)]
+unsafe fn held_other_record<H: Host>(machine: *const (), object: u64) -> u64 {
+    let machine = unsafe { &*machine.cast::<Vm<H>>() };
+    machine.hinted_receiver(Value::from_bits(object)).map_or(0, |record| record as *const crate::heap::Object as u64)
 }
 
 /// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
@@ -7684,44 +7746,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// `GetField` of a register or `this` at a site whose primary entry names a prototype
-    /// holder (`Vm::field_site_holder`), a method read: the record's hint of that read
-    /// (`Vm::holder_hint_hit`), whose receiver shape, prototype link and epoch tests stand for
-    /// the entry's receiver and holder proofs and the holder's storage, which the epoch
-    /// carries from the read that made the hint. Any other read takes
-    /// `lane_get_field_holder_refresh` out of line.
-    fn lane_get_field_holder<THIS: bool>(cx, r, ip, i, view) {
-        // A receiver of another family takes its own record: a call out of line from here
-        // made every read save a register around it.
-        let Some(record) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(Value::direct_object_index) else {
-            sibling!(lane_get_field_holder_other::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        };
-        let vm = unsafe { vm(cx) };
-        let Some(value) = vm.holder_hint_hit_in(i.call_link.get(), i.imm(), vm.heap.object_record_by_id(record)) else {
-            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_holder` of a receiver other than a direct object: an array, function or
-    /// ordinary builtin (`Vm::holder_hint_hit`); any other read takes
-    /// `lane_get_field_holder_refresh`.
-    #[inline(never)]
-    fn lane_get_field_holder_other<THIS: bool>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), object))
-        else {
-            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `lane_get_field_holder` past its hint: the site's primary holder entry
     /// (`Vm::primary_record_holder_field_hit`), whose answer becomes the hint. Any other read
     /// takes `lane_get_field_holder_any`.
@@ -7759,7 +7783,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_own` for a receiver in a heap cell rather than the object records
+    /// the own-field row for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_own_field_hit`): a function's own field, as `Strength.REQUIRED`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
     fn lane_get_field_own_cell<>(cx, r, ip, i, view) {
@@ -7939,7 +7963,7 @@ script_handler! {
 script_handler! {
     /// A `GetField`'s first run: a read of `name` or `length` can enter prototype lookup
     /// mode (`Vm::reads_function_info`), which only `lane_get_field`'s general probe
-    /// prepares, so such a site keeps it; any other takes `lane_get_field_own`.
+    /// prepares, so such a site keeps it; any other takes the own-field row (`own_formed_handler`).
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
         if crate::bytecode::FieldBase(i.b).local_index().is_some() {
@@ -7972,11 +7996,9 @@ script_handler! {
             requicken::<H>(ip, handler);
             sibling!(handler, r, ip, Carried::script_in(cx, view))
         }
-        let (this, register): (Handler, Handler) = if unsafe { (*cx).binding.object_base.is_null() } {
-            (lane_get_field_own::<H, true>, lane_get_field_own::<H, false>)
-        } else {
-            (lane_get_field_own_bound::<H, true, HINTED_FORM>, lane_get_field_own_bound::<H, false, HINTED_FORM>)
-        };
+        // The generated own read of the form of no particular hint, which binds the lane's
+        // object records on its first miss where they are not yet bound.
+        let (this, register) = (own_formed_handler::<H, true>(None), own_formed_handler::<H, false>(None));
         let own = single_base_handler(i.b, this, register, lane_get_field_miss::<H>);
         requicken::<H>(ip, own);
         sibling!(own, r, ip, Carried::script_in(cx, view))
@@ -8052,11 +8074,7 @@ script_handler! {
                 // A site that read a plain object's own `length` mostly reads such objects: it
                 // takes the own-field handler, whose misses still reach the general read.
                 if crate::bytecode::FieldBase(i.b).register_index().is_some() && i.b != crate::bytecode::FieldBase::NESTED {
-                    let own: Handler = if unsafe { (*cx).binding.object_base.is_null() } {
-                        lane_get_field_own::<H, false>
-                    } else {
-                        lane_get_field_own_bound::<H, false, HINTED_FORM>
-                    };
+                    let own = own_formed_handler::<H, false>(None);
                     requicken::<H>(ip, own);
                 }
                 r.set(i.a, value);
@@ -8085,7 +8103,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A miss of a single-entry read (`lane_get_field_own`, `_holder`, `_inherited`): a nested record moves to
+    /// A miss of a single-entry read (the own-field row, `lane_get_field_holder`, `_inherited`): a nested record moves to
     /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
     /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
     /// an inherited entry to `lane_get_field_inherited`; the read itself takes
@@ -8144,8 +8162,8 @@ script_handler! {
             }
             FieldSiteTier::Holder => Some(single_base_handler(
                 i.b,
-                lane_get_field_holder::<H, true>,
-                lane_get_field_holder::<H, false>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER>,
                 lane_get_field::<H>,
             )),
             FieldSiteTier::Inherited => Some(single_base_handler(
@@ -11056,7 +11074,7 @@ fn lane_region_field<H: Host>(
         super::compiled::FieldReceiver::Capture(slot) => lane_capture_value(cx, 0, slot)?,
         super::compiled::FieldReceiver::Field(index) => earlier(index),
     };
-    // The site's primary entry first, as the lane's own reads take it (`lane_get_field_own`).
+    // The site's primary entry first, as the lane's own reads take it (`own_formed_handler`).
     if let Some(value) = vm.record_field_entry_hit(vm.field_cache_entry(field.cache_site), receiver) {
         return Some(value);
     }
@@ -20056,7 +20074,7 @@ impl ReadArguments {
 }
 
 /// The hit a field record of a read body answers with: its quickened primary entry, own or
-/// held by a record prototype (`lane_get_field_own`, `lane_get_field_holder`). Each hit is
+/// held by a record prototype (`own_formed_handler`, `lane_get_field_holder`). Each hit is
 /// its cache's own validated read, whatever the record's state when it runs.
 #[derive(Clone, Copy)]
 enum FieldHit {
@@ -20066,15 +20084,8 @@ enum FieldHit {
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
 fn own_bound_handlers<H: Host>() -> [*const (); 18] {
-    use crate::staged::TAGGED_SLOTS;
-    use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
-    macro_rules! forms {
-        ($($form:expr),*) => {
-            [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
-        };
-    }
-    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
-        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS)
+    macro_rules! row { ($site:expr) => { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { $site }> as *const () } }
+    own_sites!(row)
 }
 
 impl FieldHit {
@@ -20082,14 +20093,12 @@ impl FieldHit {
     #[inline(always)]
     fn of<H: Host>(record: &LaneInstruction) -> Option<Self> {
         let handler = record.handler;
-        if handler == lane_get_field_own::<H, true> as *const ()
-            || handler == lane_get_field_own::<H, false> as *const ()
-            || own_bound_handlers::<H>().contains(&handler)
+        if own_bound_handlers::<H>().contains(&handler)
             || math_field_call_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
-        } else if handler == lane_get_field_holder::<H, true> as *const ()
-            || handler == lane_get_field_holder::<H, false> as *const ()
+        } else if handler == lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS> as *const ()
+            || handler == lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER> as *const ()
         {
             Some(Self::Holder(record.c))
         } else {

@@ -2410,6 +2410,15 @@ impl<H: Host> Vm<H> {
         self.holder_hint_hit_in(index, atom, self.hinted_receiver(object)?)
     }
 
+    /// The operands of prototype hint `index` for a read of `atom` (`IcOp::Held`): its guard
+    /// word, its watch's address and its value's bits; `None` where no hint of that atom is held.
+    /// The watch lives as long as the hint, which outlives the read it is given to.
+    #[inline(always)]
+    pub(super) fn holder_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64, u64)> {
+        let hint = self.holder_hints.holder.get(usize::from(index))?;
+        (hint.atom == atom).then(|| (hint.guard, std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
+    }
+
     /// `holder_hint_hit` of the object part `receiver` (`hinted_receiver`).
     #[inline(always)]
     pub(super) fn holder_hint_hit_in(&self, index: u16, atom: Atom, receiver: &crate::heap::Object) -> Option<Value> {
@@ -2441,7 +2450,7 @@ impl<H: Host> Vm<H> {
     /// The object part of a direct object, array, function or ordinary builtin, whose own
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
-    fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() { return Some(self.heap.object_record_by_id(record_id)); }
         if let Some(array) = self.heap.record_array(object) { return Some(array); }
         self.hinted_other_receiver(object)

@@ -32,6 +32,10 @@ pub(crate) enum IcOp<'a> {
     /// The record's prototype link selects its value from these (link, value bits) pairs, else
     /// the read misses; a dependency holds each prototype's value. It ends the read.
     PrototypeConstants(&'a [(u32, u64)]),
+    /// The value a prototype hint recorded (`holder::holder_read`): the record's layout is
+    /// `guard` (its exact shape, storage form and prototype link at once) and the watch at
+    /// `watch` on the prototype's values still holds, else the read misses. It ends the read.
+    Held { guard: u64, watch: u64, value: u64 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -78,9 +82,31 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::LoadSlot { slot, form, storage_len, rep } => return load_slot(stage, &at, (slot, rep), form, storage_len, miss),
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
             IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
+            IcOp::Held { guard, watch, value } => return holder_read(stage, at.record, guard, watch, value, miss),
         }
     }
     None
+}
+
+/// The value the hint `(guard, watch, value)` records for the object part at `record`: `None`
+/// (leaving at `miss`) where the record's layout (`Object::guard_word`: the interned pair of
+/// its whole auxiliary word, the exact shape with its storage form, and its prototype link and
+/// flags) differs, or the watch no longer holds. One compare of the layout id proves the shape
+/// and the prototype together.
+#[inline(always)]
+pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, value: u64,
+    miss: S::Miss) -> Option<S::Word> {
+    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
+    let guard = stage.site(guard);
+    let same = stage.eq_imm(words, guard);
+    stage.guard(same, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
 }
 
 /// `IcOp::GuardShape`: continues where the reached record's exact shape is `shape`.
