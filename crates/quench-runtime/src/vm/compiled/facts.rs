@@ -66,7 +66,7 @@ impl Facts {
     fn point_at(&self, pc: usize) -> run::Point {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
-        run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
+        run::Point { types: smallvec::SmallVec::from_slice(&self.types[start..start + self.registers]),
             relations: Relations::of_rows(relations(&self.length_of), relations(&self.below), relations(&self.under)) }
     }
 
@@ -99,7 +99,7 @@ impl Facts {
         written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool) -> Type {
         let Some(start) = (0..=pc).rev().find(|pc| leaders.contains(*pc)) else { return Type::ANY };
         let Some(entry) = self.at(start) else { return Type::ANY };
-        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = entry.iter().copied().collect();
+        let mut types: smallvec::SmallVec<[Type; INLINE_ANALYSIS_ITEMS]> = smallvec::SmallVec::from_slice(entry);
         for (at, instruction) in instructions.iter().enumerate().take(pc).skip(start) {
             if matches!(transfer_observed(&mut types, *instruction, constants, written, native_calls, self.observed_at(at)), Flow::Leaves) {
                 return Type::ANY;

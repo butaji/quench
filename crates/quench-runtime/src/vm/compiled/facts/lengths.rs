@@ -44,11 +44,12 @@ impl Relations {
 
     /// The relations of these rows, with the registers they name.
     pub(super) fn of_rows(length_of: Vec<Option<Register>>, below: Vec<Option<Register>>, under: Vec<Option<Register>>) -> Self {
-        let mut relations = Self { length_of, below, under, held: false, named: RegisterSet::default(), wide: false };
-        let named: Vec<Register> = [&relations.length_of, &relations.below, &relations.under].iter()
-            .flat_map(|rows| rows.iter().flatten().copied()).collect();
-        for register in named { relations.name(register); }
-        relations
+        let (mut named, mut wide, mut held) = (RegisterSet::default(), false, false);
+        for &register in [&length_of, &below, &under].into_iter().flat_map(|rows| rows.iter().flatten()) {
+            held = true;
+            if usize::from(register) < RegisterSet::BITS as usize { named.insert(usize::from(register)); } else { wide = true; }
+        }
+        Self { length_of, below, under, held, named, wide }
     }
 
     /// Notes that a relation names `register`.
