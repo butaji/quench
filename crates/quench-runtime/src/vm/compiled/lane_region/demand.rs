@@ -139,9 +139,14 @@ impl Demands {
             let instruction = unit.instructions[pc];
             let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
             let after = instruction.defined_register().and_then(|result| row.get(usize::from(result))).copied().unwrap_or_default();
+            // `reads` per register, its liveness probe skipped where the demand is already tagged.
+            let homes = homes_registers(instruction);
             for (register, demand) in row.iter_mut().enumerate() {
                 if defs.contains(register) { *demand = Demand::default(); }
-                *demand = demand.union(reads(unit, pc, instruction, uses.contains(register), register, (live, &|| after)));
+                if uses.contains(register) { *demand = demand.union(read_demand(instruction, register, &|| after)); }
+                if !demand.tagged() && (register >= usize::from(unit.caller_registers) || homes) && live(pc, register as Register) {
+                    *demand = demand.union(Demand::TAGGED);
+                }
             }
         }
         row
@@ -175,16 +180,16 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
             if let Some(&target) = block_of.get(successor) && target != usize::MAX { predecessors[target].push(index); }
         }
     }
-    let mut queued = vec![true; blocks.len()];
-    let mut work: std::collections::VecDeque<usize> = (0..blocks.len()).collect();
-    while let Some(index) = work.pop_front() {
-        queued[index] = false;
+    // The lowest queued index is the latest block: a backward analysis solves a block after
+    // the blocks it falls or jumps to (but for backedges), so each runs once per change.
+    let mut work: CompoundBitSet = CompoundBitSet::with_capacity(blocks.len());
+    for index in 0..blocks.len() { work.insert(index); }
+    while let Some(index) = work.iter().next() {
+        work.remove(index);
         let (start, end) = blocks[index];
         let entry = demands.block_entry(program, unit, start, end, &live);
         if demands.set(start, &entry) {
-            for &predecessor in &predecessors[index] {
-                if !queued[predecessor] { queued[predecessor] = true; work.push_back(predecessor); }
-            }
+            for &predecessor in &predecessors[index] { work.insert(predecessor); }
         }
     }
     demands

@@ -17,6 +17,9 @@ pub(in crate::vm::compiled) struct Relations {
     /// Registers known below the value of the named register, whatever it holds: a bound a loop's
     /// entry may compare with an array's length once (`IndexProof::Versioned`).
     pub(super) under: Vec<Option<Register>>,
+    /// Whether any relation may be held: false makes a write's or a length change's retirement
+    /// free, as it is in the many units that read no length (each would scan every table).
+    pub(super) held: bool,
 }
 
 /// `known` met with `incoming`: a relation the other state does not keep is lost; whether that
@@ -29,10 +32,11 @@ pub(super) fn meet(known: &mut Option<Register>, incoming: Option<Register>) -> 
 
 impl Relations {
     pub(super) fn new(registers: usize) -> Self {
-        Self { length_of: vec![None; registers], below: vec![None; registers], under: vec![None; registers] }
+        Self { length_of: vec![None; registers], below: vec![None; registers], under: vec![None; registers], held: false }
     }
 
     pub(super) fn kill(&mut self, register: Register) {
+        if !self.held { return; }
         for slot in self.length_of.iter_mut().chain(self.below.iter_mut()).chain(self.under.iter_mut()) {
             if *slot == Some(register) { *slot = None; }
         }
@@ -44,6 +48,7 @@ impl Relations {
     /// Forgets what an instruction that may change an array's length retires: the relations to
     /// lengths. A register's value stays what it was.
     pub(super) fn clear(&mut self) {
+        if !self.held { return; }
         self.length_of.fill(None);
         self.below.fill(None);
     }
@@ -54,7 +59,7 @@ impl Relations {
             .map(|table| table.get(usize::from(from)).copied().flatten());
         self.kill(to);
         for (table, array) in [(&mut self.length_of, length), (&mut self.below, below), (&mut self.under, under)] {
-            if let Some(slot) = table.get_mut(usize::from(to)) { *slot = array.filter(|array| *array != to); }
+            if let Some(slot) = table.get_mut(usize::from(to)) { *slot = array.filter(|array| *array != to); self.held |= slot.is_some(); }
         }
     }
 
@@ -62,11 +67,12 @@ impl Relations {
     /// the length of.
     fn bound_below(&mut self, [small, big]: [Operand; 2]) {
         let Some((index, bound)) = small.register_index().zip(big.register_index()).filter(|(index, bound)| index != bound) else { return };
-        if let Some(slot) = self.under.get_mut(usize::from(index)) { *slot = Some(bound); }
+        if let Some(slot) = self.under.get_mut(usize::from(index)) { *slot = Some(bound); self.held = true; }
         if let Some(array) = self.length_of.get(usize::from(bound)).copied().flatten()
             && array != index
             && let Some(slot) = self.below.get_mut(usize::from(index)) {
             *slot = Some(array);
+            self.held = true;
         }
     }
 
@@ -87,6 +93,7 @@ impl Relations {
             // A result outside the unit's registers has no relation to keep.
             && let Some(slot) = self.length_of.get_mut(usize::from(instruction.result_register())) {
             *slot = Some(array);
+            self.held = true;
         }
     }
 

@@ -9,7 +9,22 @@ use crate::typed_ir::{IntRange, Type};
 use cranelift_codegen::bitset::CompoundBitSet;
 use super::super::super::operations::NumberRelation;
 
-type Pending = smallvec::SmallVec<[usize; INLINE_ANALYSIS_ITEMS]>;
+/// The leaders whose rows changed since they last ran, run lowest first: bytecode lays a
+/// block out after the blocks that reach it (but for backedges), so the lowest pending
+/// leader is the next in reverse postorder and each block runs once per change of its
+/// inputs, not once per edge that reached it.
+#[derive(Default)]
+struct Pending(CompoundBitSet);
+
+impl Pending {
+    fn new() -> Self { Self::default() }
+    fn push(&mut self, pc: usize) { self.0.insert(pc); }
+    fn pop(&mut self) -> Option<usize> {
+        let first = self.0.iter().next()?;
+        self.0.remove(first);
+        Some(first)
+    }
+}
 
 /// The abstract state of a run at one point: the registers' types (a range is a type), and the
 /// length relations a unit-proving run tracks beside them.
