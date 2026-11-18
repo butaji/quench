@@ -29,7 +29,7 @@ impl Cell {
 
 impl Heap {
     /// Allocation, collection, peak and threshold counts, for the tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "profile-aggregate"))]
     pub(crate) fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
         (
             self.allocated as u64,
