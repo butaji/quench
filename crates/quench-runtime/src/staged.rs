@@ -705,6 +705,17 @@ impl Operation<u64, ()> {
     pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
         Self::decode(instruction, DecodeContext::EMPTY)
     }
+
+    /// Whether `instruction` does nothing: a marker that defines and writes nothing.
+    pub(crate) fn is_nop(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Nop
+    }
+
+    /// Whether `instruction` is a Number binary operation (`NumericBinary`): its operator is the
+    /// Number arithmetic, relation or bitwise operation the tier reads from its operands.
+    pub(crate) fn is_number_binary(instruction: WideInstruction) -> bool {
+        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+    }
 }
 
 /// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering
