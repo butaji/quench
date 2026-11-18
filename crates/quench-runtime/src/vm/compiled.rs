@@ -3145,6 +3145,13 @@ pub(super) struct CompiledOsrRegion {
     /// What its code owns of its calls: the callees it runs as their own rows, whose registers
     /// follow the activation's (`CallCode`).
     pub(super) calls: CallCode,
+    /// The dispatch the region's runs reuse (`Crossing::General`): its last run's, put back as the
+    /// run returns, so an entry rebinds the words that change between runs instead of building
+    /// the dispatch again (`JsStepDispatch::rebind_region`). A run entered while another of the
+    /// region runs finds none here and builds its own.
+    parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
+    /// Whether the region has parked its dispatch (`parked`).
+    made: std::cell::Cell<bool>,
 }
 
 
@@ -3217,16 +3224,42 @@ impl CompiledOsrRegion {
         interrupt: *const crate::execution_interrupt::ExecutionInterrupt,
         (lane_context, direct_calls): (usize, bool),
     ) -> RegionRun {
+        let lend = self.calls.enters_callees().then_some(direct_calls);
+        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
+            osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
+            // SAFETY: the caller's contract covers the context and `registers`.
+            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
+            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
+            captures
+        };
+        // A region that calls callees by their entries runs on the lane frame's payload, which their
+        // own helpers read (`region_lend`).
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
-        let outcome = unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
-            osr_lane::bind_loop(native, vm, region, entry, (frame, lane_context));
-            let _captures = osr_lane::bind_captures::<H>(native, region, entry, lane_context);
-            osr_lane::bind_frame(native, vm, (program, function, lane_context), registers);
-            // A region that calls callees by their entries runs on the lane frame's payload, which their
-            // own helpers read (`region_lend`).
-            let lend = self.calls.enters_callees().then_some(direct_calls);
-            osr_lane::enter(native, vm, program, (code, resume), registers, interrupt, (lane_context, lend))
-        }) }.unwrap_or(RegionRun::own(LaneExit::Terminated));
+        let outcome = match self.parked.take().filter(|_| self.crossing == Crossing::General) {
+            Some(mut dispatch) => unsafe {
+                let vm = &mut *vm;
+                match vm.programs.get(program) {
+                    Some(residual) => {
+                        dispatch.rebind_region(vm, program, &residual, frame);
+                        let _captures = bind(&mut dispatch, &residual, vm);
+                        let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                        self.parked.set(Some(dispatch));
+                        run
+                    }
+                    None => RegionRun::own(LaneExit::Terminated),
+                }
+            },
+            None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
+                native.dispatch.bind_native_storage(vm);
+                let _captures = bind(&mut native.dispatch, &native._program, vm);
+                let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
+                // The first run of the region parks a dispatch for the runs after it.
+                if self.crossing == Crossing::General && !self.made.replace(true) {
+                    self.parked.set(Some(Box::new(JsStepDispatch::idle())));
+                }
+                run
+            }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
+        };
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
@@ -4522,6 +4555,22 @@ impl JsStepDispatch {
         self.slots_tracked = usize::from(vm.heap.tracks_slot_values());
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
+    }
+
+    /// Readies a region's parked dispatch (`CompiledOsrRegion::parked`) for a run of `program`
+    /// above VM frame `frame`: the words `JsNativeActivation::with_function` and
+    /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
+    /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
+    /// The words the run's binds set (`osr_lane`) are theirs.
+    fn rebind_region<H: Host>(&mut self, vm: &mut Vm<H>, program_id: ProgramId, program: &ResidualProgram, frame: usize) {
+        self.bind_lane_storage(std::ptr::from_mut(vm));
+        (self.program_id, self.frame) = (program_id, frame);
+        (self.capture_values, self.capture_len, self.capture_stores) = (std::ptr::null(), 0, 0);
+        (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
+        (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
+        self.environment_storage = crate::heap::absent_environment_storage();
+        self.outcome = None;
+        self.refresh_heap_bases(vm, program);
     }
 
     /// Refresh the additional frame and array views read by native code.
