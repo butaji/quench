@@ -131,18 +131,14 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// How many of `ops` the plan runs.
     len: usize,
     records: u64,
-    /// The object part of a receiver other than a direct object (an array, function or ordinary
-    /// builtin), out of line, for a plan any of them runs (`IcOp::Held`): its resolver and the
-    /// machine it reads; `None` where the plan runs over direct objects alone.
-    other: Option<(OtherRecord, *const ())>,
+    /// The heap whose arrays, functions and ordinary builtins a plan any receiver runs
+    /// (`IcOp::Held`) finds the object part of (`Heap::held_other_receiver`); `None` where the
+    /// plan runs over direct objects alone.
+    other: Option<*const crate::heap::Heap>,
     /// Whether the plan starts from the receiver's word rather than its object record
     /// (`IcOp::HeldString`).
     word: bool,
 }
-
-/// Resolves the object part of a receiver other than a direct object (`Vm::hinted_receiver`):
-/// its address, or 0 for no object part.
-pub(in crate::vm::dispatch_fast) type OtherRecord = unsafe fn(*const (), u64) -> u64;
 
 impl RecordPlan {
     /// The own-slot read of the hint `(layout, slot)`: one compare of the record's layout id,
@@ -159,7 +155,7 @@ impl RecordPlan {
     /// (`IcOp::Held`).
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn held(guard: u64, watch: u64, value: u64, records: u64,
-        other: Option<(OtherRecord, *const ())>) -> Self {
+        other: Option<*const crate::heap::Heap>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
         Self { ops: [held, held], len: 1, records, other, word: false }
@@ -418,15 +414,15 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         if let Some(RecordPlan { word: true, .. }) = self.plan {
             return Some(crate::staged::ic::Reached::bare(object));
         }
-        let Some(RecordPlan { records, other: Some((resolve, machine)), .. }) = self.plan else {
+        let Some(RecordPlan { records, other: Some(heap), .. }) = self.plan else {
             return crate::staged::property::receiver(stage, self, object, miss);
         };
         if let Some(id) = Value::from_bits(object).direct_object_index() {
             return Some(crate::staged::ic::Reached::bare(crate::staged::object::object_record_at(stage, records, u64::from(id))));
         }
-        // SAFETY: the resolver was made for the machine the lane runs.
-        let record = unsafe { resolve(machine, object) };
-        (record != 0).then(|| crate::staged::ic::Reached::bare(record))
+        // SAFETY: the heap is the lane's, live for the read.
+        let record = unsafe { &*heap }.held_other_receiver(Value::from_bits(object))?;
+        Some(crate::staged::ic::Reached::bare(record as *const crate::heap::Object as u64))
     }
 
     #[inline(always)]
@@ -631,6 +627,9 @@ lane_handler! {
             if const { FLAG == super::STRING_SITE } {
                 sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { FLAG == super::HELD_CELL_REGISTER } {
+                sibling!(lane_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::held_other_site(FLAG) } {
                 if const { super::own_site_this(FLAG) } {
                     sibling!(lane_get_field_holder_refresh::<H, true>, r, ip, Carried::script_in(script, view))
@@ -696,9 +695,7 @@ lane_handler! {
                 if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
                 // A direct object's record is addressed in the table after its family test; at the
                 // held-other site, any other receiver's object part is resolved out of line.
-                let other: Option<(super::OtherRecord, *const ())> = if const { super::held_other_site(FLAG) } {
-                    Some((super::held_other_record::<H>, (machine as *const Vm<H>).cast()))
-                } else { None };
+                let other = if const { super::held_other_site(FLAG) } { Some(&raw const machine.heap) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
             } else {
             let records = unsafe { (*script).binding.object_base } as u64;

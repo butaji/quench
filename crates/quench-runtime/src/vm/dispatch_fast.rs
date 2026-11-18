@@ -3372,7 +3372,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, OtherRecord, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -7502,8 +7502,15 @@ pub(super) const fn held_site(site: u8) -> bool {
     site == HELD_SITE_THIS || site == HELD_SITE_REGISTER || held_other_site(site)
 }
 
+/// The site fact of a held read at a site whose receivers live outside the object records, as
+/// `a.push` or `f.call` (`FieldSiteTier::Holder` of a cell): the held-other read from the first,
+/// whose miss takes the site's holder entry (`lane_get_field_holder_cell_refresh`).
+pub(super) const HELD_CELL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 3);
+
 /// Whether held site `site` reads any receiver's object part, not a direct object's alone.
-pub(super) const fn held_other_site(site: u8) -> bool { site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER }
+pub(super) const fn held_other_site(site: u8) -> bool {
+    site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER || site == HELD_CELL_REGISTER
+}
 
 /// Whether own-field or held site `site` reads `this`.
 pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
@@ -7619,18 +7626,6 @@ fn holds_loop_site(ip: Ip) -> bool {
     // SAFETY: `ip` is a field read/store record of a live view.
     let i = unsafe { &*ip };
     (unsafe { i.operand.field.shape }) == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
-}
-
-/// The object part of a receiver other than a direct object, an array, function or ordinary
-/// builtin whose prototype a held read reads through (`RecordPlan::other`): its address, or 0.
-///
-/// # Safety
-/// `machine` is the live `Vm<H>` the lane runs.
-#[cold]
-#[inline(never)]
-unsafe fn held_other_record<H: Host>(machine: *const (), object: u64) -> u64 {
-    let machine = unsafe { &*machine.cast::<Vm<H>>() };
-    machine.hinted_receiver(Value::from_bits(object)).map_or(0, |record| record as *const crate::heap::Object as u64)
 }
 
 /// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
@@ -7849,22 +7844,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_holder_cell` of a register base, an array or function whose prototype
-    /// answers a method read (`a.push`, `f.call`): the record's hint of that read
-    /// (`Vm::holder_hint_hit`), whose shape, link and epoch tests stand for the site's entry
-    /// and the prototype's storage. Any other read takes
-    /// `lane_get_field_holder_cell_refresh` out of line.
-    fn lane_get_field_holder_cell_register<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), r.get(i.b)) else {
-            sibling!(lane_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_holder_cell_register` past its hint: the site's holder entry
+    /// The generated held read at `HELD_CELL_REGISTER` past its hint: the site's holder entry
     /// (`Vm::cell_holder_field_hit`), whose answer becomes the hint. A miss takes
     /// `lane_get_field_holder_cell`, which moves the record on.
     #[inline(never)]
@@ -8113,7 +8093,7 @@ script_handler! {
                 if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
                 Some(if crate::bytecode::FieldBase(i.b).register_index().is_some() {
-                    lane_get_field_holder_cell_register::<H>
+                    lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER>
                 } else {
                     lane_get_field_holder_cell::<H>
                 })
