@@ -320,6 +320,12 @@ pub(crate) const CLONE_ENV_ROW: u16 = Op::CloneEnv as u16;
 pub(crate) const LOAD_CAPTURE_ROW: u16 = Op::LoadCapture as u16;
 /// The opcode whose row is an unconditional jump (`Operation::Jump`).
 pub(crate) const JUMP_ROW: u16 = Op::Jump as u16;
+/// The opcode whose row defines a register from a constant (`Operation::LoadConst`), which the
+/// interpreter's constant table answers where the decode does not hold it.
+pub(crate) const LOAD_CONST_ROW: u16 = Op::LoadConst as u16;
+/// The opcode whose row writes a local slot from a register (`Operation::StoreLocalPlain`), which the
+/// interpreter names where it records the local write of a fused binary.
+pub(crate) const STORE_LOCAL_PLAIN_ROW: u16 = Op::StoreLocalPlain as u16;
 
 /// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
 /// it by this, the hand handler being the fallback for the operands the row does not decode).
