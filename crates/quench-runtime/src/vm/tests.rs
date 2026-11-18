@@ -615,6 +615,34 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     }
 }
 
+/// A closure made in a `for (let ...)` initializer keeps the initializer's binding: the first
+/// iteration's copy, which runs once, separates it from the bindings the test and body write
+/// (test262 language/statements/for/scope-body-lex-open.js), in a Script's root and in a function.
+#[test]
+fn a_for_let_initializer_closure_keeps_the_initializer_binding() {
+    let body = r#"
+      var probeBefore, probeTest, probeIncr, probeBody; var run = true;
+      for (let x = 'outside', _ = probeBefore = function() { return x; };
+           run && (x = 'inside', probeTest = function() { return x; });
+           probeIncr = function() { return x; })
+        probeBody = function() { return x; }, run = false;
+      const got = [probeBefore(), probeTest(), probeBody(), probeIncr()].join();
+      if (got !== 'outside,inside,inside,inside') throw new Error(got);
+    "#;
+    for source in [body.to_owned(), format!("(function () {{ {body} }})();")] {
+        for specialized in [false, true] {
+            let mut vm = Vm::new(TestHost::default());
+            let program = if specialized {
+                Engine::specialize(&source, "for-let-initializer.js")
+            } else {
+                Engine::compile(crate::ExecutionRequest { source: &source, name: "for-let-initializer.js", kind: crate::SourceKind::Script })
+            }
+            .unwrap();
+            vm.execute(&program).unwrap();
+        }
+    }
+}
+
 #[test]
 fn whole_read_per_iteration_copies_keep_their_owners_slots() {
     // Bindings enough that each iteration's copy of the script's root environment is sparse
