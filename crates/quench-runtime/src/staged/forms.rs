@@ -183,6 +183,7 @@ impl Invocation {
 
     /// Whether the call allocates its callee's receiver (a construction) instead of binding the
     /// `this` of a receiver.
+    #[inline(always)]
     pub(crate) fn constructs(&self) -> bool {
         self.receiver == Receiver::Allocated
     }

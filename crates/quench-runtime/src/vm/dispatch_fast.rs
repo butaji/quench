@@ -643,7 +643,7 @@ mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
 mod list_calls;
@@ -2709,6 +2709,10 @@ struct LaneContext<H: Host> {
     /// records in the activation it made (`lane_body_call`), and the accumulator that record reads.
     callee_resume: Ip,
     callee_acc: Value,
+    /// The call a lane body's helper decoded last (`BodyCall::at`): its program, function, record and
+    /// form, which the run's code fixes, so a loop's repeated call or construction decodes
+    /// its instruction once per run.
+    body_site: Option<(*const ResidualProgram, u32, u64, crate::staged::Invocation)>,
     /// What this run proved about the storage of the arrays its loops index
     /// (`ArrayStorageProofs`), which the proved element records read
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify

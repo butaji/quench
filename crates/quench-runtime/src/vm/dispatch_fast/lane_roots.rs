@@ -208,6 +208,7 @@ impl<H: Host> Vm<H> {
             resumed_acc: Slot::of(Value::UNDEFINED),
             callee_resume: std::ptr::null(),
             callee_acc: Value::UNDEFINED,
+            body_site: None,
             callee_warming: false,
             leaf: NO_LEAF_CALL,
             outer: NO_OUTER_WALK,
