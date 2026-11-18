@@ -16390,7 +16390,7 @@ fn lane_string_or_native_call<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if let Some(value) = vm.in_place_native_value(code, native, callee, receiver, args) {
+    if let Some(value) = vm.in_place_native_value_inline(code, native, callee, receiver, args) {
         // An in-place case may allocate; a due collection runs at the lane's next safepoint.
         note_allocation(vm);
         return Some(value);
