@@ -30,8 +30,8 @@ empty 3 15 31.2
 eq_int 7.13 28 48.8
 eq_str 67 207 207
 eq_undef_null 5 21 92.1
-field_length 3 15
-field_name 3 15
+field_length 3 15 262.2
+field_name 3 15 69.2
 field_read 3 15 70.1
 field_store 3 15 79.1
 inc_local 5 21 57.1
@@ -63,7 +63,7 @@ mixed_int_dbl 7 27 72.1
 neg_op 6 24 97.1
 not_op 5.5 23 65.6
 num_to_str 569 1713 1713
-obj_spread 146 444
+obj_spread 146 444 1772.5
 parse_int 196 594 1036.1
 shl_shr 7 27 93
 str_charcodeat 9 33 207.1
