@@ -1325,7 +1325,7 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
 /// The loop `header..=backedge` of `function_id` lowered for an ahead image: the same region
 /// specializer as a lane body and the runtime's own loop plan, over static facts and a linking
 /// helper table. `None` where the region declines or lowers no record; otherwise its records.
-#[cfg(feature = "aot")]
+#[cfg(all(test, feature = "aot"))]
 pub(super) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
     isa: &dyn cranelift_codegen::isa::TargetIsa, (header, backedge): (u32, u32)) -> Result<usize, String> {
     use super::specializer::Specializer;
@@ -9125,9 +9125,10 @@ mod ahead_loop_tests {
     /// The loop a call-bearing top-level body runs is lowered ahead from static facts: the
     /// capability an ahead image needs to re-enter native code after a call.
     #[test]
-    #[ignore = "the probe finds a back edge but not the loop the runtime analyzes: the analysis \
-        needs the field sites, constants and liveness `loop_tier` passes (`analyze_osr_region_detailed`), \
-        which an ahead build must derive from the program"]
+    #[ignore = "the synthetic analysis rejects the loop's `Binary` before admission; the runtime's \
+        `lane_method_call_region` feeds `analyze_osr_region_detailed` with `function.instructions()`, the \
+        materialized constant pool, `program.field_sites`, `shared_register_root_masks` and \
+        `MethodCalls::Exit`, which `lowered_ahead_loop` must derive from the program"]
     fn a_toplevel_loop_lowers_ahead_from_static_facts() {
         let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nfunction fib(n){return n<2?n:fib(n-1)+fib(n-2);}\nprint((loopfn(200000)+fib(20))|0);";
         let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
@@ -9141,7 +9142,7 @@ mod ahead_loop_tests {
             instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= *pc
         }).next_back().map(|(pc, instruction)| (instruction.jump_target(), pc as u32)).expect("the body has a loop");
         let records = super::lowered_ahead_loop(&program, 1, &*isa, (header, backedge));
-        assert!(matches!(records, Ok(records) if records > 0), "the loop lowered no record: {records:?} ({header}..={backedge}); op {} is {:?}", 61, crate::bytecode::opcode_name(61));
+        assert!(matches!(records, Ok(records) if records > 0), "the loop lowered no record: {records:?} ({header}..={backedge})");
     }
 }
 
