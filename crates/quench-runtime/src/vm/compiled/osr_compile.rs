@@ -385,11 +385,16 @@ pub(in crate::vm) fn start_osr_region(
     let invalidation = Invalidation::default();
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
     let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
-    let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
+    // The field sites' loads the observation recorded, which its facts name (`OsrFacts::observed`): a
+    // shape compaction retires the region, so its inline-cache rows may patch these shapes in.
+    let fields = loop_fields(region, observation);
+    let reads = |site: u16| fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
+    let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
+    let known = super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
         return decided;
     }
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers };
+    let planner = LoopPlanner { observation, fields: &fields, isa: &*isa, program, function_id, helpers, views, tiers };
     let lowered = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);

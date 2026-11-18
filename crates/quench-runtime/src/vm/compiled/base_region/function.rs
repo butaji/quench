@@ -524,9 +524,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
         return Err("first instruction leaves".to_string());
     }
-    // A loop region's publication names no shape ids, so only a body runs inline-cache rows (`Decoded::ic`).
     let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
-        .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else if ending == Ending::Region { Decoded { ic: None, ..row } } else { row })
+        .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
         .collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
