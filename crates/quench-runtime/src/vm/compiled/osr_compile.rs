@@ -43,7 +43,7 @@ impl OsrFacts {
 
     /// The facts of a region that proves none: an ahead loop lowered from static facts, shipped
     /// as code alone (`AheadImages` keeps only loops whose `StableFacts` is empty).
-    #[cfg(all(feature = "aot", feature = "native-execution"))]
+    #[cfg(feature = "native-execution")]
     pub(in crate::vm) fn none() -> Self {
         Self { shape_dependencies: Vec::new(), departure_shapes: Vec::new(), slot_dependencies: Vec::new(),
             roots: crate::folded_roots::FoldedRoots::default(), stable: StableFacts::default(),

@@ -102,8 +102,9 @@ fn image(program: &ResidualProgram, function: u32) -> Option<Image> {
 impl AheadImages {
     /// The images of every function of `program` that has one.
     pub fn compile(program: &ResidualProgram) -> Self {
-        let images = (1..program.function_count()).filter_map(|function| Some((function as u32, image(program, function as u32)?))).collect();
-        Self { program: fingerprint(program), known: Default::default(), images }
+        let images: Vec<(u32, Image)> = (1..program.function_count()).filter_map(|function| Some((function as u32, image(program, function as u32)?))).collect();
+        let program_fingerprint = fingerprint(program);
+        Self { program: program_fingerprint, known: Default::default(), images }
     }
 
     /// The image of `function`.
@@ -131,7 +132,7 @@ impl AheadImages {
 
     /// The code of `function`'s loop at `header`, its relocations and the atom texts it names,
     /// for a load that links them.
-    #[cfg(feature = "aot")]
+    #[cfg(feature = "native-execution")]
     pub(in crate::vm) fn loop_code(&self, function: u32, header: u32) -> Option<(&RelocatableCode, &[(u32, String)], bool)> {
         let loop_ = self.get(function)?.loops.iter().find(|loop_| loop_.header == header)?;
         Some((&loop_.code, &loop_.atoms, loop_.fault_poll))
@@ -221,7 +222,7 @@ impl<H: Host> Vm<H> {
     /// The region the image holds for `function`'s loop at `header`, linked to this VM's helper
     /// table and atoms and ready to publish (`LoopTier::adopt`); `None` where the image carries
     /// no loop starting there.
-    #[cfg(all(feature = "aot", feature = "native-execution"))]
+    #[cfg(feature = "native-execution")]
     pub(in crate::vm) fn ahead_loop_region(&mut self, program: &ResidualProgram, function: u32, header: u32)
         -> Option<super::CompiledOsrRegion> {
         let images = self.programs.ahead_images(self.active_program, program)?;

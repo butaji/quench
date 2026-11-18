@@ -176,7 +176,7 @@ impl LoopTier {
 
     /// Publishes `region`, which an image lowered ahead (`Vm::ahead_loop_region`): the site runs
     /// it from its next entry, and no compilation is attempted for it.
-    #[cfg(all(feature = "aot", feature = "native-execution"))]
+    #[cfg(feature = "native-execution")]
     pub(super) fn adopt<H: Host>(&mut self, vm: &mut Vm<H>, region: super::super::compiled::CompiledOsrRegion, site: &LoopSite) {
         self.publish(vm, region);
         self.compilations = site.tiers.loops.max_compilations;
@@ -221,7 +221,7 @@ pub(super) fn lane_loop_compile<H: Host>(
     let machine = unsafe { vm(cx) };
     // A dynamic-source image may carry this loop's code, lowered ahead (`Vm::ahead_loop_region`):
     // publishing it runs the region without compiling.
-    #[cfg(all(feature = "aot", feature = "native-execution"))]
+    #[cfg(feature = "native-execution")]
     if let Some(program) = machine.programs.get(machine.active_program)
         && let Some(region) = machine.ahead_loop_region(&program, site.function(), site.header)
     {
