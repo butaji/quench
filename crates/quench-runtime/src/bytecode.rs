@@ -1412,6 +1412,8 @@ pub struct Function {
     pub(crate) declared_atom_sets: std::cell::OnceCell<Box<DeclaredAtomSets>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
+    /// Lazily derived `maker_bindings_read`; never serialized.
+    pub(crate) maker_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
@@ -2178,6 +2180,21 @@ impl Function {
     /// program's table.
     pub(crate) fn activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
         *self.activation_bindings.get_or_init(|| self.derive_activation_bindings_observable(tables))
+    }
+
+    /// Whether the activation's own reads or the arrows it makes read its implicit bindings
+    /// (`activation_bindings_observable` counts every arrow it makes): an arrow chain that reads
+    /// none (`arrow_chain_reads_implicit_bindings`), as `xs.map(x => x * 2)` does, needs no
+    /// `this` kept for it.
+    pub(crate) fn maker_bindings_read(&self, code: &ResidualProgram) -> bool {
+        *self.maker_bindings.get_or_init(|| {
+            self.activation_binding_reads(code)
+                || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
+                    let id = instruction.closure_function_index();
+                    code.function_is_arrow(id as usize).is_none_or(|is_arrow| is_arrow)
+                        && arrow_chain_reads_implicit_bindings(code, id)
+                })
+        })
     }
 
     fn derive_activation_bindings_observable(&self, tables: &impl FactTables) -> bool {

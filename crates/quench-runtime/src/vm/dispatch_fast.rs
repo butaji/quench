@@ -18591,7 +18591,7 @@ unsafe fn window_environment<H: Host>(
         // any other scope names only its program, which needs no allocation.
         let mut bindings = bindings.unwrap_or_default();
         let body = code.function(function as usize);
-        if !body.is_arrow && body.activation_bindings_observable(code) {
+        if !body.is_arrow && body.activation_bindings_observable(code) && body.maker_bindings_read(code) {
             bindings.insert(0, (vm.runtime_atoms.lexical_this, this));
         }
         let scope = window_scope_ref(program, bindings);
