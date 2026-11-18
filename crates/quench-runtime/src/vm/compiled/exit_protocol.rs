@@ -41,10 +41,13 @@ impl ExitKind {
         Self::KINDS[(word >> Self::SHIFT) as usize]
     }
 
-    fn word(self, place: u64) -> u64 {
+    const fn word(self, place: u64) -> u64 {
         (self as u64) << Self::SHIFT | place
     }
 }
+
+// The b-jit's callee leave word is this protocol's: one encoding, two crates.
+const _: () = assert!(ExitKind::Callee.word(0) == quench_bjit::call_record::CALLEE_EXIT);
 
 impl LaneExit {
     /// Whether the run ended the activation, by its return or by an exception, rather than
