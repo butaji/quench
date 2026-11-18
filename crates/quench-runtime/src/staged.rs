@@ -969,6 +969,16 @@ pub(crate) enum Operation<W, P> {
     /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
     /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
     InstanceOf { destination: Register, value: Register, constructor: Register },
+    /// Continue where register `source` holds a direct array (the array identity test, `Frame::direct_array`);
+    /// any other value leaves at the miss edge.
+    DirectArray { source: Register },
+    /// Define `destination` with the `length` of the direct array in register `source` (`Frame::array_length`).
+    ArrayLength { destination: Register, source: Register },
+    /// Define `destination` with the `length` of the typed array in register `source` (`Frame::typed_length`).
+    TypedLength { destination: Register, source: Register },
+    /// Append the value in register `value` to the array in register `array`, where its backing has
+    /// room and is writable (`Frame::array_append`); a value the frame does not append leaves at the miss edge.
+    ArrayAppend { array: Register, value: Register },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
