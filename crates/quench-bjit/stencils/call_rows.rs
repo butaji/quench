@@ -41,7 +41,7 @@ use crate::layout::shared_words::KIND_NATIVE;
 use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, HEADER_CALL, HEADER_CALLEE, HEADER_CALLER_BASE, HEADER_CALLER_REGISTERS, HEADER_PACKED, JS_STEP_LANE_PLAIN, PLAIN_DEPTH_AT, PLAIN_FRAMES, PLAIN_PROGRAM_AT, PLAIN_RECORDS_TOP_AT, PLAIN_REGISTERS_AT, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::stage::StencilStage;
 use crate::staged::{call::{admit_native, window_fill}, frame, value};
 use crate::words::{S, hole64, is_int, slot};
@@ -264,10 +264,6 @@ struct Admitted {
     /// written before any read, as the interpreter's own call leaves them.
     fill: usize,
     shadow: usize,
-    /// The lane's innermost plain registers before a plain push, put back at its pop (`PLAIN_FRAMES`).
-    plain_registers: u64,
-    /// Whether the push wrote a plain header (`plain_admits`) rather than a native frame.
-    plain: bool,
 }
 
 /// The word at the address the payload's word `at` holds: a lane stack top, owned by the VM.
@@ -302,106 +298,23 @@ unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
         let fits = shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize <= word_at(payload, JS_STEP_LANE_FRAMES_END) as usize;
         let fill = window_fill(&mut StencilStage::from_hole(0), cell as u64, room as u64) as usize;
-        fits.then_some(Admitted { cell, top, room, fill, shadow, plain_registers: 0, plain: false })
+        fits.then_some(Admitted { cell, top, room, fill, shadow })
     }
 }
 
 /// The callee's window, its native frame (`ActivationKind::Native`), and the lane stack's new tops.
 #[inline(always)]
-unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &mut Admitted, this: u64) {
+unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admitted, this: u64) {
     // SAFETY: as `admit`, which proved the room.
     unsafe {
         let written = if a.fill < ARGC { ARGC } else { a.fill };
         fill_window::<ARGC>(register_slot(s, record, offset_of!(CallRecord, args_register)), a.top, written);
-        if PLAIN_FRAMES && plain_admits(payload, a) {
-            a.plain = true;
-            a.plain_registers = plain_header(s, record, payload, a, this);
-            put(word_at(payload, JS_STEP_LANE_VALUES_TOP) as usize, 0, (a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT)) as u64);
-            return;
-        }
         put(a.shadow, frame::CALLEE, word_at(record, offset_of!(CallRecord, descriptor)));
         put(a.shadow, frame::THIS, this);
         put(a.shadow, frame::BODY, word_at(a.cell, CELL_BODY_AT));
         put(a.shadow, frame::WINDOW, a.top as u64);
         put(a.shadow, ACTIVATION_KIND_OFFSET, u64::from(KIND_NATIVE));
         set_tops(payload, a.top + ((a.room + FRAME_CONTEXT_WORDS) << WORD_SHIFT), a.shadow + word_at(record, offset_of!(CallRecord, frame_bytes)) as usize);
-    }
-}
-
-/// Whether the call may push a plain header (stage C): no plain frame yet, or no record pushed
-/// since the outermost one (the records' top unmoved), as `LaneStack::spill_plain` places plain
-/// frames above every record. The first plain frame names the records' top under it.
-#[inline(always)]
-unsafe fn plain_admits(payload: usize, a: &Admitted) -> bool {
-    // SAFETY: the payload's plain words are the live lane stack's.
-    unsafe {
-        let plain = word_at(payload, JS_STEP_LANE_PLAIN) as usize;
-        if word_at(plain, PLAIN_DEPTH_AT) == 0 {
-            put(plain, PLAIN_RECORDS_TOP_AT, a.shadow as u64);
-            return true;
-        }
-        word_at(plain, PLAIN_RECORDS_TOP_AT) as usize == a.shadow
-    }
-}
-
-/// Stage C's plain activation of a compiled body: `this` (word 1) and header words 4 to 8 below the
-/// callee's register 0 (`staged::frame::CONTEXT_*`), the plain count bumped, the innermost plain
-/// registers set to the callee's window, and the program named where it is the first plain frame.
-/// The call record, caller base, packed word (`HEADER_BODY` set) and descriptor (word 8) are the
-/// site's fixed words; the caller's registers are the row's frame. Returns the registers it replaced.
-#[inline(always)]
-unsafe fn plain_header(s: &S, record: usize, payload: usize, a: &Admitted, this: u64) -> u64 {
-    // SAFETY: `admit` proved `FRAME_CONTEXT_WORDS` free below the window; the plain words are the lane's.
-    unsafe {
-        let plain = word_at(payload, JS_STEP_LANE_PLAIN) as usize;
-        put(a.top - frame::CONTEXT_THIS * REGISTER_BYTES, 0, this);
-        put(a.top - HEADER_CALL, 0, word_at(record, offset_of!(CallRecord, call)));
-        put(a.top - HEADER_CALLER_REGISTERS, 0, s.frame as u64);
-        put(a.top - HEADER_CALLER_BASE, 0, word_at(record, offset_of!(CallRecord, caller_base)));
-        put(a.top - HEADER_PACKED, 0, word_at(record, offset_of!(CallRecord, header)));
-        put(a.top - HEADER_CALLEE, 0, word_at(record, offset_of!(CallRecord, descriptor)));
-        let depth = word_at(plain, PLAIN_DEPTH_AT);
-        if depth == 0 {
-            ((plain + PLAIN_PROGRAM_AT) as *mut u32).write(word_at(record, offset_of!(CallRecord, program)) as u32);
-        }
-        put(plain, PLAIN_DEPTH_AT, depth + 1);
-        let saved = word_at(plain, PLAIN_REGISTERS_AT);
-        put(plain, PLAIN_REGISTERS_AT, a.top as u64);
-        saved
-    }
-}
-
-/// Pops a plain activation: the plain count back and the innermost plain registers back to the
-/// value the push saved (`Admitted::plain_registers`). Where the lane spilled the plain frames
-/// meanwhile (a helper the callee ran read the records: `LaneStack::activations`), the count is 0
-/// and this frame is the records' top one, which it pops instead.
-#[inline(always)]
-unsafe fn plain_pop(record: usize, payload: usize, a: &Admitted) {
-    // SAFETY: as `plain_header`, which the matching push ran.
-    unsafe {
-        let plain = word_at(payload, JS_STEP_LANE_PLAIN) as usize;
-        let depth = word_at(plain, PLAIN_DEPTH_AT);
-        if depth == 0 {
-            let records = stack_top(payload, JS_STEP_LANE_ACTIVATIONS_TOP);
-            set_tops(payload, a.top, records - word_at(record, offset_of!(CallRecord, frame_bytes)) as usize);
-            return;
-        }
-        put(plain, PLAIN_DEPTH_AT, depth - 1);
-        put(plain, PLAIN_REGISTERS_AT, a.plain_registers);
-        put(word_at(payload, JS_STEP_LANE_VALUES_TOP) as usize, 0, a.top as u64);
-    }
-}
-
-/// The pop of a returned, refused or raised callee: its window, and its frame record or plain header.
-#[inline(always)]
-unsafe fn pop(record: usize, payload: usize, a: &Admitted) {
-    // SAFETY: as `push`.
-    unsafe {
-        if PLAIN_FRAMES && a.plain {
-            plain_pop(record, payload, a);
-        } else {
-            set_tops(payload, a.top, a.shadow);
-        }
     }
 }
 
@@ -415,16 +328,16 @@ unsafe fn finish(s: &S, record: usize, payload: usize, a: &Admitted, returned: B
     unsafe {
         match returned.status {
             LANE_BODY_RETURNED => {
-                pop(record, payload, a);
+                set_tops(payload, a.top, a.shadow);
                 put(register_slot(s, record, offset_of!(CallRecord, result_register)), 0, returned.value);
                 Entered::Returned
             }
             LANE_BODY_NOT_ENTERED => {
-                pop(record, payload, a);
+                set_tops(payload, a.top, a.shadow);
                 Entered::Refused
             }
             LANE_BODY_THREW => {
-                pop(record, payload, a);
+                set_tops(payload, a.top, a.shadow);
                 let counters = word_at(a.cell, CELL_COUNTERS_AT);
                 put(a.cell, CELL_COUNTERS_AT, counters.wrapping_add(RAISED_RUN));
                 Entered::Raised
@@ -446,8 +359,8 @@ unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
         let this = read_register(s, record, offset_of!(CallRecord, this_register));
         let Some(this) = bound_this::<MODE>(record, this) else { return Entered::Refused };
         let payload = payload(s);
-        let Some(mut admitted) = admit(record, payload) else { return Entered::Refused };
-        push::<ARGC>(s, record, payload, &mut admitted, this);
+        let Some(admitted) = admit(record, payload) else { return Entered::Refused };
+        push::<ARGC>(s, record, payload, &admitted, this);
         let entry: BodyEntry = transmute(word_at(admitted.cell, CELL_ENTRY_AT) as usize);
         let returned = entry(s.ctx, this, word_at(record, offset_of!(CallRecord, captures)), admitted.top);
         finish(s, record, payload, &admitted, returned)

@@ -66,29 +66,7 @@ pub struct CallRecord {
     pub this_register: u16,
     pub args_register: u16,
     pub result_register: u16,
-    /// Stage C plain header (`register_file::FRAME_CONTEXT` words 4 and 7): the caller's call
-    /// record the callee returns to, and the packed `function | PLAIN << 32 | argc << 48` word,
-    /// both fixed per site, so a plain direct call stores them without computing either.
-    pub call: u64,
-    pub header: u64,
-    /// The caller's lane view records (`LaneContext::base` while it runs), header word 6, and the
-    /// caller's program (`ProgramId::raw`), which the first plain frame names (`PlainFrames::program`).
-    pub caller_base: u64,
-    pub program: u64,
 }
 
-/// The packed header word's flag bit for a plain activation (bits 32..48 hold the flags) and the
-/// shift of its argument count (`argc = word >> HEADER_ARGC_SHIFT`, no mask).
-pub const HEADER_PLAIN: u64 = 1 << 32;
-pub const HEADER_ARGC_SHIFT: u32 = 48;
-/// The flag of a compiled body's plain header, whose word 8 is its `DirectCallee` descriptor
-/// (`staged::frame::BODY_FLAG`): the lane spills it as the native frame a direct row would push.
-pub const HEADER_BODY: u64 = 1 << 33;
-
-/// The packed header word of a plain activation of `function` taking `argc` arguments.
-pub const fn plain_header(function: u32, argc: u16) -> u64 {
-    function as u64 | HEADER_PLAIN | (argc as u64) << HEADER_ARGC_SHIFT
-}
-
-const CALL_RECORD_BYTES: usize = 128;
+const CALL_RECORD_BYTES: usize = 64;
 const _: () = assert!(core::mem::size_of::<CallRecord>() == CALL_RECORD_BYTES);

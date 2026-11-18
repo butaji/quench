@@ -18,7 +18,6 @@ pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch,
     payload.lane_values_end = words.values_end;
     payload.lane_activations_top = words.activations_top;
     payload.lane_frames_end = words.frames_end;
-    payload.lane_plain_frames = words.plain_frames;
 }
 
 /// Gives the lane frame's place to `payload`, a region's, with the room a lane body's direct calls

@@ -1347,28 +1347,6 @@ impl Registers {
         }
     }
 
-    /// The plain header's packed word: function, flags and argc.
-    #[inline(always)]
-    fn plain_packed(self) -> u64 {
-        // SAFETY: as for `plain_caller`.
-        unsafe { *self.0.sub(CONTEXT_PACKED).cast::<u64>() }
-    }
-
-    /// A compiled body's plain header (`BODY_FLAG`) as the native frame a direct row pushes: its
-    /// descriptor (word 8, a `DirectCallee`), receiver (word 1), the descriptor's cell's body word,
-    /// and this window.
-    #[cold]
-    fn plain_native(self) -> super::compiled::ShadowFrame {
-        // SAFETY: a `BODY_FLAG` header names its call's live descriptor, whose cell is live.
-        unsafe {
-            let descriptor = *self.0.sub(CONTEXT_CALLEE).cast::<*const super::compiled::DirectCallee>();
-            let this = *self.0.sub(crate::staged::frame::CONTEXT_THIS).cast::<u64>();
-            let cell = (*descriptor).cell;
-            let body = ((cell as isize + crate::staged::call::ENTRY_CELL.body_offset as isize) as *const usize).read();
-            super::compiled::ShadowFrame { callee: descriptor, this, body, window: self.0.addr() }
-        }
-    }
-
     /// The plain header's function, argc and callee.
     #[inline(always)]
     fn plain_callee(self) -> (u32, u16, Value) {
@@ -1377,7 +1355,7 @@ impl Registers {
             let packed = *self.0.sub(CONTEXT_PACKED).cast::<u64>();
             // Emitted direct calls' plain frames (compiled bodies, native frames) are spilled
             // by their rows' own branch of `LaneStack::spill_plain` once those rows write them.
-            debug_assert!(packed & crate::staged::frame::NATIVE_FLAG == 0);
+            debug_assert!(packed & (crate::staged::frame::BODY_FLAG | crate::staged::frame::NATIVE_FLAG) == 0);
             (packed as u32, (packed >> crate::staged::frame::ARGC_SHIFT) as u16, *self.0.sub(CONTEXT_CALLEE))
         }
     }
@@ -1636,6 +1614,7 @@ enum ActivationKind {
     /// (`Activation::native`, the callee's descriptor, receiver, body and window) and this
     /// tag, no link state. `NativeFrames::link` makes it a `Script` activation when the lane
     /// first observes it; the prefix stays, as the descriptor of the frame above it.
+    #[allow(dead_code)] // written by emitted code (`call_frames`), read as the tag
     Native = KIND_NATIVE,
     Script(ScriptActivation) = KIND_SCRIPT,
     /// A Wasm activation keeps its caller's memory for the return and its requested
@@ -2429,10 +2408,6 @@ pub(in crate::vm) struct PlainFrames {
     registers: std::cell::Cell<*mut Value>,
     /// Their program, the running one: a plain call never crosses programs (offset 16).
     program: std::cell::Cell<ProgramId>,
-    /// The activation records' top when the outermost plain activation above them was pushed
-    /// (offset 24): emitted code pushes a plain header only while the records' top is still this
-    /// (no record above a plain frame, which `spill_plain` places above every record).
-    records_top: std::cell::Cell<usize>,
 }
 pub(in crate::vm) const PLAIN_DEPTH_OFFSET: usize = std::mem::offset_of!(PlainFrames, depth);
 pub(in crate::vm) const PLAIN_REGISTERS_OFFSET: usize = std::mem::offset_of!(PlainFrames, registers);
@@ -2440,7 +2415,6 @@ const _: () = {
     use crate::staged::frame;
     assert!(PLAIN_DEPTH_OFFSET == frame::PLAIN_DEPTH_AT && PLAIN_REGISTERS_OFFSET == frame::PLAIN_REGISTERS_AT);
     assert!(std::mem::offset_of!(PlainFrames, program) == frame::PLAIN_PROGRAM_AT);
-    assert!(std::mem::offset_of!(PlainFrames, records_top) == frame::PLAIN_RECORDS_TOP_AT);
 };
 
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
@@ -2453,6 +2427,7 @@ pub(in crate::vm) struct LaneStackWords {
     /// The plain activations' words (`PlainFrames`): depth at `PLAIN_DEPTH_OFFSET`, the
     /// innermost window at `PLAIN_REGISTERS_OFFSET`. Emitted calls that write plain headers
     /// bump the depth and set the window; the lane spills them before entering emitted code.
+    #[expect(dead_code, reason = "the b-jit and u-jit payload slots that read it land with their plain-header rows")]
     pub(in crate::vm) plain_frames: usize,
 }
 
@@ -2499,17 +2474,6 @@ impl LaneStack {
         let mut window = Registers(self.plain.registers.get());
         for slot in (len..len + depth).rev() {
             let (call, caller_registers, caller_base) = window.plain_caller();
-            if window.plain_packed() & crate::staged::frame::BODY_FLAG != 0 {
-                // A b-jit direct call's compiled body (`quench-bjit/stencils/call_rows.rs`): the
-                // native frame its row would have pushed, from the header's descriptor (word 8),
-                // receiver (word 1) and the descriptor's cell's body word.
-                let native = window.plain_native();
-                let activation = Activation::of_parts(native, window.plain_packed() as u32, call, caller_base, caller_registers, program, ActivationKind::Native);
-                // SAFETY: as below.
-                unsafe { records.top_ptr().sub(len).add(slot).write(activation) };
-                window = caller_registers;
-                continue;
-            }
             let (function, argc, callee) = window.plain_callee();
             let mut activation = Activation::of_parts(
                 crate::vm::compiled::ShadowFrame::EMPTY, function, call, caller_base, caller_registers, program,
@@ -2560,7 +2524,6 @@ impl Default for LaneStack {
                 depth: std::cell::Cell::new(0),
                 registers: std::cell::Cell::new(std::ptr::null_mut()),
                 program: std::cell::Cell::new(ProgramId::MAIN),
-                records_top: std::cell::Cell::new(0),
             },
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),

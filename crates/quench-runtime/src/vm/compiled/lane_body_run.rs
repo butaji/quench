@@ -98,7 +98,6 @@ impl<H: Host> Vm<H> {
             (*dispatch).lane_values_top = words.values_top;
             (*dispatch).lane_values_end = words.values_end;
             (*dispatch).lane_activations_top = words.activations_top;
-            (*dispatch).lane_plain_frames = words.plain_frames;
             &raw mut (*frame).context
         }
     }

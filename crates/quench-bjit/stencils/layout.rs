@@ -341,20 +341,6 @@ pub(crate) const RAISED_RUN: u64 = 1 << 32;
 /// next. Checked against the runtime by `stencil_layout_matches`.
 pub(crate) const FRAME_CONTEXT_WORDS: usize = crate::staged::frame::CONTEXT_WORDS;
 
-/// Stage C (`calls-frames/call-protocol-v2.md`, "final shape"): a plain direct call writes the
-/// callee's header below its register 0 and pushes no frame record (`call_rows.rs`). Off by
-/// measurement (Nov 18, fib(24) b-jit): a direct call's native record is only 5 words, so the plain
-/// header (6 words plus the plain count, registers and records-top guard) cost 245 Ir per call
-/// against 210 for the record. Plain frames pay where the record is the interpreter's 13 words.
-pub(crate) const PLAIN_FRAMES: bool = false;
-/// The header words a plain call writes, as byte offsets below the callee's register 0
-/// (`staged::frame::CONTEXT_*` count words down from register 0).
-pub(crate) const HEADER_CALL: usize = crate::staged::frame::CONTEXT_CALL * 8;
-pub(crate) const HEADER_CALLER_REGISTERS: usize = crate::staged::frame::CONTEXT_CALLER_REGISTERS * 8;
-pub(crate) const HEADER_CALLER_BASE: usize = crate::staged::frame::CONTEXT_CALLER_BASE * 8;
-pub(crate) const HEADER_PACKED: usize = crate::staged::frame::CONTEXT_PACKED * 8;
-pub(crate) const HEADER_CALLEE: usize = crate::staged::frame::CONTEXT_CALLEE * 8;
-
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
 pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
@@ -391,10 +377,3 @@ pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 176;
 /// The object layout table's fixed address (`heap::layouts::table_base`) on x86-64 Linux, the
 /// stencils' target: a row reads an entry with the address as its displacement.
 pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x7000_0000;
-/// The payload word holding the address of the lane stack's plain words (`PlainFrames`, the
-/// runtime's `LaneStackWords::plain_frames`).
-pub(crate) const JS_STEP_LANE_PLAIN: usize = 448;
-pub(crate) const PLAIN_DEPTH_AT: usize = crate::staged::frame::PLAIN_DEPTH_AT;
-pub(crate) const PLAIN_REGISTERS_AT: usize = crate::staged::frame::PLAIN_REGISTERS_AT;
-pub(crate) const PLAIN_PROGRAM_AT: usize = crate::staged::frame::PLAIN_PROGRAM_AT;
-pub(crate) const PLAIN_RECORDS_TOP_AT: usize = crate::staged::frame::PLAIN_RECORDS_TOP_AT;
