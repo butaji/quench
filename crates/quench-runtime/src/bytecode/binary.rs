@@ -12,6 +12,9 @@ use super::{
 
 /// The encoded kinds of `Handler::slot`: none, a frame local, or a register.
 const THROWN_VALUE_DISCARDED: u8 = 0;
+/// A function entry's flag for a deferred record encoded unlowered (0: the record in place,
+/// 1: deferred and lowered).
+const DEFERRED_UNLOWERED: u8 = 2;
 const THROWN_VALUE_IN_LOCAL: u8 = 1;
 const THROWN_VALUE_IN_REGISTER: u8 = 2;
 
@@ -301,8 +304,38 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     out.u32(program.functions.len() as u32);
     for (index, function) in program.functions.iter().enumerate() {
         let deferred = index != ROOT_FUNCTION;
-        out.u8(u8::from(deferred));
+        // A record still unlowered is encoded so, and lowered at its first read as the
+        // program would have lowered it (`ResidualProgram::lower_unlowered`): most functions
+        // of a loaded script never run, and lowering each only to encode it cost about a
+        // tenth of a cold load (babel: 3.7K records, 200M instructions). A deferred rewrite
+        // (`RewriteRanges::kept_pending`) settles against the load's own state, so those lower now.
+        let unlowered = (deferred
+            && crate::DYNAMIC_EXECUTION_ENABLED
+            && !program.rewrite_ranges.kept_pending
+            && !load_records.contains_key(&(index as u32))
+            && function.record.get().is_none())
+        .then(|| function.unlowered.borrow().as_ref().map(|unlowered| unlowered.function(function.header())))
+        .flatten();
+        out.u8(match (deferred, unlowered.is_some()) {
+            (false, _) => 0,
+            (true, false) => 1,
+            (true, true) => DEFERRED_UNLOWERED,
+        });
         write_function_header(&mut out, &function.header());
+        if let Some(record) = unlowered {
+            let enclosing = enclosing_names_static(program, &static_names, record.parent);
+            let names_static = record.own_names_resolve_statically(program) && enclosing;
+            let body = std::mem::take(&mut out.bytes);
+            out.unlowered = true;
+            write_function(&mut out, &record, &program.superinstructions, 0);
+            out.unlowered = false;
+            let bytes = std::mem::replace(&mut out.bytes, body);
+            let start = region.len();
+            region.extend_from_slice(&bytes);
+            write_deferred_entry(&mut out, &region, start..region.len());
+            static_names.push(names_static);
+            continue;
+        }
         let names_static = match load_records.get(&(index as u32)) {
             Some(range) => {
                 debug_assert!(deferred, "a load never releases its root");
@@ -646,7 +679,11 @@ fn decode_program(
     let mut functions = Vec::with_capacity(function_count);
     let mut ranges = Vec::with_capacity(function_count);
     for _ in 0..function_count {
-        let encoded_deferred = input.flag("deferred record")?;
+        let entry = input.u8()?;
+        if entry > DEFERRED_UNLOWERED {
+            return Err("invalid residual deferred record flag".into());
+        }
+        let encoded_deferred = entry != 0;
         let header = read_function_header(&mut input)?;
         let length = input.u32()?;
         if encoded_deferred {
@@ -656,7 +693,7 @@ fn decode_program(
                 return Err("deferred record outside its region".into());
             }
             let start = u32::try_from(region + offset).map_err(|_| "residual records exceed u32")?;
-            ranges.push(Some(super::DeferredRecord { start, length, checksum }));
+            ranges.push(Some(super::DeferredRecord { start, length, checksum, unlowered: entry == DEFERRED_UNLOWERED }));
             functions.push(FunctionSlot::released(header));
             continue;
         }
@@ -1094,7 +1131,8 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
             out.u16(handler.with_depth);
         }
         out.source_positions(&function.source_positions);
-        if out.packed {
+        // The memos below are a lowered record's, which an unlowered one derives once lowered.
+        if out.packed || out.unlowered {
             return;
         }
         let plain = match function.plain_locals.get() {
@@ -1340,7 +1378,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             })
         })?;
         let source_positions = input.source_positions()?;
-        let packed = input.packed;
+        let packed = input.packed || input.unlowered;
         let plain_bytes = if packed { Vec::new() } else { (0..usize::from(locals).div_ceil(u8::BITS as usize)).map(|_| input.u8()).collect::<Result<Vec<_>, _>>()? };
         let plain_locals: crate::heap::ThinBoxSlice<u64> = if packed { Default::default() } else { crate::bitset::words_from_le_bytes(usize::from(locals), &plain_bytes).into() };
         let derived_facts = if packed { 0 } else { input.u32()? };
@@ -1457,7 +1495,7 @@ pub(super) fn decode_deferred_function(
     if compact_checksum(bytes) != record.checksum {
         return Some(Err("deferred record checksum mismatch".into()));
     }
-    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false };
+    let mut reader = BinaryReader { bytes, cursor: 0, atoms: records.atoms.clone(), packed: false, unlowered: record.unlowered };
     Some(read_function(&mut reader).and_then(|function| reader.finish().map(|()| function)))
 }
 
@@ -1473,6 +1511,9 @@ pub(super) struct BinaryWriter {
     atoms: AtomEncoding,
     /// LEB128 integers, for records kept in memory (`pack_unlowered`), not in the cache.
     packed: bool,
+    /// An unlowered record (`encode_program`): without the memos a lowered one carries, which
+    /// its first read derives after lowering it.
+    unlowered: bool,
 }
 
 /// The function a program runs first, whose record a decoder always decodes.
@@ -1497,7 +1538,7 @@ struct CompactAtoms {
 #[rustfmt::skip]
 impl BinaryWriter {
     pub(super) fn new() -> Self { Self::with_atoms(AtomEncoding::Program) }
-    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms, packed: false } }
+    fn with_atoms(atoms: AtomEncoding) -> Self { Self { bytes: Vec::new(), atoms, packed: false, unlowered: false } }
     fn leb(&mut self, mut value: u32) { while value >= 0x80 { self.bytes.push(value as u8 | 0x80); value >>= 7; } self.bytes.push(value as u8); }
     fn atom(&mut self, atom: u32) {
         let encoded = self.encoded_atom(atom);
@@ -1563,13 +1604,15 @@ pub(super) struct BinaryReader<'a> {
     atoms: Option<std::rc::Rc<[u32]>>,
     /// LEB128 integers (`BinaryWriter::packed`).
     packed: bool,
+    /// An unlowered record, without a lowered one's memos (`BinaryWriter::unlowered`).
+    unlowered: bool,
 }
 
 #[rustfmt::skip]
 impl<'a> BinaryReader<'a> {
-    pub(super) fn new(bytes: &'a [u8]) -> Self { Self { bytes, cursor: 0, atoms: None, packed: false } }
+    pub(super) fn new(bytes: &'a [u8]) -> Self { Self { bytes, cursor: 0, atoms: None, packed: false, unlowered: false } }
     /// A reader of `bytes`, a part of this reader's input, under the same atom ids.
-    fn sub_reader<'b>(&self, bytes: &'b [u8]) -> BinaryReader<'b> { BinaryReader { bytes, cursor: 0, atoms: self.atoms.clone(), packed: self.packed } }
+    fn sub_reader<'b>(&self, bytes: &'b [u8]) -> BinaryReader<'b> { BinaryReader { bytes, cursor: 0, atoms: self.atoms.clone(), packed: self.packed, unlowered: self.unlowered } }
     /// A one-byte boolean, named by `what` in its error.
     fn flag(&mut self, what: &str) -> Result<bool, String> {
         match self.u8()? { 0 => Ok(false), 1 => Ok(true), _ => Err(format!("invalid residual {what} flag")) }

@@ -3989,6 +3989,8 @@ pub(crate) struct DeferredRecord {
     pub(crate) start: u32,
     pub(crate) length: u32,
     pub(crate) checksum: u64,
+    /// Whether the record is encoded unlowered, which its first read lowers.
+    pub(crate) unlowered: bool,
 }
 
 /// Bytes a host kept for a compiled program (`Host::kept_compiled_program`), which the program
@@ -4118,6 +4120,10 @@ impl ResidualProgram {
                 let function = decoded.unwrap_or_else(|error| {
                     panic!("function {index} of {} does not decode: {error}", self.source_name)
                 });
+                let unlowered = self.encoded_records.as_deref()
+                    .and_then(|records| records.ranges.get(index).copied().flatten())
+                    .is_some_and(|record| record.unlowered);
+                let function = if unlowered { self.lower_unlowered(index, function) } else { function };
                 if let (Some(action), Some(bytes)) = (
                     RECORD_READ.get(),
                     self.encoded_records.as_deref().and_then(|records| binary::deferred_record_bytes(records, index)),
