@@ -8,6 +8,7 @@ use super::value::{is_direct_string, is_int};
 use super::*;
 use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
+#[cfg(not(stencil_build))]
 use crate::vm::operations::equality_operator;
 use crate::Value;
 
@@ -25,6 +26,7 @@ impl<W, P> Operation<W, P> {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::Binary => return Self::decode_binary(instruction),
+            #[cfg(not(stencil_build))]
             Op::NumericAdd | Op::NumericMultiply => return Self::decode_numeric_arithmetic(instruction),
             Op::JumpBinaryFalse => Self::decode_compare(instruction),
             _ => return None,
@@ -34,6 +36,7 @@ impl<W, P> Operation<W, P> {
     /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
     /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
     /// whose operator field names another operator is none.
+    #[cfg(not(stencil_build))]
     fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
         let own = match instruction.op() {
             Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
@@ -56,10 +59,14 @@ impl<W, P> Operation<W, P> {
             return Some(Self::Number(number));
         }
         if !is_value_operand(left) || !is_value_operand(right) { return None; }
-        Some(match equality_operator(operator) {
+        #[cfg(not(stencil_build))]
+        return Some(match equality_operator(operator) {
             Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
             None => Self::Binary { destination, left, right, operator },
-        })
+        });
+        // The stencil build has no equality classifier: a non-Number `Binary` is the caller's own path.
+        #[cfg(stencil_build)]
+        return None;
     }
 }
 
