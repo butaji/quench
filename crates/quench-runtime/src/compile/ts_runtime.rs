@@ -1,3 +1,9 @@
+//! TypeScript declarations with a runtime part, rewritten right after parsing to the JavaScript
+//! TypeScript defines them as: `enum` (below), `import x = require("m")` (`const x =
+//! require("m")`), `import A = N.B` (`var A = N.B`) and `export = value` (`module.exports =
+//! value`). An `import =` whose name no value names is a type alias and goes, as TypeScript
+//! elides it.
+//!
 //! TypeScript `enum` declarations, compiled as the runtime object TypeScript defines for them.
 //!
 //! An enum is a binding to an object holding each member's value under its name and, for a
@@ -16,7 +22,7 @@
 use oxc_allocator::{Allocator, Vec as ArenaVec};
 use oxc_ast::ast::*;
 use oxc_ast::builder::AstBuilder;
-use oxc_ast_visit::{VisitMut, walk_mut};
+use oxc_ast_visit::{Visit, VisitMut, walk, walk_mut};
 use oxc_allocator::CloneIn;
 use oxc_span::Span;
 use oxc_syntax::number::NumberBase;
@@ -26,7 +32,14 @@ use rustc_hash::FxHashMap;
 /// Rewrites every runtime `enum` of `program` to its object form; the span and message of an
 /// enum TypeScript rejects too (a member without initializer after a computed one).
 pub(super) fn lower<'a>(allocator: &'a Allocator, program: &mut Program<'a>) -> Result<(), (Span, &'static str)> {
-    let mut lowering = Lowering { allocator, error: None, block_depth: 0 };
+    let values = program.body.iter().any(|statement| matches!(statement, Statement::TSImportEqualsDeclaration(_)))
+        .then(|| {
+            let mut uses = ValueUses::default();
+            uses.visit_program(program);
+            uses.names
+        })
+        .unwrap_or_default();
+    let mut lowering = Lowering { allocator, error: None, block_depth: 0, values };
     lowering.visit_program(program);
     lowering.error.map_or(Ok(()), Err)
 }
@@ -43,6 +56,31 @@ struct Lowering<'a> {
     /// Statement lists entered that are blocks, not function or program bodies: an enum there
     /// binds with `let`, as TypeScript emits it.
     block_depth: u32,
+    /// The names some value reads (`ValueUses`), when the program holds an `import =`.
+    values: rustc_hash::FxHashSet<&'a str>,
+}
+
+/// The names identifiers read as values, not in types: an `import =` none reads is a type alias.
+#[derive(Default)]
+struct ValueUses<'a> {
+    names: rustc_hash::FxHashSet<&'a str>,
+}
+
+impl<'a> Visit<'a> for ValueUses<'a> {
+    fn visit_identifier_reference(&mut self, identifier: &IdentifierReference<'a>) {
+        self.names.insert(identifier.name.as_str());
+    }
+    fn visit_ts_type_annotation(&mut self, _: &TSTypeAnnotation<'a>) {}
+    fn visit_ts_type(&mut self, _: &TSType<'a>) {}
+    fn visit_ts_type_parameter_instantiation(&mut self, _: &TSTypeParameterInstantiation<'a>) {}
+    fn visit_ts_type_parameter_declaration(&mut self, _: &TSTypeParameterDeclaration<'a>) {}
+    fn visit_ts_type_alias_declaration(&mut self, _: &TSTypeAliasDeclaration<'a>) {}
+    fn visit_ts_class_implements(&mut self, _: &TSClassImplements<'a>) {}
+    fn visit_ts_interface_declaration(&mut self, _: &TSInterfaceDeclaration<'a>) {}
+    // An alias's own target is not a use of the alias.
+    fn visit_ts_import_equals_declaration(&mut self, declaration: &TSImportEqualsDeclaration<'a>) {
+        walk::walk_ts_import_equals_declaration(self, declaration);
+    }
 }
 
 impl<'a> VisitMut<'a> for Lowering<'a> {
@@ -84,6 +122,7 @@ fn holds_runtime_enum(statement: &Statement<'_>) -> bool {
         Statement::ExportDeclaration(export) => {
             matches!(&export.declaration, Declaration::TSEnumDeclaration(declaration) if !declaration.declare)
         }
+        Statement::TSImportEqualsDeclaration(_) | Statement::TSExportAssignment(_) => true,
         _ => false,
     }
 }
@@ -125,9 +164,44 @@ impl<'a> Lowering<'a> {
                         None => return,
                     }
                 }
+                Statement::TSImportEqualsDeclaration(declaration) => {
+                    if declaration.import_kind.is_value() && self.values.contains(declaration.id.name.as_str()) {
+                        statements.push(self.import_equals(&declaration, &builder));
+                    }
+                }
+                Statement::TSExportAssignment(assignment) => {
+                    let span = assignment.span;
+                    let module = Expression::new_identifier(span, "module", &builder);
+                    let property = IdentifierName::new(span, "exports", &builder);
+                    let target = AssignmentTarget::new_static_member_expression(span, module, property, false, &builder);
+                    let value = assignment.expression.clone_in(self.allocator);
+                    let store = Expression::new_assignment_expression(span, AssignmentOperator::Assign, target, value, &builder);
+                    statements.push(Statement::new_expression_statement(span, store, &builder));
+                }
                 statement => statements.push(statement),
             }
         }
+    }
+
+    /// `const x = require("m")`, or `var A = N.B` for an entity name.
+    fn import_equals(&self, declaration: &TSImportEqualsDeclaration<'a>, builder: &AstBuilder<'a>) -> Statement<'a> {
+        let span = declaration.span;
+        let (kind, value) = match &declaration.module_reference {
+            TSModuleReference::ExternalModuleReference(reference) => {
+                let callee = Expression::new_identifier(span, "require", builder);
+                let specifier = Expression::StringLiteral(oxc_allocator::Box::new_in(reference.expression.clone_in(self.allocator), &self.allocator));
+                let arguments = ArenaVec::from_iter_in([Argument::from(specifier)], &self.allocator);
+                (VariableDeclarationKind::Const, Expression::new_call_expression(span, callee, None::<oxc_allocator::Box<'a, TSTypeParameterInstantiation<'a>>>, arguments, false, builder))
+            }
+            TSModuleReference::IdentifierReference(identifier) => {
+                (VariableDeclarationKind::Var, Expression::new_identifier(identifier.span, identifier.name, builder))
+            }
+            TSModuleReference::QualifiedName(name) => (VariableDeclarationKind::Var, entity(name, builder)),
+        };
+        let id = &declaration.id;
+        let pattern = BindingPattern::new_binding_identifier(id.span, id.name, builder);
+        let declarator = VariableDeclarator::new(id.span, pattern, None, Some(value), false, builder);
+        Statement::new_variable_declaration(span, kind, ArenaVec::from_iter_in([declarator], &self.allocator), false, builder)
     }
 
     /// `var E` (`let E` in a block), the enum's binding.
@@ -350,4 +424,15 @@ impl<'a> VisitMut<'a> for MemberReferences<'_, 'a> {
     fn visit_function(&mut self, _: &mut Function<'a>, _: oxc_syntax::scope::ScopeFlags) {}
 
     fn visit_arrow_function_expression(&mut self, _: &mut ArrowFunctionExpression<'a>) {}
+}
+
+/// `N.B.C`, the value a qualified name of an `import =` names.
+fn entity<'a>(name: &TSQualifiedName<'a>, builder: &AstBuilder<'a>) -> Expression<'a> {
+    let object = match &name.left {
+        TSTypeName::IdentifierReference(identifier) => Expression::new_identifier(identifier.span, identifier.name, builder),
+        TSTypeName::QualifiedName(inner) => entity(inner, builder),
+        TSTypeName::ThisExpression(this) => Expression::new_this_expression(this.span, builder),
+    };
+    let property = IdentifierName::new(name.right.span, name.right.name, builder);
+    Expression::new_static_member_expression(name.span, object, property, false, builder)
 }

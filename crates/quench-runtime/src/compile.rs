@@ -56,7 +56,7 @@ mod call_only;
 mod capture_scope;
 mod class; mod class_private;
 mod early;
-mod ts_enums;
+mod ts_runtime;
 mod frame_registers;
 pub(crate) mod lazy_bodies;
 mod literal_singletons;
@@ -523,8 +523,8 @@ impl Engine {
         }
         drop(semantic);
         Self::erase_type_only_module_syntax(&mut parsed.program);
-        // An exported enum is an exported binding the link plan names (`ts_enums`).
-        if typescript && let Err((_, message)) = ts_enums::lower(&allocator, &mut parsed.program) {
+        // An exported enum is an exported binding the link plan names (`ts_runtime`).
+        if typescript && let Err((_, message)) = ts_runtime::lower(&allocator, &mut parsed.program) {
             return StaticModuleAnalysis { early_error: Some(format!("SyntaxError: {message}")), plan: None };
         }
         StaticModuleAnalysis {
@@ -1194,7 +1194,7 @@ impl Engine {
         }
         stack::validate(&parsed.program).map_err(|crate::stack::StackExhausted| vec![Diagnostic::stack_exhausted(name)])?;
         if source_type.is_typescript()
-            && let Err((span, message)) = ts_enums::lower(&allocator, &mut parsed.program)
+            && let Err((span, message)) = ts_runtime::lower(&allocator, &mut parsed.program)
         {
             let mut diagnostic = Diagnostic::unsupported(name, message);
             diagnostic.span = span;
