@@ -222,6 +222,26 @@ impl crate::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: crate::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
+    /// The heap's array and object record tables and collection epoch, read from the dispatch
+    /// payload as the lane frame reads them (`LaneFrame::heap_records`). A table the dispatch holds
+    /// as zero is absent, which leaves at the miss edge; a row without one takes its call-out.
+    #[inline(always)]
+    fn heap_records(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> {
+        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
+        let at = if self.arrays_fixed { crate::staged::Region::RecordBases.readonly() } else { crate::staged::Region::RecordBases.mutable() };
+        let arrays = crate::staged::Stage::load_u64(stage, at, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, array_record_base) as i32);
+        let objects = super::super::emit_js_payload_word(stage.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, object_record_base));
+        let epoch = super::super::emit_js_payload_word(stage.builder, self.payload,
+            std::mem::offset_of!(super::super::JsStepDispatch, epoch));
+        for table in [arrays, objects] {
+            let present = stage.raw_compare_imm(crate::staged::machine::Relation::NotEqual, table, 0);
+            super::super::emit_js_guard(stage.builder, present, miss);
+        }
+        Some((arrays, objects, epoch))
+    }
+
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
         let (Edges::Branch { miss, .. } | Edges::ValueGuarded { miss }) = self.edges else { unreachable!("truthiness needs a miss edge") };

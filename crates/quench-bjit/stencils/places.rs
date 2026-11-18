@@ -11,7 +11,7 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_RECEIVER};
+use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_RECEIVER};
 use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, value};
 use crate::words::*;
 
@@ -318,6 +318,15 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>) -> Option<(u64, Rep)> {
         let locals = local_slot(&self.s, slot)?;
         Some((word_at(locals, 0), Rep::Tagged))
+    }
+
+    /// The array and object record tables and the collection epoch the dispatch payload holds, where
+    /// both tables are reserved (the lane frame's `heap_records`); `None` where one is absent.
+    #[inline(always)]
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
+        let payload = payload(&self.s);
+        let (arrays, objects) = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
+        (arrays != 0 && objects != 0).then(|| (arrays, objects, word_at(payload, JS_STEP_EPOCH)))
     }
 
     #[inline(always)]
