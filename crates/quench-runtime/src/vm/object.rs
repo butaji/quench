@@ -2452,6 +2452,15 @@ impl<H: Host> Vm<H> {
         self.hinted_other_receiver(object)
     }
 
+    /// The layout id (`Object::hint_shape`) of any receiver with an object part a hint reads
+    /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
+    /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
+    /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
+        self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
+    }
+
     /// `hinted_receiver` of anything but a direct object or array (as hot: `a.push`), out of
     /// line: the hint tests those first, with no compare of the other families before them.
     #[cold]
