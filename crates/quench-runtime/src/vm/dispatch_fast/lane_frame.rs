@@ -619,7 +619,7 @@ lane_handler! {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             if const { super::held_site(FLAG) && !super::held_other_site(FLAG) } {
                 // A direct object's miss; the read of any other receiver's object part.
-                if const { super::own_site_this(FLAG) } {
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     sibling!(lane_row::<H, OP, ACC, { super::HELD_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
                 }
                 sibling!(lane_row::<H, OP, ACC, { super::HELD_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
@@ -629,13 +629,13 @@ lane_handler! {
             }
             if const { super::inherited_site(FLAG) && !super::inherited_other_site(FLAG) } {
                 // A direct object's miss; the read of any other receiver's object part.
-                if const { super::own_site_this(FLAG) } {
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     sibling!(lane_row::<H, OP, ACC, { super::INHERITED_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
                 }
                 sibling!(lane_row::<H, OP, ACC, { super::INHERITED_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
             }
             if const { super::inherited_other_site(FLAG) } {
-                if const { super::own_site_this(FLAG) } {
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     sibling!(lane_get_field_inherited_walk::<H, true>, r, ip, Carried::script_in(script, view))
                 }
                 sibling!(lane_get_field_inherited_walk::<H, false>, r, ip, Carried::script_in(script, view))
@@ -644,12 +644,12 @@ lane_handler! {
                 sibling!(lane_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
             if const { super::held_other_site(FLAG) } {
-                if const { super::own_site_this(FLAG) } {
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     sibling!(lane_get_field_holder_refresh::<H, true>, r, ip, Carried::script_in(script, view))
                 }
                 sibling!(lane_get_field_holder_refresh::<H, false>, r, ip, Carried::script_in(script, view))
             }
-            if const { super::own_site_this(FLAG) } {
+            if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                 sibling!(lane_get_field_own_refresh::<H, true, true>, r, ip, Carried::script_in(script, view))
             }
             sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(script, view))
@@ -660,7 +660,7 @@ lane_handler! {
             // the record only without result flags: stated so the decode's tests fold.
             unsafe {
                 std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
-                if const { super::own_site_this(FLAG) } {
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == crate::bytecode::FieldBase::THIS.0);
                 } else {
                     std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
@@ -700,7 +700,7 @@ lane_handler! {
                 let machine = unsafe { vm(script) };
                 let others = const { super::inherited_other_site(FLAG) };
                 let Some((guard, watch, value)) = machine.inherited_hint_operands(i.call_link.get(), i.imm(), others) else { property_miss!() };
-                if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let other = if others { Some(&raw const machine.heap) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
             } else if const { FLAG == super::STRING_SITE } {
@@ -714,7 +714,7 @@ lane_handler! {
                 // read of any receiver, which refreshes it.
                 let machine = unsafe { vm(script) };
                 let Some((guard, watch, value)) = machine.holder_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
-                if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+                if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 // A direct object's record is addressed in the table after its family test; at the
                 // held-other site, any other receiver's object part is resolved out of line.
                 let other = if const { super::held_other_site(FLAG) } { Some(&raw const machine.heap) } else { None };
@@ -725,14 +725,14 @@ lane_handler! {
                 // The form of no particular hint is the row a site starts on, before the lane bound
                 // its object records: its first miss binds them.
                 if records == 0 {
-                    if const { super::own_site_this(FLAG) } {
+                    if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                         sibling!(lane_get_field_own_refresh::<H, true, false>, r, ip, Carried::script_in(script, view))
                     }
                     sibling!(lane_get_field_own_refresh::<H, false, false>, r, ip, Carried::script_in(script, view))
                 }
             }
             debug_assert_ne!(records, 0, "an own-field row runs over bound object records");
-            if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+            if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
             let hint = i.field_hint();
             let form = const { super::own_site_form(FLAG) };
             let fixed = (form != HINTED_FORM).then_some(form & !crate::staged::TAGGED_SLOTS);

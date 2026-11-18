@@ -7490,8 +7490,9 @@ pub(super) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
 /// The site facts of the held read of a receiver other than a direct object (an array, function
 /// or ordinary builtin, as `a.push` or `f.call`), which a held site's miss takes: its object part
 /// is resolved out of line (`RecordPlan::other`).
-pub(super) const HELD_OTHER_THIS: u8 = own_site(true, OWN_FORMS.len() + 1);
-pub(super) const HELD_OTHER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 1);
+/// One instantiation for both bases: the base is a runtime test (`runtime_base`), as these rows are cold.
+pub(super) const HELD_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 1);
+pub(super) const HELD_OTHER_REGISTER: u8 = HELD_OTHER_THIS;
 
 /// The site fact of a string register's read through a `String.prototype` hint
 /// (`IcOp::HeldString`), as `s.charCodeAt`.
@@ -7512,8 +7513,12 @@ pub(super) const HELD_CELL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 3);
 /// part, each of `this` and of a register.
 pub(super) const INHERITED_THIS: u8 = own_site(true, OWN_FORMS.len() + 4);
 pub(super) const INHERITED_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 4);
-pub(super) const INHERITED_OTHER_THIS: u8 = own_site(true, OWN_FORMS.len() + 5);
-pub(super) const INHERITED_OTHER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 5);
+pub(super) const INHERITED_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 5);
+pub(super) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
+
+/// Whether site `site` reads `this` or a register as its record says at run time, not as a
+/// site fact: a cold row kept to one instantiation for both bases.
+pub(super) const fn runtime_base(site: u8) -> bool { site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS }
 
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
 pub(super) const fn inherited_site(site: u8) -> bool {
