@@ -17926,19 +17926,34 @@ fn derive_lane_view<'live, H: Host>(
     };
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
-    lane_frame::fuse_chains::<H>(&mut records);
+    let mut fused = lane_frame::fuse_chains::<H>(&mut records);
     fuse_target_backedges::<H>(&mut records, loop_tier);
-    lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier);
+    fused.extend(lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
     // skipped producers wrote (a fused postfix update skips its `IncDec` row), so a plain
-    // accumulator reader within reach of any fused record reads its operand from the register.
+    // accumulator reader within reach of a changed record reads its operand from the register.
+    // A fused record that ends at the reader's predecessor publishes that predecessor's carry-out
+    // (its last link's `Carried`, `fused_rows`, `chain_rows`), so it does not count as a change
+    // there, as long as the link publishes the register the reader takes. A change that reports no
+    // span (`fuse_target_backedges`) counts as one.
     if !wasm {
         const FUSED_REACH: usize = 6;
         let changed: Vec<bool> = records.iter().zip(&selected).map(|(record, &selected)| record.handler != selected).collect();
+        let mut fused_last: Vec<Option<usize>> = vec![None; records.len()];
+        for (head, last) in fused {
+            fused_last[head] = Some(last);
+        }
         for pc in 1..records.len() {
-            if !changed[pc.saturating_sub(FUSED_REACH)..pc].iter().any(|&changed| changed) {
+            let publishes = produced[pc - 1].is_some() && lane_frame::row_produces(decoded[pc - 1].op());
+            // Whether the change at `head` can leave the reader at `pc` without the carry it expects.
+            let hazard = |head: usize| match fused_last[head] {
+                Some(last) if last + 1 < pc => false,
+                Some(last) if last + 1 == pc => !publishes,
+                _ => true,
+            };
+            if !(pc.saturating_sub(FUSED_REACH)..pc).any(|head| changed[head] && hazard(head)) {
                 continue;
             }
             let op = decoded[pc].op() as u16;

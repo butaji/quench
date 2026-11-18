@@ -275,9 +275,9 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     (Op::Binary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     (Op::Binary as u16, Op::JumpTrue as u16, FUSED_PLAIN),
     // Two arithmetic or bitwise operators, the second reading the first's result: `(a + b) * c`,
-    // `(a + b) | 0`. Both rows run in full (`FUSED_PLAIN`); the hand pair's dead-write skip and its
-    // raw result are dropped.
-    (Op::Binary as u16, Op::Binary as u16, FUSED_PLAIN),
+    // `(a + b) | 0`. Both rows run in full; the first's double result stays raw where the second
+    // reads it and nothing after does (`FUSED_RAW`, the hand pair's raw result made general).
+    (Op::Binary as u16, Op::Binary as u16, FUSED_RAW),
     // A `typeof` test then the branch on it (`if (typeof x === "number")`).
     (Op::Unary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     // `!(x instanceof C)` tests also take the `Binary` then `JumpTrue` pair above.
@@ -425,6 +425,12 @@ pub(crate) const FUSED_PLAIN: u8 = 0;
 /// proves that; otherwise the pair runs as `FUSED_PLAIN`. `B` must be a value row: a jump's
 /// target liveness is not checked, so no jump pair names this mode.
 pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
+/// `FUSED_ROWS` mode: `A` is a Number operator (`number_operator`) whose double result is written as
+/// its raw double bits, not canonicalized to an int32 where integral (`LaneFrame::raw_result`). `B`
+/// is a Number operator that reads `A`'s register, so it takes the raw double as its Number; `A`'s
+/// register is dead after the pair, or `B` writes it. `fuse_rows` installs it only where those hold;
+/// otherwise the pair runs as `FUSED_PLAIN`. A raw register never reaches a store, a key or a jump.
+pub(crate) const FUSED_RAW: u8 = 2;
 /// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
 pub(crate) const FUSED_WINDOW: u8 = 3;
@@ -485,6 +491,13 @@ pub(crate) const LOAD_CONST_ROW: u16 = Op::LoadConst as u16;
 pub(crate) const STORE_LOCAL_PLAIN_ROW: u16 = Op::StoreLocalPlain as u16;
 /// The opcode whose row makes a closure (`Operation::Allocate` over `Allocation::Closure`).
 pub(crate) const MAKE_CLOSURE_ROW: u16 = Op::MakeClosure as u16;
+
+/// Whether `op` is a Number operator row: a binary or unary operator over Numbers
+/// (`JsDenotation::NumericBinary`, `NumericUnary`). Its double result may stay raw (`FUSED_RAW`),
+/// and it is the reader such a result feeds: a raw result is only read as a Number.
+pub(crate) const fn number_operator(op: Op) -> bool {
+    matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary | crate::bytecode::JsDenotation::NumericUnary)
+}
 
 /// Whether `op` is a conditional jump whose row answers its control edge from a comparison of
 /// two operands (`Operation::CompareJump`): a jump the lane runs as its generated row.

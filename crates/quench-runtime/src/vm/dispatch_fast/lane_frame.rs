@@ -411,6 +411,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
     /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
     wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
+    /// The row's double result keeps its double bits, not an int32 canonical form (`FUSED_RAW`):
+    /// set only for the producer of a raw pair, whose one reader is the next Number row.
+    raw_result: bool,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -798,7 +801,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1027,6 +1030,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, fact: Self::Fact) {
         let value = match fact {
             Boxing::Value => Value::from_bits(value),
+            // A raw result stores its double bits as they are: the next Number row of its raw pair
+            // reads them as a double, and nothing else reads the register.
+            Boxing::Double if self.raw_result => Value::from_bits(value),
             Boxing::Double => Value::number(f64::from_bits(value)),
         };
         self.registers.set(register, value);
@@ -3132,7 +3138,8 @@ lane_handler! {
     /// `BACKWARD` is `B`'s jump direction where `B` is a jump (`jumps_by_row`). A flagged row
     /// reads its flag from its record at run time. `MODE` is the pair's `staged::FUSED_*`:
     /// `FUSED_DEAD_FIRST` skips `A`'s register write (installed only where liveness proves
-    /// `A`'s register dead and `B` does not name it); `FUSED_RAW` runs as `FUSED_PLAIN` here.
+    /// `A`'s register dead and `B` does not name it); `FUSED_RAW` keeps `A`'s double result as its
+    /// bits (`LaneFrame::raw_result`), which `B`, a Number operator, reads as its operand.
     /// `FUSED_TARGET` (a backward `B` whose target holds the conditional test `TARGET`): the
     /// back edge's fuel check, then `TARGET`'s row over the target record's own fields, which
     /// continues at its taken or fall-through edge. Any other mode ignores `TARGET`.
@@ -3147,6 +3154,7 @@ lane_handler! {
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
             let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
+            frame.raw_result = const { MODE == crate::staged::FUSED_RAW };
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) && MODE != crate::staged::FUSED_DEAD_FIRST } {
@@ -3375,8 +3383,8 @@ const fn chain_index(chain: usize) -> usize { if chain < crate::staged::FUSED_CH
 /// chain wins over the pair at its head; the later records keep their own rows for jumps
 /// into them. A chain whose middle record is a jump target still fuses: the jump enters at
 /// that record's own row.
-pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction]) {
-    if const { crate::staged::FUSED_CHAINS.is_empty() } { return; }
+pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInstruction]) -> Vec<(usize, usize)> {
+    if const { crate::staged::FUSED_CHAINS.is_empty() } { return Vec::new(); }
     macro_rules! link { ($chain:literal, $k:literal) => { crate::staged::FUSED_CHAINS[chain_index($chain)][$k] }; }
     macro_rules! chains {
         ($($chain:literal),*) => {
@@ -3415,12 +3423,15 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
     let window_chains = window_chains!(0, 1);
     let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63);
     const { assert!(crate::staged::FUSED_CHAINS.len() <= 64, "`chains!` covers 64 chains; add indices") };
+    let mut fused_records = Vec::new();
     for pc in 0..records.len() {
         let Some((_, length, backward, row)) = chains.iter().chain(window_chains.iter()).find(|(links, length, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))
         }) else { continue };
         records[pc].handler = row[usize::from(backward(records[pc + length - 1].handler))] as *const ();
+        fused_records.push((pc, pc + length - 1));
     }
+    fused_records
 }
 
 /// Opcode pair `(A, B)`'s fused record handler for `B`'s jump direction `backward`.
@@ -3451,7 +3462,10 @@ const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS
 /// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
 /// pair takes its fused record only where `liveness` proves `A`'s result register dead after
 /// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
-pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool) {
+/// A `FUSED_RAW` pair takes its raw record only where `raw_results` (no handler in the function) and
+/// `B` reads `A`'s register with `A`'s register dead after it or overwritten by `B`. Returns each fused
+/// record's head and its last record, which `derive_lane_view` reads for the accumulator carry.
+pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool, raw_results: bool) -> Vec<(usize, usize)> {
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
@@ -3459,6 +3473,9 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                 (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
                 jump_row_backward::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
                 crate::staged::FUSED_ROWS[fused_index($pair)].2,
+                // Both rows are Number operators: a `FUSED_RAW` pair's double result is then only a Number's operand.
+                const { crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].0 }>::OPCODE)
+                    && crate::staged::number_operator(LaneFields::<{ crate::staged::FUSED_ROWS[fused_index($pair)].1 }>::OPCODE) },
                 [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(false),
                     fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(true)],
                 [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(false),
@@ -3482,13 +3499,15 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
     let window_pairs = window_pairs!(31, 34, 35, 63);
     let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127);
     const { assert!(crate::staged::FUSED_ROWS.len() <= 128, "`pairs!` covers 128 fused pairs; add indices") };
+    let mut fused_records = Vec::new();
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
         if let Some((_, _, backward, window)) = window_pairs.iter().find(|(a, b, _, _)| a(first) && b(second)) {
             records[pc].handler = window[usize::from(backward(second))] as *const ();
+            fused_records.push((pc, pc + 1));
             continue;
         }
-        let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {
+        let Some((_, _, backward, mode, numbers, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
         let direction = usize::from(backward(second));
@@ -3510,13 +3529,25 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
                     .and_then(|masks| masks.get(pc + 2))
                     .is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(first.a)))
         };
-        let handler = if *mode == crate::staged::FUSED_DEAD_FIRST && !dead_first {
+        // A `FUSED_RAW` pair keeps `A`'s double result raw only where both rows are Number operators
+        // (`numbers`), `B` reads `A`'s register as an operand, and nothing after the pair reads it
+        // (`B` may write it instead). Its raw bits are then only ever a Number operand. A function with
+        // a handler never does (`raw_results`): a catch may read any register.
+        let raw = raw_results && *mode == crate::staged::FUSED_RAW && *numbers && {
+            let (producer, consumer) = (&records[pc], &records[pc + 1]);
+            let reads = [consumer.b, consumer.c].into_iter().any(|field| Operand(field).register_index() == Some(producer.a));
+            reads && (consumer.a == producer.a
+                || live.and_then(|masks| masks.get(pc + 2)).is_some_and(|after| crate::compile::liveness::register_dead(after, usize::from(producer.a))))
+        };
+        let handler = if (*mode == crate::staged::FUSED_DEAD_FIRST && !dead_first) || (*mode == crate::staged::FUSED_RAW && !raw) {
             plain[direction]
         } else {
             fused[direction]
         };
         records[pc].handler = handler as *const ();
+        fused_records.push((pc, pc + 1));
     }
+    fused_records
 }
 
 /// Whether `handler` is opcode `OP`'s backward jump row.
