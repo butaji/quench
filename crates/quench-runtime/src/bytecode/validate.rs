@@ -1137,6 +1137,17 @@ mod tests {
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
 
     #[test]
+    fn for_of_pattern_marks_are_validated() {
+        // A value-only array pattern sets RequireIteratorResult's flag; the layout declares it.
+        let program = crate::Engine::specialize(
+            "let t = 0; for (const [k, v] of new Map([[1, 2]])) t += k + v; for (const x of [1]) t += x; for (const [a, ...r] of [[1, 2]]) t += a;",
+            "for-of-pattern.js",
+        )
+        .unwrap();
+        assert_eq!(program.validate(), Ok(()));
+    }
+
+    #[test]
     fn rest_list_closure_layouts_are_validated() {
         // The compiler splits a rest list that binds directly; the validator accepts what it emits.
         let program = crate::Engine::specialize(
