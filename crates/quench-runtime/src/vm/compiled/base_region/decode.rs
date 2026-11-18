@@ -352,9 +352,10 @@ fn capture_arm(facts: Facts, heap: Heap, result: Option<Register>, value: Option
     }
 }
 
-/// The row of a depth-0 capture read, which a loop region that makes calls leaves for the captures its entry copied.
+/// The row of a depth-0 capture read: the activation's slots, which a region that makes calls
+/// reads live (`osr_lane::bind_captures`), as the interpreter's `lane_load_capture` does.
 fn capture_load_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
-    (instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }))
+    (instruction.capture_depth() == 0)
         .then(|| capture_arm(facts, Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None))
 }
 

@@ -35,7 +35,7 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
     captures
 }
 
-/// Binds the capture view: a region that stores a capture reads the activation's own slots,
+/// Binds the capture view: a region that stores a capture or calls reads the activation's own slots,
 /// as a lane body does; otherwise the returned dense view, which the dispatch points at and
 /// the caller keeps alive for the run.
 ///
@@ -44,10 +44,13 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
 pub(super) unsafe fn bind_captures<H: Host>(
     native: &mut JsNativeActivation, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
 ) -> Vec<crate::Value> {
-    let live = (!region.stored_captures.is_empty())
+    // A region that calls reads its captures live too: a callee may store one, which a copy
+    // would not see; without the slots its capture reads leave to their step.
+    let calls = region.instructions().iter().any(|instruction| instruction.op().is_call());
+    let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
-    let none = region.captures.is_empty() && region.stored_captures.is_empty();
+    let none = calls || (region.captures.is_empty() && region.stored_captures.is_empty());
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
     if let Some(((values, len), stores)) = live {
         (native.dispatch.capture_values, native.dispatch.capture_len, native.dispatch.capture_stores) = (values, len, usize::from(stores));
