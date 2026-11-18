@@ -2812,7 +2812,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::PromiseRecord(_)
                 | HeapReference::AwaitRecord(_)
                 | HeapReference::V128Record(_)
-                | HeapReference::EnvironmentRecord(_),
+                | HeapReference::EnvironmentRecord(_)
+                | HeapReference::SymbolRecord(_),
             )
             | None => None,
         };

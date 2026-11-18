@@ -37,6 +37,9 @@ pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
 /// Environments have no legacy-slot fallback, so their space holds as many records as the
 /// legacy slots do (`MAX_HEAP_CELLS`).
 pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, { super::MAX_HEAP_CELLS }>;
+/// Symbols are immutable and have no legacy-slot fallback, so their space holds as many records
+/// as the legacy slots do (`MAX_HEAP_CELLS`).
+pub(super) type SymbolRecordSpace = RecordSpace<super::SymbolData, { super::MAX_HEAP_CELLS }>;
 /// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
 pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy

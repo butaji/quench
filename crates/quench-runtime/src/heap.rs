@@ -70,7 +70,7 @@ pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_addres
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
-    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
+    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, IteratorRecordSpace, SymbolRecordSpace, V128RecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
 use records::RECORD_SPACE_CAPACITY;
@@ -371,7 +371,7 @@ struct SweepOutput {
 }
 
 /// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 10;
+const RECORD_FAMILIES: usize = 11;
 
 /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
 #[derive(Clone, Copy)]
@@ -386,6 +386,7 @@ pub(super) struct MarkBits<'a> {
     small_strings: &'a small_strings::SmallStringSpace,
     v128_records: &'a V128RecordSpace,
     environment_records: &'a EnvironmentRecordSpace,
+    symbol_records: &'a SymbolRecordSpace,
     marks: &'a [AtomicU64],
 }
 
@@ -405,6 +406,7 @@ impl MarkBits<'_> {
             },
             Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
             Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_marked(id),
+            Some(HeapReference::SymbolRecord(id)) => self.symbol_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
@@ -430,6 +432,7 @@ macro_rules! mark_bits {
             small_strings: &$heap.small_strings,
             v128_records: &$heap.v128_records,
             environment_records: &$heap.environment_records,
+            symbol_records: &$heap.symbol_records,
             marks: &$heap.marks,
         }
     };
@@ -467,6 +470,8 @@ pub(crate) struct Heap {
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
     environment_records: EnvironmentRecordSpace,
+    /// Symbols (`alloc_symbol`): immutable leaves that hold no edges, never prototypes.
+    symbol_records: SymbolRecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
     #[cfg(feature = "profile-aggregate")]
     allocated_variants: std::collections::BTreeMap<&'static str, u64>,
@@ -984,6 +989,7 @@ impl Heap {
             (&self.small_strings, small_strings::small_string_value),
             (&self.v128_records, Value::direct_v128),
             (&self.environment_records, Value::direct_environment),
+            (&self.symbol_records, Value::direct_symbol),
         ]
     }
 
@@ -1008,6 +1014,7 @@ impl Heap {
             (&mut self.small_strings, small_strings::small_string_value),
             (&mut self.v128_records, Value::direct_v128),
             (&mut self.environment_records, Value::direct_environment),
+            (&mut self.symbol_records, Value::direct_symbol),
         ]
     }
 
@@ -2160,6 +2167,7 @@ impl Heap {
         self.promise_records = PromiseRecordSpace::default();
         self.await_records = AwaitRecordSpace::default();
         self.environment_records = EnvironmentRecordSpace::default();
+        self.symbol_records = SymbolRecordSpace::default();
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
         self.small_strings = small_strings::SmallStringSpace::default();
@@ -2949,7 +2957,18 @@ impl Heap {
             let (string_live, string_freed) = (string_out.live, string_out.freed);
             // An environment owns no arena storage; dropping a dead one frees its slots.
             let (environment_live, environment_freed) = self.environment_records.sweep(full, age, false, |_| {});
-            live += environment_live
+            // A symbol owns no arena storage; a dead one releases its description, which
+            // `alloc_symbol` charged as external bytes.
+            let mut dead_description_bytes = 0;
+            let (symbol_live, symbol_freed) = self.symbol_records.sweep(full, age, false, |record| {
+                if let RecordSweep::Dead(_record_id, symbol) = record {
+                    dead_description_bytes += symbol.description.as_ref().map_or(0, |description| description.len());
+                    #[cfg(feature = "profile-memory")]
+                    self.memory_profile.freed_symbol(Value::direct_symbol(_record_id));
+                }
+            });
+            self.external_bytes = self.external_bytes.saturating_sub(dead_description_bytes);
+            live += symbol_live + environment_live
                 + object_live
                 + array_live
                 + function_live
@@ -2960,7 +2979,7 @@ impl Heap {
                 + string_live;
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.freed += (environment_freed
+                self.gc_profile.freed += (symbol_freed + environment_freed
                     + object_freed
                     + array_freed
                     + function_freed
@@ -2972,6 +2991,7 @@ impl Heap {
             }
             #[cfg(not(feature = "profile-aggregate"))]
             let _ = (
+                symbol_freed,
                 environment_freed,
                 object_freed,
                 array_freed,
@@ -3802,6 +3822,18 @@ impl Heap {
             }
             // SAFETY: as above.
             Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, work, last_proto);
+        } else if let Some(record_id) = value.direct_symbol_index() {
+            // A symbol holds no edges: marking it is the whole visit, and a weak key's ephemeron
+            // is told that it is marked.
+            if self.symbol_records.mark(record_id) {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::Symbol as usize] += 1;
+                }
+                let mark_bits = mark_bits!(self);
+                ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            }
         } else if let Some(record_id) = value.direct_await_index() {
             if !self.await_records.mark(record_id) {
                 return;
@@ -3957,7 +3989,7 @@ impl Heap {
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             // Strings and vectors are immutable and hold no edges, so nothing is ever stored
             // into them.
-            Some(HeapReference::StringRecord(_) | HeapReference::V128Record(_)) | None => {}
+            Some(HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::SymbolRecord(_)) | None => {}
         }
     }
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
@@ -4492,6 +4524,7 @@ impl Heap {
             function_records,
             promise_records,
             iterator_records,
+            symbol_records,
             slots,
             properties,
             memory_profile,
@@ -4528,6 +4561,12 @@ impl Heap {
             let iterator = unsafe { iterator_records.get_live(record_id) };
             let slots = properties.len(iterator.object.properties());
             memory_profile.allocated_iterator(identity, iterator, slots);
+            return;
+        }
+        if let Some(record_id) = identity.direct_symbol_index() {
+            // SAFETY: profile runs immediately after inserting this symbol.
+            let symbol = unsafe { symbol_records.get_live(record_id) };
+            memory_profile.allocated_symbol(identity, symbol);
             return;
         }
         let index = identity
@@ -4782,7 +4821,6 @@ impl Heap {
             | Cell::TemporalInstant { object: value, .. }
             | Cell::WasmTag { object: value, .. } => object(value),
             Cell::BigInt(_)
-            | Cell::Symbol(_)
             | Cell::Error(_)
             | Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Host(_),
@@ -5003,7 +5041,6 @@ impl Heap {
             Cell::WasmException { .. } => CellKind::WasmException,
             Cell::WasmGc { .. } => CellKind::WasmGc,
             Cell::WasmHostFunction { .. } => CellKind::WasmHostFunction,
-            Cell::Symbol(_) => CellKind::Symbol,
             Cell::Date { .. } => CellKind::Date,
             Cell::Error(_) => CellKind::Error,
             Cell::RegExp { .. } => CellKind::RegExp,
@@ -5080,7 +5117,6 @@ impl Heap {
                 Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
-                Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
 }

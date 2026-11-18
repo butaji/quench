@@ -565,7 +565,7 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id, properties) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) => {
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) | HeapReference::SymbolRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -837,6 +837,7 @@ impl Heap {
             | HeapReference::StringRecord(_)
             | HeapReference::V128Record(_)
             | HeapReference::EnvironmentRecord(_)
+            | HeapReference::SymbolRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -892,6 +893,7 @@ impl Heap {
             },
             Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
             Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_live(id),
+            Some(HeapReference::SymbolRecord(id)) => self.symbol_records.is_live(id),
             None => false,
         }
     }

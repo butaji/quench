@@ -1766,7 +1766,7 @@ impl<H: Host> Vm<H> {
                 write_json_string(&text, &mut state.output);
                 Ok(true)
             }
-            Some(Cell::Symbol(_)) => Ok(false),
+            _ if self.heap.is_symbol(value) => Ok(false),
             Some(Cell::BigInt(_)) => {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }

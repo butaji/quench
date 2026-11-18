@@ -123,6 +123,7 @@ impl Heap {
             let direct_string = identity.direct_string_index().is_some();
             let direct_v128 = identity.direct_v128_index().is_some();
             let direct_environment = identity.direct_environment_index().is_some();
+            let direct_symbol = identity.direct_symbol_index().is_some();
             direct_records += usize::from(
                 direct_object
                     || direct_array
@@ -132,9 +133,12 @@ impl Heap {
                     || direct_iterator
                     || direct_string
                     || direct_v128
-                    || direct_environment,
+                    || direct_environment
+                    || direct_symbol,
             );
-            let kind = if direct_environment {
+            let kind = if direct_symbol {
+                CellKind::Symbol as usize
+            } else if direct_environment {
                 CellKind::Environment as usize
             } else if direct_v128 {
                 CellKind::WasmV128 as usize
@@ -154,7 +158,9 @@ impl Heap {
                 Self::cell_kind(cell.expect("live legacy value has a Cell")) as usize
             };
             cell_counts[kind] += 1;
-            let variant_name = if direct_environment {
+            let variant_name = if direct_symbol {
+                "symbol"
+            } else if direct_environment {
                 "environment"
             } else if direct_v128 {
                 "wasm_v128"
@@ -224,6 +230,10 @@ impl Heap {
             } else if direct_promise {
                 self.promise(identity)
                     .map_or(0, |promise| promise.object.allocated_extra_bytes())
+            } else if direct_symbol {
+                self.symbol_data(identity)
+                    .and_then(|symbol| symbol.description.as_ref())
+                    .map_or(0, |description| description.len())
             } else if direct_iterator {
                 self.iterator(identity)
                     .map_or(0, |iterator| iterator.object.allocated_extra_bytes())

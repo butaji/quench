@@ -122,6 +122,7 @@ impl Heap {
             small_strings,
             v128_records,
             environment_records,
+            symbol_records,
             marks,
             aged,
             slots,
@@ -141,6 +142,7 @@ impl Heap {
             small_strings,
             v128_records,
             environment_records,
+            symbol_records,
             marks,
         };
         let mut finalization_jobs = Vec::new();

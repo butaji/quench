@@ -44,7 +44,6 @@ mod tag {
     /// `WebAssembly.JSTag`, the one Wasm cell every realm holds (`wasm_js::js_tag_cell`).
     pub(super) const JS_TAG: u8 = 17;
     pub(super) const BIGINT: u8 = 18;
-    pub(super) const SYMBOL: u8 = 19;
     pub(super) const DATE: u8 = 20;
     pub(super) const REGEXP: u8 = 21;
     pub(super) const ERROR: u8 = 22;
@@ -434,6 +433,22 @@ impl FunctionRecord {
     }
 }
 
+impl SymbolData {
+    pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        let Self { description, kind } = self;
+        writer.option_str(description.as_deref());
+        symbol_kind::write(writer, *kind);
+        Ok(())
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        Ok(Self {
+            description: reader.option_string()?.map(String::into_boxed_str),
+            kind: symbol_kind::read(reader)?,
+        })
+    }
+}
+
 impl EnvironmentRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self { parent, function, slots, scope } = self;
@@ -673,11 +688,6 @@ impl Cell {
                 writer.u8(tag::BIGINT);
                 writer.bytes(&value.to_num().to_signed_bytes_le());
             }
-            Self::Symbol(SymbolData { description, kind }) => {
-                writer.u8(tag::SYMBOL);
-                writer.option_str(description.as_deref());
-                symbol_kind::write(writer, *kind);
-            }
             Self::Date { milliseconds, object } => {
                 writer.u8(tag::DATE);
                 writer.f64(*milliseconds);
@@ -835,10 +845,6 @@ impl Cell {
             },
             tag::JS_TAG => crate::vm::js_tag_cell(boxed_object(reader)?),
             tag::BIGINT => Self::bigint(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?)),
-            tag::SYMBOL => Self::Symbol(SymbolData {
-                description: reader.option_string()?.map(String::into_boxed_str),
-                kind: symbol_kind::read(reader)?,
-            }),
             tag::DATE => Self::Date { milliseconds: reader.f64()?, object: boxed_object(reader)? },
             tag::REGEXP => {
                 let object = boxed_object(reader)?;

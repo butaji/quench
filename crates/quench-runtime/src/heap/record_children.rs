@@ -63,6 +63,10 @@ impl records::RecordChildren for AwaitState {
     }
 }
 
+impl records::RecordChildren for SymbolData {
+    fn children(&self, _properties: &ValueArena, _out: &mut Vec<Value>) {}
+}
+
 impl records::RecordChildren for EnvironmentRecord {
     fn children(&self, _properties: &ValueArena, out: &mut Vec<Value>) {
         Heap::environment_children(self, out, &mut PushedProtos::default());

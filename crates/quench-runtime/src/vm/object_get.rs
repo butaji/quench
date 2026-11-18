@@ -893,6 +893,25 @@ impl<H: Host> Vm<H> {
                     .object(object)
                     .expect("live direct array retains its object header")
                     .proto();
+            } else if let Some(symbol) = self.heap.symbol_data(object) {
+                let description = symbol.clone();
+                match self.atom_name(atom) {
+                    "description" => {
+                        return Ok(description
+                            .as_ref()
+                            .map(|value| {
+                                self.heap.alloc_string(value.as_ref().into())
+                            })
+                            .unwrap_or(Value::UNDEFINED));
+                    }
+                    "toString" => return Ok(self.native_value(Native::SymbolToString)),
+                    "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
+                    _ => {
+                        object = self
+                            .primitive_prototype(object)
+                            .unwrap_or(self.object_proto)
+                    }
+                }
             } else {
                 match self.heap.get(object) {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
@@ -913,26 +932,6 @@ impl<H: Host> Vm<H> {
                             .primitive_prototype(object)
                             .unwrap_or(self.string_proto);
                         return self.get_property_with_receiver(p, prototype, atom, object);
-                    }
-                    Some(Cell::Symbol(description)) => {
-                        let description = description.clone();
-                        match self.atom_name(atom) {
-                            "description" => {
-                                return Ok(description
-                                    .as_ref()
-                                    .map(|value| {
-                                        self.heap.alloc_string(value.as_ref().into())
-                                    })
-                                    .unwrap_or(Value::UNDEFINED));
-                            }
-                            "toString" => return Ok(self.native_value(Native::SymbolToString)),
-                            "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
-                            _ => {
-                                object = self
-                                    .primitive_prototype(object)
-                                    .unwrap_or(self.object_proto)
-                            }
-                        }
                     }
                     Some(Cell::BigInt(_)) => {
                         object = self

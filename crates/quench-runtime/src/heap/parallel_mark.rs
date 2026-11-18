@@ -68,6 +68,7 @@ struct ParallelMarkView<'heap> {
     small_strings: ParallelRecordMarks<'heap, super::SmallParts>,
     v128s: ParallelRecordMarks<'heap, [u8; crate::wasm::V128_BYTES]>,
     environments: ParallelRecordMarks<'heap, super::EnvironmentRecord>,
+    symbols: ParallelRecordMarks<'heap, super::SymbolData>,
     /// The keys weak map values wait for, which change only between rounds.
     ephemerons: &'heap weak::EphemeronWork,
     /// `EnvironmentTrace::reads_closures` for this collection.
@@ -175,6 +176,7 @@ impl<'heap> ParallelMarkView<'heap> {
             small_strings: heap.small_strings.parallel_marks(),
             v128s: heap.v128_records.parallel_marks(),
             environments: heap.environment_records.parallel_marks(),
+            symbols: heap.symbol_records.parallel_marks(),
             ephemerons,
             reads_closures,
             projection_function,
@@ -404,6 +406,14 @@ impl<'heap> ParallelMarkView<'heap> {
                 }
                 Heap::environment_children(environment, work, last_proto);
                 CellKind::Environment
+            }
+            // A symbol holds no edges: marking it is the whole visit, and a weak key may wait on it.
+            HeapReference::SymbolRecord(id) => {
+                if !self.symbols.mark_if_new(id) {
+                    return;
+                }
+                self.note_marked_key(value, batch);
+                CellKind::Symbol
             }
             HeapReference::LegacySlot(index) => {
                 let index = index as usize;

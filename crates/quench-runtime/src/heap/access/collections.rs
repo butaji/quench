@@ -1,7 +1,7 @@
 //! Map, Set and Symbol, reached through the heap rather than by matching `Cell`
 //! variants at each site. Every caller asks the heap for the record it means, so the
-//! storage behind these accessors (today a legacy arena cell) can move into a record
-//! space of its own without touching a single call site.
+//! storage behind these accessors can move without touching a single call site. A Symbol
+//! is already a record (`Heap::symbol_records`); a Map or Set is still a legacy arena cell.
 
 use super::super::{Cell, Entries, Heap, Object, SymbolData};
 use crate::value::Value;
@@ -22,7 +22,7 @@ impl Heap {
     /// Whether `value` is a Symbol.
     #[inline(always)]
     pub(crate) fn is_symbol(&self, value: Value) -> bool {
-        matches!(self.get(value), Some(Cell::Symbol(_)))
+        value.direct_symbol_index().is_some()
     }
 
     /// A Map's entries.
@@ -64,10 +64,8 @@ impl Heap {
     /// A Symbol's data.
     #[inline(always)]
     pub(crate) fn symbol_data(&self, value: Value) -> Option<&SymbolData> {
-        match self.get(value)? {
-            Cell::Symbol(symbol) => Some(symbol),
-            _ => None,
-        }
+        let record_id = value.direct_symbol_index()?;
+        self.symbol_records.is_live(record_id).then(|| unsafe { self.symbol_records.get_live(record_id) })
     }
 
     /// A new Map with `object` as its ordinary object part and `entries`.
@@ -82,9 +80,18 @@ impl Heap {
         self.alloc(Cell::Set { object, entries })
     }
 
-    /// A new Symbol.
+    /// A new Symbol, as a symbol record. Its description is external bytes, charged as a
+    /// cell's are (`charge_allocation`), and uncharged when the record is swept.
     #[inline]
     pub(crate) fn alloc_symbol(&mut self, symbol: SymbolData) -> Value {
-        self.alloc(Cell::Symbol(symbol))
+        let description = symbol.description.as_ref().map_or(0, |description| description.len());
+        self.charge_allocation(0, description);
+        let Ok(record_id) = self.symbol_records.try_insert(symbol) else {
+            panic!("symbol records exhausted");
+        };
+        let value = Value::direct_symbol(record_id);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
     }
 }
