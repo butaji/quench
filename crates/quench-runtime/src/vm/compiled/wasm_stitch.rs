@@ -388,7 +388,14 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         function.code.iter().map(|packed| super::super::dispatch_fast::decoded_instruction(function, *packed)).collect();
     let mut planned = Vec::with_capacity(instructions.len());
     for pc in 0..instructions.len() {
-        planned.push(plan(pc, &instructions, returns, world)?);
+        let Some(rows) = plan(pc, &instructions, returns, world) else {
+            // `QUENCH_TRACE=wasm-jit` names the first instruction a function has no rows for.
+            if crate::trace::Channel::WasmJit.on() {
+                eprintln!("QUENCH_WASM_BJIT_REJECT pc={pc} op={:?}", instructions[pc].op());
+            }
+            return None;
+        };
+        planned.push(rows);
     }
     // The first row of each instruction, and past the last.
     let mut first = Vec::with_capacity(planned.len() + 1);

@@ -32,36 +32,54 @@ fn is_reference(instruction: WideInstruction) -> bool {
     matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Call(Call::Reference)))
 }
 
+/// Whether `instruction` loads a constant: the lowering places the call's signature constant
+/// between the target and the call.
+fn is_constant(instruction: WideInstruction) -> bool {
+    instruction.op() == crate::bytecode::Op::LoadConst
+}
+
+/// The `Call::Reference` the target at `pc` feeds: the first instruction after it that loads no
+/// constant, reading the target's register as `b`, with no constant in between overwriting that
+/// register and nothing branching into the span (so the call's row runs the target's checks
+/// exactly when the interpreter would).
+fn call_of(pc: usize, instructions: &[WideInstruction]) -> Option<usize> {
+    let target = instructions[pc];
+    let call_pc = (pc + 1..instructions.len()).find(|&at| !is_constant(instructions[at]))?;
+    let call = instructions[call_pc];
+    let clobbered = instructions[pc + 1..call_pc].iter().any(|constant| constant.a() == target.a());
+    if !is_reference(call) || call.b() != target.a() || clobbered {
+        return None;
+    }
+    // Conservative: any instruction whose target lies in the span (a branch, or a branch
+    // table's entry) refuses. A non-branch instruction whose field reads so refuses too.
+    let span = pc + 1..=call_pc;
+    if instructions.iter().any(|other| span.contains(&(other.jump_target() as usize))) {
+        return None;
+    }
+    Some(call_pc)
+}
+
 /// Whether `instruction` is a `Call::IndirectTarget`.
 fn is_target(instruction: WideInstruction) -> bool {
     matches!(Step::of(instruction.op(), instruction.imm()), Some(Step::Call(Call::IndirectTarget)))
 }
 
 /// The rows of the indirect target at `pc` (`Call::IndirectTarget`): a move of its element index
-/// (register `c`) into its register `a`, which the call at `pc + 1` reads as `b`. The checks are
+/// (register `c`) into its register `a`, which the call after it (`call_of`) reads as `b`. The checks are
 /// the call's row's, so the target places nothing else.
 pub(super) fn target(pc: usize, instructions: &[WideInstruction]) -> Option<Vec<Planned>> {
     let instruction = instructions[pc];
-    let call = *instructions.get(pc + 1)?;
-    if !is_reference(call) || call.b() != instruction.a() {
-        return None;
-    }
+    call_of(pc, instructions)?;
     Some(vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(instruction.a()), slot(instruction.c()), 0], None)])
 }
 
-/// The row of the indirect call at `pc` (`Call::Reference`): the target before it at `pc - 1`
-/// must read into this call's register `b`, and nothing may branch to `pc`.
+/// The row of the indirect call at `pc` (`Call::Reference`): the target before it, past
+/// constants, must feed this call (`call_of`).
 pub(super) fn reference(pc: usize, instructions: &[WideInstruction], world: &World<'_>) -> Option<Vec<Planned>> {
     let instruction = instructions[pc];
-    let target = *instructions.get(pc.checked_sub(1)?)?;
-    if !is_target(target) || target.a() != instruction.b() {
-        return None;
-    }
-    // Conservative: any instruction whose target is `pc` (a branch, or a branch table's entry)
-    // refuses. A non-branch instruction whose field reads as `pc` refuses too, which is safe.
-    if instructions.iter().any(|other| other.jump_target() as usize == pc) {
-        return None;
-    }
+    // The target this call reads: the nearest target before it, past constants only.
+    let target_pc = (0..pc).rev().find(|&at| !is_constant(instructions[at]))?;
+    (is_target(instructions[target_pc]) && call_of(target_pc, instructions) == Some(pc)).then_some(())?;
     let site = (world.indirect)(pc)?;
     let destination = u32::try_from(slot(instruction.result_register())).ok()?;
     let window = u32::try_from(slot(instruction.call_window().base)).ok()?;
