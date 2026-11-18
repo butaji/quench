@@ -26,6 +26,12 @@ const FIRST_CONSTANT_CODE: u64 = crate::value::NARROW_HEAP_FAMILIES as u64;
 #[inline(always)]
 pub(crate) fn narrow_form<S: Stage>(stage: &mut S, value: S::Word, fact: Type) -> S::Word {
     if fact.is_subtype(Type::INT32) { return integer_form(stage, value); }
+    any_narrow_form(stage, value)
+}
+
+/// `narrow_form` of a value nothing is proved of: the integer or the reference arm, by its tag.
+#[inline(always)]
+fn any_narrow_form<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
     let upper = stage.and_imm(value, UPPER_WORD);
     let is_int = stage.eq_imm(upper, ValueLayout::INT_TAG);
     stage.choose(is_int, |stage| integer_form(stage, value), |stage| reference_form(stage, value, upper))
@@ -93,7 +99,31 @@ fn reference_form<S: Stage>(stage: &mut S, value: S::Word, upper: S::Word) -> S:
 pub(crate) fn own_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, hinted: bool, slot: u16,
     value: S::Word, miss: S::Miss) -> Option<()> {
     let payload = admitted_payload(stage, record, record_id, shape, hinted, value, miss)?;
+    if hinted {
+        // The hint is a layout id the record's matched: its form, packed or a flat run, is a
+        // fact of the id (`ic::layout_form`), so the store takes its arm with no flag test.
+        let packed = super::ic::layout_form(shape) & OBJECT.inline_form != 0;
+        return own_store_formed(stage, (record, payload, slot), value, packed, miss);
+    }
     own_store_with(stage, (record, payload, slot), (value, Type::ANY), miss)
+}
+
+/// `own_store_with` of a record whose form the caller knows and of a value nothing is proved
+/// of: packed (`packed`), its narrow form into its half of the payload word, else into its run.
+#[inline(always)]
+fn own_store_formed<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S::Word, u16),
+    value: S::Word, packed: bool, miss: S::Miss) -> Option<()> {
+    if !packed {
+        store_flat(stage, payload, slot, (value, Rep::Tagged));
+        return Some(());
+    }
+    let narrow = any_narrow_form(stage, value);
+    let storable = stage.ne_imm(narrow, NOT_NARROW);
+    stage.guard(storable, miss)?;
+    let half = stage.site(OBJECT.payload_offset as u64 + u64::from(slot) * HALF_BYTES);
+    let address = stage.add_imm(record, half);
+    stage.store_u32(Region::Payload.mutable(), address, 0, narrow);
+    Some(())
 }
 
 /// `own_store` for a record whose exact shape the caller proved: the same gate and storage
@@ -126,6 +156,20 @@ fn own_store_with<S: Stage>(stage: &mut S, (record, payload, slot): (S::Word, S:
         store_flat(stage, payload, slot, (value, Rep::Tagged));
         stage.constant(0)
     });
+    Some(())
+}
+
+/// The binary64 word `number` into `slot` of the plain object at `record`, whose exact shape the
+/// caller proved and keeps the slot in its arena run as a raw double (`StoreArm::raw_double`):
+/// no tag, no canonical integer form. A Number is immediate, so no barrier gates it; a narrow
+/// run, whose halves take no wide word, leaves at `miss`.
+#[inline(always)]
+pub(crate) fn own_store_raw<S: Stage>(stage: &mut S, record: S::Word, slot: u16, number: S::Word, miss: S::Miss) -> Option<()> {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    let run = super::object::flat_run(stage, payload, miss)?;
+    let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
+    let address = stage.add_imm(run, offset);
+    super::slot_store::store_word(stage, address, number, Rep::Float64);
     Some(())
 }
 
@@ -187,10 +231,41 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
     value: crate::Value) -> bool {
     // SAFETY: the caller's contract; the gate reads the heap before any write.
     let record = unsafe { heap.unlogged_object_record(record_id) };
+    if hinted {
+        // A hinted store's layout id (`Object::hint_shape`) names the shape and the form: one
+        // compare of the record's own word, then the form the id's entry tells picks the arm,
+        // as `own_store` does for a hint, without its second compare.
+        // SAFETY: a live record, read before any write.
+        if unsafe { (*record).layout_id() } != shape {
+            return false;
+        }
+        let form = super::ic::layout_form(shape);
+        if form == OBJECT.inline_form {
+            // Packed: the value's narrow form into its half of the payload word, behind the gate.
+            let record = record as u64;
+            let mut stage = super::Concrete::storing(heap);
+            if gate_open(&mut stage, u64::from(record_id), (value.to_bits(), Type::ANY), ()).is_none() {
+                return false;
+            }
+            return own_store_formed(&mut stage, (record, 0, slot), value.to_bits(), true, ()).is_some();
+        }
+        if form != 0 {
+            // Extras or a narrow run: the general store.
+            return false;
+        }
+        // The arena form: the payload is the run's start (`Object::plain_arena_start`).
+        // SAFETY: a live record, read before any write.
+        let start = unsafe { (*record).proved_arena_start() };
+        if !heap.store_unlogged(super::RecordSpace::Object, record_id, value) {
+            return false;
+        }
+        // SAFETY: the layout matched, so its run holds `slot`; the gate admitted the write.
+        unsafe { heap.arena_values_base().cast_mut().add(start + usize::from(slot)).write(value) };
+        return true;
+    }
     // The common form first, as `own_store` takes it: a plain object's arena run, whose start
-    // is the payload itself, after the same store gate. The hint, an exact shape or a hinted
-    // store's whole auxiliary word (`Object::hint_shape`), equals the record's word in the
-    // arena form alone, so one compare proves the shape and the form
+    // is the payload itself, after the same store gate. An exact shape equals the record's
+    // word in the arena form alone, so one compare proves the shape and the form
     // (`Object::formed_plain_start`). Packed inline values and every miss take the staged
     // store, which changes nothing on a miss.
     // SAFETY: a live record, read before any write.
@@ -208,7 +283,7 @@ pub(crate) unsafe fn concrete_own_store(heap: &mut crate::heap::Heap, record_id:
 }
 
 /// A hinted own-field store into a narrow run (`Object::formed_narrow_start`): `value`'s
-/// narrow form at `slot` of record `record_id` where its whole auxiliary word is `shape`, a
+/// narrow form at `slot` of record `record_id` where its layout id is `shape`, a
 /// narrow run, and the store gate admits the write; false changes nothing (a value without a
 /// narrow form leaves to the general store, which widens the run).
 ///

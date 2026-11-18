@@ -204,6 +204,7 @@ impl ExecutionInterrupt {
     }
 
     /// The termination byte, for readers that decline only on termination.
+    #[inline]
     pub(crate) fn atomic_flag(&self) -> &AtomicBool {
         &self.state.requested
     }

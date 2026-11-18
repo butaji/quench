@@ -131,8 +131,8 @@ impl<H: Host> Vm<H> {
         if !caller.owns_environment() {
             return caller.environment();
         }
-        match self.heap.get(caller.environment()) {
-            Some(Cell::Environment { parent, .. }) => *parent,
+        match self.heap.environment(caller.environment()) {
+            Some(crate::heap::EnvironmentRecord { parent, .. }) => *parent,
             _ => Value::NULL,
         }
     }

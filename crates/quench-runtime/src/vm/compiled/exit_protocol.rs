@@ -37,6 +37,7 @@ impl ExitKind {
     const FRAME_SHIFT: u32 = u32::BITS;
     const PC_MASK: u64 = u32::MAX as u64;
 
+    #[inline]
     fn of(word: u64) -> Self {
         Self::KINDS[(word >> Self::SHIFT) as usize]
     }
@@ -49,6 +50,7 @@ impl ExitKind {
 impl LaneExit {
     /// Whether the run ended the activation, by its return or by an exception, rather than
     /// leaving it to the lane.
+    #[inline]
     pub(in crate::vm) fn completes(self) -> bool {
         matches!(self, Self::Returned { .. } | Self::Threw { .. })
     }
@@ -90,6 +92,7 @@ impl LaneExit {
 
     /// Whether the run entered nothing: its entry contract failed or the cell held the stub, so
     /// the registers are as the run found them.
+    #[inline]
     pub(in crate::vm) fn entered_nothing(self) -> bool {
         matches!(self, Self::Entry | Self::Stub)
     }
@@ -143,7 +146,7 @@ impl LoopRegion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Source {
     /// An inlined callee's register, which the leave stores to this slot of the entry's
-    /// scratch window (`LaneFrame::scratch`).
+    /// scratch window (`BodyRunContext::scratch`).
     Scratch(u16),
 }
 

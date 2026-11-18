@@ -16,7 +16,7 @@ pub(super) fn parse_program<'a>(
     source: &'a str,
     source_type: SourceType,
 ) -> ParserReturn<'a> {
-    parse_program_with(allocator, source, source_type, None, None, None, false, false, Recognize::No, None)
+    parse_program_with(allocator, source, source_type, None, None, None, false, false, Recognize::No, None, None)
 }
 
 /// Which lazily parsed bodies are recognized without their trees (`ParseOptions::lazy_recognize`).
@@ -43,10 +43,11 @@ pub(super) fn parse_program_with<'a>(
     nested: bool,
     recognize: Recognize,
     lazy_body_skip: Option<oxc_parser::LazyBodySkip>,
+    declared: Option<&mut crate::bytecode::DeclaredTypes>,
 ) -> ParserReturn<'a> {
     let flat = recognize == Recognize::Flat;
     let recognize = recognize != Recognize::No && lazy_body_check.is_some() && crate::trace::Dev::Recognize.value() != Some("off");
-    Parser::new(allocator, source, source_type)
+    let mut parsed = Parser::new(allocator, source, source_type)
         .with_options(ParseOptions {
             allow_call_assignment_targets: true,
             lazy_function_bodies: lazy_from,
@@ -61,7 +62,14 @@ pub(super) fn parse_program_with<'a>(
             lazy_body_skip,
             ..ParseOptions::default()
         })
-        .parse()
+        .parse();
+    // Every compile parse of typed text admits it here, so a body compiled later (lazily,
+    // streamed, replayed) is the tree its load admitted.
+    if source_type.is_typescript() && parsed.diagnostics.is_empty() && !parsed.stack_exhausted {
+        let mut discarded = crate::bytecode::DeclaredTypes::default();
+        super::typescript::admit(allocator, &mut parsed.program, declared.unwrap_or(&mut discarded));
+    }
+    parsed
 }
 
 pub(super) fn call_target<'s, 'a>(

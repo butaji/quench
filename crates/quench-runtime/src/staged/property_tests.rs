@@ -115,7 +115,7 @@ fn ops(list: Vec<IcOp<'static>>) -> &'static [IcOp<'static>] { Box::leak(list.in
 /// An own read of `slot` of an object of `shape` that keeps `len` values.
 fn own(shape: u32, slot: u16, len: usize) -> FieldPlan<'static> {
     FieldPlan::Ops(ops(vec![IcOp::GuardShape(shape),
-        IcOp::LoadSlot { slot, form: Form::Either, storage_len: len }]))
+        IcOp::LoadSlot { slot, form: Form::Either, storage_len: len, rep: super::object::Rep::Tagged }]))
 }
 
 const NO_STORE: StorePlan<'static> = StorePlan::Host;
@@ -165,8 +165,8 @@ fn a_polymorphic_plan_reads_through_the_arm_that_holds_the_shape() {
     let (second, second_shape) = object_of(&mut heap, &[Value::integer(20), Value::integer(31)]);
     let (third, _) = object_of(&mut heap, &[]);
     let arms: &'static [Arm<'static>] = Box::leak(Box::new([
-        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }]), holds: None },
-        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2 }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: super::object::Rep::Tagged }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: super::object::Rep::Tagged }]), holds: None },
     ]));
     let plan = FieldPlan::Arms(arms);
     assert_eq!(read(&heap, plan, first), Some(Value::integer(10)));
@@ -304,7 +304,7 @@ fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value)
 #[test]
 fn an_arm_is_the_slots_type_or_the_test_of_the_type_that_keeps_its_representation() {
     let arm = |slot_ty, fact| StoreArm::of((5, 2), slot_ty, fact);
-    let plain = |holds| Some(StoreArm { shape: 5, slot: 2, holds });
+    let plain = |holds| Some(StoreArm { shape: 5, slot: 2, holds, raw_double: false });
     assert_eq!(arm(Type::NUMBER, Type::INT32), plain(None), "the slot holds the value's type");
     assert_eq!(arm(Type::INT32, Type::NUMBER), plain(Some(Type::INT32)), "a Number may widen an int32 slot: test the int32");
     let objects = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
@@ -318,7 +318,7 @@ fn an_arm_is_the_slots_type_or_the_test_of_the_type_that_keeps_its_representatio
 fn a_widening_arm_stores_the_values_its_type_admits_in_place_and_leaves_the_rest_to_the_vm() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
-    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: Some(Type::INT32) }]));
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: Some(Type::INT32), raw_double: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Host);
     let (word, log) = store(&mut heap, plan, object, Value::integer(9));
     assert_eq!((word, log), (Some(Value::integer(9)), Vec::new()));
@@ -335,7 +335,7 @@ fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
     let (second, second_shape) = object_of(&mut heap, &[Value::integer(2), Value::integer(3)]);
     let (third, _) = object_of(&mut heap, &[]);
     let arms: &'static [StoreArm] = Box::leak(Box::new([
-        StoreArm { shape: first_shape, slot: 0, holds: None }, StoreArm { shape: second_shape, slot: 1, holds: None }]));
+        StoreArm { shape: first_shape, slot: 0, holds: None, raw_double: false }, StoreArm { shape: second_shape, slot: 1, holds: None, raw_double: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Host);
     assert_eq!(store(&mut heap, plan, first, Value::integer(10)).1, Vec::<&str>::new());
     assert_eq!(read(&heap, own(first_shape, 0, 1), first), Some(Value::integer(10)));
@@ -354,7 +354,7 @@ fn bound_and_entry_plans_reach_their_frame_callouts_and_a_bound_join_completes_w
     let (other, _) = object_of(&mut heap, &[]);
     assert_eq!(store(&mut heap, StorePlan::Bound, object, Value::integer(1)).1, ["field_store_bound"]);
     assert_eq!(store(&mut heap, StorePlan::Entry, object, Value::integer(1)).1, ["entry_slot_store"]);
-    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None }]));
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, raw_double: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Bound);
     assert_eq!(store(&mut heap, plan, object, Value::integer(2)).1, Vec::<&str>::new(), "the arm takes its shape");
     assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_bound"], "the join the plan names");
@@ -364,7 +364,7 @@ fn bound_and_entry_plans_reach_their_frame_callouts_and_a_bound_join_completes_w
 fn a_word_no_register_names_stores_through_the_sites_plan_with_the_fact_it_is_given() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
-    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None }]));
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, raw_double: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Host);
     let word = Value::integer(5);
     let operation = Operation::StoreField { base: Some(1), value: word.to_bits(), fact: Type::INT32, atom: 7, site: 3 };

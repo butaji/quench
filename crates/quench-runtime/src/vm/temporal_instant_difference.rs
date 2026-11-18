@@ -88,7 +88,8 @@ fn read_options<H: Host>(
     })
 }
 
-fn read_string_option<H: Host>(
+/// GetOption of a String: `options[name]` converted by ToString, `None` where undefined.
+pub(super) fn read_string_option<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     options: Value,
@@ -116,7 +117,8 @@ fn read_number_option<H: Host>(
     }
 }
 
-fn read_option<H: Host>(
+/// `options[name]`.
+pub(super) fn read_option<H: Host>(
     vm: &mut Vm<H>,
     p: &ResidualProgram,
     options: Value,

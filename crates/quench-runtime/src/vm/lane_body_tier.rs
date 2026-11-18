@@ -247,6 +247,7 @@ impl LaneView {
         }
     }
 
+    #[inline]
     pub(super) fn note_late_call(&self) -> bool {
         let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
@@ -254,6 +255,14 @@ impl LaneView {
         late_calls == self.tiers.lane_body.late_call_calls
     }
 
+    /// Whether the late calls counted past the threshold (`note_late_call`), which only a
+    /// respecialization resets.
+    #[inline]
+    pub(super) fn late_calls_settled(&self) -> bool {
+        self.tier().history.get().late_calls > self.tiers.lane_body.late_call_calls
+    }
+
+    #[inline]
     pub(super) fn owns_record(&self, record: super::Ip) -> bool {
         let start = self.records();
         record >= start && record < start.wrapping_add(self.records.len())
@@ -355,6 +364,7 @@ impl LaneView {
                     return false;
                 }
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
+                if !self.attempts_at(entries.saturating_add(1)) { super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyRecurrent); }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
@@ -376,6 +386,13 @@ impl LaneView {
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
     fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+        {
+            use super::super::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
+            count(match &outcome {
+                O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+            });
+        }
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });
@@ -459,7 +476,7 @@ pub(super) fn start_gate<H: super::Host>(vm: &super::Vm<H>, view: &LaneView, bod
     use super::super::compiled::LaneBodyOutcome;
     let body = body?;
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
-        super::decoded_instruction(body, *packed).op().is_call()
+        body.widened(*packed).op().is_call()
             && site_target(vm, view, pc).is_some_and(|target| {
                 // SAFETY: a resolved target's view outlives its program.
                 target.program() == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })

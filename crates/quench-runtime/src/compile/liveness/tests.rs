@@ -46,7 +46,7 @@ const NO_METHODS: &[MethodSite] = &[];
 fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::Handler>) -> Function {
     Function {
         parent: None, name: None, inferred_name: None, is_arrow: false, self_binding_slot: None, source_span: None,
-        params: 0, length: 0, parameter_end_pc: 0, parameter_atoms: vec![].into(), rest: false, is_async: false,
+        params: 0, length: 0, parameter_end_pc: 0, parameter_atoms: vec![].into(), declared_parameters: vec![].into(), rest: false, is_async: false,
         is_generator: false, is_class_constructor: false, derived_constructor: false, instance_initializer: None,
         super_home_atom: None, constructible: true, class_initializer: false, parameter_eval_arguments_error: false,
         unaliased_arguments: false, prototype_unobservable: false, arguments_slot: None, simple_parameters: true,
@@ -56,7 +56,7 @@ fn function_of(code: Vec<Instr>, registers: u16, handlers: Vec<crate::bytecode::
         binding_sites: vec![].into(), source_positions: Default::default(), environment_clones: vec![].into(), code,
         wide: vec![], registers, dispatch: crate::bytecode::DispatchClass::General, decoded: Default::default(),
         plain_locals: Default::default(), declared_atom_sets: Default::default(),
-        activation_bindings: Default::default(), live_parameter_reflection: Default::default(),
+        activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(), live_parameter_reflection: Default::default(),
         static_name_scope: Default::default(), dynamic_scope_access: Default::default(),
         js_tier_candidate: Default::default(), call_plan: Default::default(), initializer: Default::default(),
         handlers: handlers.into(), register_roots: Default::default(), undefined_register: None,

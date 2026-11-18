@@ -47,39 +47,12 @@ pub(crate) mod i31;
 pub(crate) mod integer;
 pub(crate) mod numeric;
 pub(crate) mod reference;
+pub(crate) mod trap;
+pub use trap::WasmTrap;
 use control::{Control, Reachability};
 use conversion::ScalarConversionOperator;
 use float::{F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator};
 use integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
-
-/// A WebAssembly trap, distinct from a JavaScript throw or invalid residual.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WasmTrap {
-    Unreachable,
-    CallStackExhausted,
-    IntegerDivideByZero,
-    IntegerOverflow,
-    InvalidConversionToInteger,
-    OutOfBoundsMemory,
-    UnalignedAtomic,
-    WaitOnUnsharedMemory,
-    TooManyWaiters,
-    OutOfBoundsTable,
-    OutOfBoundsArray,
-    UndefinedElement,
-    UninitializedElement,
-    NullReference,
-    NullFunctionReference,
-    NullI31Reference,
-    NullStructReference,
-    NullArrayReference,
-    NullExceptionReference,
-    NullDescriptorReference,
-    ArrayTooLarge,
-    CastFailure,
-    DescriptorCastFailure,
-    IndirectCallTypeMismatch,
-}
 
 impl std::fmt::Display for WasmTrap {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -931,6 +904,7 @@ impl Engine {
             module_requests: vec![],
             module_imports: vec![],
             module_link_plan: None,
+            declared_types: None,
             source_name: name.into(),
             source: None,
             atoms: AtomTable::default(),
@@ -1624,6 +1598,7 @@ impl ModuleBindings<'_> {
             length: params,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
+            declared_parameters: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -1658,7 +1633,7 @@ impl ModuleBindings<'_> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
@@ -1754,6 +1729,8 @@ struct Lowering<'a> {
 enum Alias {
     Local(Register),
     I32(i32),
+    /// An i64 constant small enough to be an operator's 16-bit constant operand.
+    I64(i16),
 }
 
 /// Locals live in frame registers while the whole register file stays small.
@@ -1852,6 +1829,10 @@ impl Lowering<'_> {
                 self.load_i32(position, value)?;
                 Ok(position)
             }
+            Some(Alias::I64(value)) => {
+                self.load_scalar(position, WasmValue::I64(i64::from(value)))?;
+                Ok(position)
+            }
             None => Ok(position),
         }
     }
@@ -1864,9 +1845,24 @@ impl Lowering<'_> {
 
     /// The constant on the operand-stack top, while it is still unmaterialized.
     fn top_i32_constant(&self) -> Option<i32> {
+        match self.top_alias()? {
+            Alias::I32(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The small i64 constant on the operand-stack top, while it is still unmaterialized.
+    fn top_i64_constant(&self) -> Option<i16> {
+        match self.top_alias()? {
+            Alias::I64(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn top_alias(&self) -> Option<Alias> {
         let top = usize::from(self.depth.checked_sub(1)?);
         match self.aliases.get(top) {
-            Some(Some(Alias::I32(value))) if self.depth > self.control_base() => Some(*value),
+            Some(Some(alias)) if self.depth > self.control_base() => Some(*alias),
             _ => None,
         }
     }
@@ -1895,6 +1891,7 @@ impl Lowering<'_> {
                     self.emit(Op::Move, position as Register, local, 0, 0)?
                 }
                 Some(Alias::I32(value)) => self.load_i32(position as Register, value)?,
+                Some(Alias::I64(value)) => self.load_scalar(position as Register, WasmValue::I64(i64::from(value)))?,
                 None => {}
             }
         }
@@ -1968,11 +1965,7 @@ impl Lowering<'_> {
     }
 
     pub(super) fn instruction(&self, pc: usize) -> WideInstruction {
-        if self.code[pc].is_wide() {
-            self.wide[self.code[pc].wide_index()]
-        } else {
-            self.code[pc].as_wide()
-        }
+        crate::bytecode::widen(self.code[pc], &self.wide)
     }
 
     /// Write `value` into `local`: redirect its producer when it was the
@@ -1983,6 +1976,12 @@ impl Lowering<'_> {
             self.take_alias(position);
             self.materialize_local_aliases(local)?;
             return self.load_i32(local, value);
+        }
+        if let Some(value) = self.top_i64_constant() {
+            let position = self.pop_position()?;
+            self.take_alias(position);
+            self.materialize_local_aliases(local)?;
+            return self.load_scalar(local, WasmValue::I64(i64::from(value)));
         }
         let value = self.pop()?;
         let emitted = self.code.len();
@@ -2259,6 +2258,17 @@ impl Lowering<'_> {
                 NumericLowering::I32Binary(operator) => return self.i32_binary(operator),
                 NumericLowering::Selector(op, selector) => (op, selector),
             };
+            if op == Op::WasmI64Binary
+                && let Some(value) = self.top_i64_constant()
+            {
+                let position = self.pop_position()?;
+                self.take_alias(position);
+                let left = self.pop()?;
+                let result = self.push()?;
+                self.emit(Op::WasmI64BinaryImmediate, result, left, value as u16, selector)?;
+                self.produced(result);
+                return Ok(());
+            }
             let right = if op
                 .field_layout(crate::bytecode::InstructionField::C)
                 .is_register_field()
@@ -2277,6 +2287,12 @@ impl Lowering<'_> {
             Operator::I32Const { value } => {
                 if self.path == Reachability::Live {
                     self.push_alias(Alias::I32(value))?;
+                }
+                Ok(())
+            }
+            Operator::I64Const { value } if i16::try_from(value).is_ok() => {
+                if self.path == Reachability::Live {
+                    self.push_alias(Alias::I64(value as i16))?;
                 }
                 Ok(())
             }

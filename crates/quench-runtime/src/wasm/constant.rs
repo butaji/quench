@@ -505,12 +505,12 @@ impl WasmConstantExpression {
                             ConstantOperator::I32(op),
                             WasmValue::I32(left),
                             WasmValue::I32(right),
-                        ) => op.apply(left, right),
+                        ) => op.evaluate(left, right).map(WasmValue::I32),
                         (
                             ConstantOperator::I64(op),
                             WasmValue::I64(left),
                             WasmValue::I64(right),
-                        ) => op.apply(left, right),
+                        ) => op.evaluate(left, right),
                         _ => return Err(error("Wasm constant operand type mismatch")),
                     };
                     value.map_err(|trap| Diagnostic::unsupported(name, trap.to_string()))?

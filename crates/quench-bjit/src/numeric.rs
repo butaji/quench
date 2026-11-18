@@ -126,7 +126,7 @@ impl Kind {
 
     /// Whether a row of this kind with a double operand computes in f64.
     pub fn has_float_form(self) -> bool {
-        self <= Kind::Ne && !self.is_bitwise()
+        (self <= Kind::Ne && !self.is_bitwise()) || self == Kind::Rem
     }
 }
 

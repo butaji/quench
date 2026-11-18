@@ -5,14 +5,23 @@
 //! Cranelift values (`Emitter`, `vm/compiled/wasm_memory_stage.rs`). A stage supplies the
 //! machine: the memory's length, the words an access moves and the bulk movers.
 
+use super::machine::MachineStage;
 use super::wasm::{WasmStage, Width};
+use super::wasm_concrete::ConcreteWasm;
+#[cfg(not(stencil_build))]
 use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Class, Op, WideInstruction};
+#[cfg(not(stencil_build))]
 use crate::wasm::V128_BYTES;
+#[cfg(not(stencil_build))]
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;
+#[cfg(not(stencil_build))]
 use crate::wasm::memory::{MemoryLoad, MemoryStore, WASM_PAGE_BITS, checked_range};
-use crate::{WasmTrap, WasmType, WasmValue};
+use crate::{WasmTrap, WasmType};
+#[cfg(not(stencil_build))]
+use crate::WasmValue;
 
 /// What one scalar access moves: the type of its register value, the bytes it touches and
 /// whether a narrow load sign-extends them.
@@ -24,7 +33,23 @@ pub(crate) struct Access {
 }
 
 impl Access {
-    /// The access a scalar load makes; a vector load has none.
+    /// The word an access moves, from the `bytes` little-endian bytes it read (`raw`, zero
+    /// above them): sign-extended where a narrow load asks, in the width of its type. Every
+    /// stage that reads bytes (the interpreter's slices, the b-jit's raw memory) decodes here.
+    #[inline(always)]
+    pub(crate) fn loaded(self, raw: u64) -> u64 {
+        let unused = u64::BITS - self.bytes as u32 * u8::BITS;
+        let value = if self.signed { ((raw << unused) as i64) >> unused } else { raw as i64 };
+        match Width::of(self.ty) {
+            Some(width) => ConcreteWasm.constant(width, value),
+            None => raw,
+        }
+    }
+
+    /// The access a scalar load makes; a vector load has none. Always inlined: a handler's
+    /// constant load folds to its width and sign, so the bytes move as one word, not by memcpy.
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
     pub(crate) fn of_load(load: MemoryLoad) -> Option<Self> {
         let ty = match load {
             MemoryLoad::I32Load
@@ -59,13 +84,15 @@ impl Access {
     }
 
     /// A 128-bit vector access, which only the vector steps make.
+    #[cfg(not(stencil_build))]
     pub(crate) const VECTOR: Self = Self {
         ty: WasmType::V128,
         bytes: V128_BYTES,
         signed: false,
     };
 
-    #[inline]
+    #[cfg(not(stencil_build))]
+    #[inline(always)]
     pub(crate) fn of_store(store: MemoryStore) -> Self {
         Self {
             ty: store.value_type(),
@@ -76,6 +103,7 @@ impl Access {
 }
 
 /// The linear-memory opcodes a function body runs.
+#[cfg(not(stencil_build))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Memory {
     /// `a = load[b][c + imm]`: the memory in `b`, a 32-bit address in `c`, a static offset.
@@ -95,6 +123,7 @@ pub(crate) enum Memory {
     Copy,
 }
 
+#[cfg(not(stencil_build))]
 impl Memory {
     pub(crate) fn of(op: Op) -> Option<Self> {
         if let Some(load) = MemoryLoad::from_direct_op(op).and_then(Access::of_load) {
@@ -239,6 +268,7 @@ pub(crate) fn effective_address<S: WasmMemory>(
 }
 
 /// `memory.size`: the length in pages, an `I32` word.
+#[cfg(not(stencil_build))]
 #[inline(always)]
 pub(crate) fn size<S: WasmMemory>(stage: &mut S) -> S::Word {
     let length = stage.memory_length();
@@ -278,6 +308,7 @@ pub(crate) fn copy<S: WasmMemoryWrite>(
     Ok(())
 }
 
+#[cfg(not(stencil_build))]
 impl Memory {
     /// The registers naming the memory the operation reads: its binding register.
     pub(crate) fn memories(self, instruction: WideInstruction) -> [Option<u16>; 2] {
@@ -311,6 +342,7 @@ impl Memory {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl MemoryLoad {
     /// The value at `address` of `bytes`: out of bounds traps. A scalar load is the staged
     /// access (`load`) on the bytes; a vector load decodes its own.
@@ -343,6 +375,7 @@ impl MemoryLoad {
     }
 }
 
+#[cfg(not(stencil_build))]
 impl MemoryStore {
     /// Write `value` at `address` of `bytes`: out of bounds traps before any byte changes. A
     /// scalar store is the staged access (`store`) on the bytes; a vector store writes its own.

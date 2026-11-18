@@ -27,7 +27,7 @@ fn run_pick(linked: &[u8], registers: usize) {
     let memory = CodeMemory::new(linked).unwrap();
     // SAFETY: the image is a lane entry of the shared ABI, its helpers now this process's.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(memory.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);

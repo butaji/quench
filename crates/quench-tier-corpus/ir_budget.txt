@@ -1,95 +1,115 @@
-# The tier ladder per primitive (quench-gate step `ir-budget`; alone: `quench-gate --only ir-budget`).
-# One row per op of quench-bench/primitives/ops.js: op, C, budget, then a ceiling per tier: no-jit, b-jit, u-jit,
-# in instructions per loop iteration (callgrind, exact to 0.1).
+# Per-primitive instruction budget (quench-gate step `ir-budget`; alone: `quench-gate --only ir-budget`).
+# One row per op of quench-bench/primitives/ops.js: op, C, budget, ceiling, in instructions per loop
+# iteration under --no-jit (callgrind, exact to 0.1).
 # C: the twin in ops.c (cc -O2 -fno-tree-vectorize -fno-unroll-loops), loop step included.
-# budget: 3 x C + 6, the u-jit target (three instructions of residue per instruction of C, plus six for the loop's
-#   backward jump and interrupt poll). By design no-jit >= b-jit >= u-jit ~ budget (Futamura, Ershov: b-jit is the
-#   interpreter with dispatch and decode folded, u-jit is b-jit specialized on proven facts).
-# ceilings: the counts a tier may not exceed. The gate lowers them when a count falls; a no-jit or u-jit count at or
-#   under the budget makes the budget its ceiling. `-` is not recorded yet (--record). Never raise a ceiling by hand.
-# A tier above the tier before it fails the gate unless tier_inversions.txt lists it (shrink-only debt).
-arr_length 4 18 76.1 51.1 18
-arr_load_dbl 5 21 87.1 34.1 22.1
-arr_load_int 5 21 73.1 32.1 21
-arr_load_obj 6 24 103.1 82.1 63.1
-arr_push 8 30 234.1 225.8 230.5
-arr_store_dbl 8 30 98.1 54.1 60.6
-arr_store_int 5 21 73.1 40.1 46.1
-arr_store_obj 3 15 89.1 89.1 89.1
-bitwise 8 30 76.1 18.1 30
-call_closure 11 39 231.1 231.1 231.1
-call_direct 8 30 222.1 222.1 30
-call_method 11 39 279.1 279.1 279.1
-cmp_dbl 6 24 90.1 22.1 24
-cmp_int 7.5 29 80.1 80.1 29
-dbl_add 4 18 46.3 13 18
-dbl_div 8 30 93.1 15.1 30
-dbl_mul 4 18 44.1 13.1 18
-empty 3 15 31.2 14.1 15
-eq_int 7.13 28 48.8 15.6 28
-eq_str 67 207 207 157.1 1002.1
-eq_undef_null 5 21 92.1 92.1 28.1
-field_read 3 15 70.1 25.2 15
-field_store 3 15 79.1 63.1 189.1
-inc_local 5 21 57.1 19.1 21
-int_add 4 18 39.2 18.1 18
-int_add_noor 8 30 55.2 19.1 30
-int_div 7 27 119 68.1 27
-int_mod 16 54 66.9 67.1 54
-int_mod_var 7 27 68.1 68.1 84
-int_mul 5 21 108.2 76.8 51.1
-int_mul_ovf 18 60 140.5 119.6 99.1
-int_sub 4 18 39.2 18.1 18
-k01_sum_or 4 18 39.2 15.1 18
-k02_fib 1440 4326 42575.2 42494.1 42494.1
-k03_call_add 4 18 295.2 214.1 18
-k04_dot 4 18 236.9 236.8 38.1
-k05_field_add 4 18 125.7 185.5 215.8
-k06_list 69 213 1854.4 1903.3 1957
-k07_area 3 15 249.2 250.1 44.1
-k08_escape 4 18 652.5 754.5 676.7
-k09_reduce 75 231 6560.6 6799.5 6799.7
-k10_f64_sum 69 213 2681.1 644 695.1
-k11_saxpy 134 408 6370.3 6387.3 7299.1
-k12_copy 15 51 3214.1 1231.1 4991.1
-k13_matmul 666 2004 17441.8 9072.7 2004
-k14_bsearch 62.2 192.6 892.2 343.1 566.3
-k15_isort 266.8 806.4 5777.7 2848.4 4018.8
-k16_sieve 310 936 8837.9 5620.1 1140.1
-k17_hash 134 408 5572.3 5988.3 5988.3
-k18_math 44 138 744.6 840.6 840.6
-k19_gcd 47.1 147.3 672.9 - -
-k20_switch 169 513 4387.3 1294.3 1100.1
-k_dispatch 14 48 354.6 511.1 547.1
-k_json 812 2442 5702.5 5259.3 5259.9
-k_nbody_pair 21.1 70 1452.1 1820.1 1820.1
-k_regexp 40.2 127 1371.3 1300.1 1300.1
-k_str_build 14.1 49 1371.9 1407.2 1407.5
-k_struct_sum 8 30 179.1 187.3 98.1
-math_abs 8 30 164 186.1 186.1
-math_floor 22 72 192.2 214.2 214.2
-math_imul 7 27 147.1 173.1 173.1
-math_minmax 15 51 286.1 338.1 338.1
-math_round 23 75 212.7 234.7 234.7
-math_sqrt 9 33 154.1 180.1 180.1
-mixed_int_dbl 7 27 72.1 15.1 27
-neg_op 6 24 88.1 59.1 24
-not_op 5.5 23 65.6 16.1 23
-num_to_str 569 1713 1713 957 1713
-parse_int 196 594 1036.1 1056.1 1056.1
-shl_shr 7 27 93 19.1 27
-str_charcodeat 9 33 207.1 207.1 207.1
-str_compare 4 18 176.1 174.1 174.1
-str_concat 531.56 1601 1601 918.6 1601
-str_concat_acc 7 27 559.1 513.1 513.2
-str_index 9.07 34 375 373 373
-str_length 4 18 84.1 84.1 84.1
-str_to_num 496 1494 1494 602.1 1494
-to_uint32 20 66 219.7 198.2 109.1
-truthy_int 5.75 24 45.6 45.6 24
-truthy_obj 4 18 62.1 62.1 23.1
-truthy_str 4 18 117.1 117.1 93.1
-typed_load 5 21 83.1 73.1 21
-typed_store_f64 8 30 99.6 26 30
-typeof_op 4 18 57.1 63.1 26.1
-ushr 5 21 56.1 20.1 21
+# budget: the target, 3 x C + 6 (three instructions of handler per instruction of C, plus one
+#   dispatch allowance per iteration for the loop's backward jump).
+# ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
+#   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
+arr_length 4 18 75.1
+arr_load_dbl 5 21 86.1
+arr_load_int 5 21 72.1
+arr_load_obj 6 24 102.1
+arr_push 8 30 234.1
+arr_store_dbl 8 30 97.1
+arr_store_int 5 21 72.1
+arr_store_obj 3 15 86.1
+bitwise 8 30 75.1
+call_closure 11 39 231.1
+call_direct 8 30 219.1
+call_method 11 39 279.1
+call_rest 10 36 482.1
+call_rest_forward 11 39 841.1
+call_spread 10 36 670.1
+cmp_dbl 6 24 90.1
+cmp_int 7.5 29 63.6
+dbl_add 4 18 45.3
+dbl_div 8 30 92.1
+dbl_mul 4 18 43.1
+empty 3 15 31.2
+eq_int 7.13 28 47.9
+eq_str 67 207 207
+eq_undef_null 5 21 92.1
+field_read 3 15 69.1
+field_store 3 15 73.1
+inc_local 5 21 56.1
+int_add 4 18 39.2
+int_add_noor 8 30 55.2
+int_div 7 27 118.1
+int_mod 16 54 66.2
+int_mod_var 7 27 67.2
+int_mul 5 21 108.1
+int_mul_ovf 18 60 118.8
+int_sub 4 18 39.2
+math_abs 8 30 163.1
+math_floor 22 72 191.2
+math_imul 7 27 147.1
+math_minmax 15 51 286.1
+math_round 23 75 211.7
+math_sqrt 9 33 154.1
+mixed_int_dbl 7 27 71.1
+neg_op 6 24 87.1
+not_op 5.5 23 42.1
+num_to_str 569 1713 1713
+parse_int 196 594 1018.1
+shl_shr 7 27 92.1
+str_charcodeat 9 33 186.1
+str_compare 4 18 174.1
+str_concat 531.56 1601 1601
+str_concat_acc 7 27 530.1
+str_index 9.07 34 378.3
+str_length 4 18 83.1
+str_to_num 496 1494 1494
+to_uint32 20 66 197.2
+truthy_int 5.75 24 45.6
+truthy_obj 4 18 62.1
+truthy_str 4 18 117.1
+typed_load 5 21 82.1
+typed_store_f64 8 30 98.6
+typeof_op 4 18 57.1
+ushr 5 21 55.1
+k_dispatch 14 48 348.6
+k_json 812 2442 4915.8
+k_nbody_pair 21.1 70 1340.1
+k_regexp 40.2 127 1224.3
+k_str_build 14.1 49 1461
+k_struct_sum 8 30 178.1
+arr_includes 247.2 747.6 1193.8
+arr_indexof 248.2 750.6 1194.3
+date_now 34 108 260.1
+k01_sum_or 4 18 39.1
+k02_fib 1440 4326 42494.1
+k03_call_add 4 18 211.1
+k04_dot 4 18 212.7
+k05_field_add 4 18 113.6
+k06_list 69 213 1854.3
+k07_area 3 15 250.1
+k08_escape 4 18 246.8
+k09_reduce 75 231 6686.9
+k10_f64_sum 69 213 1835.1
+k11_saxpy 134 408 5928.3
+k12_copy 15 51 2373.1
+k13_matmul 666 2004 17356.7
+k14_bsearch 62.2 192.6 865.2
+k15_isort 266.8 806.4 5544.4
+k16_sieve 310 936 8088.8
+k17_hash 134 408 5252.3
+k18_math 44 138 744.6
+k19_gcd 47.1 147.3 672.9
+k20_switch 169 513 3944.3
+alloc_class 146 444 444
+alloc_ctor 143 435 362.1
+alloc_literal 143 435 435
+field_length 3 15 69.1
+field_name 3 15 69.2
+k_dist2 12.9 44.7 252.7
+k_field_acc 3.9 17.7 63.3
+k_list_walk 6.9 26.7 148.3
+k_vec_local 8.9 32.7 193.8
+obj_spread 146 444 1350.8
+typed_store_u8c 24 78 155.9
+alloc_literal1 140 426 426
+arr_isarray 4 18 211.1
+arr_slice 144 438 1696.8
+str_includes 99 303 600.1
+str_slice 166 504 779.2

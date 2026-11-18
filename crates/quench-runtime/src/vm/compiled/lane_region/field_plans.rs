@@ -8,6 +8,7 @@ use super::super::object_slots::{field_load_groups, NativeFieldLoad};
 use crate::staged::ic::IcOp;
 use crate::staged::property::{Arm, FieldPlan, PlanSource, StorePlan};
 use crate::staged::Form;
+use crate::staged::object::Rep;
 
 /// What one access's frame proved: the plan of its read and of its store.
 pub(super) struct LanePlans<'p> {
@@ -105,7 +106,8 @@ pub(super) fn embed_inherited(links: &[LinkInput], roots: &mut crate::folded_roo
 /// constant, or the slot of the prototype whose exact shape the load names.
 fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)]) -> Vec<IcOp<'a>> {
     match load.holder {
-        None => vec![IcOp::LoadSlot { slot: load.slot, form: Form::of(load.storage, load.storage_len), storage_len: load.storage_len }],
+        None => vec![IcOp::LoadSlot { slot: load.slot, form: Form::of(load.storage, load.storage_len), storage_len: load.storage_len,
+            rep: if load.raw_double { Rep::Float64 } else { Rep::Tagged } }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
         Some(holder) => vec![IcOp::Prototype, IcOp::GuardShape(holder), IcOp::LoadPrototypeSlot(load.slot)],
     }
@@ -126,7 +128,14 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
     let loads = fast.loads();
     let lists = loads.iter().zip(pairs).map(|(load, pairs)| load_ops(load, pairs));
     match fast {
-        Fast::Single(load) => lists.map(|ops| std::iter::once(IcOp::GuardShape(load.shape)).chain(ops).collect()).collect(),
+        Fast::Single(load) => {
+            // An own read whose receivers' storage form the site observed guards the whole word.
+            let guard = match load.formed {
+                Some(id) if load.holder.is_none() && crate::staged::ic::layout_shape(id) == load.shape => IcOp::GuardLayout(id),
+                _ => IcOp::GuardShape(load.shape),
+            };
+            lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()
+        }
         _ => lists.collect(),
     }
 }

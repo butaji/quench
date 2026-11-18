@@ -14,7 +14,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     assert!(region.fault_poll);
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);
@@ -38,7 +38,7 @@ fn admitted_integer_stores_do_not_repeat_heap_barrier_checks() {
     let mut fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
             shape: 0, holder: None, slot: 0, storage_len: 1, storage: None,
-            ty: Type::INT32, inherited: None, function_shape: false,
+            ty: Type::INT32, inherited: None, function_shape: false, raw_double: false, formed: None,
         }])));
     assert_eq!(fields.iter().flatten().count(), 1, "the test must exercise a profiled store");
     let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -67,7 +67,7 @@ fn object_shape_proofs_survive_verified_control_flow_edges() {
         if instruction.op().class().eq(Class::GetField)
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
-            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
+            Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None }]))
         } else { None }
     }));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -92,7 +92,7 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
     let function = program.function(1);
     let fields = flat_table(function.instructions().filter(|instruction| instruction.op().is_set_field())
         .map(|instruction| (usize::from(instruction.cache_site_index()), vec![NativeFieldLoad {
-            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false,
+            shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: slot, inherited: None, function_shape: false, raw_double: false, formed: None,
         }])));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let unit = super::super::lane_unit::unit(&program, 1, function, &|_, _| Vec::new(), &|_| None).unwrap();
@@ -121,7 +121,7 @@ fn shape_tests(source: &str, names: &[&str]) -> usize {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = names.iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: names.len(),
-                storage: None, ty: Type::ANY, inherited: None, function_shape: false }]))
+                storage: None, ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None }]))
         } else { None }
     }));
     let isa = super::super::super::jit_backend::target_isa().unwrap();
@@ -155,7 +155,7 @@ fn own_field_reads_take_no_arena_bound() {
             && let Some(FieldLookup::Atom { atom, cache_site, .. }) = instruction.field_lookup()
             && let Some(slot) = ["left", "right"].iter().position(|name| *name == &program.atoms[atom as usize]) {
             Some((usize::from(cache_site), vec![NativeFieldLoad { shape: 0, holder: None, slot: slot as u16, storage_len: 2, storage: None,
-                ty: Type::ANY, inherited: None, function_shape: false }]))
+                ty: Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None }]))
         } else { None }
     }));
     let isa = super::super::super::jit_backend::target_isa().unwrap();

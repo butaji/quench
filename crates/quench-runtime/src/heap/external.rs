@@ -28,8 +28,9 @@ impl Cell {
 }
 
 impl Heap {
-    #[allow(dead_code)]
-    pub fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
+    /// Allocation, collection, peak and threshold counts, for the tests.
+    #[cfg(test)]
+    pub(crate) fn stats(&self) -> (u64, u64, usize, usize, usize, usize) {
         (
             self.allocated as u64,
             self.collections,
@@ -39,6 +40,7 @@ impl Heap {
             self.external_bytes,
         )
     }
+
 
     /// Changes the legacy cell `cell` through `change`, charging what its payload
     /// (`Cell::payload_bytes`) grew toward the next collection, as `alloc` charges a new

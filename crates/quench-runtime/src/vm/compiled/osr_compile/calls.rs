@@ -17,6 +17,17 @@ use quench_bjit::call_record::CallRecord;
 pub(in crate::vm) struct RegionCalls {
     pub(in crate::vm::compiled) callees: Callees,
     pub(in crate::vm::compiled) realm: RealmProof,
+    /// By PC, the callees each call site reached (`lane_direct_callees`): what a Cranelift
+    /// region calls by their entries, as a lane body does (`unit_direct_calls`).
+    pub(in crate::vm::compiled) direct: Vec<DirectCandidates>,
+}
+
+impl RegionCalls {
+    /// The calls of a region Cranelift lowers: the call sites' `direct` candidates only, nothing
+    /// stitched.
+    pub(in crate::vm) fn direct(direct: Vec<DirectCandidates>) -> Self {
+        Self { direct, ..Self::default() }
+    }
 }
 
 impl<H: Host> Vm<H> {
@@ -27,7 +38,7 @@ impl<H: Host> Vm<H> {
         let code: Vec<WideInstruction> = program.function_get(function as usize).map(|body| body.instructions().collect()).unwrap_or_default();
         let callees = self.stitch_callees(program, function, &code, candidates);
         bind_callees(&callees.owned, own);
-        RegionCalls { callees, realm: self.realm_proof() }
+        RegionCalls { callees, realm: self.realm_proof(), direct: candidates.to_vec() }
     }
 }
 
@@ -49,6 +60,12 @@ pub(in crate::vm) struct CallCode {
 }
 
 impl CallCode {
+    /// The calls of a region that inlines and enters none, whose code reads `invalidation`
+    /// (`VmFacts::held_atoms`), which its publication sets when a fact it holds changes.
+    pub(super) fn holding(invalidation: Invalidation) -> Self {
+        Self { invalidation, ..Self::default() }
+    }
+
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
     pub(super) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
@@ -58,10 +75,11 @@ impl CallCode {
         Self { inlined, direct, records, caller_registers, recovery, invalidation }
     }
 
-    /// Whether its code calls a callee by its entry (a direct row, whose record it owns): it runs on
-    /// the lane frame's payload (`region_lend`).
+    /// Whether its code calls a callee by its entry (a b-jit direct row, whose record it owns, or a
+    /// Cranelift region's direct call): it runs on the lane frame's payload (`region_lend`), whose
+    /// lane stack words the callee's window and frame are pushed through.
     pub(in crate::vm) fn enters_callees(&self) -> bool {
-        !self.records.is_empty()
+        !self.records.is_empty() || !self.direct.is_empty()
     }
 
     /// The room a leave inside an inlined callee needs, which a run is admitted by.

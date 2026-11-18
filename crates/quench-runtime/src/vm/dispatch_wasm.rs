@@ -254,215 +254,24 @@ impl<H: Host> Vm<H> {
             Op::WasmUnreachable => {
                 return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable));
             }
-            Op::WasmI32Add => {
+            // Every i32 binary operator, register or immediate form: the operator is the
+            // opcode's (`from_register_op` / `from_immediate_op`), as the lane handler reads it.
+            op if I32BinaryOperator::from_register_op(op).is_some() => {
+                let operator = I32BinaryOperator::from_register_op(op).expect("an i32 operator");
                 let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Add, right)?;
+                self.wasm_i32_binary(f, i, operator, right)?;
             }
-            Op::WasmI32Subtract => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Subtract, right)?;
+            op if I32BinaryOperator::from_immediate_op(op).is_some() => {
+                let operator = I32BinaryOperator::from_immediate_op(op).expect("an i32 operator");
+                self.wasm_i32_binary(f, i, operator, i.imm() as i32)?;
             }
-            Op::WasmI32Multiply => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Multiply, right)?;
+            op if I32BinaryOperator::from_jump_op(op).is_some() => {
+                let operator = I32BinaryOperator::from_jump_op(op).expect("an i32 comparison");
+                self.wasm_i32_jump(p, f, i, pc, operator)?;
             }
-            Op::WasmI32DivideSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::DivideSigned, right)?;
-            }
-            Op::WasmI32DivideUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::DivideUnsigned, right)?;
-            }
-            Op::WasmI32RemainderSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RemainderSigned, right)?;
-            }
-            Op::WasmI32RemainderUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RemainderUnsigned, right)?;
-            }
-            Op::WasmI32And => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::And, right)?;
-            }
-            Op::WasmI32Or => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Or, right)?;
-            }
-            Op::WasmI32Xor => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Xor, right)?;
-            }
-            Op::WasmI32ShiftLeft => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::ShiftLeft, right)?;
-            }
-            Op::WasmI32ShiftRightSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::ShiftRightSigned, right)?;
-            }
-            Op::WasmI32ShiftRightUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::ShiftRightUnsigned, right)?;
-            }
-            Op::WasmI32RotateLeft => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RotateLeft, right)?;
-            }
-            Op::WasmI32RotateRight => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RotateRight, right)?;
-            }
-            Op::WasmI32Equal => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Equal, right)?;
-            }
-            Op::WasmI32NotEqual => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::NotEqual, right)?;
-            }
-            Op::WasmI32LessSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessSigned, right)?;
-            }
-            Op::WasmI32LessUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessUnsigned, right)?;
-            }
-            Op::WasmI32GreaterSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterSigned, right)?;
-            }
-            Op::WasmI32GreaterUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterUnsigned, right)?;
-            }
-            Op::WasmI32LessEqualSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessEqualSigned, right)?;
-            }
-            Op::WasmI32LessEqualUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessEqualUnsigned, right)?;
-            }
-            Op::WasmI32GreaterEqualSigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterEqualSigned, right)?;
-            }
-            Op::WasmI32GreaterEqualUnsigned => {
-                let right = self.read(f, i.register_c()).wasm_bits32() as i32;
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterEqualUnsigned, right)?;
-            }
-            Op::WasmI32AddImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Add, i.imm() as i32)?;
-            }
-            Op::WasmI32SubtractImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Subtract, i.imm() as i32)?;
-            }
-            Op::WasmI32MultiplyImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Multiply, i.imm() as i32)?;
-            }
-            Op::WasmI32DivideSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::DivideSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32DivideUnsignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::DivideUnsigned, i.imm() as i32)?;
-            }
-            Op::WasmI32RemainderSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RemainderSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32RemainderUnsignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RemainderUnsigned, i.imm() as i32)?;
-            }
-            Op::WasmI32AndImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::And, i.imm() as i32)?;
-            }
-            Op::WasmI32OrImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Or, i.imm() as i32)?;
-            }
-            Op::WasmI32XorImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Xor, i.imm() as i32)?;
-            }
-            Op::WasmI32ShiftLeftImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::ShiftLeft, i.imm() as i32)?;
-            }
-            Op::WasmI32ShiftRightSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::ShiftRightSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32ShiftRightUnsignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::ShiftRightUnsigned, i.imm() as i32)?;
-            }
-            Op::WasmI32RotateLeftImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RotateLeft, i.imm() as i32)?;
-            }
-            Op::WasmI32RotateRightImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::RotateRight, i.imm() as i32)?;
-            }
-            Op::WasmI32EqualImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::Equal, i.imm() as i32)?;
-            }
-            Op::WasmI32NotEqualImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::NotEqual, i.imm() as i32)?;
-            }
-            Op::WasmI32LessSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32LessUnsignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessUnsigned, i.imm() as i32)?;
-            }
-            Op::WasmI32GreaterSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32GreaterUnsignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterUnsigned, i.imm() as i32)?;
-            }
-            Op::WasmI32LessEqualSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessEqualSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32LessEqualUnsignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::LessEqualUnsigned, i.imm() as i32)?;
-            }
-            Op::WasmI32GreaterEqualSignedImmediate => {
-                self.wasm_i32_binary(f, i, I32BinaryOperator::GreaterEqualSigned, i.imm() as i32)?;
-            }
-            Op::WasmI32GreaterEqualUnsignedImmediate => {
-                self.wasm_i32_binary(
-                    f,
-                    i,
-                    I32BinaryOperator::GreaterEqualUnsigned,
-                    i.imm() as i32,
-                )?;
-            }
-            Op::WasmJumpI32Equal => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::Equal)?;
-            }
-            Op::WasmJumpI32NotEqual => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::NotEqual)?;
-            }
-            Op::WasmJumpI32LessSigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::LessSigned)?;
-            }
-            Op::WasmJumpI32LessUnsigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::LessUnsigned)?;
-            }
-            Op::WasmJumpI32GreaterSigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::GreaterSigned)?;
-            }
-            Op::WasmJumpI32GreaterUnsigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::GreaterUnsigned)?;
-            }
-            Op::WasmJumpI32LessEqualSigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::LessEqualSigned)?;
-            }
-            Op::WasmJumpI32LessEqualUnsigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::LessEqualUnsigned)?;
-            }
-            Op::WasmJumpI32GreaterEqualSigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualSigned)?;
-            }
-            Op::WasmJumpI32GreaterEqualUnsigned => {
-                self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualUnsigned)?;
+            op if I32BinaryOperator::from_immediate_jump_op(op).is_some() => {
+                let operator = I32BinaryOperator::from_immediate_jump_op(op).expect("an i32 comparison");
+                self.wasm_i32_constant_jump(p, f, i, pc, operator)?;
             }
             Op::WasmFillRegisters => {
                 let value = self
@@ -484,36 +293,6 @@ impl<H: Host> Vm<H> {
                     i.register_c()
                 };
                 self.write(f, i.result_register(), self.read(f, source));
-            }
-            Op::WasmJumpI32EqualImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::Equal)?;
-            }
-            Op::WasmJumpI32NotEqualImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::NotEqual)?;
-            }
-            Op::WasmJumpI32LessSignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::LessSigned)?;
-            }
-            Op::WasmJumpI32LessUnsignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::LessUnsigned)?;
-            }
-            Op::WasmJumpI32GreaterSignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::GreaterSigned)?;
-            }
-            Op::WasmJumpI32GreaterUnsignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::GreaterUnsigned)?;
-            }
-            Op::WasmJumpI32LessEqualSignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::LessEqualSigned)?;
-            }
-            Op::WasmJumpI32LessEqualUnsignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::LessEqualUnsigned)?;
-            }
-            Op::WasmJumpI32GreaterEqualSignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualSigned)?;
-            }
-            Op::WasmJumpI32GreaterEqualUnsignedImmediate => {
-                self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualUnsigned)?;
             }
             Op::WasmI32ShiftRightUnsignedAndImmediate => {
                 let value = self.read(f, i.register_b()).wasm_bits32() as i32;
@@ -548,9 +327,13 @@ impl<H: Host> Vm<H> {
                     .expect("validated Wasm unary operator");
                 self.write(f, i.result_register(), Value::integer(operator.evaluate(value)));
             }
-            Op::WasmI64Binary => {
+            Op::WasmI64Binary | Op::WasmI64BinaryImmediate => {
                 let left = self.wasm_i64_operand(self.read(f, i.register_b()))?;
-                let right = self.wasm_i64_operand(self.read(f, i.register_c()))?;
+                let right = if i.op() == Op::WasmI64BinaryImmediate {
+                    i64::from(i.c() as i16)
+                } else {
+                    self.wasm_i64_operand(self.read(f, i.register_c()))?
+                };
                 let operator = crate::wasm::integer::I64BinaryOperator::from_tag(i.imm())
                     .expect("validated Wasm binary operator");
                 let value = operator

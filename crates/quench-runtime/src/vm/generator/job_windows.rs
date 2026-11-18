@@ -26,7 +26,7 @@ impl<H: Host> Vm<H> {
     /// a superinstruction, or a local addressed by an instruction no window handler reads
     /// (`Function::window_reads_locals`).
     pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
-        let nested = !self.lane_stack.activations.is_empty() || self.lane_deferred.is_some();
+        let nested = !self.lane_stack.activations().is_empty() || self.lane_deferred.is_some();
         let admitted = if nested {
             let innermost = self.innermost_lane_state();
             self.nested_lane_run(innermost, |vm| vm.run_lane_job(code, job, resume))
@@ -68,7 +68,10 @@ impl<H: Host> Vm<H> {
             SuspendKind::AsyncGenerator | SuspendKind::Generator => self.generator_record_mut(job.object)?.resume_windowed()?,
         };
         // SAFETY: the owner keeps the box, which nothing moves or drops until the run ends.
-        unsafe { &mut *frame }.receive(resume_register, sent);
+        let epoch = self.heap.collection_epoch();
+        let record = unsafe { &mut *frame };
+        record.settle_registers(epoch);
+        record.receive(resume_register, sent);
         Some(frame)
     }
 

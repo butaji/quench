@@ -1357,11 +1357,7 @@ impl ProgramStore {
         // A function its module lowers on its first call reads only the module's own pool.
         for function in entry.residual.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             for instruction in &function.code {
-                let instruction = if instruction.is_wide() {
-                    function.wide[instruction.wide_index()]
-                } else {
-                    instruction.as_wide()
-                };
+                let instruction = function.widened(*instruction);
                 let valid = match instruction.op().class() {
                     crate::bytecode::Class::WasmRefFunc => {
                         signatures.get(instruction.imm() as usize).is_some()
@@ -1522,6 +1518,18 @@ impl ProgramStore {
             None if import(usize::from(slot)) => RootSlotRule::Import,
             None => RootSlotRule::Binding,
         }
+    }
+
+    /// Whether every slot of `id`'s root environment is the binding itself
+    /// (`RootSlotRule::Binding`), as a strict eval's or a function-wrapped script's is: its
+    /// dense slots then serve a closure's captures as any function environment's do
+    /// (`Vm::target_capture`). A module's imports read through their records, so none is.
+    pub(crate) fn root_slots_are_bindings(&self, id: ProgramId) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.module || !entry.module_imports.is_empty() { return false; }
+        let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+        // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
+        (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
@@ -1964,10 +1972,12 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
 
+    #[inline]
     pub(super) fn tier_events(&self) -> &super::tier_events::TierEvents {
         &self.tier_events
     }
 
+    #[inline]
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
@@ -2636,7 +2646,8 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32) -> bool {
+    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`).
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
         };
@@ -2646,7 +2657,7 @@ impl ProgramStore {
                 .lane_deferred
                 .get(function as usize)
                 .is_some_and(deferred_run_completes)
-                && !entry.residual.runs_tier0(function as usize)
+                && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 
     pub(super) fn lane_view<'s>(
@@ -2665,6 +2676,28 @@ impl ProgramStore {
         let code = entry.residual.function_get(function as usize)?;
         let view = entry.lane_views.of(&entry.residual).get(function as usize)?;
         Some(derive_lane_view(entry, function, code, view, derive))
+    }
+
+    /// A view of `function` derived afresh from its bytecode and not stored, beside the view
+    /// its runs settled (requickened records) if one was derived: the lane plan
+    /// (`QUENCH_TRACE=bytecode=lanes`, `Vm::report_lane_plan`).
+    pub(super) fn plan_lane_view<'s>(
+        &'s self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+            &dyn Fn() -> Option<&'s std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
+            &[crate::bytecode::FieldSite],
+        ) -> super::dispatch_fast::LaneView,
+    ) -> Option<(super::dispatch_fast::LaneView, Option<&'s super::dispatch_fast::LaneView>)> {
+        let entry = self.lane_entry(id)?;
+        let code = entry.residual.function_get(function as usize)?;
+        let live = || entry.residual.shared_register_root_masks(function);
+        let fresh = derive(code, &entry.constants, entry.residual.kind, &live, &entry.residual.field_sites);
+        Some((fresh, entry.lane_views.derived(function)))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {

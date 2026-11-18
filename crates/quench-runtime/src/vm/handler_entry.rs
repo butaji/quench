@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let environment = self.iteration_environment(own, window.program, window.function, &[local], crate::bytecode::Resets::listed(&[]))?;
-        let Some(crate::heap::Cell::Environment { slots, .. }) = self.heap.get(environment) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(environment) else {
             return Err(JsError("invalid handler binding".into()));
         };
         let storage = std::ptr::from_ref(slots);

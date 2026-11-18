@@ -991,15 +991,12 @@ impl<H: Host> Vm<H> {
         // outer declaration even though their parent chain also contains that slot.
         let mut environment = *env;
         loop {
-            let Cell::Environment {
+            let crate::heap::EnvironmentRecord {
                 parent,
                 function: owner_function,
                 slots,
                 scope,
-            } = self.heap.get(environment)?
-            else {
-                return None;
-            };
+            } = self.heap.environment(environment)?;
             if scope.root_eval_scope()
                 || scope.binding_site_pc().is_some()
                 || !scope.with_objects().is_empty()

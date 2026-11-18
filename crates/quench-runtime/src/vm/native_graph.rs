@@ -394,7 +394,7 @@ fn object_fallback_table(
     let size = function.code.len().checked_mul(pointer_bytes).ok_or("native fallback table size overflow")?;
     let mut addresses = Vec::with_capacity(function.code.len());
     for (pc, packed) in function.code.iter().copied().enumerate() {
-        let op = super::dispatch_fast::decoded_instruction(function, packed).op();
+        let op = function.widened(packed).op();
         addresses.push(NativeFunctionAddress {
             offset: u32::try_from(pc * pointer_bytes).map_err(|_| "native fallback table offset exceeds u32")?,
             function: operations[op as usize].expect("collected operation"),

@@ -14,7 +14,8 @@ impl<H: Host> Vm<H> {
                 Some(this) => (ThisBinding::Lexical, this),
                 None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
             },
-            binding => (binding, Value::UNDEFINED),
+            // A sloppy function's plain `this`, the global object, is its function's.
+            binding => (binding, known.lexical_this),
         };
         Some(ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known })
     }
@@ -69,7 +70,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             let stores = entry.capture.addr() & CAPTURE_STORES;
-            let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+            let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
                 return None;
             };
             let storage = slots.dense_storage()?;
@@ -87,8 +88,8 @@ impl<H: Host> Vm<H> {
 
     /// `entry`'s target for `callee`, another closure of its function, read from the entry
     /// alone where the closures' environments are activations of one function in one
-    /// program: their capture facts then match (`target_capture`), and a receiver-binding
-    /// callee has no lexical `this` to read. Anything else resolves in `closure_target`.
+    /// program: their capture facts then match (`target_capture`); an arrow's lexical `this`
+    /// is read from its own environment. Anything else resolves in `closure_target`.
     #[inline(always)]
     fn sibling_closure_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
         // A sibling over the entry's own environment, as closures made over their maker's
@@ -97,9 +98,23 @@ impl<H: Host> Vm<H> {
         if env == entry.env {
             return Some(ScriptCallTarget { callee, ..*entry });
         }
-        if !entry.this_binding.binds_receiver() {
-            return None;
+        let mut target = self.sibling_capture_target(entry, callee, env)?;
+        // An arrow's `this` is its own environment's: read for the new one, as
+        // `closure_target` does, with every other fact kept.
+        // An arrow that reads none of its maker's implicit bindings keeps the entry's.
+        if entry.forms & TARGET_READS_IMPLICIT != 0 {
+            (target.this_binding, target.lexical_this) = match self.captured_lexical_this(env) {
+                Some(this) if this.is_deleted() => return None,
+                Some(this) => (ThisBinding::Lexical, this),
+                None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
+            };
         }
+        Some(target)
+    }
+
+    /// `sibling_closure_target`'s entry for `callee` over `env`, its captures read.
+    #[inline(always)]
+    fn sibling_capture_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
         // A closure of the same function over the same environment, as an immediately
         // invoked function expression makes at each run of its enclosing body: every fact
         // of the entry holds for it but its identity.
@@ -109,11 +124,11 @@ impl<H: Host> Vm<H> {
         if entry.capture.is_null() {
             return None;
         }
-        let Some(Cell::Environment { function: old, scope: old_scope, .. }) = self.heap.get(entry.env) else {
+        let Some(crate::heap::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap.reachable_environment(entry.env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
-        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.reachable_environment(env) else {
             return None;
         };
         if *function != old || scope.program() != old_program {

@@ -77,6 +77,20 @@ impl Lowering<'_, '_> {
     /// the closed program gives the field one value: the field is read once here as data and
     /// required to hold it, so a changed prototype fails the guard and leaves to the shared
     /// body. False, emitting nothing, otherwise.
+    /// The read at `pc` of a native member of a Stable global (`GlobalRead::NativeMember`), folded
+    /// to the function it held: the holder's values are a dependency (`hold_holder`), so a write
+    /// to one retires this code rather than each run re-reading the member.
+    /// `None` where the read is not one, or completes its frame or writes `this` besides.
+    pub(super) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
+        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, holder, .. }) = self.global_reads.get(&pc) else { return None };
+        if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
+        let exit = self.guard_exit(state, pc as u32);
+        self.hold_holder_any(state, exit, holder);
+        let constant = self.identity_constant(value);
+        self.define(state, instruction.result_register(), constant, RegisterFact::definition(Type::immediate(value), Representation::Tagged));
+        Some(true)
+    }
+
     pub(super) fn fold_frozen_field(&mut self, state: &mut State, read: (crate::bytecode::FieldBase, FieldLookup),
         first: (Atom, u16), destination: Register, exit: ir::Block) -> bool {
         if !self.division().folds(crate::staged::division::FROZEN_FIELD) { return false; }
@@ -109,7 +123,23 @@ impl Lowering<'_, '_> {
                 None => state.proofs.fields.push(read),
             }
         }
+        self.define_read_value(state, (pc, instruction), (value, ty), exit);
+    }
+
+    /// Defines `instruction`'s register as the `value` it read, of the slots' type `ty`: a raw
+    /// double's Number, an int32 view, or a tagged value proved Number where only Number
+    /// operations read it.
+    fn define_read_value(&mut self, state: &mut State, (pc, instruction): (usize, WideInstruction), (value, ty): (ir::Value, Type),
+        exit: ir::Block) {
         let destination = instruction.result_register();
+        // A raw double's read boxed its binary64 word (`compiled::take_boxed_numbers`): the
+        // register holds that word, and the box, which nothing else reads, folds away; an exit
+        // boxes the register on its own path.
+        let bits = self.builder.func.dfg.resolve_aliases(value);
+        if let Some(number) = state.proofs.numbers.iter().find(|(source, _)| *source == bits).map(|(_, number)| *number) {
+            self.set_number(state, destination, number);
+            return;
+        }
         let described = if ty == Type::INT32 { Type::ANY } else { ty };
         self.define(state, destination, value, RegisterFact::definition(described, Representation::Tagged));
         // A slot that has held doubles, read only by Number operations: prove Number here,

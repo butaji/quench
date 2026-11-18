@@ -50,6 +50,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
             Kind::Dot | Kind::LBrack => self.ctx.super_property,
             _ => false,
         };
+        self.names_super |= valid && self.ctx.home;
         valid.then_some(Form::Other)
     }
 

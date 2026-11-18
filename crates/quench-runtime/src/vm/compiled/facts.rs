@@ -67,7 +67,9 @@ impl Facts {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
         let relations = |rows: &[Option<Register>]| rows.get(start..start + self.registers).map_or_else(Vec::new, <[_]>::to_vec);
         run::Point { types: self.types[start..start + self.registers].iter().copied().collect(),
-            relations: Relations { length_of: relations(&self.length_of), below: relations(&self.below), under: relations(&self.under) } }
+            relations: { let (length_of, below, under) = (relations(&self.length_of), relations(&self.below), relations(&self.under));
+                let held = [&length_of, &below, &under].iter().any(|rows| rows.iter().any(Option::is_some));
+                Relations { length_of, below, under, held } } }
     }
 
     /// The types on entry to the block led by `pc`. Rows share one flat buffer;
@@ -157,13 +159,18 @@ impl Facts {
                 let start = offset.get() - 1;
                 let widening = self.headers.contains(pc) && self.rounds.get(pc).is_some_and(|rounds| *rounds >= WIDENING_ROUNDS);
                 let mut changed = false;
+                // Most edges bring a row equal to the one held, register by register: the
+                // join of equal types is the type, so only differing registers join.
                 for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
+                    if *known == *incoming { continue; }
                     let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };
                     changed |= joined != *known;
                     *known = joined;
                 }
                 for (rows, theirs) in [(&mut self.length_of, &relations.length_of), (&mut self.below, &relations.below), (&mut self.under, &relations.under)] {
-                    for (known, theirs) in rows.get_mut(start..start + theirs.len()).into_iter().flatten().zip(theirs) {
+                    let Some(known) = rows.get_mut(start..start + theirs.len()) else { continue };
+                    if known == theirs.as_slice() { continue; }
+                    for (known, theirs) in known.iter_mut().zip(theirs) {
                         changed |= lengths::meet(known, *theirs);
                     }
                 }
@@ -203,6 +210,12 @@ pub(in crate::vm) fn operand_type(constants: &[Constant], operand: Operand, regi
         Some(OperandKind::Constant) => constants.get(usize::from(operand.payload())).map_or(Type::ANY, constant_type),
         _ => Type::ANY,
     }
+}
+
+/// Whether a value of type `ty` is known to be no Number (a string, a boolean, `null`): a relation
+/// reading it is no Number comparison.
+pub(in crate::vm) fn numberless(ty: Type) -> bool {
+    !ty.is_subtype(Type::NUMBER) && !Type::NUMBER.is_subtype(ty)
 }
 
 pub(super) fn prove_number(types: &mut [Type], operands: [Operand; 2]) {
@@ -267,8 +280,11 @@ fn transfer(
             let operand_types = operands.map(|operand| operand_type(constants, operand,
                 |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
             let operator = instruction.binary_operator_field();
+            // So does a relation with an operand known to hold no Number (`numberless`), which
+            // the lane decides by the interpreter's rule (`Lowering::decided_relation`).
             let numeric = super::super::operations::NumberRelation::from_operator(operator).is_some()
-                && super::super::operations::equality_operator(operator).is_none();
+                && super::super::operations::equality_operator(operator).is_none()
+                && !operand_types.iter().any(|ty| numberless(*ty));
             if numeric && !operand_types.iter().all(|ty| ty.is_subtype(Type::INT32)) { prove_number(types, operands); }
             Flow::To(instruction.jump_target() as usize)
         }
@@ -367,7 +383,8 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
     written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>) -> Flow {
     let flow = unary_transfer(types, instruction)
         .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
-    if let Some(ty) = observed.filter(|_| instruction.op().class().eq(Class::GetIndex)) {
+    // `observed` names only the reads the observation typed (element reads, `length` reads).
+    if let Some(ty) = observed {
         for register in written(instruction) { set(types, register, ty); }
     }
     flow
@@ -380,13 +397,13 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitSet,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     // Each unsuccessful iteration removes at least one candidate. Compile
     // work is bounded by candidate count, without a semantic iteration cap.
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
         for register in candidates.iter() { inputs[register] = Type::INT32; }
-        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, Seeds::observing(observed));
+        let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, raises, Seeds::observing(observed));
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
             if !facts.backedge().get(register).is_some_and(|ty| ty.is_int32()) { rejected.insert(register); }
@@ -411,11 +428,11 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
 pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Contract, std::ops::RangeInclusive<usize>)>,
     instructions: &[WideInstruction], leaders: &CompoundBitSet, constants: &[Constant],
     written: &dyn Fn(WideInstruction) -> Vec<Register>, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>,
-    native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
+    native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
     while !candidates.is_empty() {
         let contracts: Vec<Contract> = candidates.iter().map(|(contract, _)| *contract).collect();
         let seeds = Seeds { contracts: &contracts, ..Seeds::observing(observed) };
-        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, seeds);
+        let facts = analyze(entry, initial, instructions, leaders, constants, written, own_shape, native_calls, raises, seeds);
         let mut rejected = vec![false; candidates.len()];
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             for (index, ((_, candidate, required), body)) in candidates.iter().enumerate() {
@@ -441,7 +458,7 @@ pub(super) fn loop_int32(entry: usize, initial: &[Type], mut candidates: Vec<(Co
 pub(in crate::vm) use immediates::{constant_number, constant_type, immediate, is_int32};
 pub(in crate::vm) use binary::{generic_operator, heap_primitive_binary};
 pub(super) use lengths::IndexProof;
-pub(super) use run::{analyze, analyze_text, Model, Point, Seeds, Text};
+pub(super) use run::{analyze, analyze_text, Model, Point, Raise, Seeds, Text};
 
 #[cfg(test)]
 #[path = "facts/decode_ratchet.rs"] mod decode_ratchet;

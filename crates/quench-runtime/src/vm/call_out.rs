@@ -52,8 +52,11 @@ impl<H: Host> Vm<H> {
             CallOut::Equality { .. } | CallOut::Binary { .. } | CallOut::Delete { .. } | CallOut::Decide { .. } =>
                 self.operator_step(p, site, operation, (first, operand)),
             CallOut::ForInNext { .. } => Ok(Some(self.for_in_next(p, operand)?.unwrap_or(Value::DELETED))),
+            CallOut::EnumeratedGet { .. } => self.get_index(p, first.expect("an enumerated read names its base"), operand).map(Some),
+            CallOut::Protocol { step: Protocol::RestView { get, fixed, rest }, .. } =>
+                self.rest_view_step(p, site, (get, fixed, rest), first, second.unwrap_or(Value::UNDEFINED)).map(Some),
             CallOut::Protocol { step, .. } => self.protocol_step(p, step, first, second),
-            CallOut::Spread { passing, .. } => self.spread_call(p, passing, [first, second], &list).map(Some),
+            CallOut::Spread { passing, .. } => self.spread_call(p, site, passing, [first, second], &list).map(Some),
             CallOut::SuperCall { passing, .. } => self.super_call(p, passing, first, &list).map(Some),
             _ => self.name_step(p, site, operation, first),
         }
@@ -188,6 +191,7 @@ impl<H: Host> Vm<H> {
             Protocol::GetIterator => self.get_iterator(p, source).map(Some),
             Protocol::ForInStart => self.for_in_start(p, source).map(Some),
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
+            Protocol::RestView { .. } => unreachable!("a rest view's step reads its activation (`rest_view_step`)"),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;

@@ -44,8 +44,14 @@ mod places;
 mod stage;
 mod staged;
 mod supernode_rows;
+mod wasm;
+mod wasm_codes;
+#[cfg(all(fixed_rows, target_arch = "x86_64"))]
+mod wasm_entry;
+mod wasm_rows;
 mod words;
 pub(crate) use facade::{Value, bytecode, heap, operations, typed_ir, units, value, value_vec, vm};
+pub(crate) use wasm::{WasmTrap, WasmType};
 
 use numeric::{Out, S};
 
@@ -110,6 +116,25 @@ macro_rules! supernode_row {
             unsafe {
                 let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
                 match supernode_rows::run::<{ $first }, { $k0 }, { $e0 }, { $d0 }, { $a0 }, { $b0 }, { $s0 }, { $k1 }, { $d1 }, { $a1 }, { $b1 }, { $s1 }>(s) {
+                    Out::Next(s) => go!(HOLE_NEXT, s),
+                    Out::Taken(s) => go!(HOLE_TAKEN, s),
+                    Out::Exit(s) => {
+                        core::hint::cold_path();
+                        go!(HOLE_EXIT0, s)
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! wasm_row {
+    ($name:ident, $k:expr, $op:expr, $w:expr, $shape:expr) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
+            unsafe {
+                let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
+                match wasm_rows::run::<{ $k }, { $op }, { $w }, { $shape }>(s) {
                     Out::Next(s) => go!(HOLE_NEXT, s),
                     Out::Taken(s) => go!(HOLE_TAKEN, s),
                     Out::Exit(s) => {

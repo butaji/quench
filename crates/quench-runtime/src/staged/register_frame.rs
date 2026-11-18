@@ -86,6 +86,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
 
+    /// The heap's array and object record tables and its collection epoch, where the frame reads
+    /// live records (the interpreter's lane); `None` where it does not, leaving a row that needs
+    /// them to its call-out.
+    #[inline(always)]
+    fn heap_records(&mut self, _stage: &mut S) -> Option<(S::Word, S::Word, S::Word)> { None }
+
     /// The element store's host helper; `None` where the frame has no helper table.
     #[inline(always)]
     fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }
@@ -113,6 +119,13 @@ pub(crate) trait Frame<S: Stage> {
     /// binding is not one only kept values answer.
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// A rest view's read (`Protocol::RestView`): `rest.length` (`get` false) or `rest[key]`
+    /// of the values its activation kept past its first `fixed` parameters; `None` where the
+    /// frame keeps none of its own or `key` is no index they hold. The row answers the value and
+    /// its runner defines the destination.
+    #[inline(always)]
+    fn rest_view(&mut self, _stage: &mut S, _get: bool, _fixed: usize, _key: Option<Register>) -> Option<(S::Word, Self::Fact)> { None }
 
     /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
     /// decide it, defining `result` where the operation has one: the word it defined with the

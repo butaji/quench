@@ -338,6 +338,28 @@ impl FunctionCompiler<'_, '_> {
             && self.owner.atoms[atom as usize].contains(crate::bytecode::SELF_BINDING_MARKER)
     }
 
+    /// Whether `store_atom_with_initialization` of `atom` writes only this activation's
+    /// own local (a register or a local slot): no `with` object, dynamic scope, global mirror
+    /// or immutable binding can observe or refuse it, so it runs no guest code and never throws.
+    pub(super) fn stores_locally(&self, atom: Atom, initializing: bool) -> bool {
+        let source_atom = self.parameter_binding_atom(atom);
+        let binding_kind = self.lexical_binding_kind(source_atom);
+        if self.dynamic_eval || self.with_depth != 0 || self.with_depth != self.inherited_with_depth
+            || (!initializing && binding_kind != LexicalBindingKind::Mutable)
+            || self.owner.atoms[source_atom as usize].contains("\0quench:class-binding:")
+        {
+            return false;
+        }
+        let lexical = self.active_lexical_binding(source_atom);
+        let compiler_binding = self.is_compiler_binding(source_atom);
+        let atom = lexical.unwrap_or(source_atom);
+        if self.owner.atoms[atom as usize].contains("\0quench:class-binding:") {
+            return false;
+        }
+        let mirrored = lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal;
+        !mirrored && (self.frame_var(atom) || lexical.is_some() || compiler_binding) && self.local_slots.contains_key(&atom)
+    }
+
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
         self.store_atom_with_initialization(atom, value, false);
     }
@@ -408,7 +430,14 @@ impl FunctionCompiler<'_, '_> {
                     u32::from(slot),
                 );
             }
-            if lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal {
+            // A root `var` is the global object's property too, except in strict eval code,
+            // whose vars are the eval's own (`ResidualProgram::root_variables_are_local`).
+            if lexical.is_none()
+                && !compiler_binding
+                && self.function_id == 0
+                && !self.owner.module_goal
+                && !(self.strict && self.owner.eval_context.is_some())
+            {
                 let cache = self.owner.cache_site();
                 self.emit(
                     Op::StoreName,
@@ -652,6 +681,7 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
+        let object_expression = object;
         if let Some(slot) = self.arguments_binding_slot(object) {
             let key = self.last_operand(key);
             let dst = self.reg();
@@ -692,10 +722,27 @@ impl FunctionCompiler<'_, '_> {
             }
             None => {}
         }
+        if let Some(state) = self.enumerated_state(object_expression, key) {
+            let key = self.expression(key);
+            let state = self.load_atom(state);
+            let dst = self.reg();
+            let pair = crate::bytecode::ImmediateLayout::register_pair_immediate(state, state);
+            self.emit(Op::GetEnumerated, dst, object, key, pair);
+            return dst;
+        }
         let key = self.last_operand(key);
         let dst = self.reg();
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
+    }
+
+    /// The state's hidden local of the innermost for-in whose body this read `o[k]` is in, where
+    /// `o` and `k` are the identifiers it lists and binds; the row guards they still are.
+    fn enumerated_state(&self, object: &Expression<'_>, key: &Expression<'_>) -> Option<Atom> {
+        let (Expression::Identifier(object), Expression::Identifier(key)) = (object, key) else { return None };
+        self.enumerations.iter().rev()
+            .find(|enumeration| enumeration.object == object.name.as_str() && enumeration.key == key.name.as_str())
+            .map(|enumeration| enumeration.state)
     }
 
     pub(super) fn emit_set_field(
@@ -881,6 +928,15 @@ impl FunctionCompiler<'_, '_> {
             Expression::UnaryExpression(unary) if unary.operator == UnaryOperator::LogicalNot => {
                 self.false_exits(&unary.argument)
             }
+            // A comparison's true edge is its fused test's fall-through, then a jump: the
+            // comparison is never made into a boolean that a second test reads again, so every
+            // tier decides it as the one compare-and-jump `false_exit` emits.
+            Expression::BinaryExpression(binary) if fuses_with_jump(binary.operator) => {
+                let skip = self.false_exit(value);
+                let taken = self.emit(Op::Jump, 0, 0, 0, 0);
+                self.patch(skip);
+                smallvec::smallvec![taken]
+            }
             _ => {
                 let test = self.expression(value);
                 smallvec::smallvec![self.emit(Op::JumpTrue, test, 0, 0, 0)]
@@ -897,7 +953,11 @@ impl FunctionCompiler<'_, '_> {
 
     /// The single jump a test that is no `&&`, `||` or `!` takes when `value` is falsy.
     fn false_exit(&mut self, value: &Expression<'_>) -> usize {
-        if let Expression::BinaryExpression(binary) = value {
+        // Only a comparison fuses with its jump: an arithmetic or bitwise result (`if (i & 3)`)
+        // is a Number every tier makes in its own row, whose truthiness `JumpFalse` tests.
+        if let Expression::BinaryExpression(binary) = value
+            && fuses_with_jump(binary.operator)
+        {
             if let Some(test) = self.typeof_test(binary) {
                 return self.emit(Op::JumpFalse, test, 0, 0, 0);
             }
@@ -930,6 +990,21 @@ impl FunctionCompiler<'_, '_> {
         }
         dst
     }
+}
+
+/// Whether a test of `operator`'s result is one compare-and-jump (`JumpBinaryFalse`): the
+/// relations, the equalities, `in` and `instanceof`, whose result is a boolean.
+fn fuses_with_jump(operator: oxc_ast::ast::BinaryOperator) -> bool {
+    use oxc_ast::ast::BinaryOperator as B;
+    matches!(operator, B::LessThan | B::LessEqualThan | B::GreaterThan | B::GreaterEqualThan | B::Equality | B::Inequality
+        | B::StrictEquality | B::StrictInequality | B::In | B::Instanceof)
+}
+
+/// `fuses_with_jump` of an operator's bytecode number.
+pub(crate) fn fuses_with_jump_operator(operator: u32) -> bool {
+    use oxc_ast::ast::BinaryOperator as B;
+    [B::LessThan, B::LessEqualThan, B::GreaterThan, B::GreaterEqualThan, B::Equality, B::Inequality,
+        B::StrictEquality, B::StrictInequality, B::In, B::Instanceof].into_iter().any(|candidate| candidate as u32 == operator)
 }
 
 /// A comparison of a constant with a register, `C < r`, as the mirrored comparison of the

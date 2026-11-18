@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
             return;
         }
         let function = p.function(frame.function as usize);
-        let op = dispatch_fast::decoded_instruction(function, function.code[pc as usize]).op();
+        let op = function.widened(function.code[pc as usize]).op();
         let lands = self.name_lands_on_global_object(p, VarOwner::Frame(self.frames.len() - 1), atom);
         if let Some(view) = self
             .programs

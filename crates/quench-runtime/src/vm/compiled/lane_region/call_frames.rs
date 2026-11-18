@@ -7,7 +7,7 @@
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::flow::FlowStage;
-use crate::staged::machine::{Lane, MachineScalar, Relation};
+use crate::staged::machine::{Binary, Lane, MachineScalar, Relation};
 use super::frame::{Edges, EmitFrame, FRAME};
 use super::relocs::address;
 use super::super::entry_cell::{EntryCell, LANE_BODY_NOT_ENTERED, RAISED_RUN};
@@ -205,7 +205,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         self.push_native(stage, callee, this, room);
         let entry = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, entry)));
         let signature = lane_body_signature(types::I64, stage.builder.func.signature.call_conv);
-        let signature = stage.builder.import_signature(signature);
+        let signature = crate::vm::jit_backend::signature_ref(stage.builder.func, signature);
         let captures = address(self.helpers, stage.builder, RelocKind::CaptureWords, callee.target.function,
             callee.capture_word());
         let (status, word) = stage.call_entry(signature, entry, &[call.context, this, captures, room.top]);
@@ -224,24 +224,28 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         self.pop_native(stage, room);
         stage.store_u64(FRAME, call.registers, register_offset(site.result), value);
         stage.jump(call.completed, &[]);
-        let (left, missed, threw, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
-        for block in [left, missed, threw, raised] {
+        let (left, missed, raised) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
+        for block in [left, missed, raised] {
             stage.builder.set_cold_block(block);
         }
+        // A callee that never entered and one that threw both pop the frame, once, in one
+        // block; a leave keeps it pushed for the lane to link.
+        let popped = stage.builder.create_block();
+        stage.builder.set_cold_block(popped);
         stage.builder.switch_to_block(entered.unfinished);
         let not_entered = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
-        stage.branch(not_entered, (missed, &[]), (threw, &[]));
-        stage.builder.switch_to_block(missed);
-        self.pop_native(stage, room);
-        stage.jump(helper, &[]);
-        stage.builder.switch_to_block(threw);
         let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_THREW));
-        stage.branch(did_raise, (raised, &[]), (left, &[]));
+        let pops = stage.raw_binary(Binary::Or, not_entered, did_raise);
+        stage.branch(pops, (popped, &[]), (left, &[]));
+        stage.builder.switch_to_block(popped);
+        self.pop_native(stage, room);
+        stage.branch(not_entered, (missed, &[]), (raised, &[]));
+        stage.builder.switch_to_block(missed);
+        stage.jump(helper, &[]);
         stage.builder.switch_to_block(raised);
         let counters = stage.load_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)));
         let counted = stage.add_imm(counters, RAISED_RUN);
         stage.store_u64(ENTRY_CELL, room.cell, field(std::mem::offset_of!(EntryCell, counters)), counted);
-        self.pop_native(stage, room);
         stage.jump(call.raised, &[]);
         stage.builder.switch_to_block(left);
         call.leave.with(stage.builder, entered.status, Some(entered.word));

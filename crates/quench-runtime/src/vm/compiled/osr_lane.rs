@@ -35,7 +35,7 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
     captures
 }
 
-/// Binds the capture view: a region that stores a capture reads the activation's own slots,
+/// Binds the capture view: a region that stores a capture or calls reads the activation's own slots,
 /// as a lane body does; otherwise the returned dense view, which the dispatch points at and
 /// the caller keeps alive for the run.
 ///
@@ -44,7 +44,10 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
 pub(super) unsafe fn bind_captures<H: Host>(
     native: &mut JsNativeActivation, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
 ) -> Vec<crate::Value> {
-    let live = (!region.stored_captures.is_empty())
+    // A region that calls reads its captures live too where the lane has them: a callee may
+    // store one, which a copy would not see. Where it has none, the copy as before.
+    let calls = region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
+    let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
     let none = region.captures.is_empty() && region.stored_captures.is_empty();
@@ -136,5 +139,5 @@ pub(super) unsafe fn enter<H: Host>(
     }
     let exit = LaneExit::read(status, word, || native.dispatch.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
-    RegionRun { exit, nested: vm.lane_stack.activations.native_depth() != 0 }
+    RegionRun { exit, nested: vm.lane_stack.activations().native_depth() != 0 }
 }

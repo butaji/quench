@@ -1,5 +1,5 @@
 use super::{
-    ArrayObject, AwaitState, Cell, EnvironmentBindings, FunctionRecord, IteratorRecord,
+    ArrayObject, AwaitState, Cell, EnvironmentBindings, EnvironmentRecord, FunctionRecord, IteratorRecord,
     PromiseCell, EnvironmentSlotState, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
@@ -101,23 +101,17 @@ impl Heap {
     }
 
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
-        match self.get(environment)? {
-            Cell::Environment { scope, .. } => match scope.dynamic_bindings() {
-                EnvironmentBindings::Owned(_) => Some(environment),
-                EnvironmentBindings::Shared(owner) => Some(*owner),
-            },
-            _ => None,
+        match self.environment(environment)?.scope.dynamic_bindings() {
+            EnvironmentBindings::Owned(_) => Some(environment),
+            EnvironmentBindings::Shared(owner) => Some(*owner),
         }
     }
 
     pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
-        match self.get(owner)? {
-            Cell::Environment { scope, .. } => match scope.dynamic_bindings() {
-                EnvironmentBindings::Owned(bindings) => Some(bindings),
-                EnvironmentBindings::Shared(_) => None,
-            },
-            _ => None,
+        match self.environment(owner)?.scope.dynamic_bindings() {
+            EnvironmentBindings::Owned(bindings) => Some(bindings),
+            EnvironmentBindings::Shared(_) => None,
         }
     }
 
@@ -126,38 +120,24 @@ impl Heap {
         environment: Value,
     ) -> Option<&mut Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
-        match self.get_mut(owner)? {
-            Cell::Environment { scope, .. } => match &mut scope.make_mut().dynamic_bindings {
-                EnvironmentBindings::Owned(bindings) => Some(bindings),
-                EnvironmentBindings::Shared(_) => None,
-            },
-            _ => None,
+        match &mut self.environment_mut(owner)?.scope.make_mut().dynamic_bindings {
+            EnvironmentBindings::Owned(bindings) => Some(bindings),
+            EnvironmentBindings::Shared(_) => None,
         }
     }
 
     pub(crate) fn environment_slot_owner(&self, environment: Value, slot: usize) -> Option<Value> {
-        let Cell::Environment { slots, .. } = self.get(environment)? else {
-            return None;
-        };
-        match slots.state(slot)? {
+        match self.environment(environment)?.slots.state(slot)? {
             EnvironmentSlotState::Owned(_) => Some(environment),
             EnvironmentSlotState::Shared(owner) => Some(owner),
         }
     }
 
     pub(crate) fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
-        let Cell::Environment { slots, .. } = self.get(environment)? else {
-            return None;
-        };
-        match slots.state(slot)? {
+        match self.environment(environment)?.slots.state(slot)? {
             EnvironmentSlotState::Owned(value) => Some(value),
             // A shared slot names its owner, which holds the slot itself.
-            EnvironmentSlotState::Shared(owner) => {
-                let Cell::Environment { slots, .. } = self.get(owner)? else {
-                    return None;
-                };
-                slots.owned(slot)
-            }
+            EnvironmentSlotState::Shared(owner) => self.environment(owner)?.slots.owned(slot),
         }
     }
 
@@ -167,10 +147,7 @@ impl Heap {
         slot: usize,
     ) -> Option<&mut Value> {
         let owner = self.environment_slot_owner(environment, slot)?;
-        let Cell::Environment { slots, .. } = self.get_mut(owner)? else {
-            return None;
-        };
-        slots.owned_mut(slot)
+        self.environment_mut(owner)?.slots.owned_mut(slot)
     }
 
     /// A per-iteration copy of `environment`: the `fresh` slots own the current values,
@@ -181,14 +158,8 @@ impl Heap {
         fresh: &[u16],
         reset: crate::bytecode::Resets<'_>,
     ) -> Option<EnvironmentSlots> {
-        let Cell::Environment { slots, .. } = self.get(environment)? else {
-            return None;
-        };
-        slots.iteration_copy(environment, fresh, reset, |owner, index| {
-            let Cell::Environment { slots, .. } = self.get(owner)? else {
-                return None;
-            };
-            slots.owned(index)
+        self.environment(environment)?.slots.iteration_copy(environment, fresh, reset, |owner, index| {
+            self.environment(owner)?.slots.owned(index)
         })
     }
 
@@ -338,6 +309,41 @@ impl Heap {
     }
 
     /// `await_state`, mutably, past the write barrier.
+    /// The environment `value` names, while it lives.
+    #[inline(always)] pub(crate) fn environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        // SAFETY: an occupied id names an initialized record.
+        self.environment_records.is_live(record_id).then(|| unsafe { self.environment_records.get_live(record_id) })
+    }
+
+    /// `environment` of a value reached from a live root, a register or another live record's
+    /// link, which the collector keeps live: no occupancy test (checked in debug builds). The
+    /// lane's hot capture reads take this; a value of unknown provenance takes `environment`.
+    #[inline(always)] pub(crate) fn reachable_environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
+        // SAFETY: a reachable record is live, so occupied and initialized.
+        Some(unsafe { self.environment_records.get_live(record_id) })
+    }
+
+    /// `reachable_environment`, mutably, past the write barrier.
+    #[inline(always)] pub(crate) fn reachable_environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
+        // SAFETY: as `reachable_environment`; `&mut self` is exclusive.
+        Some(unsafe { self.environment_records.get_live_mut(record_id, &self.properties) })
+    }
+
+    /// `environment`, mutably, past the write barrier.
+    #[inline(always)] pub(crate) fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        if !self.environment_records.is_live(record_id) {
+            return None;
+        }
+        // SAFETY: occupied, so initialized; `&mut self` is exclusive.
+        Some(unsafe { self.environment_records.get_live_mut(record_id, &self.properties) })
+    }
+
     #[inline(always)] pub(crate) fn await_state_mut(&mut self, value: Value) -> Option<&mut AwaitState> {
         if let Some(record_id) = value.direct_await_index() {
             // SAFETY: direct-await Values name live records; `&mut self` is exclusive.
@@ -559,7 +565,7 @@ impl Heap {
             HeapReference::IteratorRecord(record_id) => {
                 &mut unsafe { iterator_records.get_live_mut(record_id, properties) }.object
             }
-            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) => {
+            HeapReference::AwaitRecord(_) | HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::EnvironmentRecord(_) => {
                 return None;
             }
             HeapReference::LegacySlot(index) => {
@@ -602,6 +608,22 @@ impl Heap {
             Cell::Array { object } => Some(object),
             _ => None,
         }
+    }
+
+    /// The object part of an array, function or ordinary builtin, whose own layout a held
+    /// read guards (`IcOp::Held`): an array's inline, the rest out of line.
+    #[inline(always)]
+    pub(crate) fn held_other_receiver(&self, value: Value) -> Option<&Object> {
+        if let Some(array) = self.record_array(value) { return Some(array); }
+        self.held_cell_receiver(value)
+    }
+
+    /// `held_other_receiver` of a function or ordinary builtin.
+    #[cold]
+    #[inline(never)]
+    fn held_cell_receiver(&self, value: Value) -> Option<&Object> {
+        let function = value.direct_function_index().and_then(|_| self.function(value));
+        function.map(|function| &function.object).or_else(|| self.ordinary_builtin_object(value))
     }
 
     /// The array a direct-array Value names; `None` for any other value, including an array
@@ -742,6 +764,13 @@ impl Heap {
         self.object_records.base_ptr()
     }
 
+    /// `object_record_base` untested, for a read that proves its receiver a direct object before
+    /// it addresses the table (`object_record_by_id`'s contract).
+    #[inline(always)]
+    pub(crate) fn live_object_records(&self) -> *const Object {
+        self.object_records.live_base()
+    }
+
     /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).
     pub(crate) fn function_record_base(&self) -> Option<*const FunctionRecord> {
         self.function_records.base_ptr()
@@ -793,6 +822,7 @@ impl Heap {
             | HeapReference::AwaitRecord(_)
             | HeapReference::StringRecord(_)
             | HeapReference::V128Record(_)
+            | HeapReference::EnvironmentRecord(_)
             | HeapReference::LegacySlot(_) => None,
         }
     }
@@ -847,6 +877,7 @@ impl Heap {
                 None => self.string_records.is_live(id),
             },
             Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
+            Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_live(id),
             None => false,
         }
     }

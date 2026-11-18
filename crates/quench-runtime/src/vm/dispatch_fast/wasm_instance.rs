@@ -192,7 +192,7 @@ lane_handler! {
 #[inline(never)]
 fn lane_instance_slot_miss<H: Host>(cx: *mut LaneContext<H>, env: Value, slot: usize) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if let Some(Cell::Environment { slots, .. }) = vm.heap.get(env)
+    if let Some(crate::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(env)
         && let Some(storage) = slots.dense_storage()
     {
         unsafe { (*cx).instance_slots = (env, storage) };

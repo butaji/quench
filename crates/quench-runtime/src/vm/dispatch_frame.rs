@@ -548,7 +548,7 @@ impl<H: Host> Vm<H> {
         if !lane_runs
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.lane_admits(p)
-            || !self.programs.lane_call_may_derive(program, id)
+            || !self.programs.lane_call_may_derive(program, id, false)
         {
             return std::ptr::null();
         }
@@ -913,7 +913,11 @@ impl<H: Host> Vm<H> {
             .locals
             .resize(usize::from(function.locals), Value::UNDEFINED);
         if function.rest {
-            frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+            // A rest view's local stays `undefined`: its reads take the values past the fixed
+            // parameters from those the frame keeps (`RestGet`), below.
+            if !function.rest_view() {
+                frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+            }
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
@@ -927,7 +931,7 @@ impl<H: Host> Vm<H> {
             };
         }
         self.initialize_frame_invocation(p, frame, function, context, args);
-        if forwards_arguments {
+        if forwards_arguments || function.rest && function.rest_view() {
             // The frame keeps every argument for the object it may still materialize; legacy
             // reflection reads the same values, since such a frame reflects no parameter.
             debug_assert_eq!(frame.reflected_parameters, 0);
@@ -1368,31 +1372,27 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| JsError("invalid environment clone owner".into()))?,
             )
         };
-        let Some(Cell::Environment {
+        let Some(crate::heap::EnvironmentRecord {
             parent,
             function,
             scope,
             ..
-        }) = self.heap.get(source)
+        }) = self.heap.environment(source)
         else {
             return Err(JsError("invalid environment clone".into()));
         };
-        let environment = Cell::Environment {
-            parent: *parent,
-            function: *function,
-            slots,
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
-                program: scope.program(),
-                root_eval_scope: scope.root_eval_scope(),
-                binding_site_pc: scope.binding_site_pc(),
-                dynamic_bindings: owner.map_or_else(
-                    || crate::heap::EnvironmentBindings::Owned(Vec::new()),
-                    crate::heap::EnvironmentBindings::Shared,
-                ),
-                with_objects: scope.with_objects().into(),
-            }),
-        };
-        Ok(self.heap.alloc(environment))
+        let (parent, function) = (*parent, *function);
+        let scope_ref = crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+            program: scope.program(),
+            root_eval_scope: scope.root_eval_scope(),
+            binding_site_pc: scope.binding_site_pc(),
+            dynamic_bindings: owner.map_or_else(
+                || crate::heap::EnvironmentBindings::Owned(Vec::new()),
+                crate::heap::EnvironmentBindings::Shared,
+            ),
+            with_objects: scope.with_objects().into(),
+        });
+        Ok(self.heap.alloc_environment(parent, function, slots, scope_ref).0)
     }
 
     pub(super) fn activate_frame(&mut self, frame: &mut Frame) {
@@ -1592,7 +1592,7 @@ impl<H: Host> Vm<H> {
             let stops_here = running == frame
                 && pending_calls.is_empty()
                 && executing.id == program
-                && self.lane_raised.is_none()
+                && !self.lane_completion.is_raised()
                 && pc < body.code.len();
             if stops_here
                 && let Some(outcome) = self.lane_stop_outcome(p, frame, cursor.instruction(pc), pc, body.is_async)
@@ -1600,7 +1600,7 @@ impl<H: Host> Vm<H> {
                 return Ok(outcome);
             }
             self.frames[running].pc = pc;
-            let raised = self.lane_raised.take();
+            let raised = self.lane_completion.take_raised();
             self.run_frames_after_lane_exit(p, running, &mut pending_calls, LaneExit { executing, raised })
         })();
         pending_calls.clear();
@@ -1625,7 +1625,7 @@ impl<H: Host> Vm<H> {
         pc: usize,
         asynchronous: bool,
     ) -> Option<FrameOutcome> {
-        let returned = match self.lane_returned.take() {
+        let returned = match self.lane_completion.take_returned() {
             Some(value) => Some(value),
             None if instruction.op().is_return() => Some(self.read(frame, instruction.register_a())),
             None => None,
@@ -1732,6 +1732,9 @@ impl<H: Host> Vm<H> {
         // retains after a cross-program tail call. Updated only where that switch happens.
         let mut executing_residual: *const ResidualProgram = current_program.as_deref().unwrap_or(entry_program);
         let mut frame = frame;
+        // The completion a call the lane made returned from the frame it left in, taken once
+        // per lane exit (`LaneCompletion::Returned`) and returned at that instruction.
+        let mut lane_returned = self.lane_completion.take_returned();
         // The initial Wasm activation is allocated before the dispatch loop and has no
         // caller guard. Account it here so root and reentrant Wasm entries obey the same
         // frame-payload limit as Wasm calls pushed by the loop.
@@ -1856,6 +1859,7 @@ impl<H: Host> Vm<H> {
             if !resumed && native_step.is_none() && Self::lane_enters(cursor.lane, pc, entering_after_lane_exit) {
                 let mut executing = ExecutingProgram { id: executing_program, retained: current_program.take() };
                 pc = self.run_fast_lane(p, cursor.program, cursor.lane, &mut frame, pc, pending_calls, &mut executing, allow_inline_calls);
+                lane_returned = self.lane_completion.take_returned();
                 crate::clock::note_lane_run();
                 after_lane_exit = self.heap.should_collect();
                 // The lane may leave in a frame of another program, its activations' calls
@@ -2035,7 +2039,7 @@ impl<H: Host> Vm<H> {
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
                 // A call the lane made in place failed: it throws at its instruction, as the
                 // general path's call would have.
-                if let Some(error) = self.lane_raised.take() {
+                if let Some(error) = self.lane_completion.take_raised() {
                     let mut executing = ExecutingProgram {
                         id: executing_program,
                         retained: current_program.take(),
@@ -2373,7 +2377,7 @@ impl<H: Host> Vm<H> {
             // general `step` dispatch.
             match ins.op()  as u16 {
                 // A call the lane made returned its callee's completion from this frame.
-                _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
+                _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
                 index::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
                 index::Call if allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
@@ -2795,7 +2799,7 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         let mut layers = Vec::new();
-        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
+        while let Some(crate::heap::EnvironmentRecord { parent, scope, .. }) = self.heap.environment(env) {
             if !scope.with_objects().is_empty() {
                 layers.push(scope.with_objects().to_vec());
             }

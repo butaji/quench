@@ -615,6 +615,34 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     }
 }
 
+/// A closure made in a `for (let ...)` initializer keeps the initializer's binding: the first
+/// iteration's copy, which runs once, separates it from the bindings the test and body write
+/// (test262 language/statements/for/scope-body-lex-open.js), in a Script's root and in a function.
+#[test]
+fn a_for_let_initializer_closure_keeps_the_initializer_binding() {
+    let body = r#"
+      var probeBefore, probeTest, probeIncr, probeBody; var run = true;
+      for (let x = 'outside', _ = probeBefore = function() { return x; };
+           run && (x = 'inside', probeTest = function() { return x; });
+           probeIncr = function() { return x; })
+        probeBody = function() { return x; }, run = false;
+      const got = [probeBefore(), probeTest(), probeBody(), probeIncr()].join();
+      if (got !== 'outside,inside,inside,inside') throw new Error(got);
+    "#;
+    for source in [body.to_owned(), format!("(function () {{ {body} }})();")] {
+        for specialized in [false, true] {
+            let mut vm = Vm::new(TestHost::default());
+            let program = if specialized {
+                Engine::specialize(&source, "for-let-initializer.js")
+            } else {
+                Engine::compile(crate::ExecutionRequest { source: &source, name: "for-let-initializer.js", kind: crate::SourceKind::Script })
+            }
+            .unwrap();
+            vm.execute(&program).unwrap();
+        }
+    }
+}
+
 #[test]
 fn whole_read_per_iteration_copies_keep_their_owners_slots() {
     // Bindings enough that each iteration's copy of the script's root environment is sparse
@@ -1166,7 +1194,7 @@ fn nested_reads_follow_their_first_steps_hint_across_shapes() {
 #[test]
 fn inherited_reads_follow_their_hint_and_the_prototype_values() {
     // An inherited read's record keeps the entry that last answered it as its hint, and the
-    // entry its answer while no prototype changes (`Vm::hinted_inherited_field_hit`):
+    // entry its answer while no prototype changes (`Vm::inherited_hint_operands`):
     // instances of sibling and nested subclasses reading one site, a method replaced on the
     // base prototype, shadowed on an intermediate one and deleted again, and a receiver moved
     // to another prototype each read the method the receiver in hand inherits. Expected value
@@ -4067,30 +4095,30 @@ fn atom_invalidation_drops_only_the_entries_naming_the_atom() {
 #[test]
 fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(TestHost::default());
-    let live = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let live = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
-    let dead = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    ).0;
+    let dead = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     vm.method_caches.push([
         MethodCache {
             shape: 1,
@@ -4126,18 +4154,18 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     ));
     assert!(vm.method_caches[0][1].target.is_none());
 
-    let reused = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let reused = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
 }
@@ -5291,20 +5319,20 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 .iter()
                 .position(|candidate| *candidate == atom)
                 .unwrap();
-            let environment = vm.heap.alloc(crate::heap::Cell::Environment {
-                parent: Value::NULL,
-                function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
+            let environment = vm.heap.alloc_environment(
+                Value::NULL,
+                super::ROOT_FUNCTION_ID,
+                vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
                     dynamic_bindings: vec![].into(),
                     with_objects: Box::default(),
                 }),
-            });
+            ).0;
             vm.programs
                 .set_module_environment(super::program_store::ProgramId::MAIN, environment);
             let attributes = super::PropertyAttributes {
@@ -6956,18 +6984,18 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let mut vm = Vm::new(TestHost::default());
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
     vm.initialize(&program).unwrap();
-    let live = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let live = vm.heap.alloc_environment(
+        Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     let held = vm
         .heap
         .alloc(crate::heap::Cell::Error("suspended binding".into()));
@@ -14544,7 +14572,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
             .filter_map(|(pc, packed)| {
                 (site.header_pc as usize <= pc
                     && pc <= site.backedge_pc as usize
-                    && super::dispatch_fast::decoded_instruction(body, *packed).op()
+                    && body.widened(*packed).op()
                         == crate::bytecode::Op::Call)
                     .then_some(pc as u32)
             })
@@ -14552,8 +14580,8 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         assert_eq!(call_pcs, site.call_boundary_pcs, "call boundary attribution: {site:?}");
         assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {site:?}");
         assert!(
-            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0,
-            "the call-free prefix must execute natively then leave for the callback: {site:?}"
+            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0,
+            "the loop runs natively and its callback is a step in place, not a leave: {site:?}"
         );
     }
     compiled.programs.record_js_jit_lane_entry(
@@ -14845,10 +14873,12 @@ fn shared_osr_call_result_is_not_an_incoming_number() {
             .and_then(super::program_store::derived_lane_view)
             .unwrap()
             .osr_diagnostics();
+        // The call is a step the region makes in place, so its result enters the region's
+        // registers without a leave.
         assert!(
             diagnostics.compile_successes > 0
                 && diagnostics.native_region_runs > 0
-                && diagnostics.exits > 0,
+                && diagnostics.exits == 0,
             "bypass={bypass}: {diagnostics:?}"
         );
         assert_eq!(
@@ -14989,7 +15019,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
     let site = &osr.sites[0];
     assert!(site.admitted && site.deferred_call, "the call is a resumable exact-PC boundary: {site:?}");
-    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0, "tagged Move should run natively before its call: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0, "tagged Move and its call run natively, the call as a step in place: {site:?}");
     assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
@@ -14997,7 +15027,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     // A dense indexed read may produce any JS value. Native code can carry that boxed word
-    // through a Move, but a hole must leave at GetIndex so prototype lookup stays in the VM.
+    // through a Move; a hole's prototype lookup is the interpreter's GetIndex step, made in place.
     let source = r#"
       let calls = 0;
       let sawHole = false;
@@ -15054,7 +15084,7 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     let site = &osr.sites[0];
     assert!(site.admitted && site.deferred_call, "the callback remains an exact-PC boundary: {site:?}");
     assert!(site.compile_attempts > 0 && site.native_region_runs > 0, "tagged indexed reads should execute natively: {site:?}");
-    assert!(site.exits > 0, "the dynamic call and hole fallbacks must leave the native region: {site:?}");
+    assert_eq!(site.exits, 0, "the dynamic call and a hole's prototype lookup are steps in place, not leaves: {site:?}");
     assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
@@ -20846,7 +20876,7 @@ const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
   Cell.prototype.add = function (a, b) { this.sum = (this.sum + a * 3 + b) & MASK; return this.sum; };
   Cell.prototype.pair = function (a, b) { return (this.add(b, a) + this.add(a, b)) & MASK; };
   Cell.prototype.far = function (p, q, r) { return (p - q + r * 2) & MASK; };
-  Cell.prototype.drive = function (n, other) {
+  Cell.prototype.drive = function drive(n, other) {
     let total = 0;
     for (let i = 0; i < n; i++) {
       const x = i & 255, y = (i * 7) & 127, z = (i * 3) & 63;
@@ -23750,9 +23780,9 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
-/// The interpreter enters a hot callee's body through its function's one entry word, and a run
-/// binds the dispatch payload once: entries of one lane run find its program, residual, lane
-/// context and interrupt standing, so the runs bound are a small fraction of the entries.
+/// A hot callee's body is entered over and over, and a run binds the dispatch payload once:
+/// entries of one lane run find its program, residual and interrupt standing, so the runs bound
+/// are a small fraction of the entries.
 #[test]
 fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
     let source = r#"(function () {
@@ -23762,10 +23792,11 @@ fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
       globalThis.answer = total;
     })();"#;
     let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
-    let (entries, binds, crossings) = (events.count(Event::Entered), events.count(Event::RunBound), events.count(Event::CellCrossed));
+    // The caller's loop is compiled too and enters the callee's body by its entry, a nested
+    // lane entry (`Vm::run_nested_lane_method`), so the callee's cell is not crossed here.
+    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
     assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
     assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-    assert!(crossings > 1000, "the interpreter's calls enter the body through its cell before any activation, {crossings} times");
 }
 
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the

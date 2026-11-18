@@ -120,25 +120,6 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
 /// shape equal to the record's shape complemented are the guards.
 // Read by the b-jit stencil generator (thread 7) once it derives GetField from this row; the
 // tests run it on `Concrete` meanwhile.
-#[allow(dead_code)]
-#[inline(always)]
-pub(crate) fn own_read_entry<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let stored_holder = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_offset as i32);
-    let holder = stage.eq_imm(stored_holder, u64::from(ENTRY.holder_complement ^ ENTRY.own_holder));
-    stage.guard(holder, miss)?;
-    let exact = super::object::exact_shape(stage, record);
-    let stored_shape = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
-    let complement = stage.constant(u64::from(ENTRY.receiver_complement));
-    let wanted = stage.sub(complement, exact);
-    let difference = stage.sub(stored_shape, wanted);
-    let same = stage.eq_imm(difference, 0u32);
-    stage.guard(same, miss)?;
-    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-    let plain = plain_payload(stage, payload);
-    stage.guard(plain, miss)?;
-    let slot = entry_slot(stage, entry);
-    plain_slot(stage, record, payload, slot, miss)
-}
 
 /// The value at `slot` of the prototype record `holder`, whose shape the caller proved: a
 /// prototype keeps its values in its extras (`Object::mark_as_prototype`), wide and inline or as

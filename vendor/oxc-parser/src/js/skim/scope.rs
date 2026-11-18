@@ -95,6 +95,19 @@ impl<'a> Scopes<'a> {
         self.refs.truncate(end);
     }
 
+    /// Settles the references the innermost function's parameters read, at its body: a
+    /// parameter's, or else the scopes' around it, which the body's own declarations (in a
+    /// scope of their own where the parameters are not plain names) do not bind.
+    pub(super) fn settle_head(&mut self) {
+        let Some(frame) = self.frames.last() else { return };
+        let (start, serial) = (frame.refs_start, frame.serial);
+        let end = if frame.declared { self.retain_undeclared(start, serial) } else { self.refs.len() };
+        self.refs.truncate(end);
+        if let Some(frame) = self.frames.last_mut() {
+            frame.refs_start = end;
+        }
+    }
+
     /// Compacts `refs[start..]` to the names not declared in scope `serial`: the new end.
     fn retain_undeclared(&mut self, start: usize, serial: u32) -> usize {
         let mut kept = start;

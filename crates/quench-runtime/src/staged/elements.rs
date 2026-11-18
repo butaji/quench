@@ -230,7 +230,7 @@ fn unbarred_backing<S: Stage>(stage: &mut S, backing: Backing<S::Word>, barred: 
     let unique = stage.eq_imm(owners, 1u32);
     stage.guard(unique, miss)?;
     let object = stage.add_imm(backing.record, ARRAY.object_offset as u64);
-    let meta = super::object::header_u32(stage, Region::Records.mutable(), object, OBJECT.meta_offset);
+    let meta = super::object::header_u32(stage, Region::ShapeWord.mutable(), object, OBJECT.meta_offset);
     let held = stage.and_imm(meta, u64::from(barred));
     let clear = stage.eq_imm(held, 0u32);
     stage.guard(clear, miss)?;
@@ -336,8 +336,7 @@ pub(super) fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, 
 /// One where `value` counts among a backing's others (it is no int32), else zero.
 #[inline(always)]
 pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
-    let tag = stage.and_imm(value, crate::value::ValueLayout::TAG_MASK);
-    let int = stage.eq_imm(tag, crate::value::ValueLayout::INT_TAG);
+    let int = super::value::is_int(stage, value);
     let (zero, one) = (stage.constant(0), stage.constant(1));
     stage.select(int, zero, one)
 }

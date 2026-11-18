@@ -164,6 +164,8 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
                 function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
             })
         });
+    let makes_closures = function.code.iter().any(|instruction| instruction.op() == Op::MakeClosure)
+        || function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure);
     let eligible_function = function.parent.is_some()
         // An async body that never suspends runs to completion as an ordinary one does
         // (`Compiler::promoted_local_plan`'s `async_body`).
@@ -181,14 +183,16 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
+        // A function that makes closures promotes only parameters, under a selective capture
+        // layout that captures none of them (checked per entry below): its closures reach
+        // its environment's slots alone (`Compiler::promoted_local_plan`'s `parameters_only`).
+        && (!makes_closures || function.selective_capture_slots.is_some() && promoted.iter().all(|entry| entry.local < function.params))
         && !function.code.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
+            instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
         })
         && !function.wide.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags()
-                    && ImmediateLayout::direct_eval(instruction.imm())
+            instruction.op().is_call_with_eval_flags()
+                && ImmediateLayout::direct_eval(instruction.imm())
         });
     eligible_function
         && promoted.iter().enumerate().all(|(index, entry)| {
@@ -408,6 +412,7 @@ fn immediate_domains_in_bounds(
                 || matches!(instruction.unary_operator(), super::UNARY_TO_STRING_PRIMITIVE | super::UNARY_ADD_OPERAND_STRING)
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
+                || super::array_pattern_test(instruction.unary_operator()).is_some()
         }
         super::ImmediateRole::FunctionNamePrefix => {
             instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER
@@ -497,7 +502,9 @@ fn object_site_instruction_valid(
             };
             let window = instruction.register_window();
             let mut atoms = FxHashSet::default();
-            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+            // `MakeObject2` holds the two-field literal; any other nonempty width up to the
+            // window is this one's.
+            (window.count == 1 || usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS)
                 && site.atoms.len() == usize::from(window.count)
                 && site.atoms.iter().all(|atom| atoms.insert(*atom))
                 && register_window_in_bounds(window.base, u32::from(window.count), registers)
@@ -611,8 +618,12 @@ impl ResidualProgram {
                 .then_some(self.module_link_plan.as_ref())
                 .flatten()
                 .map(|plan| (plan, &self.module_imports[..]));
+            let script_root = matches!(self.kind, super::ProgramKind::Script | super::ProgramKind::Eval)
+                && index == 0
+                && function.parent.is_none();
+            let script_root = script_root.then_some(self.kind == super::ProgramKind::Eval);
             if let Some(captured) = &function.selective_capture_slots
-                && ((module_body.is_none() && (index == 0 || function.parent.is_none()))
+                && ((module_body.is_none() && script_root.is_none() && (index == 0 || function.parent.is_none()))
                     || captured.iter().any(|slot| *slot >= function.locals)
                     || captured.windows(2).any(|pair| pair[0] >= pair[1]))
             {
@@ -622,7 +633,7 @@ impl ResidualProgram {
             }
             if function.selective_capture_slots.is_some()
                 && (selective_capture_scope_unsafe[index]
-                    || !selective_capture_layout_is_eligible(function, index, module_body, &self.atoms))
+                    || !selective_capture_layout_is_eligible(function, index, module_body, script_root, &self.atoms))
             {
                 return Err(format!(
                     "function {index} has an ineligible selective capture layout"
@@ -1077,6 +1088,7 @@ fn selective_capture_layout_is_eligible(
     function: &super::Function,
     index: usize,
     module_body: Option<(&super::ModuleLinkPlan, &[super::ModuleImportBinding])>,
+    script_root: Option<bool>,
     atoms: &super::AtomTable,
 ) -> bool {
     let has_closure = function
@@ -1109,9 +1121,14 @@ fn selective_capture_layout_is_eligible(
             .is_none_or(|slot| captured.binary_search(&slot).is_ok());
 
     // A module body (`module_body` given: its link plan and imports) splits whether or not it makes closures, keeping
-    // its module-scope bindings in the module environment; a nested function splits only
-    // around closures.
-    let activation_splits = if let Some((plan, imports)) = module_body {
+    // its module-scope bindings in the module environment; a Script's or eval's root
+    // without dynamic name resolution splits keeping its global declarations in its
+    // environment; a nested function splits only around closures.
+    let activation_splits = if let Some(eval) = script_root {
+        !function.has_dynamic_scope_access()
+            && function.binding_sites.is_empty()
+            && function.global_declaration_slots(eval).all(|slot| captured.binary_search(&slot).is_ok())
+    } else if let Some((plan, imports)) = module_body {
         function
             .module_environment_slots(plan, imports, |atom| {
                 usize::try_from(atom).ok().filter(|atom| *atom < atoms.len()).map(|atom| &atoms[atom])
@@ -1134,6 +1151,17 @@ fn selective_capture_layout_is_eligible(
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
+
+    #[test]
+    fn for_of_pattern_marks_are_validated() {
+        // A value-only array pattern sets RequireIteratorResult's flag; the layout declares it.
+        let program = crate::Engine::specialize(
+            "let t = 0; for (const [k, v] of new Map([[1, 2]])) t += k + v; for (const x of [1]) t += x; for (const [a, ...r] of [[1, 2]]) t += a;",
+            "for-of-pattern.js",
+        )
+        .unwrap();
+        assert_eq!(program.validate(), Ok(()));
+    }
 
     #[test]
     fn rest_list_closure_layouts_are_validated() {
@@ -1296,6 +1324,7 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
+            declared_parameters: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -1330,7 +1359,7 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
@@ -1352,6 +1381,7 @@ mod tests {
             module_requests: Vec::new(),
             module_imports: Vec::new(),
             module_link_plan: None,
+            declared_types: None,
             source_name: String::new(),
             source: None,
             atoms: AtomTable::default(),

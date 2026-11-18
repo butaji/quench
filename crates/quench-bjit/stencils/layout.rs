@@ -330,8 +330,8 @@ pub(crate) const JS_STEP_LANE_VALUES_END: usize = 296;
 pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = 304;
 pub(crate) const JS_STEP_LANE_FRAMES_END: usize = 312;
 /// An activation's size, and where its kind tag lies; `KIND_NATIVE` marks a frame a direct call wrote.
-pub(crate) const ACTIVATION_BYTES: usize = 128;
-pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
+pub(crate) const ACTIVATION_BYTES: usize = crate::staged::frame::ACTIVATION_BYTES;
+pub(crate) const ACTIVATION_KIND_OFFSET: usize = crate::staged::frame::ACTIVATION_KIND_OFFSET;
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << 32;
@@ -339,27 +339,18 @@ pub(crate) const RAISED_RUN: u64 = 1 << 32;
 /// The context words below every lane window's register 0 (the runtime's
 /// `register_file::FRAME_CONTEXT`): a pushed window leaves them free past its registers for the
 /// next. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) const FRAME_CONTEXT_WORDS: usize = if PLAIN_FRAMES { 8 } else { 3 };
+pub(crate) const FRAME_CONTEXT_WORDS: usize = crate::staged::frame::CONTEXT_WORDS;
 
 /// Stage C (`calls-frames/call-protocol-v2.md`, "final shape"): a plain direct call writes the
-/// callee's header below its register 0 and pushes no frame record. Off until the runtime's
-/// `register_file::FRAME_CONTEXT` is 8 and `LaneStack` has the plain words; the switch flips both
-/// the context size above and the call rows' push (`call_rows.rs`), so it is one line.
+/// callee's header below its register 0 and pushes no frame record (`call_rows.rs`).
 pub(crate) const PLAIN_FRAMES: bool = false;
-/// The header words a plain call writes, as byte offsets below the callee's register 0: word `k`
-/// counted down from register 0 lies at `-k * 8`.
-pub(crate) const HEADER_CALL: usize = 4 * 8;
-pub(crate) const HEADER_CALLER_REGISTERS: usize = 5 * 8;
-pub(crate) const HEADER_CALLER_BASE: usize = 6 * 8;
-pub(crate) const HEADER_PACKED: usize = 7 * 8;
-pub(crate) const HEADER_CALLEE: usize = 8 * 8;
-/// The payload word holding the address of the lane stack's plain words (`LaneStackWords`): the
-/// plain frame count at +0, the innermost plain frame's registers at +8, the values' base at +16.
-/// The calls thread sends the runtime's offset when the core lands; 0 while `PLAIN_FRAMES` is off.
-pub(crate) const JS_STEP_LANE_PLAIN: usize = 0;
-pub(crate) const PLAIN_DEPTH_AT: usize = 0;
-pub(crate) const PLAIN_REGISTERS_AT: usize = 8;
-pub(crate) const PLAIN_BASE_AT: usize = 16;
+/// The header words a plain call writes, as byte offsets below the callee's register 0
+/// (`staged::frame::CONTEXT_*` count words down from register 0).
+pub(crate) const HEADER_CALL: usize = crate::staged::frame::CONTEXT_CALL * 8;
+pub(crate) const HEADER_CALLER_REGISTERS: usize = crate::staged::frame::CONTEXT_CALLER_REGISTERS * 8;
+pub(crate) const HEADER_CALLER_BASE: usize = crate::staged::frame::CONTEXT_CALLER_BASE * 8;
+pub(crate) const HEADER_PACKED: usize = crate::staged::frame::CONTEXT_PACKED * 8;
+pub(crate) const HEADER_CALLEE: usize = crate::staged::frame::CONTEXT_CALLEE * 8;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
@@ -397,3 +388,11 @@ pub(crate) const JS_STEP_STORES_SPECIALIZED: usize = 176;
 /// The object layout table's fixed address (`heap::layouts::table_base`) on x86-64 Linux, the
 /// stencils' target: a row reads an entry with the address as its displacement.
 pub(crate) const LAYOUT_TABLE_BASE: u64 = 0x7000_0000;
+/// The payload word holding the address of the lane stack's plain words (`PlainFrames`, the
+/// runtime's `LaneStackWords::plain_frames`); its payload slot lands with `PLAIN_FRAMES`.
+pub(crate) const JS_STEP_LANE_PLAIN: usize = 0;
+pub(crate) const PLAIN_DEPTH_AT: usize = crate::staged::frame::PLAIN_DEPTH_AT;
+pub(crate) const PLAIN_REGISTERS_AT: usize = crate::staged::frame::PLAIN_REGISTERS_AT;
+/// Where the caller's lane view base (`LaneContext::base`) is read for the header's `caller_base`;
+/// lands with `PLAIN_FRAMES`, as `JS_STEP_LANE_PLAIN`.
+pub(crate) const PLAIN_BASE_AT: usize = 0;

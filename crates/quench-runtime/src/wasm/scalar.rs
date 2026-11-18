@@ -286,6 +286,7 @@ impl WasmValue {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn bits(self) -> Option<ScalarBits> {
         Some(match self {
             Self::I32(value) => ScalarBits::Bits32(value as u32),

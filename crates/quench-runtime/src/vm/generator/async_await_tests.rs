@@ -156,3 +156,22 @@ fn a_throw_no_handler_covers_ends_a_generator_step_without_a_frame() {
     assert_eq!(lines, [r#"raised stop {"done":true}"#]);
     assert_eq!(made, 0, "the throw made a frame");
 }
+
+#[test]
+fn an_await_of_a_settled_value_continues_in_place_only_where_no_other_job_waits() {
+    // A resumed async function awaiting a settled value whose reaction would be the only queued
+    // job continues without suspending (`lane_await`); with other jobs queued, or on its first
+    // run from a caller, it suspends: the order matches Node's.
+    let lines = agree(
+        r#"
+        const log = [];
+        async function a() { for (let i = 0; i < 3; i++) { log.push("a" + i); await i; } }
+        async function b() { for (let i = 0; i < 3; i++) { log.push("b" + i); await Promise.resolve(i); } }
+        async function c() { await null; log.push("c1"); const x = await (async () => 5)(); log.push("c" + x); }
+        async function solo() { let s = 0; for (let i = 0; i < 5; i++) s += await i; log.push("solo" + s); }
+        a(); b(); c(); Promise.resolve().then(() => log.push("then")); log.push("sync");
+        solo().then(() => Promise.resolve().then(() => print(log.join(" "))));
+        "#,
+    );
+    assert_eq!(lines, ["a0 b0 sync a1 b1 c1 then a2 b2 c5 solo10"]);
+}

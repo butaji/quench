@@ -120,6 +120,27 @@ pub(crate) mod heap {
     pub(crate) struct ArrayObject;
     pub(crate) struct EnvironmentSlots;
     pub(crate) struct Heap;
+    /// The object layout table (`heap::layouts`) at its fixed address (`LAYOUT_TABLE_BASE`).
+    pub(crate) mod layouts {
+        /// Distinct headers the table holds (`heap::layouts::LAYOUT_CAPACITY`).
+        const LAYOUT_CAPACITY: usize = 1 << 22;
+        /// `heap::layouts::word`: the header word of the interned layout `id`.
+        #[inline(always)]
+        pub(crate) fn word(id: u32) -> u64 {
+            // SAFETY: an interned id's entry, written before the id existed.
+            unsafe { *(crate::layout::LAYOUT_TABLE_BASE as *const u64).add(id as usize) }
+        }
+        /// `heap::layouts::auxiliary`: the low half of layout `id`'s header word, 0 past the table.
+        #[inline(always)]
+        pub(crate) fn auxiliary(id: u32) -> u32 {
+            if id as usize >= LAYOUT_CAPACITY {
+                return 0;
+            }
+            // SAFETY: the runtime maps the table before any stencil runs; an entry below the
+            // capacity is readable (zero until interned).
+            unsafe { *(crate::layout::LAYOUT_TABLE_BASE as *const u64).add(id as usize) as u32 }
+        }
+    }
 }
 
 /// The Number operation rows, the runtime's own file: `crate::vm::operations` to the shared
@@ -141,8 +162,15 @@ pub(crate) mod vm {
 
 /// The register and operand names the staged numeric rows take. Only a register operand exists
 /// here: a row names its places by register.
+/// The `typeof` names and their indices, the runtime's own file.
+#[path = "../../quench-runtime/src/bytecode/typeof_names.rs"]
+#[allow(dead_code)]
+mod typeof_names;
+
 pub(crate) mod bytecode {
     pub(crate) type Register = u16;
+
+    pub(crate) use super::typeof_names::typeof_name_index;
 
     #[derive(Clone, Copy)]
     pub(crate) struct Operand(Register);

@@ -42,7 +42,7 @@ pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
-pub(crate) use decode::DecodeContext;
+pub(crate) use decode::{DecodeContext, Fields};
 pub(crate) use compare::{Comparison, Nullish};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
@@ -68,7 +68,6 @@ pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod naming;
 pub(crate) mod call; pub(crate) mod frame;
-pub(crate) mod construct;
 pub(crate) mod forms;
 pub(crate) mod protocol;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};
@@ -114,7 +113,7 @@ pub(crate) mod trace;
 pub(crate) use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub(crate) use region::Access;
-pub(crate) use ic::{HINTED_FORM, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub(crate) use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
@@ -142,8 +141,7 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
-    /// Nothing: the instruction changes no register, local or heap value. A tier continues at the
-    /// next instruction itself; `step` has no control word for it, so it leaves at the miss edge.
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
     Nop,
     /// A Number operation (`numeric`).
     Number(NumberOperation),
@@ -209,6 +207,9 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the next key of the for-in state in register `state`; continue
     /// at the jump target once none is left.
     ForInNext { destination: Register, state: Register },
+    /// `base[key]` in the body of the for-in whose state register is `state`: the key's listed
+    /// slot where the state's memo answers (`iteration::for_in_keyed_get`), else the element read.
+    EnumeratedGet { destination: Register, state: Register, base: Register, key: Register },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     #[cfg_attr(not(test), allow(dead_code))] // no tier builds it until the call-out rows land
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
@@ -279,14 +280,23 @@ impl<W, P> Operation<W, P> {
         }
     }
 
-    /// The register moves and control transfers of `decode`.
-    fn decode_flow(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<Self> {
+    /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
+    /// record's wide fields (`Fields::wide`).
+    #[inline(always)]
+    pub(crate) fn decode_names(instruction: WideInstruction) -> Option<Self> {
+        names::decode(instruction)
+    }
+
+    /// The register moves and control transfers of `decode`, from any record a tier holds
+    /// (`Fields`): the one flow decoder, the bytecode's and the lane's alike.
+    #[inline(always)]
+    pub(crate) fn decode_flow<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         Some(match instruction.op() {
             Op::Move => Self::Move {
                 destination: instruction.result_register(), source: instruction.register_b() },
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
-                constant: context.constant(instruction.constant_index())? },
+                constant: instruction.constant(context)? },
             Op::Nop => Self::Nop,
             Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
@@ -307,7 +317,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
-    fn decode_property(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
@@ -321,6 +332,7 @@ impl<W, P> Operation<W, P> {
 
     /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
     /// tier's own (`FieldBase::NESTED`).
+    #[inline(always)]
     fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let lookup = instruction.field_lookup()?;
@@ -332,7 +344,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The value-level operations of `decode`.
-    fn decode_value(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_value(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
@@ -356,6 +369,7 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The unary operators of `decode_value`.
+    #[inline(always)]
     fn decode_unary(instruction: WideInstruction) -> Option<Self> {
         let (destination, source) = (instruction.result_register(), instruction.register_b());
         let operator = instruction.unary_operator();
@@ -371,7 +385,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The local-slot operations of `decode`.
-    fn decode_local(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_local(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::LoadLocalPlain => Self::LoadLocalPlain {
                 destination: instruction.result_register(),

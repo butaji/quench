@@ -46,7 +46,7 @@ unsafe fn activation_window<H: Host>(cx: *mut LaneContext<H>) -> Option<BodyLoca
     let cx = std::ptr::NonNull::new(cx)?.as_ptr();
     // SAFETY: the caller's contract; the program's views outlive the lane run.
     unsafe {
-        if vm(cx).lane_stack.activations.is_empty() || (*cx).registers.env().is_deleted() {
+        if vm(cx).lane_stack.activations().is_empty() || (*cx).registers.env().is_deleted() {
             return None;
         }
         let function = lane_running_function(cx);

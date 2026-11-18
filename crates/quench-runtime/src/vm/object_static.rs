@@ -264,34 +264,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let args = args
-            .iter()
-            .map(|value| self.heap.root(*value))
-            .collect::<Vec<_>>();
-        let mut target_root = None;
-        let outcome = (|| {
-            let target = args
-                .first()
-                .map(|root| self.heap.root_value(*root).unwrap())
-                .unwrap_or(Value::UNDEFINED);
-            let target = self.box_object_or_type_error(p, target)?;
-            let target = self.heap.root(target);
-            target_root = Some(target);
-            for source in args.iter().skip(1) {
-                self.copy_enumerable_properties(
-                    p,
-                    self.heap.root_value(target).unwrap(),
-                    self.heap.root_value(*source).unwrap(),
-                    &[],
-                    PropertyCopyKind::Set,
-                )?;
-            }
-            Ok(self.heap.root_value(target).unwrap())
-        })();
-        for root in args.into_iter().chain(target_root) {
-            self.heap.release_root(root);
-        }
-        outcome
+        // The arguments and the target stay reachable on the call roots while sources' getters
+        // and the target's setters run.
+        self.with_call_roots(args.iter().copied(), |vm| {
+            let target = vm.box_object_or_type_error(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            vm.with_call_roots([target], |vm| {
+                for &source in args.iter().skip(1) {
+                    vm.copy_enumerable_properties(p, target, source, &[], PropertyCopyKind::Set)?;
+                }
+                Ok(target)
+            })
+        })
     }
 
     /// The for-in key snapshot of `object` (`Vm::for_in_start`): every enumerable string key
