@@ -722,6 +722,28 @@ impl Operation<u64, ()> {
     pub(crate) fn is_number_unary(instruction: WideInstruction) -> bool {
         instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericUnary
     }
+
+    /// Whether `instruction` is a call through its callee register (`Call`, including the eval
+    /// forms that decode to no operation), which an inlined unit plans and admits as a call.
+    pub(crate) fn is_plain_call(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Call
+    }
+
+    /// Whether `instruction` constructs (`Construct`), with its callee and arguments in registers.
+    pub(crate) fn is_construction(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Construct
+    }
+
+    /// Whether `instruction` throws: a row with no staged operation, which leaves at its miss edge.
+    pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Throw
+    }
+
+    /// Whether a unit holds `instruction` by its own rewrite or an exit rather than by renaming
+    /// (the catalog's `UNIT_REWRITTEN` trait).
+    pub(crate) fn is_unit_rewritten(instruction: WideInstruction) -> bool {
+        instruction.op().is_unit_rewritten()
+    }
 }
 
 /// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering
@@ -738,6 +760,21 @@ pub(crate) mod emit {
     /// Copy register `source` into `destination`.
     pub(crate) fn move_register(destination: Register, source: Register) -> WideInstruction {
         WideInstruction::new(Op::Move, destination, source, 0, 0)
+    }
+
+    /// A call through its callee register `b`, with the window and immediate of its arguments.
+    pub(crate) fn call(a: Register, b: Register, c: Register, imm: u32) -> WideInstruction {
+        WideInstruction::new(Op::Call, a, b, c, imm)
+    }
+
+    /// A construction with its callee in `b` and its arguments' window in `c`.
+    pub(crate) fn construct(a: Register, b: Register, c: Register, imm: u32) -> WideInstruction {
+        WideInstruction::new(Op::Construct, a, b, c, imm)
+    }
+
+    /// A named read of the lookup `imm` (its cache site and atom) into `a`, from base `b`.
+    pub(crate) fn get_field(a: Register, b: Register, c: Register, imm: u32) -> WideInstruction {
+        WideInstruction::new(Op::GetField, a, b, c, imm)
     }
 }
 
