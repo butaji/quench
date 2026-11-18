@@ -875,7 +875,7 @@ opcodes!($;
     ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; class ForInNext; staged Names; step Lane; traits LANE_LOOP_EXIT, @ Register, @ fields(ResultRegister, Register, Unused),
     // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
     ForInStart => CALL_EFFECT; layout Scalar; meaning Unused; class ForInStart; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetEnumerated => READ_THROW; layout RegisterPair; meaning Unused; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
+    GetEnumerated => READ_THROW; layout RegisterPair; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; class SetFunctionName; step Lane, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix; step Lane, @ Register, @ fields(Register, Register, Unused),
     InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot; class InitializeTdz; step Body, @ Register, @ fields(Unused, Unused, Unused),
@@ -927,8 +927,8 @@ opcodes!($;
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     // The general loop's fast arms dispatch on these with the opcodes above, so they share
     // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; class StoreLocalPlain; staged Local; traits ROW_HANDLER ACTIVATION_FREE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits ACTIVATION_FREE, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; class StoreLocalPlain; staged Local; traits ACTIVATION_FREE, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpTrue; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE, @ Register, @ fields(Register, Unused, Unused),
     // `Call` whose last window argument the instruction before it loaded from the activation's
     // `arguments` binding (`CallPlan::forwards_arguments`).
