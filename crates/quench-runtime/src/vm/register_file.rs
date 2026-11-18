@@ -9,9 +9,6 @@ use crate::value::Value;
 
 /// The words in front of register 0: captures, environment, receiver (`r[-3]`, `r[-2]`, `r[-1]`).
 pub(in crate::vm) const FRAME_CONTEXT: usize = 3;
-/// The words a new file holds room for past its context: a typical frame's registers and window plus
-/// `dispatch_fast::INLINED_WINDOW_ROOM`.
-const SPARE_WORDS: usize = 32 + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM;
 
 #[derive(Clone)]
 pub(in crate::vm) struct RegisterFile {
@@ -24,13 +21,8 @@ impl Default for RegisterFile {
 }
 
 impl RegisterFile {
-    /// An empty file with spare room for a small frame's registers, its environment window and the windows
-    /// of the callees a loop region inlines past them (`dispatch_fast::lane_frame_holds_window`), so that a
-    /// region runs over the frame without growing it under the lane's pointers.
     pub(in crate::vm) fn new() -> Self {
-        let mut words = Vec::with_capacity(FRAME_CONTEXT + SPARE_WORDS);
-        words.resize(FRAME_CONTEXT, Value::UNDEFINED);
-        Self { words }
+        Self { words: vec![Value::UNDEFINED; FRAME_CONTEXT] }
     }
 
     pub(in crate::vm) fn from_registers(registers: &[Value]) -> Self {
