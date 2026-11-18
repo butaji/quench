@@ -347,7 +347,7 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
     let address = call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?;
     let (spills, record) = (layout.spills(pc), layout.record(pc));
-    chained(call_plan::plan_step(record, address, &spills, reloads)?, spills.len(), None)
+    chained(call_plan::plan_step(record, address, &spills, reloads)?, spills.len(), Vec::new())
 }
 
 /// The pinned registers a row at `pc` reloads before it continues: those live at the next
