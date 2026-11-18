@@ -210,7 +210,7 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The global object's own data field a global-name store writes through the record's hint,
     /// where the row is a `StoreName` (`global_name_store`).
     global_store: Option<GlobalStore>,
-    /// The lane's pure binary operation (`lane_binary_values`), which answers a `Binary` or an
+    /// The lane's pure binary operation (`binary_values`), which answers a `Binary` or an
     /// `Equality` call-out a row makes where its words do not decide it (`vm_step`).
     binary: Option<(*mut (), unsafe fn(*mut (), u32, Value, Value) -> Option<Value>)>,
     /// The lane context and the fast answers of an iteration or for-in call-out (`fast_names_step`), for
@@ -1322,9 +1322,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
-        // A generic row's word-decided answers, and the pure binary of its call-outs (`lane_binary_values`).
+        // A generic row's word-decided answers, and the pure binary of its call-outs (`binary_values`).
         let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> =
-            |context, operator, left, right| unsafe { super::lane_binary_values::<H>(context.cast(), operator, left, right) };
+            |context, operator, left, right| unsafe { super::binary_values::<H>(context.cast(), operator, left, right) };
         // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
         // leave is the VM's steady decision (`staged::step` over the comparison).
         return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
@@ -1411,7 +1411,7 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
             _ => super::store_name_first_miss::<H> as Handler,
         },
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
-        crate::staged::Miss::Binary => super::lane_binary_general::<H>,
+        crate::staged::Miss::Binary => super::binary_general_miss::<H>,
         crate::staged::Miss::WasmMemoryLoad => super::lane_wasm_memory_load::<H>,
         crate::staged::Miss::WasmMemoryStore => super::lane_wasm_memory_store::<H>,
         crate::staged::Miss::WasmMemoryAddress => super::lane_wasm_memory_address::<H>,

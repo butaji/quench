@@ -103,7 +103,7 @@ pub(super) unsafe fn run<H: Host>(
         return None;
     }
     let (storage, slot, previous) = unsafe { writable_binding(target) }?;
-    let value = lane_concatenation(cx, previous, chunk)?;
+    let value = concat_value(cx, previous, chunk)?;
     // SAFETY: no guest code or collection can have changed this initialized binding.
     unsafe { crate::heap::EnvironmentSlots::write_storage(storage, slot, value) }
         .expect("admitted capture remains initialized without guest effects");

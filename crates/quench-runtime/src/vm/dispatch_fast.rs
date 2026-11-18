@@ -3751,7 +3751,7 @@ script_handler! {
     /// `Symbol.hasInstance`, a `valueOf` or `toString`) or throw. A numeric local target takes
     /// the general path.
     #[inline(never)]
-    fn lane_binary_general<>(cx, r, ip, i, view) {
+    fn binary_general_miss<>(cx, r, ip, i, view) {
         let operator = i.imm();
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
             return exit(ip);
@@ -3777,23 +3777,23 @@ script_handler! {
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
-unsafe fn lane_binary_value<H: Host>(
+unsafe fn binary_value<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     i: &LaneInstruction,
 ) -> Option<Value> {
     let left = lane_operand_value(cx, r, i.b)?;
     let right = lane_operand_value(cx, r, i.c)?;
-    unsafe { lane_binary_values::<H>(cx, i.imm(), left, right) }
+    unsafe { binary_values::<H>(cx, i.imm(), left, right) }
 }
 
-/// The value of `left operator right` where it runs no guest code (`lane_binary_value`'s pure
+/// The value of `left operator right` where it runs no guest code (`binary_value`'s pure
 /// part, which the lane frame answers a row's `Binary` or `Equality` call-out with).
 ///
 /// # Safety
 /// `cx` is the running lane's context.
 #[inline(always)]
-unsafe fn lane_binary_values<H: Host>(
+unsafe fn binary_values<H: Host>(
     cx: *mut LaneContext<H>,
     operator: u32,
     left: Value,
@@ -3803,41 +3803,41 @@ unsafe fn lane_binary_values<H: Host>(
         Some(value) => Some(value),
         // `undefined`, `null` or a Boolean among Numbers, as Sunspider's `x | 0` of a missing
         // element or an emulator's `flag & mask`; a string key's `"k" + i` first.
-        None if let Some(value) = lane_concatenation_or_immediate(cx, operator, left, right) => Some(value),
-        None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
-            .or_else(|| lane_bigint_value(cx, operator, left, right)),
+        None if let Some(value) = concat_or_immediate(cx, operator, left, right) => Some(value),
+        None if operator == super::operations::ADDITION => concat_value(cx, left, right)
+            .or_else(|| bigint_value(cx, operator, left, right)),
         // A comparison, `instanceof`, or an ordinary-object `in` (`relation_other`),
         // decides from the operands; any other operator past Numbers may be a BigInt's.
         None if operator <= super::operations::LAST_COMPARISON_OPERATOR
             || operator == INSTANCEOF_OPERATOR
             || operator == IN_OPERATOR =>
         {
-            lane_relation::<H>(operator, left, right)
+            relation_outcome::<H>(operator, left, right)
                 .map(|holds| if holds { Value::TRUE } else { Value::FALSE })
         }
-        None => lane_bigint_value(cx, operator, left, right),
+        None => bigint_value(cx, operator, left, right),
     }
 }
 
-/// `+` of a string operand (`lane_concatenation`), as a key built as `"k" + i`, before the
+/// `+` of a string operand (`concat_value`), as a key built as `"k" + i`, before the
 /// immediate operands' tests, which a string fails; else `Vm::immediate_binary`.
 #[inline(always)]
-fn lane_concatenation_or_immediate<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
+fn concat_or_immediate<H: Host>(cx: *mut LaneContext<H>, operator: u32, left: Value, right: Value) -> Option<Value> {
     let heap = &unsafe { vm(cx) }.heap;
     if operator == super::operations::ADDITION && (heap.is_string(left) || heap.is_string(right))
-        && let Some(value) = lane_concatenation(cx, left, right)
+        && let Some(value) = concat_value(cx, left, right)
     {
         return Some(value);
     }
     unsafe { vm(cx) }.immediate_binary(operator, left, right)
 }
 
-/// `lane_binary_value` of a returning `Binary`, which keeps its operands encoded: two
+/// `binary_value` of a returning `Binary`, which keeps its operands encoded: two
 /// integer registers decide it in place (`integer_binary`), as the operator-specialized
 /// records decide theirs; any other operands take the general value.
 ///
 /// # Safety
-/// As for `lane_binary_value`.
+/// As for `binary_value`.
 #[inline(always)]
 unsafe fn lane_returning_binary_value<H: Host>(
     cx: *mut LaneContext<H>,
@@ -3862,13 +3862,13 @@ unsafe fn lane_returning_binary_value<H: Host>(
     {
         return Some(value);
     }
-    unsafe { lane_binary_value(cx, r, i) }
+    unsafe { binary_value(cx, r, i) }
 }
 
 /// A BigInt operator of two BigInts that raises nothing (`Vm::bigint_binary_value`), which
 /// allocates the result; `None` leaves the operation, and any error, to the general path.
 #[inline(never)]
-fn lane_bigint_value<H: Host>(
+fn bigint_value<H: Host>(
     cx: *mut LaneContext<H>,
     operator: u32,
     left: Value,
@@ -3884,7 +3884,7 @@ fn lane_bigint_value<H: Host>(
 /// which allocates the result; `None` leaves any other `+` to the general path. Out of line,
 /// so the numeric handlers that fall back to it keep their code.
 #[inline(never)]
-fn lane_concatenation<H: Host>(cx: *mut LaneContext<H>, left: Value, right: Value) -> Option<Value> {
+fn concat_value<H: Host>(cx: *mut LaneContext<H>, left: Value, right: Value) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let value = vm.primitive_concatenation(unsafe { &*(*cx).code }, left, right)?;
@@ -3897,7 +3897,7 @@ fn lane_concatenation<H: Host>(cx: *mut LaneContext<H>, left: Value, right: Valu
 /// `Option::or_else` closures, which capture the operands by reference and, left out of
 /// line, would cost the calling handler its tail call to the next record.
 #[inline(always)]
-fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
+fn relation_outcome<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
     // Two heap values are no Numbers: their identity decides without the Number decode.
     if left.is_heap() && right.is_heap() && let Some(holds) = Vm::<H>::word_identity_equality(operator, left, right) {
         return Some(holds);
@@ -15511,8 +15511,8 @@ script_handler! {
                         };
                     }
                 },
-                RETURNING_UNARY => lane_unary_value(cx, r, i).or_else(|| lane_operation_in_place(cx, ip, r, i, true)),
-                RETURNING_BINARY => lane_returning_binary_value(cx, r, i).or_else(|| lane_operation_in_place(cx, ip, r, i, false)),
+                RETURNING_UNARY => lane_unary_value(cx, r, i).or_else(|| operation_in_place(cx, ip, r, i, true)),
+                RETURNING_BINARY => lane_returning_binary_value(cx, r, i).or_else(|| operation_in_place(cx, ip, r, i, false)),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i.imm(), [i.b, i.c])),
                 RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i.imm(), lane_literal_window(i))),
                 _ => lane_literal_value(cx, r, i),
@@ -15531,7 +15531,7 @@ script_handler! {
 /// operand the lane cannot read. Out of line, so the returning handlers keep their code.
 #[cold]
 #[inline(never)]
-fn lane_operation_in_place<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, i: &LaneInstruction, unary: bool) -> Option<Value> {
+fn operation_in_place<H: Host>(cx: *mut LaneContext<H>, ip: Ip, r: Registers, i: &LaneInstruction, unary: bool) -> Option<Value> {
     let operator = i.imm();
     if unary {
         let operand = r.get(i.b);
@@ -15558,14 +15558,14 @@ script_handler! {
 
 script_handler! {
     /// `lane_returning_operator` of operands other than two integers: other Numbers, then the
-    /// concatenation and BigInt values `lane_binary_value` decides; any other takes the
+    /// concatenation and BigInt values `binary_value` decides; any other takes the
     /// general path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn lane_returning_operator_other<OP: u32, CONSTANT: bool, LEAF: u8>(cx, r, ip, i, view) {
         let (left, right) = (r.get(i.b), if CONSTANT { i.constant() } else { r.get(i.c) });
         let value = super::operations::number_value_operator::<OP>(left, right)
-            .or_else(|| (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten())
-            .or_else(|| lane_bigint_value(cx, OP, left, right));
+            .or_else(|| (OP == super::operations::ADDITION).then(|| concat_value(cx, left, right)).flatten())
+            .or_else(|| bigint_value(cx, OP, left, right));
         let Some(value) = value else {
             return exit(ip);
         };

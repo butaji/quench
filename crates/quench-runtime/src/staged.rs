@@ -169,7 +169,7 @@ pub(crate) enum Miss {
     /// A `yield*` the frame does not suspend in place: the general step (`yield_star_miss`).
     YieldStar,
     /// A `Binary` whose pure value declines (a heap operand, BigInt, a numeric local target): the
-    /// general operation made in place (`lane_binary_general`).
+    /// general operation made in place (`binary_general_miss`).
     Binary,
     /// `ToPropertyKey` of a value the frame leaves (an integer's decimal key, a symbol): the
     /// lane's own answer for it, else the general step.

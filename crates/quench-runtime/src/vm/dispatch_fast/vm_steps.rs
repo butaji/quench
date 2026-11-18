@@ -78,7 +78,7 @@ pub(in crate::vm) unsafe extern "C" fn body_string_concat<H: Host>(_vm: u64, _re
     let body = unsafe { &*(*cx).code }.function(function as usize);
     let instruction = decoded_instruction(body, body.code[call_pc as usize]);
     let [Some(left), Some(right)] = [instruction.operand_b(), instruction.operand_c()].map(|operand| operand.register_index().map(|register| r.get(register))) else { return LANE_CALL_MISSED };
-    match lane_concatenation(cx, left, right) {
+    match concat_value(cx, left, right) {
         Some(value) => {
             r.set(instruction.result_register(), value);
             LANE_CALL_COMPLETED
