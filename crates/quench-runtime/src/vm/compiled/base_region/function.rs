@@ -170,7 +170,7 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
     (shape.form == CallForm::Plain && shape.argc == 1).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
-    let GlobalRead::NativeMember { value, native, holder } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
+    let GlobalRead::NativeMember { value, native, holder, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
     let kind = match native {
         Native::MathSqrt => Kind::Sqrt,
         _ => return None,

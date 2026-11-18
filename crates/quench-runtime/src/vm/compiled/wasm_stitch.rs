@@ -308,7 +308,7 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
         .iter()
         .zip(&stencils)
         .zip(&holes)
-        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)) })
+        .map(|((planned, stencil), hole)| Row { stencil, hole: &**hole, taken: planned.taken.map(|target| row_index(target, &first)), cold: false })
         .collect();
 
     let entry = stencil("entry_wasm")?;
