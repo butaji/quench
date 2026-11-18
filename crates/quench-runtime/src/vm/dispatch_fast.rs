@@ -10913,7 +10913,7 @@ impl<H: Host, const CARRY: bool> ZeroJumps<H, CARRY> {
 #[path = "vector_region.rs"]
 mod vector_region;
 mod wasm_instance;
-use wasm_instance::{lane_global_get, lane_global_set, lane_instance_binding, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store, lane_wasm_simd, lane_wasm_simd_shuffle};
+use wasm_instance::{lane_instance_binding, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store, lane_wasm_simd, lane_wasm_simd_shuffle};
 
 /// `if condition { chosen } else { other }` of two loaded values, picked after both load, so
 /// neither load waits on the condition; the compiler would otherwise load once from a picked
@@ -10942,15 +10942,6 @@ fn select_loaded(condition: bool, chosen: Value, other: Value) -> Value {
     }
 }
 
-lane_handler! {
-    fn lane_fill_registers<>(cx, r, ip, i, view) {
-        let value = i.constant();
-        for offset in 0..i.c {
-            r.set(i.b + offset, value);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
 
 /// A numeric scalar as a slot value.
 #[inline(always)]
@@ -20748,14 +20739,11 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
-        Class::WasmGlobalGet => Some(lane_global_get::<H>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
         Class::WasmMemoryLoad => Some(lane_wasm_memory_load::<H>),
         Class::WasmMemoryAddress => Some(lane_wasm_memory_address::<H>),
         Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
-        Class::WasmGlobalSet => Some(lane_global_set::<H>),
-        Class::WasmFillRegisters => Some(lane_fill_registers::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
         Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
         Class::CallArray => Some(lane_call_array::<H>),

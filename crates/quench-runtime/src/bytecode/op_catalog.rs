@@ -176,6 +176,9 @@ pub(crate) enum Decoder {
     /// A Wasm i32 conditional jump or fused add-and-jump: int32 operands, and an edge the row
     /// answers (`staged::WasmJump`).
     WasmJump,
+    /// The Wasm instance's state: a global's load and store, and the fill of a register window
+    /// with one constant (`staged::wasm_state`).
+    WasmState,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the

@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
@@ -110,6 +110,7 @@ pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
 pub(crate) mod wasm_jump;
 pub(crate) use wasm_jump::WasmJump;
+pub(crate) mod wasm_state;
 pub(crate) use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
@@ -277,6 +278,11 @@ pub(crate) const fn checked_local(op: Op) -> bool {
 /// store has no result register, and answers the source word it stored; a store's result is its
 /// `b` register and an InitializeTdz has none.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
+    // A Wasm row writes its result register only where its record has one: a store, a global
+    // store and a fill define none.
+    if matches!(op.staged(), Some(Decoder::WasmState)) {
+        return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
+    }
     !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz)
 }
 
@@ -448,6 +454,8 @@ pub(crate) enum Operation<W, P> {
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
     WasmJump(WasmJump),
+    /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
+    WasmState(wasm_state::WasmStateOperation),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -469,6 +477,7 @@ impl<W, P> Operation<W, P> {
             Decoder::Proved => None,
             Decoder::WasmInt => Self::decode_wasm_int(instruction),
             Decoder::WasmJump => Self::decode_wasm_jump(instruction),
+            Decoder::WasmState => Self::decode_wasm_state(instruction, context),
         }
     }
 

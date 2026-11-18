@@ -186,6 +186,8 @@ pub(crate) enum RowStep {
     WasmFloat,
     /// The Wasm i32 conditional jumps and fused add-and-jump (`wasm_jump::step`).
     WasmJump,
+    /// The Wasm instance's global loads and stores, and register fills (`wasm_state::step`).
+    WasmState,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -202,6 +204,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::WasmFloat) => RowStep::WasmFloat,
         Some(Decoder::Generic) => if matches!(op, Op::Unary) { RowStep::Full } else { RowStep::Generic },
         Some(Decoder::WasmJump) => RowStep::WasmJump,
+        Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,
@@ -283,6 +286,15 @@ pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fra
 pub(crate) fn step_wasm_float<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmFloat(operation) => super::wasm_float::step(stage, frame, operation),
+        _ => Step::Unresolved,
+    }
+}
+
+/// `step` of an instance-state row (`RowStep::WasmState`) on the interpreter's stage and frame.
+#[inline(always)]
+pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+    match operation {
+        Operation::WasmState(operation) => super::wasm_state::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }

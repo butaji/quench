@@ -139,6 +139,16 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn wasm_write(&mut self, _stage: &mut S, _register: Register, _word: S::Word, _rep: WasmRep) -> Option<S::Word> { None }
 
+    /// The Wasm global bound in `binding` (the register encoding of its binding), as the register
+    /// encoding its slot holds; `None` where the frame cannot load it, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_global_load(&mut self, _stage: &mut S, _binding: S::Word) -> Option<S::Word> { None }
+
+    /// Store `value` (a register encoding) to the mutable Wasm global bound in `binding`; `None`
+    /// where the frame cannot, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_global_store(&mut self, _stage: &mut S, _binding: S::Word, _value: S::Word) -> Option<()> { None }
+
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.
     #[inline(always)]

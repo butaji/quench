@@ -163,27 +163,26 @@ lane_handler! {
     }
 }
 
-lane_handler! {
-    /// A global's load (`Vm::wasm_global_load`, the staged rule): the slot's word under its
-    /// type's storage. Anything but a global binding takes the general path.
-    pub(super) fn lane_global_get<>(cx, r, ip, i, view) {
-        let Ok(value) = unsafe { vm(cx) }.wasm_global_load(r.get(i.b)) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
+/// The global bound in `binding` as its register encoding (`Vm::wasm_global_load`, the staged
+/// rule), for the instance-state row of the lane context `context` (`WasmGlobals`). Anything but a
+/// global binding answers `None`, which leaves the row to its general step.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_global_load<H: Host>(context: *mut (), binding: Value) -> Option<Value> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.wasm_global_load(binding).ok()
 }
 
-lane_handler! {
-    /// A global's store (`Vm::wasm_global_store`, the staged rule); a binding that is no
-    /// mutable global takes the general path, which raises.
-    pub(super) fn lane_global_set<>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.wasm_global_store(r.get(i.b), r.get(i.a)).is_err() {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
+/// Store `value` to the mutable global bound in `binding` (`Vm::wasm_global_store`, the staged
+/// rule), for the lane context `context`; `false` for a binding that is no mutable global, which the
+/// row leaves to the general step that raises.
+///
+/// # Safety
+/// `context` is the running lane's context.
+pub(super) unsafe fn wasm_global_store<H: Host>(context: *mut (), binding: Value, value: Value) -> bool {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    vm.wasm_global_store(binding, value).is_ok()
 }
 
 /// `lane_instance_binding`'s first read of `env` this run (or of a slot its storage does not
