@@ -10420,30 +10420,6 @@ fn lane_safepoint_writing<H: Host>(
 // no calls.
 
 lane_handler! {
-    /// An i32 shift left by a constant, reading its operand through field
-    /// `ACC`, whose result the next record, an i32 add, takes as its left
-    /// (`LEFT`) or right operand: a scaled index. Both records run here,
-    /// each result written as its own record writes it.
-    fn lane_shift_add<ACC: u8, LEFT: bool>(cx, r, ip, i, view) {
-        let Ok(shifted) = I32BinaryOperator::ShiftLeft
-            .evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), i.imm() as i32)
-        else {
-            return exit(ip);
-        };
-        r.set(i.a, view.integers.encode(shifted));
-        let next = following(ip);
-        // SAFETY: the view fuses a shift only with a following add record.
-        let add = unsafe { &*next };
-        let other = r.i32(if LEFT { add.c } else { add.b });
-        let (left, right) = if LEFT { (shifted, other) } else { (other, shifted) };
-        let Ok(sum) = I32BinaryOperator::Add.evaluate(left, right) else {
-            return exit(next);
-        };
-        produce!(cx, r, next, add.a, view.integers.encode(sum), view)
-    }
-}
-
-lane_handler! {
     /// A direct i32 load `OP` whose value the next record, a branch table,
     /// selects on: both records run here, the value written as the load
     /// writes it. With `ADD`, the record is a plain add of a constant ahead
@@ -10603,23 +10579,6 @@ impl<H: Host> JumpFusions<H> {
         [
             lane_then_jump::<H, true, false>,
             lane_then_jump::<H, true, true>,
-        ],
-    ];
-}
-
-/// The scaled-index handlers, indexed by the shift's operand field (none,
-/// `b`) and by whether the add takes the shifted value on its left.
-struct ScaledIndex<H>(std::marker::PhantomData<H>);
-
-impl<H: Host> ScaledIndex<H> {
-    const HANDLERS: [[Handler; 2]; 2] = [
-        [
-            lane_shift_add::<H, ACC_NONE, false>,
-            lane_shift_add::<H, ACC_NONE, true>,
-        ],
-        [
-            lane_shift_add::<H, ACC_B, false>,
-            lane_shift_add::<H, ACC_B, true>,
         ],
     ];
 }
@@ -19904,20 +19863,6 @@ fn derive_lane_view<'live, H: Host>(
                 {
                     records[pc - 1].handler = fused as *const ();
                 }
-            }
-        }
-        // A shift left by a constant whose result the next record adds runs
-        // with that add as one record.
-        for pc in 0..records.len().saturating_sub(1) {
-            let variant = |op: u16, acc: u8, at: usize| serves(records[at].handler, op, acc);
-            let field = [ACC_NONE, ACC_B]
-                .into_iter()
-                .position(|acc| variant(opc::WasmI32ShiftLeftImmediate, acc, pc));
-            let left = [ACC_C, ACC_B]
-                .into_iter()
-                .position(|acc| variant(opc::WasmI32Add, acc, pc + 1));
-            if let (Some(field), Some(left)) = (field, left) {
-                records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
             }
         }
         // A load whose value the next record stores runs with that store as
