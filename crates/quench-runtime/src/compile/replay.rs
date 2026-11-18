@@ -449,6 +449,11 @@ pub(crate) struct ProgramReplay {
     /// The starts of the bodies the load compiled from their source parsed again (`lazy_bodies`),
     /// in order: a replay stands each in, so the code around it compiles as the load did.
     pub(super) lazy_bodies: Box<[u32]>,
+    /// The starts of the functions whose bodies the load's check found free of early errors
+    /// (`BodyFacts::checked`), sorted. A first-call chunk of one skips its own semantic syntax
+    /// check, which repeats the load's. Empty where the load kept no check (a kept form's chunks),
+    /// so the chunk checks itself.
+    pub(super) checked_bodies: Box<[u32]>,
     pub(super) specialized: bool,
     /// Tagged template sites: a global eval of a program with any (own template objects) is never cached.
     pub(crate) template_sites: u32,
@@ -525,6 +530,7 @@ impl ProgramReplay {
             root_strict: false,
             module_goal: false,
             lazy_bodies: Box::default(),
+            checked_bodies: Box::default(),
             specialized,
             template_sites: 0,
             atoms: ProgramAtomIndex { atoms: hashbrown::HashTable::new() },
@@ -544,6 +550,12 @@ impl ProgramReplay {
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()
+    }
+
+    /// Whether the load checked the body of the function at `start` alone, with its early errors
+    /// found by the semantic analysis (`checked_bodies`).
+    pub(super) fn checked_at_load(&self, start: u32) -> bool {
+        self.checked_bodies.binary_search(&start).is_ok()
     }
 }
 

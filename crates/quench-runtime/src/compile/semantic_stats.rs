@@ -29,9 +29,11 @@ pub(super) fn builder<'a>(program: &Program<'_>) -> SemanticBuilder<'a> {
     ))
 }
 
-/// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`.
-pub(super) fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
-    let semantic = builder(program).with_check_syntax_error(true).build(program);
+/// OXC's semantic analysis of `program`, its early errors as diagnostics of `name`. With
+/// `checked_at_load`, the load's check of the same body (`BodyFacts::check`) already found its
+/// early errors, so the analysis builds its facts without checking them a second time.
+pub(super) fn checked_semantic<'a>(program: &'a Program<'a>, name: &str, checked_at_load: bool) -> Result<oxc_semantic::SemanticBuilderReturn<'a>, Vec<Diagnostic>> {
+    let semantic = builder(program).with_check_syntax_error(!checked_at_load).build(program);
     if semantic.diagnostics.is_empty() {
         return Ok(semantic);
     }

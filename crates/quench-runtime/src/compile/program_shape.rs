@@ -34,6 +34,12 @@ pub(super) enum ParsedProgramShape<'a> {
 }
 
 impl ParsedProgramShape<'_> {
+    /// Whether the load checked the function a first-call chunk compiles (`ChunkWindow::checked`):
+    /// its early errors were found then, so the chunk's semantic analysis need not check them again.
+    pub(super) fn checked_at_load(self) -> bool {
+        matches!(self, Self::FirstCallChunk(window) if window.checked())
+    }
+
     /// Whether each function compiles again from its own text alone: a script's or module's,
     /// or an eval's that its caller gives no context (indirect or global: unwrapped, a script).
     pub(super) fn replayable(self, private_names: &[(String, String)], annex_b_forbidden: &[String]) -> bool {
