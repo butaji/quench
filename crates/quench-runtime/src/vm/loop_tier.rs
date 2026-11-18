@@ -220,7 +220,10 @@ pub(super) fn lane_loop_compile<H: Host>(
     // SAFETY: the lane's VM is live, and nothing borrows it across the call.
     let machine = unsafe { vm(cx) };
     // A dynamic-source image may carry this loop's code, lowered ahead (`Vm::ahead_loop_region`):
-    // publishing it runs the region without compiling.
+    // publishing it runs the region without compiling. Only a lane site reaches here: the
+    // general loop executes a back edge itself (`dispatch_frame`) and has no loop tier, so a
+    // function the lane left — its body ended at a call, or was retired — runs its loops in the
+    // interpreter and can adopt nothing.
     #[cfg(feature = "native-execution")]
     if let Some(program) = machine.programs.get(machine.active_program)
         && let Some(region) = machine.ahead_loop_region(&program, site.function(), site.header)
