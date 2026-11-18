@@ -10,7 +10,8 @@ use super::{Owner, PropertyFrame};
 /// The value at `slot` of `owner`'s object, which must have exact `shape` and keep its values in
 /// a plain wide arena run: one compare of the record's auxiliary word, whose storage-form bits
 /// (inline, extras, narrow) are all clear in that form, proves both, as the interpreter's formed
-/// read does (`object::formed_own_layout`); the frame keeps the shape and the run.
+/// read does (`object::formed_own_layout`); the frame keeps the shape and the run. Only a direct
+/// object's record keeps those bits current: a function's record is read through `kept_slot`.
 pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
     at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Rep, usize), miss: S::Miss) -> Option<S::Word> {
     let word = super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
