@@ -138,6 +138,12 @@ pub(crate) enum Miss {
     /// An `arguments` count the frame does not hold: the binding's own count, read from the
     /// frame or window that holds it.
     ArgumentsBinding,
+    /// An environment read the frame holds no storage for (an uncaptured or root frame, a
+    /// mapped `arguments`, an environment window): the lane's local read (`lane_load_local`).
+    EnvironmentLoad,
+    /// An environment write the frame cannot make in place: the lane's local store
+    /// (`lane_store_local`), which takes the binding rules.
+    EnvironmentStore,
 }
 
 /// The row of `op`'s miss route (`Miss`).
@@ -146,6 +152,8 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::LoadCapture => Miss::WalkScopes,
         Op::StoreCapture => Miss::StoreThroughScopes,
         Op::ArgumentsLength => Miss::ArgumentsBinding,
+        Op::LoadEnvLocal => Miss::EnvironmentLoad,
+        Op::StoreEnvLocal => Miss::EnvironmentStore,
         _ => match truth_jump(op) {
             Some(taken) => Miss::CellTruth { taken },
             None => Miss::General,

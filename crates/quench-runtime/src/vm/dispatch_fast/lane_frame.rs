@@ -128,8 +128,19 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The running function's `arguments` count in a local slot (`arguments_count`), read only
     /// by the row that asks for it.
     arguments: Option<(*mut (), unsafe fn(*mut (), u16) -> Option<Value>)>,
+    /// The running frame's captured environment, for a staged environment row (`Decoder::Names`).
+    environment: Option<EnvironmentReads>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
+}
+
+/// The running frame's captured environment for a staged environment row: the storage of its
+/// slots, which `read` finds for a read and `write` for a store (it takes the environment's barrier).
+#[derive(Clone, Copy)]
+struct EnvironmentReads {
+    context: *mut (),
+    read: unsafe fn(*mut ()) -> Option<*mut crate::heap::EnvironmentSlots>,
+    write: unsafe fn(*mut (), u16) -> Option<*mut crate::heap::EnvironmentSlots>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -137,7 +148,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -161,7 +172,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, reads: Reads::NONE }
     }
 }
 
@@ -306,6 +317,67 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let CaptureStores { context, store } = self.captures?;
         store(context, depth, slot, Value::from_bits(value)).then_some(())
     }
+
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
+        let EnvironmentReads { context, read, .. } = self.environment?;
+        // SAFETY: the running lane's context, live for the row's step.
+        let storage = unsafe { read(context) }?;
+        Some((storage as u64, Boxing::Value))
+    }
+
+    #[inline(always)]
+    fn environment_write(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
+        let EnvironmentReads { context, write, .. } = self.environment?;
+        // SAFETY: as `environment`; `write` took the environment's barrier, and no collection runs in the lane.
+        let storage = unsafe { write(context, slot) }?;
+        unsafe { crate::staged::environment::concrete_environment_slot_store(storage, slot, Value::from_bits(value)) }
+            .then_some(())
+    }
+}
+
+/// The running frame's environment storage and the environment that holds it, where a staged
+/// environment row may read its slots: a captured frame of a non-root function whose every local
+/// lives in its environment and whose `arguments` alias no parameter, in a run that holds no
+/// environment window. `store` names the slot a write targets, which the function's self binding
+/// keeps from the row.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn environment_of<H: Host>(cx: *mut LaneContext<H>, store: Option<u16>)
+    -> Option<(*mut crate::heap::EnvironmentSlots, Value)> {
+    if !unsafe { (*cx).registers }.env().is_deleted() {
+        return None;
+    }
+    let storage = super::lane_frame_storage(cx)?;
+    let vm = unsafe { vm(cx) };
+    let frame = &vm.frames[unsafe { (*cx).frame() }];
+    let function = unsafe { &*(*cx).code }.function(frame.function as usize);
+    if function.selective_capture_slots.is_some() || function.arguments_alias_parameters()
+        || store.is_some_and(|slot| function.is_self_binding_slot(usize::from(slot))) {
+        return None;
+    }
+    Some((std::ptr::from_mut(storage), frame.env))
+}
+
+/// `EnvironmentReads::read`: the storage `environment_of` finds for a read.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn environment_read<H: Host>(cx: *mut ()) -> Option<*mut crate::heap::EnvironmentSlots> {
+    unsafe { environment_of::<H>(cx.cast(), None) }.map(|(storage, _)| storage)
+}
+
+/// `EnvironmentReads::write`: the storage `environment_of` finds for a store to `slot`, after the
+/// environment's write barrier (`Heap::remember_cell`), as `lane_store_window_local_general` takes it.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn environment_write_storage<H: Host>(cx: *mut (), slot: u16) -> Option<*mut crate::heap::EnvironmentSlots> {
+    let (storage, environment) = unsafe { environment_of::<H>(cx.cast(), Some(slot)) }?;
+    unsafe { vm(cx.cast::<LaneContext<H>>()) }.heap.remember_cell(environment);
+    Some(storage)
 }
 
 /// The by-name load's binding as the row asks for it: the global `undefined` is a constant; any
@@ -520,7 +592,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             |context, slot| unsafe { super::arguments_count::<H, false>(context.cast(), slot) }
         };
-        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), ..LaneFrame::<ACC>::new(r, view) };
+        let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H> };
+        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment),
+            ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
@@ -551,6 +625,8 @@ const fn row_miss<H: Host>(op: Op) -> Handler {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::lane_store_outer_capture::<H>,
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
+        crate::staged::Miss::EnvironmentLoad => super::lane_load_local::<H>,
+        crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. } => lane_general_step::<H>,
     }
 }

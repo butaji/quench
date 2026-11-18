@@ -21202,7 +21202,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
     match opcode.class() {
         Class::StoreName => Some(lane_store_name_first::<H>),
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
-        Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
+        Class::StoreLocal => Some(lane_store_local::<H>),
         Class::LoadCallee => Some(lane_load_callee::<H>),
         Class::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Class::CloneEnv => Some(lane_clone_env::<H>),
@@ -21225,7 +21225,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::SetIndex => Some(lane_set_index::<H>),
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
-        Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
+        Class::LoadLocal => Some(lane_load_local::<H>),
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Class::WasmGlobalGet => Some(lane_global_get::<H>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
