@@ -647,7 +647,7 @@ mod list_calls;
 mod loop_runs;
 mod unary_values;
 mod lane_capture_store; use lane_capture_store::{lane_capture_store, lane_environment_store};
-use unary_values::lane_unary_value;
+use unary_values::unary_value;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -15511,7 +15511,7 @@ script_handler! {
                         };
                     }
                 },
-                RETURNING_UNARY => lane_unary_value(cx, r, i).or_else(|| operation_in_place(cx, ip, r, i, true)),
+                RETURNING_UNARY => unary_value(cx, r, i).or_else(|| operation_in_place(cx, ip, r, i, true)),
                 RETURNING_BINARY => lane_returning_binary_value(cx, r, i).or_else(|| operation_in_place(cx, ip, r, i, false)),
                 RETURNING_OBJECT => Some(lane_object_pair(cx, r, i.imm(), [i.b, i.c])),
                 RETURNING_OBJECT_LITERAL => Some(lane_object_literal_value(cx, r, i.imm(), lane_literal_window(i))),

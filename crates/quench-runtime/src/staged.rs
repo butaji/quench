@@ -196,7 +196,7 @@ pub(crate) enum Miss {
     /// A generic Wasm effective address the row leaves: the lane's hand handler of the address.
     WasmMemoryAddress,
     /// A `Unary` the frame leaves (an operand its value declines): the lane's unary arm
-    /// (`lane_unary`), which answers the pure operators and otherwise makes the operation in place.
+    /// (`unary_miss`), which answers the pure operators and otherwise makes the operation in place.
     Unary,
     /// A `StringConcat` whose parts the pure concatenation declines (a part that converts with guest
     /// code, or a result past the string length limit): the lane's own concatenation of the parts

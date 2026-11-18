@@ -8,7 +8,7 @@ use super::*;
 /// # Safety
 /// `cx` is the running lane's context and `r` its registers.
 #[inline(always)]
-pub(super) unsafe fn lane_unary_value<H: Host>(
+pub(super) unsafe fn unary_value<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     i: &LaneInstruction,
@@ -24,7 +24,7 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
         return Some(Value::number(result));
     }
     let vm = unsafe { vm(cx) };
-    if let Some(answer) = lane_value_query(vm, operator, operand) {
+    if let Some(answer) = unary_query(vm, operator, operand) {
         return Some(answer);
     }
     let pure = vm.converts_to_string_purely(operand);
@@ -48,7 +48,7 @@ pub(super) unsafe fn lane_unary_value<H: Host>(
 /// Logical not and the `typeof` operators: they read any value's truthiness or type, so no
 /// operand runs guest code. `None` for every other operator.
 #[inline(always)]
-fn lane_value_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> Option<Value> {
+fn unary_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> Option<Value> {
     if operator == super::coercion::LOGICAL_NOT {
         return Some(vm.logical_not(operand));
     }
