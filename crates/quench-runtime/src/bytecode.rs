@@ -875,7 +875,7 @@ opcodes!($;
     ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; class ForInNext; staged Names; step Lane; traits LANE_LOOP_EXIT, @ Register, @ fields(ResultRegister, Register, Unused),
     // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
     ForInStart => CALL_EFFECT; layout Scalar; meaning Unused; class ForInStart; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetEnumerated => READ_THROW; layout RegisterPair; meaning Unused; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
+    GetEnumerated => READ_THROW; layout RegisterPair; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; class SetFunctionName; step Lane, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix; step Lane, @ Register, @ fields(Register, Register, Unused),
     InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot; class InitializeTdz; step Body, @ Register, @ fields(Unused, Unused, Unused),
