@@ -202,3 +202,38 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         }
     }
 }
+
+/// A Wasm branch table (`WasmBranchTable`): the i32 selector in `index` picks one of `entries`
+/// jump records that follow the table record; the last entry is the default, which every selector
+/// past it takes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct BranchTable {
+    pub(crate) index: Register,
+    /// The entry count: the record's case count plus the default.
+    pub(crate) entries: u32,
+}
+
+impl BranchTable {
+    /// The table `instruction` is: its selector is `a`, and its immediate counts the cases before
+    /// the default (`branch_table_entries`), so the entries are that count plus one.
+    pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
+        (instruction.op() == Op::WasmBranchTable).then(|| Self {
+            index: instruction.a(),
+            entries: instruction.imm().checked_add(1)?,
+        })
+    }
+}
+
+/// `table` on `frame`: its selector read as an int32, and the entry it picks (`Frame::branch_table`,
+/// which clamps it to the default). A selector the frame cannot read as an int32 leaves the row.
+#[inline(always)]
+pub(crate) fn branch_table<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, table: BranchTable) -> Step<S::Word, F::Control> {
+    let miss = frame.miss();
+    let Some(index) = frame.int_operand(stage, Operand::register(table.index), miss) else {
+        return Step::Unresolved;
+    };
+    match frame.branch_table(stage, index, table.entries) {
+        Some(edge) => Step::Control(edge),
+        None => Step::Unresolved,
+    }
+}

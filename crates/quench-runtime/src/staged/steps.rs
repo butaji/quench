@@ -15,6 +15,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
+        Operation::BranchTable(table) => super::wasm_jump::branch_table(stage, frame, table),
         call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. } | Operation::InitializeLocal { .. }
@@ -322,6 +323,7 @@ pub(crate) fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
 pub(crate) fn step_wasm_jump<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::WasmJump(jump) => super::wasm_jump::step(stage, frame, jump),
+        Operation::BranchTable(table) => super::wasm_jump::branch_table(stage, frame, table),
         _ => Step::Unresolved,
     }
 }

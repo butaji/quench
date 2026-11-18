@@ -341,6 +341,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
+    fn branch_table(&mut self, _stage: &mut Concrete, index: u64, entries: u32) -> Option<Edge> {
+        // The selector is an int32 word, zero-extended; any selector past the cases takes the default.
+        Some(Edge::Entry((index as u32).min(entries - 1)))
+    }
+
+    #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Boxing) {
         (Value::boolean(condition).to_bits(), Boxing::Value)
     }
@@ -1057,11 +1063,13 @@ const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
 
 /// Whether opcode `op` runs its generated jump row (`row_jump`): a jump the flow decoder
 /// stages (`Decoder::Flow`), a loop's exit (`LANE_LOOP_EXIT`), whose names row makes its step and
-/// its edge, or a jump whose row answers its edge from a comparison (`staged::compare_jump`).
+/// its edge, a jump whose row answers its edge from a comparison (`staged::compare_jump`), or a
+/// Wasm branch table, whose edge is the entry its index picks (`Edge::Entry`).
 pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
-    op.control_flow_layout().jumps()
-        && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow)) || op.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT)
-            || crate::staged::compare_jump(op) || crate::staged::wasm_i32_jump(op))
+    crate::staged::wasm_branch_table(op)
+        || (op.control_flow_layout().jumps()
+            && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow)) || op.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT)
+                || crate::staged::compare_jump(op) || crate::staged::wasm_i32_jump(op)))
 }
 
 /// Opcode `OP`'s jump row in direction `backward`.
@@ -1129,6 +1137,9 @@ lane_handler! {
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
+            // A table's entry is the jump record `k` places after the table record (validation places
+            // `entries` of them after it), and the lane jumps from that record.
+            Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
             Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
         }
@@ -1234,6 +1245,7 @@ lane_handler! {
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
+                Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                 Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                 Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<B>::OPCODE) }, r, ip, view),
             }
@@ -1339,6 +1351,7 @@ lane_handler! {
                 let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                     Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
+                    Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                     Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                     Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<$L>::OPCODE) }, r, ip, view),
                 }

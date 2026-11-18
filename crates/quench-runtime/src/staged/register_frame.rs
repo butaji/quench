@@ -216,6 +216,12 @@ pub(crate) trait Frame<S: Stage> {
     /// Continue at the jump target.
     fn jump(&mut self, stage: &mut S) -> Self::Control;
 
+    /// Where a branch table's selector `index` (an int32 word) goes among `entries` entries: the entry
+    /// it picks, the last one for any selector past the cases (`Edge::Entry`). `None` where this
+    /// frame cannot decide the entry, leaving the table to the tier's own lowering.
+    #[inline(always)]
+    fn branch_table(&mut self, _stage: &mut S, _index: S::Word, _entries: u32) -> Option<Self::Control> { None }
+
     /// The canonical boolean `condition`, with the fact this stage keeps of it.
     fn boolean(&mut self, stage: &mut S, condition: S::Cond) -> (S::Word, Self::Fact);
 

@@ -992,7 +992,7 @@ opcodes!($;
     WasmSelect => Effect::PURE; layout RegisterPair; class WasmSelect; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32Zero; staged WasmJump, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32NonZero; staged WasmJump, @ Register, @ fields(Register, Unused, Unused),
-    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable; class WasmBranchTable, @ Register, @ fields(Register, Unused, Unused),
+    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable; class WasmBranchTable; staged WasmJump; traits ROW_HANDLER, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32Equal => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32NotEqual => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32LessSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump, @ Register, @ fields(Register, Register, Unused),

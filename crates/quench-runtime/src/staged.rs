@@ -109,7 +109,7 @@ pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
 pub(crate) mod wasm_step;
 pub(crate) mod wasm_jump;
-pub(crate) use wasm_jump::WasmJump;
+pub(crate) use wasm_jump::{BranchTable, WasmJump};
 pub(crate) mod wasm_state;
 pub(crate) mod wasm_access;
 pub(crate) use wasm_concrete::ConcreteWasm;
@@ -328,6 +328,12 @@ pub(crate) const fn compare_jump(op: Op) -> bool {
 /// jump the lane runs as its generated row.
 pub(crate) const fn wasm_i32_jump(op: Op) -> bool {
     matches!(op.staged(), Some(Decoder::WasmJump))
+}
+
+/// Whether `op` is a Wasm branch table (`Operation::BranchTable`): a jump the lane runs as its
+/// generated row, whose edge is the entry its index picks (`Edge::Entry`).
+pub(crate) const fn wasm_branch_table(op: Op) -> bool {
+    matches!(op, Op::WasmBranchTable)
 }
 
 /// The opcodes of the Wasm i32 zero tests, which the lane names to give a zero test's row the
@@ -606,6 +612,8 @@ pub(crate) enum Operation<W, P> {
     WasmInt(wasm_int::WasmIntOperation),
     /// A Wasm i32 conditional jump or fused add-and-jump over int32 operands (`wasm_jump`).
     WasmJump(WasmJump),
+    /// A Wasm branch table: control goes to the entry its index picks (`Edge::Entry`, `wasm_jump`).
+    BranchTable(BranchTable),
     /// A Wasm global's load or store, or a register window's fill (`wasm_state`).
     WasmState(wasm_state::WasmStateOperation),
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
@@ -640,7 +648,7 @@ impl<W, P> Operation<W, P> {
     /// (`Fields::wide`).
     #[inline(always)]
     pub(crate) fn decode_wasm_jump(instruction: WideInstruction) -> Option<Self> {
-        WasmJump::decode(instruction).map(Self::WasmJump)
+        WasmJump::decode(instruction).map(Self::WasmJump).or_else(|| BranchTable::decode(instruction).map(Self::BranchTable))
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
@@ -909,6 +917,9 @@ pub(crate) enum Edge {
     Target,
     /// The instruction after this one.
     Following,
+    /// The entry a branch table's index picks (`k`, clamped to the default entry): control goes to
+    /// the jump record `k` places after the table record.
+    Entry(u32),
 }
 
 #[cfg(test)]

@@ -247,7 +247,11 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
     ];
     for (value, truthy_edge) in cases {
         assert_eq!(jump_if_edge(value, true, &heap), truthy_edge, "JumpTrue {value:?}");
-        let falsy_edge = match truthy_edge { Edge::Target => Edge::Following, Edge::Following => Edge::Target };
+        let falsy_edge = match truthy_edge {
+            Edge::Target => Edge::Following,
+            Edge::Following => Edge::Target,
+            Edge::Entry(_) => unreachable!("a conditional jump takes no table entry"),
+        };
         assert_eq!(jump_if_edge(value, false, &heap), falsy_edge, "JumpFalse {value:?}");
     }
     let mut stage = Concrete::new(std::ptr::null());

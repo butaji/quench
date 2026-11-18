@@ -523,7 +523,6 @@ vm/dispatch_fast.rs Class:StringCaseIndex 1
 vm/dispatch_fast.rs Class:SuperConstArrayObject2 2
 vm/dispatch_fast.rs Class:ToPropertyKey 1
 vm/dispatch_fast.rs Class:Unary 1
-vm/dispatch_fast.rs Class:WasmBranchTable 1
 vm/dispatch_fast.rs Class:WasmFillRegisters 2
 vm/dispatch_fast.rs Class:WasmFloatBinary32 2
 vm/dispatch_fast.rs Class:WasmFloatBinary64 3

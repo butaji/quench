@@ -3169,6 +3169,7 @@ macro_rules! jump_on_edge {
         match $edge {
             crate::staged::Edge::Target => resume!($cx, lane_jump::<H>($r, $ip, $backward, $carried, None)),
             crate::staged::Edge::Following => next!($cx, $r, following($ip), $carried),
+            crate::staged::Edge::Entry(_) => unreachable!("a comparison jump takes no table entry"),
         }
     }};
 }
@@ -10676,17 +10677,6 @@ script_handler! {
             resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-lane_handler! {
-    /// Take the selected entry's jump; the view admits a table only when
-    /// every entry is a lane jump.
-    fn lane_branch_table<BACKWARD: bool>(cx, r, ip, i, view) {
-        let case = r.get(i.a).wasm_bits32().min(i.imm());
-        // SAFETY: validation places `imm + 1` entries after the table.
-        let entry = unsafe { ip.add(1 + case as usize) };
-        resume!(cx, lane_jump::<H>(r, entry, BACKWARD, view, None))
     }
 }
 
@@ -20236,7 +20226,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     if lane_runs_row(op) {
         return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
     }
-    let handler: Handler = match other_handler::<H, BACKWARD, ACC>(op) {
+    let handler: Handler = match other_handler::<H>(op) {
         Some(handler) => handler,
         None => return None,
     };
@@ -20258,14 +20248,6 @@ fn zero_test_row<H: Host>(when_zero: bool, backward: bool) -> *const () {
     handler as *const ()
 }
 
-/// The handlers of the jumps (`other_handler`), whose direction decides whether they run a
-/// safepoint, then of the Wasm GC steps (`wasm_gc_handler`).
-const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        _ => wasm_gc_handler::<H>(opcode),
-    }
-}
 
 /// The handlers of a class's private elements, none of which runs guest code: a field's
 /// definition, a method's brand, and the brand checks of a read and of `#x in`.
@@ -20291,7 +20273,7 @@ const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
 
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
-const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
+const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
         Class::GetField => Some(lane_get_field_first::<H>),
@@ -20327,7 +20309,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),
         _ if suspend_handler::<H>(opcode).is_some() => suspend_handler::<H>(opcode),
-        _ => jump_handler::<H, BACKWARD, ACC>(opcode),
+        _ => wasm_gc_handler::<H>(opcode),
     }
 }
 
@@ -21901,7 +21883,7 @@ fn install_loop_sites<'live, H: Host>(
             && [lane_move_pair::<H, true, false> as Handler, lane_move_pair::<H, true, true>]
                 .iter()
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
-        // A branch table takes its entry's jump offset the same way (`lane_branch_table`):
+        // A branch table takes its entry's jump offset the same way (`row_jump`, `Edge::Entry`):
         // babel-minify-wtb's generator `switch` under --jit jumped to a site read as an offset.
         then || pair || table_entries.contains(pc)
     };
