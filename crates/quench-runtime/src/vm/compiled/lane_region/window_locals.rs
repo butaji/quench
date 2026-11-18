@@ -29,8 +29,9 @@ impl Lowering<'_, '_> {
     }
 
     /// The storage word again, after an operation that made the environment.
+    /// A numeric body (no entry facts) holds no environment word: its locals live in no window.
     pub(super) fn reload_environment(&mut self) {
-        let variable = self.entry.as_ref().expect("entry facts").environment;
+        let Some(variable) = self.entry.as_ref().map(|entry| entry.environment) else { return };
         let word = self.environment_word();
         self.builder.def_var(variable, word);
     }

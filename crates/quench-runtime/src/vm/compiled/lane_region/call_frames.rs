@@ -172,7 +172,13 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
-        let plan = DirectPlan { kind, identity: Identity::Guarded(callee.callee.to_bits()), sloppy: callee.sloppy.map(Value::to_bits),
+        // A callee register the state already holds as this very function (a Stable binding's
+        // read, or an identity an earlier guard proved) needs no check: the identity is folded.
+        let word = callee.callee.to_bits();
+        let proven = matches!(site.callee, crate::staged::forms::Callee::Register(register)
+            if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
+        let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };
+        let plan = DirectPlan { kind, identity, sloppy: callee.sloppy.map(Value::to_bits),
             registers: callee.registers, returned: LANE_BODY_RETURNED, bound: None };
         // The callee is the one the site linked, which the call guards: a Site fact, never inlined by the plan.
         plan_entry(Some(Resolved { plan, binding: BindingTime::Site, body: None }), self.tiers.lane_body.max_inlined_instructions)
