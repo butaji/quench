@@ -130,7 +130,9 @@ impl LoweringJob<'_> {
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            names: Some(&names) }), ..self.facts };
+            // TODO(merge): wyc2t0's own-constant fold and the scalar construct plans read the VM
+            // live; they need FactTables entries before the off-thread lowering can answer them.
+            names: Some(&names), own_constant: &|_| None }), ..self.facts };
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads)
     }
