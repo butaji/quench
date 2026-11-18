@@ -3300,7 +3300,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 lane_handler! {
@@ -3322,25 +3322,20 @@ mod capture_append;
 mod mapped_windows;
 mod string_case_filter;
 
-script_handler! {
-    /// `MakeClosure` of a function an environment activation may run: in a frame's run, as
-    /// the `MakeClosure` row's closure; in an environment activation, over its environment.
-    fn lane_make_window_closure<>(cx, r, ip, i, view) {
-        let (function, registers) = environment_window_fields(i);
-        let value = if unsafe { (*cx).registers }.env().is_deleted() {
-            lane_closure_value_of(cx, function as u32)
-        } else {
-            lane_window_closure_value(cx, r, function as u32, registers)
-        };
-        let Some(value) = value else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+/// `ScopeReads::closure` of a window whose names do not resolve through its scope
+/// (`FLAG_WINDOW_CLOSURE`): the closure over the running environment, as `lane_window_closure_value` makes it.
+///
+/// # Safety
+/// As `lane_frame::ScopeReads`: `cx` is the running lane's context, `r` its register file.
+unsafe fn window_closure_into<H: Host>(cx: *mut (), r: Registers, _ip: Ip, function: u32, registers: u16) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    if unsafe { (*cx).registers }.env().is_deleted() {
+        return lane_closure_value_of(cx, function);
     }
+    lane_window_closure_value(cx, r, function, registers)
 }
 
-/// `lane_make_window_closure`'s closure of `function` over the running environment
+/// `window_closure_into`'s closure of `function` over the running environment
 /// activation's environment, whose window starts at register `registers`. Out of line, as
 /// `lane_new_object`: making the closure takes stack temporaries.
 #[inline(never)]
@@ -3387,7 +3382,7 @@ lane_handler! {
     /// `lane_frame::staged_store_local_checked` completes; any other store takes the general
     /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
     /// write a `with` object's binding instead, has no record (`derive_lane_view`) but the
-    /// scoped window's (`scoped_names::lane_store_scoped_local`).
+    /// scoped window's (`scoped_names::lane_store_scoped_local_miss`).
     fn store_local_miss<>(cx, r, ip, i, view) {
         let value = r.get(i.a);
         let stored = unsafe { (*cx).registers }.env().is_deleted()
@@ -10478,8 +10473,9 @@ script_handler! {
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
                 if code.function_get(lane_running_function(cx) as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
-                    requicken::<H>(ip, scoped_names::scoped_load_name::<H, KIND>());
-                    sibling!(scoped_names::scoped_load_name::<H, KIND>(), r, ip, Carried::script_in(cx, view))
+                    let scoped = name_row::<H, FLAG_SCOPE>(load);
+                    requicken::<H>(ip, scoped);
+                    sibling!(scoped, r, ip, Carried::script_in(cx, view))
                 }
                 // Any other name's scope is a runtime fact, which the general path's read settles
                 // (`lane_load_name_probe`).
@@ -10527,8 +10523,9 @@ script_handler! {
             sibling!(store_global_name_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         if code.function_get(function as usize).is_some_and(|body| body.call_plan(code).holds_window_scope()) {
-            requicken::<H>(ip, scoped_names::scoped_store_name::<H>());
-            sibling!(scoped_names::scoped_store_name::<H>(), r, ip, Carried::script(cx))
+            let scoped = lane_frame::scoped_store_row::<H>();
+            requicken::<H>(ip, scoped);
+            sibling!(scoped, r, ip, Carried::script(cx))
         }
         requicken::<H>(ip, lane_exit::<H>);
         exit(ip)

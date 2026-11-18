@@ -179,6 +179,10 @@ fn global_typeof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 fn global_write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, source: Register,
     (atom, site, initialize): (u32, u16, bool)) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
+    // A window whose names resolve through its scope stores to the `with` object that has the name first.
+    if frame.scoped_store(stage, atom, value).is_some() {
+        return Step::Value(value);
+    }
     match frame.global_write(stage, source, atom, site, value, initialize) {
         Some(()) => Step::Value(value),
         None => calling(stage, frame, CallOut::GlobalWrite { source, atom, site, initialize }, None),
@@ -204,6 +208,10 @@ fn global_row<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
 #[inline(always)]
 fn load_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (destination, receiver): (Register, Option<Register>), (atom, site): (u32, u16), proof: S::Proof) -> Step<S::Word, F::Control> {
+    // A window whose names resolve through its scope reads the `with` object or dynamic binding that has the name first.
+    if frame.scoped_name(stage, destination, receiver, atom).is_some() {
+        return Step::Value(stage.constant(0));
+    }
     match (global_row(stage, frame, destination, (atom, site), proof), receiver) {
         (None, None) => calling(stage, frame, CallOut::LoadName { atom, site }, Some(destination)),
         (None, Some(_)) => Step::Unresolved,
@@ -250,6 +258,14 @@ fn load_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &
 fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     (source, slot, initialize): (Register, u16, bool), result: Option<Register>) -> Step<S::Word, F::Control> {
     let value = frame.tagged(stage, source);
+    // A window whose names resolve through its scope stores to the `with` object that has the local's name first.
+    if frame.scoped_local_store(stage, slot, value).is_some() {
+        if let Some(result) = result {
+            let fact = frame.fact(source);
+            frame.write(stage, result, value, fact);
+        }
+        return Step::Value(value);
+    }
     if frame.environment_write(stage, slot, value).is_none() {
         return calling(stage, frame, CallOut::StoreEnvLocal { source, slot, initialize }, result);
     }

@@ -68,6 +68,27 @@ struct EnvironmentClones {
     run: unsafe fn(*mut (), Registers, u16, u32) -> bool,
 }
 
+/// The window scope a row of a window activation whose names resolve through its scope reads and
+/// writes through (`FLAG_SCOPE`, `FLAG_SCOPE_ENVIRONMENT`, `FLAG_WINDOW_CLOSURE`): the lane context and
+/// the record's ip, which the scope's lookup takes (`window_scope`), the closure's function and window
+/// register count, and the lane's callouts for each answer.
+#[derive(Clone, Copy)]
+struct ScopeReads {
+    context: *mut (),
+    ip: super::Ip,
+    /// The closure's function, and its window's register count (`environment_window_fields`).
+    function: u32,
+    window: u16,
+    /// The by-name read of the atom into the destination and, for a call, its receiver.
+    name: unsafe fn(*mut (), Registers, super::Ip, u32, Register, Option<Register>) -> bool,
+    /// The store of a word to the atom's `with` object.
+    store: unsafe fn(*mut (), Registers, super::Ip, u32, u64) -> bool,
+    /// The store of a word to the window's local slot's `with` object.
+    local: unsafe fn(*mut (), Registers, super::Ip, u16, u64) -> bool,
+    /// The closure of the function, over the window's scope.
+    closure: unsafe fn(*mut (), Registers, super::Ip, u32, u16) -> Option<Value>,
+}
+
 /// The lane context's capture stores, erased of its host so the frame names no `H`
 /// (`lane_capture_store`).
 #[derive(Clone, Copy)]
@@ -176,6 +197,8 @@ struct YieldSuspension {
     /// The register a keeping activation's kept values follow its registers from (`ArgumentGet`'s
     /// record `c`, the running function's register count), read by `Frame::argument`.
     kept: u16,
+    /// The window scope of a row whose names resolve through its scope (`ScopeReads`), where the row is one.
+    scope: Option<ScopeReads>,
     /// The running frame's captured environment, for a staged environment row (`Decoder::Names`).
     environment: Option<EnvironmentReads>,
     /// The global object's own data field a global-name store writes through the record's hint,
@@ -315,7 +338,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -339,7 +362,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
     }
 }
 
@@ -469,8 +492,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn allocate_value(&mut self, _stage: &mut Concrete, destination: Register, allocation: Allocation, _proof: ()) -> Option<u64> {
         let host = self.host?;
-        // SAFETY: the maker was made for the lane context this frame runs in.
-        let value = unsafe { (host.allocate)(host.cx, self.registers, allocation) }?;
+        // SAFETY: the maker was made for the lane context this frame runs in; a window's closure is
+        // made over the window's scope, at the record's ip (`ScopeReads::closure`).
+        let value = match (self.scope, &allocation) {
+            (Some(scope), Allocation::Closure { .. }) =>
+                unsafe { (scope.closure)(scope.context, self.registers, scope.ip, scope.function, scope.window) }?,
+            _ => unsafe { (host.allocate)(host.cx, self.registers, allocation) }?,
+        };
         self.registers.set(destination, value);
         Some(value.to_bits())
     }
@@ -603,6 +631,31 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         Some((self.registers.get(self.kept + index).to_bits(), Boxing::Value))
     }
 
+    /// The by-name read through the window's scope (`ScopeReads::name`): the destination and the call
+    /// receiver are written by the callout, which finds the binding the scope holds.
+    #[inline(always)]
+    fn scoped_name(&mut self, _stage: &mut Concrete, destination: Register, receiver: Option<Register>, atom: u32) -> Option<()> {
+        let ScopeReads { context, ip, name, .. } = self.scope?;
+        // SAFETY: the running lane's context and register file, live for the row's step.
+        unsafe { name(context, self.registers, ip, atom, destination, receiver) }.then_some(())
+    }
+
+    /// The store of `value` to the `with` object the window's scope holds the name in (`ScopeReads::store`).
+    #[inline(always)]
+    fn scoped_store(&mut self, _stage: &mut Concrete, atom: u32, value: u64) -> Option<()> {
+        let ScopeReads { context, ip, store, .. } = self.scope?;
+        // SAFETY: as `scoped_name`.
+        unsafe { store(context, self.registers, ip, atom, value) }.then_some(())
+    }
+
+    /// The store of `value` to local `slot` through the window's scope (`ScopeReads::local`).
+    #[inline(always)]
+    fn scoped_local_store(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
+        let ScopeReads { context, ip, local, .. } = self.scope?;
+        // SAFETY: as `scoped_name`.
+        unsafe { local(context, self.registers, ip, slot, value) }.then_some(())
+    }
+
     #[inline(always)]
     fn callee(&mut self, _stage: &mut Concrete) -> Option<(u64, Boxing)> {
         let (context, read) = self.callee?;
@@ -640,6 +693,10 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn environment_write(&mut self, _stage: &mut Concrete, slot: u16, value: u64) -> Option<()> {
+        // A window whose names resolve through its scope leaves its local stores to the scope's rules (`scoped_local_store`).
+        if self.scope.is_some() {
+            return None;
+        }
         let EnvironmentReads { context, write, .. } = self.environment?;
         // SAFETY: as `environment`; `write` took the environment's barrier, and no collection runs in the lane.
         let storage = unsafe { write(context, slot) }?;
@@ -1063,6 +1120,13 @@ pub(in crate::vm::dispatch_fast) const FLAG_CASE_FILTER: u8 = 8;
 /// its slot (`staged::window_base`). In a window activation's run the row reads the window's locals;
 /// in a frame's run, the frame's own locals, as an unflagged plain record does.
 pub(in crate::vm::dispatch_fast) const FLAG_WINDOW: u8 = 9;
+/// `FLAG` of a by-name load or store, or a closure, in a window activation whose names resolve through its
+/// scope (`ScopeReads`): the row reads or writes the scope's binding first, and any miss takes the general step.
+pub(in crate::vm::dispatch_fast) const FLAG_SCOPE: u8 = 10;
+/// `FLAG` of an environment-local store in such a window whose environment holds the local.
+pub(in crate::vm::dispatch_fast) const FLAG_SCOPE_ENVIRONMENT: u8 = 11;
+/// `FLAG` of a closure in a window activation whose names do not resolve through its scope.
+pub(in crate::vm::dispatch_fast) const FLAG_WINDOW_CLOSURE: u8 = 12;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -1083,10 +1147,33 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
             || op.traits().has(crate::bytecode::Traits::ROW_HANDLER))
 }
 
+/// The window scope `FLAG` reads through (`ScopeReads`), for a row of a window whose names resolve
+/// through its scope; `None` for any other row. The closure's function and window register count are
+/// the record's (`environment_window_fields`), which a name or store row does not read.
+#[inline(always)]
+fn scope_reads<H: Host, const FLAG: u8>(cx: *mut LaneContext<H>, ip: super::Ip, i: &LaneInstruction) -> Option<ScopeReads> {
+    if !matches!(FLAG, FLAG_SCOPE | FLAG_SCOPE_ENVIRONMENT | FLAG_WINDOW_CLOSURE) {
+        return None;
+    }
+    let (function, window) = super::environment_window_fields(i);
+    let closure: unsafe fn(*mut (), Registers, super::Ip, u32, u16) -> Option<Value> = if FLAG == FLAG_WINDOW_CLOSURE {
+        super::window_closure_into::<H>
+    } else {
+        super::scoped_names::scoped_closure_into::<H>
+    };
+    Some(ScopeReads {
+        context: cx.cast(), ip, function: function as u32, window,
+        name: super::scoped_names::scoped_name_into::<H>,
+        store: super::scoped_names::scoped_store_into::<H>,
+        local: super::scoped_names::scoped_local_store_into::<H>,
+        closure,
+    })
+}
+
 /// The frame `lane_row` steps opcode `OP`'s row over: the register file and the carried view, and
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
-fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
+fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { crate::staged::name_load(LaneFields::<OP>::OPCODE).is_some() } {
         // A by-name load reads the binding its record's first run resolved (`FLAG`, `name_row`);
@@ -1098,7 +1185,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
             _ => None,
         };
-        let frame = LaneFrame::<ACC>::hosted::<H>(r, view, cx);
+        let frame = LaneFrame::<ACC> { scope: scope_reads::<H, FLAG>(cx, ip, i), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
         return match binding {
             Some(binding) => frame.named(binding),
             None => frame,
@@ -1114,8 +1201,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             |context, slot| unsafe { super::arguments_count::<H, false>(context.cast(), slot) }
         };
         let environment = EnvironmentReads { context: cx.cast(), read: environment_read::<H>, write: environment_write_storage::<H> };
-        // A global-name store writes through the record's own hint (`global_name_store`).
-        let global_store = if const { OP == crate::staged::GLOBAL_WRITE_ROW } {
+        // A global-name store writes through the record's own hint (`global_name_store`), which a window's
+        // store does not take: its scope answers the name (`ScopeReads::store`).
+        let global_store = if const { OP == crate::staged::GLOBAL_WRITE_ROW } && FLAG != FLAG_SCOPE {
             Some(GlobalStore { cx: cx.cast(), hint: i.field_hint(), store: global_name_store::<H> })
         } else {
             None
@@ -1133,7 +1221,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         // An element read names the running function's register count, which its kept values follow.
         let kept = if const { OP == crate::staged::ARGUMENT_GET_ROW } { i.c } else { 0 };
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), global_store, names: Some((cx.cast(), names)),
-            clones, cleanups: Some(cleanups), ..LaneFrame::<ACC>::new(r, view) };
+            clones, cleanups: Some(cleanups), scope: scope_reads::<H, FLAG>(cx, ip, i), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
         // A string-case index reads its operand from the register file (`LaneFrame::read` stands for field B),
@@ -1210,7 +1298,8 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
         // An allocation or an element definition makes its value in the lane context, as a staged
         // allocation does (`LaneHost::allocate`, `LaneHost::define`).
-        return LaneFrame::<ACC>::hosted::<H>(r, view, cx);
+        // A window's closure is made over the window's scope (`allocate_value`).
+        return LaneFrame::<ACC> { scope: scope_reads::<H, FLAG>(cx, ip, i), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmInt)) } {
         // An integer row reads its operands from the register file: the carried accumulator stands for
@@ -1277,8 +1366,16 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::ArgumentsElement => super::lane_frame_arguments::<H, true>,
         crate::staged::Miss::EnvironmentLoad => super::load_local_miss::<H>,
-        crate::staged::Miss::EnvironmentStore => super::store_local_miss::<H>,
-        crate::staged::Miss::StoreNameFirst => super::store_name_first_miss::<H>,
+        crate::staged::Miss::EnvironmentStore => match FLAG {
+            FLAG_SCOPE => super::scoped_names::scoped_store_local::<H, false>(),
+            FLAG_SCOPE_ENVIRONMENT => super::scoped_names::scoped_store_local::<H, true>(),
+            _ => super::store_local_miss::<H> as Handler,
+        },
+        crate::staged::Miss::StoreNameFirst => match FLAG {
+            // A window's store the scope does not take leaves to the general step.
+            FLAG_SCOPE => super::lane_exit::<H> as Handler,
+            _ => super::store_name_first_miss::<H> as Handler,
+        },
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
         crate::staged::Miss::Binary => super::lane_binary_general::<H>,
         crate::staged::Miss::WasmMemoryLoad => super::lane_wasm_memory_load::<H>,
@@ -1325,9 +1422,24 @@ const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
         FLAG_NAME_GLOBAL => super::lane_load_global_name_refresh::<H, KIND, false> as Handler,
         FLAG_NAME_GLOBAL_SCOPED => super::lane_load_global_name_refresh::<H, KIND, true> as Handler,
-        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC => super::lane_exit::<H> as Handler,
+        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::lane_exit::<H> as Handler,
         _ => super::lane_load_name_resolve::<H, KIND> as Handler,
     }
+}
+
+/// The row handler of a window's by-name store (`GLOBAL_WRITE_ROW` at `FLAG_SCOPE`): the scope's store first.
+pub(in crate::vm::dispatch_fast) const fn scoped_store_row<H: Host>() -> Handler {
+    lane_row::<H, { crate::staged::GLOBAL_WRITE_ROW }, ACC_NONE, FLAG_SCOPE> as Handler
+}
+
+/// The row handler of a window's environment-local store (`STORE_ENV_LOCAL_ROW`) at `FLAG`.
+pub(in crate::vm::dispatch_fast) const fn scoped_local_row<H: Host, const FLAG: u8>() -> Handler {
+    lane_row::<H, { crate::staged::STORE_ENV_LOCAL_ROW }, ACC_NONE, FLAG> as Handler
+}
+
+/// The row handler of a closure (`MAKE_CLOSURE_ROW`) in a window, at `FLAG`.
+pub(in crate::vm::dispatch_fast) const fn closure_row<H: Host, const FLAG: u8>() -> Handler {
+    lane_row::<H, { crate::staged::MAKE_CLOSURE_ROW }, ACC_NONE, FLAG> as Handler
 }
 
 /// Opcode `OP`'s row handler for a record of which the view proved its row's fact (`FLAG_SET`),
@@ -1468,7 +1580,7 @@ lane_handler! {
         let mut stage = Concrete::new(std::ptr::null());
         // A loop's exit writes its result register, so no producer's accumulator carries past it.
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
-        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
+        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
             // A table's entry is the jump record `k` places after the table record (validation places
@@ -1514,7 +1626,7 @@ lane_handler! {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = Concrete::new(property_values);
-        let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, i, view);
+        let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
                 // A row that answers its value without writing its register (`row_writes_result`):
@@ -1564,7 +1676,7 @@ lane_handler! {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, i, view);
+            let mut frame = row_frame::<H, A, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             match row_step!(LaneFields::<A>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<A>::OPCODE) && MODE != crate::staged::FUSED_DEAD_FIRST } {
@@ -1597,7 +1709,7 @@ lane_handler! {
             let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
             let mut stage = Concrete::new(std::ptr::null());
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
-            let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
+            let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
                 Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
@@ -1614,7 +1726,7 @@ lane_handler! {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, B, ACC_NONE, { $flag }>(cx, r, i, view);
+            let mut frame = row_frame::<H, B, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<B>::OPCODE) } {
@@ -1651,7 +1763,7 @@ lane_handler! {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, i, view);
+            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
@@ -1675,7 +1787,7 @@ lane_handler! {
                 unsafe { vm(cx) }.heap.arena_values_base()
             } else { std::ptr::null() };
             let mut stage = Concrete::new(property_values);
-            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, i, view);
+            let mut frame = row_frame::<H, $L, ACC_NONE, { $flag }>(cx, r, ip, i, view);
             match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Value(value) => {
                     if const { !crate::staged::row_writes_result(LaneFields::<$L>::OPCODE) } {
@@ -1705,7 +1817,7 @@ lane_handler! {
                 let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
                 let mut stage = Concrete::new(std::ptr::null());
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
-                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
+                let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                     Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
                     Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),

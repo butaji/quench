@@ -452,6 +452,9 @@ pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
 /// The opcode whose row answers an `arguments` element (`Frame::argument`), which the lane's record
 /// names its register base for (`LaneFrame::kept`).
 pub(crate) const ARGUMENT_GET_ROW: u16 = Op::ArgumentGet as u16;
+/// The opcode whose row stores an environment local (`Operation::StoreEnvLocal`), which a window whose names
+/// resolve through its scope runs with its scope's store first (`Frame::scoped_local_store`).
+pub(crate) const STORE_ENV_LOCAL_ROW: u16 = Op::StoreEnvLocal as u16;
 
 /// The opcode whose row answers a `Unary` record: `+x`, `-x`, `!x`, `~x` and the index form of
 /// `typeof` decode here; a `typeof` test of a name runs the general step.

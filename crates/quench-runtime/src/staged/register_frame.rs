@@ -231,7 +231,24 @@ pub(crate) trait Frame<S: Stage> {
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
     /// The element `index` (a word) of the arguments binding in local `slot`, where the frame holds
     /// its kept values (a keeping activation's); `None` leaves it to the row's miss.
+    #[inline(always)]
     fn argument(&mut self, _stage: &mut S, _slot: u16, _index: S::Word) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The by-name read of `atom` through the running window activation's scope chain (its `with`
+    /// objects, then its dynamic bindings), defining `destination` and, for a call, `receiver`; `None`
+    /// where the frame does not decide it, which leaves the name to the row's miss.
+    #[inline(always)]
+    fn scoped_name(&mut self, _stage: &mut S, _destination: Register, _receiver: Option<Register>, _atom: u32) -> Option<()> { None }
+
+    /// Store `value` to `atom` through the running window activation's scope chain: the `with` object
+    /// that has the name takes it. `None` where no object does, or the frame cannot decide it.
+    #[inline(always)]
+    fn scoped_store(&mut self, _stage: &mut S, _atom: u32, _value: S::Word) -> Option<()> { None }
+
+    /// Store `value` to local `slot` through the running window activation's scope chain (the `with`
+    /// object that has the local's name takes it). `None` where no object does, or the frame cannot decide it.
+    #[inline(always)]
+    fn scoped_local_store(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
 
     /// The function the running activation runs (its self binding's value), as a word and the fact
     /// the frame keeps of it; `None` where the frame does not hold it, leaving the read to the

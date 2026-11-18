@@ -43,7 +43,7 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
     }
     let class = op.class();
     if class == Class::MakeClosure {
-        return Some(if scoped { scoped_names::scoped_closure::<H>() } else { lane_make_window_closure::<H> as Handler });
+        return Some(if scoped { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_SCOPE }>() } else { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_WINDOW_CLOSURE }>() });
     }
     // A store to the function's own name is ignored or throws (`Function::strict`), which
     // the general step decides.
@@ -51,10 +51,10 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
         return Some(lane_exit::<H>);
     }
     // A function that resolves names at run time may store to a `with` object's binding instead of the
-    // local: its environment store takes the scope first (`scoped_names::lane_store_scoped_local`).
+    // local: its environment store takes the scope first (`scoped_names::lane_store_scoped_local_miss`).
     let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
     if scoped && class == Class::StoreEnvLocal {
-        return Some(if environment { scoped_names::scoped_store_local::<H, true>() } else { scoped_names::scoped_store_local::<H, false>() });
+        return Some(if environment { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE_ENVIRONMENT }>() } else { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE }>() });
     }
     let environment_slot = class == Class::LoadEnvLocal || class == Class::StoreEnvLocal;
     // A plain slot of a non-root function: the frame's own local, which the window holds too
