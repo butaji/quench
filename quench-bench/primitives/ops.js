@@ -94,6 +94,8 @@ ops.k_nbody_pair = function (n) {
 };
 // Allocation: an object literal, a function constructor's instance and a class instance per
 // iteration, each read back; the C twins allocate the same struct on the heap (malloc + free).
+// A one-field object literal per iteration (`{ v: i }`), consumed locally.
+ops.alloc_literal1 = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { v: i }; s = (s + p.v) | 0; } return s; };
 ops.alloc_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; s = (s + p.x + p.y) | 0; } return s; };
 function Pair(x, y) { this.x = x; this.y = y; }
 ops.alloc_ctor = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; } return s; };

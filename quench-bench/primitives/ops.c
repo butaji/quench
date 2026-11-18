@@ -786,6 +786,21 @@ static double NOINL op_alloc_literal(long n) {
   return s;
 }
 
+struct cell1 { int32_t v; };
+
+static double NOINL op_alloc_literal1(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct cell1 *p = malloc(sizeof *p);
+    p->v = i;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->v);
+    free(p);
+  }
+  return s;
+}
+
 static double NOINL op_alloc_ctor(long n) { return op_alloc_literal(n); }
 
 static double NOINL op_alloc_class(long n) {
@@ -1102,7 +1117,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64}, {"typed_store_u8c", op_typed_store_u8c},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
   {"k_dist2", op_k_dist2}, {"k_field_acc", op_k_field_acc}, {"k_list_walk", op_k_list_walk}, {"k_vec_local", op_k_vec_local},
-  {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
+  {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_literal1", op_alloc_literal1}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
   {"date_now", op_date_now}, {"arr_includes", op_arr_includes}, {"arr_indexof", op_arr_indexof},
   {"k01_sum_or", op_k01_sum_or},

@@ -498,7 +498,9 @@ fn object_site_instruction_valid(
             };
             let window = instruction.register_window();
             let mut atoms = FxHashSet::default();
-            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+            // `MakeObject2` holds the two-field literal; any other nonempty width up to the
+            // window is this one's.
+            (window.count == 1 || usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS)
                 && site.atoms.len() == usize::from(window.count)
                 && site.atoms.iter().all(|atom| atoms.insert(*atom))
                 && register_window_in_bounds(window.base, u32::from(window.count), registers)
