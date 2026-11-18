@@ -148,24 +148,43 @@ impl Demands {
     }
 }
 
-/// Each block leader's use demand, solved backward to a fixed point over the unit's CFG.
+/// Each block leader's use demand, solved backward to a fixed point over the unit's CFG. A
+/// worklist reaches the round-robin solution: the demand only grows as rows join, so a block
+/// needs solving again only when a successor's row changed, and each change queues its
+/// predecessors alone instead of sweeping every block once more.
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
     leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
     let Liveness::Unit(masks) = liveness else { return Demands::default() };
     let live = |pc: usize, register: Register| masks.as_deref().is_none_or(|masks| masks.is_live(pc, register));
-    let mut demands = Demands { offsets: vec![None; unit.instructions.len()], rows: Vec::new(),
+    let length = unit.instructions.len();
+    let mut demands = Demands { offsets: vec![None; length], rows: Vec::new(),
         registers: usize::from(unit.registers) };
-    let mut blocks: Vec<(usize, usize)> = leaders.iter().filter(|pc| *pc < unit.instructions.len())
-        .map(|start| (start, (start + 1..unit.instructions.len()).find(|pc| leaders.contains(*pc))
-            .unwrap_or(unit.instructions.len()))).collect();
+    let starts: Vec<usize> = leaders.iter().filter(|pc| *pc < length).collect();
+    let mut blocks: Vec<(usize, usize)> = starts.iter().zip(starts.iter().skip(1).copied().chain([length]))
+        .map(|(start, end)| (*start, end)).collect();
     blocks.reverse();
-    for (start, _) in &blocks { demands.set(*start, &vec![Demand::default(); demands.registers]); }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for (start, end) in &blocks {
-            let entry = demands.block_entry(program, unit, *start, *end, &live);
-            changed |= demands.set(*start, &entry);
+    let mut block_of = vec![usize::MAX; length];
+    for (index, (start, _)) in blocks.iter().enumerate() {
+        block_of[*start] = index;
+        demands.set(*start, &vec![Demand::default(); demands.registers]);
+    }
+    let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); blocks.len()];
+    for (index, (_, end)) in blocks.iter().enumerate() {
+        let last = unit.instructions[end - 1];
+        for successor in successors(end - 1, last).into_iter().flatten() {
+            if let Some(&target) = block_of.get(successor) && target != usize::MAX { predecessors[target].push(index); }
+        }
+    }
+    let mut queued = vec![true; blocks.len()];
+    let mut work: std::collections::VecDeque<usize> = (0..blocks.len()).collect();
+    while let Some(index) = work.pop_front() {
+        queued[index] = false;
+        let (start, end) = blocks[index];
+        let entry = demands.block_entry(program, unit, start, end, &live);
+        if demands.set(start, &entry) {
+            for &predecessor in &predecessors[index] {
+                if !queued[predecessor] { queued[predecessor] = true; work.push_back(predecessor); }
+            }
         }
     }
     demands

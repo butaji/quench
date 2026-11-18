@@ -268,6 +268,7 @@ impl<H: Host> Vm<H> {
         if let Some(entries) = observed
             && !pays_compile(tiers, program, function, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, true, false) { return Err(Unstarted::Unpaid); }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
+        super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
         let (mut plan, native) = self.plan_lane_method_sized(program, function, targets, trips, captures, direct, generic, budget, entry, arrays)
             .ok_or(Unstarted::Declined)?;

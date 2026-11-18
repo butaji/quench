@@ -290,7 +290,7 @@ impl Lowering<'_, '_> {
             arguments.push(if abi.is_float(index) { self.number(state, register, miss) } else { self.int(state, register, miss) });
         }
         let signature = abi.signature(types::I64, self.builder.func.signature.call_conv);
-        let signature = self.builder.import_signature(signature);
+        let signature = crate::vm::jit_backend::signature_ref(self.builder.func, signature);
         let cell = self.reloc(RelocKind::EntryCell, self.function_id, cell as u64);
         let mut stage = emit(&mut self.builder);
         let entry = stage.load_u64(CELL, cell, crate::staged::call::ENTRY_CELL.scalar_offset);

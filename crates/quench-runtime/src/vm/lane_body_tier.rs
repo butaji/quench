@@ -355,6 +355,7 @@ impl LaneView {
                     return false;
                 }
                 super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyCompile);
+                if !self.attempts_at(entries.saturating_add(1)) { super::super::compiled::base_region::count(super::super::compiled::base_region::Event::BodyRecurrent); }
                 // A predecessor's few leaves are the specialization's feedback (`stuck`).
                 let generic: Vec<_> = stuck.exits().collect();
                 (work(super::super::compiled::LaneBodyWork::Start { generic: &generic, shrinks: self.tier().history.get().shrinks, observed: self.attempts_at(entries.saturating_add(1)).then(|| entries.saturating_add(1)), looped: None, called: self.called_by_bodies(), caller: self, arrays: &[] }), entries, recompiles, stuck, 0)
@@ -376,6 +377,13 @@ impl LaneView {
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile in
     /// flight records the inlining its plan fits (`LaneBodyHistory::shrinks`).
     fn body_after(&self, outcome: super::super::compiled::LaneBodyOutcome, entry: Handler, entries: u32, recompiles: u8, stuck: LaneLeaves, looks: u8) -> LaneBody {
+        {
+            use super::super::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
+            count(match &outcome {
+                O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
+                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+            });
+        }
         match outcome {
             super::super::compiled::LaneBodyOutcome::Compiling(pending) => {
                 self.tier().history.set(LaneBodyHistory { shrinks: pending.shrinks(), ..self.tier().history.get() });

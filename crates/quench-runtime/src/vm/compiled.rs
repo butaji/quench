@@ -751,6 +751,16 @@ fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, o
     object_slots::emit(builder).load_u64(Region::Dispatch.mutable(), payload, offset)
 }
 
+/// A payload word fixed for a whole native run (`JsStepDispatch::vm`, `residual`): a nested
+/// run that rebinds it restores it before its caller's code continues
+/// (`Vm::run_nested_lane_method`), so the caller's code reads it once, and every helper call
+/// shares that read instead of loading it again after each call.
+fn emit_js_payload_fixed_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
+    use crate::staged::region::Region;
+    let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
+    object_slots::emit(builder).load_u64(Region::Dispatch.readonly(), payload, offset)
+}
+
 /// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
 /// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
 fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
@@ -781,8 +791,8 @@ fn emit_lane_helper_call(
     helper: ir::Value,
     arguments: &[ir::Value],
 ) -> ir::Value {
-    let vm = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
-    let residual = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
+    let vm = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, vm));
+    let residual = emit_js_payload_fixed_word(builder, payload, std::mem::offset_of!(JsStepDispatch, residual));
     // All current helpers fit inline; larger future ABIs spill without a limit.
     let mut values = smallvec::SmallVec::<[ir::Value; 8]>::from_slice(&[vm, residual]);
     values.extend_from_slice(arguments);
