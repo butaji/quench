@@ -299,6 +299,7 @@ fn plan(
         }
         Step::Simd(simd) => wasm_stitch_simd::simd(instruction, simd, world).or_else(|| wasm_stitch_simd_more::simd_more(pc, instruction, world)),
         Step::Table(op) => wasm_stitch_table::table(pc, instruction, op, world),
+        Step::Gc(op) => wasm_stitch_gc::gc(instruction, op, world),
         Step::Flow(Flow::Return) => Some(vec![if returns {
             Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
         } else {
@@ -361,6 +362,9 @@ pub(super) struct World<'a> {
     /// The table or segment operation's callout, `table_op_callout::<H>` as an address: the
     /// stitched code is the program's own, so it names its Host type's callout.
     pub(super) table_callout: u64,
+    /// The GC operations' callout, `wasm_gc_callout::<H>` as an address (`wasm_gc_callout.rs`):
+    /// the stitched code names its Host type's callout, as `table_callout` does.
+    pub(super) gc_callout: u64,
     /// The environment slots a table or segment operation at `pc` binds (`TableOp::bindings`:
     /// the first, then the second), from the function's full plan; `None` where the plan did not
     /// reach `pc` or names no first binding.
@@ -489,6 +493,8 @@ use self::wasm_stitch_memory::bulk;
 mod wasm_stitch_global;
 #[path = "wasm_stitch_table.rs"]
 mod wasm_stitch_table;
+#[path = "wasm_stitch_gc.rs"]
+mod wasm_stitch_gc;
 #[path = "wasm_stitch_simd.rs"]
 mod wasm_stitch_simd;
 #[path = "wasm_stitch_simd_more.rs"]

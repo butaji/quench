@@ -38,14 +38,17 @@ pub(crate) trait WasmGc: MachineStage {
     fn is_null(&mut self, reference: Self::Word) -> Self::Word;
     /// The flag that `reference` is a GC object: a cell with fields, neither null nor an i31.
     fn is_object(&mut self, reference: Self::Word) -> Self::Word;
-    /// The flag that `reference` is an object whose field `index` exists.
-    fn field_exists(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
+    /// The address of field `index` of `reference`'s storage, 0 where `reference` is no object or
+    /// has no field `index`: one lookup that both checks the field and locates it, as a compiled
+    /// access computes the address it bounds-checks. Valid until the next allocation.
+    fn field_slot(&mut self, reference: Self::Word, index: Self::Word) -> Self::Word;
     /// The number of fields of the object `reference`.
     fn field_count(&mut self, reference: Self::Word) -> Self::Word;
-    /// The stored word of field `index`: the integer of a packed field, the value's bits otherwise.
-    fn read_field(&mut self, reference: Self::Word, index: Self::Word, field: GcField) -> Self::Word;
-    /// Stores the value bits `value` at field `index`, in the field's storage.
-    fn write_field(&mut self, reference: Self::Word, index: Self::Word, field: GcField, value: Self::Word);
+    /// The stored word at the field address `slot` (`field_slot`, checked nonzero): the integer of
+    /// a packed field, the value's bits otherwise.
+    fn read_slot(&mut self, slot: Self::Word, field: GcField) -> Self::Word;
+    /// Stores the value bits `value` at the field address `slot`, in the field's storage.
+    fn write_slot(&mut self, slot: Self::Word, field: GcField, value: Self::Word);
     /// The flag that the array `reference` has mutable elements.
     fn array_mutable(&mut self, reference: Self::Word) -> Self::Word;
     /// The flag that the elements of array `source` are storable in array `destination`.
@@ -79,17 +82,18 @@ fn negated<S: MachineStage>(stage: &mut S, flag: S::Word) -> S::Word {
 
 /// The checks of a reference to an aggregate before its field `index` is read or written: a null
 /// reference traps as its aggregate's null trap, then a struct's missing field is rejected or an
-/// array's element past the end traps.
+/// array's element past the end traps. The field's address, which the access then uses.
 #[inline(always)]
-fn locate<S: WasmGc>(stage: &mut S, aggregate: Aggregate, reference: S::Word, index: S::Word) -> Result<(), S::Exit> {
+fn locate<S: WasmGc>(stage: &mut S, aggregate: Aggregate, reference: S::Word, index: S::Word) -> Result<S::Word, S::Exit> {
     let null = stage.is_null(reference);
     stage.trap_when(null, aggregate.null_trap())?;
-    let exists = stage.field_exists(reference, index);
-    let missing = negated(stage, exists);
+    let slot = stage.field_slot(reference, index);
+    let missing = stage.operate_unary(Unary::EqualZero, Width::I64, slot);
     match aggregate {
-        Aggregate::Struct => stage.reject_when(missing, "invalid Wasm aggregate reference"),
-        Aggregate::Array => stage.trap_when(missing, WasmTrap::OutOfBoundsArray),
+        Aggregate::Struct => stage.reject_when(missing, "invalid Wasm aggregate reference")?,
+        Aggregate::Array => stage.trap_when(missing, WasmTrap::OutOfBoundsArray)?,
     }
+    Ok(slot)
 }
 
 /// The field `index` of `reference` as a `struct.get` or `array.get` reads it: a signed packed read
@@ -104,8 +108,8 @@ pub(crate) fn field_read<S: WasmGc>(
     field: GcField,
     access: GcFieldAccess,
 ) -> Result<S::Word, S::Exit> {
-    locate(stage, aggregate, reference, index)?;
-    let stored = stage.read_field(reference, index, field);
+    let slot = locate(stage, aggregate, reference, index)?;
+    let stored = stage.read_slot(slot, field);
     let bits = match (access, field.packed_bits()) {
         (GcFieldAccess::ReadSigned, Some(bits)) => bits,
         _ => return Ok(stored),
@@ -125,8 +129,8 @@ pub(crate) fn field_write<S: WasmGc>(
     field: GcField,
     value: S::Word,
 ) -> Result<(), S::Exit> {
-    locate(stage, aggregate, reference, index)?;
-    stage.write_field(reference, index, field, value);
+    let slot = locate(stage, aggregate, reference, index)?;
+    stage.write_slot(slot, field, value);
     Ok(())
 }
 
@@ -219,4 +223,55 @@ pub(crate) fn reference_cast<S: WasmGc>(
     let refused = negated(stage, admitted);
     stage.trap_when(refused, WasmTrap::CastFailure)?;
     Ok(reference)
+}
+
+/// What a Wasm GC instruction is, for the tiers (`Step::Gc`): the groups whose rules and
+/// primitives differ. The call targets (`ref.func`, an indirect target) are `Step::Call`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GcOp {
+    /// `struct.get[_s|_u]`, `struct.set`, `array.get[_s|_u]`, `array.set`: `field_read` or
+    /// `field_write`.
+    Field,
+    /// `array.len`: `array_length`.
+    ArrayLength,
+    /// `ref.is_null` and `ref.as_non_null` (`non_null`).
+    Null,
+    /// `ref.eq`: equal reference bits.
+    Equal,
+    /// `ref.test` and `ref.cast` (`reference_cast`), without descriptors.
+    Test,
+    /// Everything that can allocate a cell, so make a collection due: `struct.new*`,
+    /// `array.new*`, `array.init_*`, `array.fill`, `array.copy`, `ref.i31`, the extern
+    /// conversions, the descriptor operations. A tier runs these only where it roots the
+    /// references its frame holds.
+    Allocating,
+}
+
+#[cfg(not(stencil_build))]
+impl GcOp {
+    /// The group of `op`, `None` for an opcode that is no GC operation.
+    pub(crate) fn of(op: crate::bytecode::Op) -> Option<Self> {
+        use crate::bytecode::Op;
+        Some(match op {
+            Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet
+            | Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArraySet => Self::Field,
+            Op::WasmArrayLen => Self::ArrayLength,
+            Op::WasmRefIsNull | Op::WasmRefAsNonNull => Self::Null,
+            Op::WasmRefEq => Self::Equal,
+            Op::WasmRefTest | Op::WasmRefCast => Self::Test,
+            Op::WasmI31 | Op::WasmExternalConversion
+            | Op::WasmArrayNewData | Op::WasmArrayNewElem | Op::WasmArrayInitData | Op::WasmArrayInitElem
+            | Op::WasmArrayFill | Op::WasmArrayCopy | Op::WasmArrayNew | Op::WasmArrayNewDefault
+            | Op::WasmArrayNewFixed | Op::WasmStructNew | Op::WasmStructNewDefault | Op::WasmStructNewDesc
+            | Op::WasmStructNewDefaultDesc | Op::WasmRefGetDesc | Op::WasmDescriptorTest
+            | Op::WasmDescriptorCast => Self::Allocating,
+            _ => return None,
+        })
+    }
+
+    /// Whether the operation can allocate (`Allocating`); the others only read or write cells
+    /// that exist, so no collection runs during them.
+    pub(crate) const fn allocates(self) -> bool {
+        matches!(self, Self::Allocating)
+    }
 }

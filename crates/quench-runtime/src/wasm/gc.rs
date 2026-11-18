@@ -2,7 +2,7 @@
 use wasmparser::{FieldType, StorageType};
 
 mod field;
-pub(crate) use field::GcField;
+pub(crate) use field::{GcField, GcFieldValue};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GcFieldAccess {

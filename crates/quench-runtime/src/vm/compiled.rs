@@ -145,6 +145,8 @@ mod wasm_flow_stage;
 mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_table_ops_stage;
+mod wasm_gc_stage;
+mod wasm_gc_callout;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
@@ -2771,6 +2773,7 @@ fn stitched_entry<H: Host>(
         globals_offset: CONTEXT_GLOBALS as u64,
         indirect: &indirect,
         table_callout: wasm_table_ops_stage::table_op_callout::<H> as *const () as u64,
+        gc_callout: wasm_gc_callout::wasm_gc_callout::<H> as *const () as u64,
         table_bindings: &table_bindings,
         registers: function.registers,
         vector_constant: &vector_constant,
@@ -5828,6 +5831,7 @@ impl<H: Host> Analysis<'_, H> {
             Step::Table(op) => {
                 self.transfer_table(function, instruction, state, op, (memory_register, *memory_slot))
             }
+            Step::Gc(op) => self.transfer_gc(function, instruction, state, op),
             Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
             Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
             Step::Simd(step) => {
@@ -6951,6 +6955,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Step::Table(op) => {
                 self.table_op(pc, instruction, op);
+                true
+            }
+            Step::Gc(op) => {
+                self.gc(instruction, op);
                 true
             }
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
