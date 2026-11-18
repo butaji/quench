@@ -2891,6 +2891,28 @@ impl<H: Host> Vm<H> {
         self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start })
     }
 
+    /// Whether the legacy statics already hold the pending match that
+    /// `record_regexp_legacy_pending` would record for `this`: the same matcher over the same
+    /// input storage from the same start, as a loop testing one regexp on one string records.
+    pub(super) fn regexp_legacy_pending_holds(&self, this: Value, input: &JsString, matcher: &Rc<quench_regexp::Regex>, start: usize) -> bool {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(this) else {
+            return false;
+        };
+        let Some(state) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
+            return false;
+        };
+        let enabled = matches!(meta.legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if owner == state.constructor);
+        let LegacyRegExpMatch::Pending { input: held, matcher: held_matcher, start: held_start } = &state.legacy.last else {
+            return false;
+        };
+        // Short text has no storage to share: the same units are the same input.
+        let same_input = held.existing_flat().zip(input.existing_flat()).is_some_and(|(held, input)| match (held, input) {
+            (FlatUnits::Short(_), FlatUnits::Short(_)) => matches!((held.view(), input.view()), (super::wtf16::Units::Ascii(left), super::wtf16::Units::Ascii(right)) if left == right),
+            _ => held.same_storage(input),
+        });
+        enabled && state.legacy.input_override.is_none() && *held_start == start && Rc::ptr_eq(held_matcher, matcher) && same_input
+    }
+
     fn record_regexp_legacy(
         &mut self,
         this: Value,

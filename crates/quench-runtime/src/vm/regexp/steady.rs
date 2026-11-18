@@ -23,7 +23,8 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let exec = native == Native::RegExpExec;
-        if !exec && !self.regexp_exec_is_builtin(receiver) {
+        // Proved once, the fuse answers `regexp_exec_is_builtin` with no read of the slot.
+        if !exec && (!self.fuse_intact(crate::code_dependencies::IntactFuse::RegExpExec) || !self.regexp_exec_is_builtin(receiver)) {
             return None;
         }
         if let Some(outcome) = self.steady_ascii_direct(receiver, subject, exec, result_used) {
@@ -371,6 +372,12 @@ impl<H: Host> Vm<H> {
                 None => return false,
             },
         };
+        // The prototype's exec proved the intrinsic and unchanged since (`IntactFuse`) needs
+        // no read of its slot.
+        let fuses = self.heap.dependencies().fuses();
+        if fuses.intact(crate::code_dependencies::IntactFuse::RegExpExec, intrinsics.prototype) == Some(true) {
+            return true;
+        }
         let Some(data) = self.object_data(intrinsics.prototype) else {
             return false;
         };
@@ -422,6 +429,13 @@ impl<H: Host> Vm<H> {
             }
             return Some(Ok(if exec { Value::NULL } else { Value::FALSE }));
         };
+        // The statics already hold this very match: nothing to record again.
+        if !captures && self.regexp_legacy_pending_holds(receiver, input, regex, found.range.start) {
+            if stateful {
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(found.range.end as f64));
+            }
+            return Some(Ok(if exec { Value::UNDEFINED } else { Value::TRUE }));
+        }
         let (regex, input) = (Rc::clone(regex), input.clone());
         Some(self.steady_ascii_match(receiver, subject, input, regex, found, (exec, stateful, slot), captures))
     }
