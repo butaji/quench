@@ -11961,6 +11961,24 @@ lane_handler! {
 }
 
 lane_handler! {
+    fn lane_i64_binary_immediate<ACC: u8>(cx, r, ip, i, view) {
+        let (Some(left), Some(operator)) = (
+            read::<ACC, ACC_B>(r, i.b, view).bits64(),
+            I64BinaryOperator::from_tag(i.imm()),
+        ) else {
+            return exit(ip);
+        };
+        let Ok(value) = operator.evaluate(left as i64, i64::from(i.c as i16)) else {
+            return exit(ip);
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+lane_handler! {
     fn lane_i64_unary<ACC: u8>(cx, r, ip, i, view) {
         let (Some(input), Some(operator)) = (
             read::<ACC, ACC_B>(r, i.b, view).bits64(),
@@ -21632,6 +21650,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
             Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, ACC>),
+            Class::WasmI64BinaryImmediate => return LaneHandler::producer(lane_i64_binary_immediate::<H, ACC>),
             Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, ACC>),
             Class::WasmScalarConvert => {
                 return LaneHandler::producer(lane_scalar_convert::<H, ACC>);

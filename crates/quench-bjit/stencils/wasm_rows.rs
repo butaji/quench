@@ -10,10 +10,12 @@
 
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{Width, integer_binary};
-use crate::staged::wasm_concrete::ConcreteWasm;
+use crate::staged::wasm_concrete::{ConcreteWasm, scalar_stage};
+use crate::staged::wasm_memory::{Access, WasmMemory, WasmMemoryWrite, load, store};
+use crate::wasm::WasmType;
 use crate::wasm::WasmTrap;
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
-use crate::words::{HOLE_A, HOLE_B, Out, S, hole64, slot};
+use crate::words::{HOLE_A, HOLE_B, Out, S, hole, hole64, slot};
 
 pub(crate) use crate::wasm_codes::*;
 
@@ -29,6 +31,8 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 write::<0>(&s, read::<HOLE_A>(&s));
                 Out::Next(s)
             }
+            LOAD => memory_load::<OP>(s),
+            STORE => memory_store::<OP>(s),
             CONSTANT => {
                 write::<0>(&s, hole64::<HOLE_B>());
                 Out::Next(s)
@@ -118,5 +122,121 @@ pub(crate) unsafe fn jump<const OP: u32, const W: u8, const SHAPE: u8>(s: S) -> 
     unsafe {
         let (left, right) = (read::<HOLE_A>(&s), right::<SHAPE>(&s));
         if ConcreteWasm.operate(operator, const { width_of(W) }, left, right) != 0 { Out::Taken(s) } else { Out::Next(s) }
+    }
+}
+
+/// The access the operator code `index` names (`ACCESSES`).
+const fn access(index: u32) -> Access {
+    let (ty, bytes, signed) = ACCESSES[if (index as usize) < ACCESSES.len() { index as usize } else { 0 }];
+    let ty = match ty {
+        T_I32 => WasmType::I32,
+        T_I64 => WasmType::I64,
+        T_F32 => WasmType::F32,
+        _ => WasmType::F64,
+    };
+    Access { ty, bytes, signed }
+}
+
+/// The linear memory a Wasm function runs over: its base in the second pin, its length in
+/// bytes in the third, as the entry loads them (`wasm_entry.rs`). Unguarded: the staged rule
+/// checks every access against the length, as the interpreter's does.
+struct StencilMemory {
+    base: *mut u8,
+    length: u64,
+}
+
+impl StencilMemory {
+    #[inline(always)]
+    fn of(s: &S) -> Self {
+        Self { base: s.p[1] as *mut u8, length: s.p[2] as u64 }
+    }
+
+    #[inline(always)]
+    fn at(&self, index: u64, offset: u32) -> *mut u8 {
+        self.base.wrapping_add((index + u64::from(offset)) as usize)
+    }
+}
+
+scalar_stage!(StencilMemory);
+
+impl WasmMemory for StencilMemory {
+    fn guarded(&self) -> bool {
+        false
+    }
+
+    #[inline(always)]
+    fn memory_length(&mut self) -> u64 {
+        self.length
+    }
+
+    /// A 32-bit address word is already its zero-extended index.
+    #[inline(always)]
+    fn memory_index(&mut self, address: u64) -> u64 {
+        address
+    }
+
+    #[inline(always)]
+    fn memory_load(&mut self, access: Access, index: u64, offset: u32) -> u64 {
+        let at = self.at(index, offset);
+        // SAFETY: the rule checked the access's bytes inside the memory.
+        let raw = unsafe {
+            match access.bytes {
+                1 => u64::from(*at),
+                2 => u64::from((at as *const u16).read_unaligned()),
+                4 => u64::from((at as *const u32).read_unaligned()),
+                _ => (at as *const u64).read_unaligned(),
+            }
+        };
+        access.loaded(raw)
+    }
+}
+
+impl WasmMemoryWrite for StencilMemory {
+    #[inline(always)]
+    fn memory_store(&mut self, access: Access, index: u64, offset: u32, value: u64) {
+        let at = self.at(index, offset);
+        // SAFETY: the rule checked the access's bytes inside the memory.
+        unsafe {
+            match access.bytes {
+                1 => *at = value as u8,
+                2 => (at as *mut u16).write_unaligned(value as u16),
+                4 => (at as *mut u32).write_unaligned(value as u32),
+                _ => (at as *mut u64).write_unaligned(value),
+            }
+        }
+    }
+
+    // The bulk movers have no rows; a stitched function never runs them.
+    fn memory_fill(&mut self, _index: u64, _byte: u64, _length: u64) {}
+
+    fn memory_copy(&mut self, _destination: u64, _source: u64, _length: u64) {}
+}
+
+/// `D = memory[A + B]` of the access `OP` names: the staged rule's check and access.
+#[inline(always)]
+unsafe fn memory_load<const OP: u32>(s: S) -> Out {
+    let access = const { access(OP) };
+    let mut memory = StencilMemory::of(&s);
+    unsafe {
+        match load(&mut memory, access, read::<HOLE_A>(&s), hole::<HOLE_B>() as u32, false) {
+            Ok(word) => {
+                write::<0>(&s, word);
+                Out::Next(s)
+            }
+            Err(error) => trap(s, error),
+        }
+    }
+}
+
+/// `memory[A + B] = D` of the access `OP` names.
+#[inline(always)]
+unsafe fn memory_store<const OP: u32>(s: S) -> Out {
+    let access = const { access(OP) };
+    let mut memory = StencilMemory::of(&s);
+    unsafe {
+        match store(&mut memory, access, read::<HOLE_A>(&s), hole::<HOLE_B>() as u32, read::<0>(&s), false) {
+            Ok(()) => Out::Next(s),
+            Err(error) => trap(s, error),
+        }
     }
 }

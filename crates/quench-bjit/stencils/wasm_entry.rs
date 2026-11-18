@@ -5,10 +5,11 @@
 //! The entry saves the callee-saved registers, reserves the function's frame on the native stack
 //! (hole 0: its bytes, 8 more than a multiple of 16, so the call to the first row is aligned),
 //! puts the result pointer in the frame's first word and copies the arguments (hole 1: their
-//! count) into the words after it, the registers the parameters are, and zeroes the other
-//! registers (hole 2: their count), as the interpreter's frame starts them. The rows run with the
-//! frame in r12 and the context in r13 (the row convention); a leave returns to the entry with
-//! the status in eax.
+//! count) into the registers the parameters are (hole 3: the first one's frame offset, past
+//! the instance bindings), and zeroes the registers after them (hole 2: their count), as the
+//! interpreter's frame starts them. The rows run with the
+//! frame in r12, the context in r13, the memory base in r15 and its length in rdi (the second
+//! and third pins of the row convention); a leave returns to the entry with the status in eax.
 
 use crate::words::HOLE_V0;
 
@@ -16,6 +17,7 @@ unsafe extern "C" {
     static HOLE_NEXT: u8;
     static HOLE_V1: u8;
     static HOLE_V2: u8;
+    static HOLE_V3: u8;
 }
 
 /// Enters the function: frame, arguments, then the first row.
@@ -33,14 +35,18 @@ pub unsafe extern "C" fn entry_wasm() {
         "sub rsp, rax",
         "mov r12, rsp",
         "mov r13, rdi",
+        "mov r15, rsi",
+        "mov rbx, rdx",
         "mov [r12], r8",
-        "lea rdi, [r12 + 8]",
+        "movabs rdi, offset {first_parameter}",
+        "add rdi, r12",
         "mov rsi, rcx",
         "movabs rcx, offset {count}",
         "rep movsq",
         "xor eax, eax",
         "movabs rcx, offset {rest}",
         "rep stosq",
+        "mov rdi, rbx",
         "call {first}",
         "movabs rcx, offset {frame}",
         "add rsp, rcx",
@@ -54,6 +60,7 @@ pub unsafe extern "C" fn entry_wasm() {
         frame = sym HOLE_V0,
         count = sym HOLE_V1,
         rest = sym HOLE_V2,
+        first_parameter = sym HOLE_V3,
         first = sym HOLE_NEXT,
     )
 }

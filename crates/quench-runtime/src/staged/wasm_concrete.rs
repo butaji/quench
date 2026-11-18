@@ -280,3 +280,43 @@ impl MachineStage for ConcreteWasm {
         }
     }
 }
+
+/// Methods that are `ConcreteWasm`'s: one definition, delegated.
+macro_rules! delegated {
+    ($($name:ident($($argument:ident: $ty:ty),*) -> $result:ty;)+) => {$(
+        #[inline(always)]
+        fn $name(&mut self, $($argument: $ty),*) -> $result {
+            $crate::staged::wasm_concrete::ConcreteWasm.$name($($argument),*)
+        }
+    )+};
+}
+pub(crate) use delegated;
+
+/// The scalar primitives of a stage over machine state (an instance's, a memory's): those of
+/// `ConcreteWasm`, so every such stage computes as the interpreter does.
+macro_rules! scalar_stage {
+    ($($stage:ty),+) => {$(
+        impl $crate::staged::machine::Machine for $stage {
+            type Word = u64;
+        }
+
+        impl $crate::staged::machine::MachineStage for $stage {
+            type Exit = $crate::WasmTrap;
+
+            $crate::staged::wasm_concrete::delegated! {
+                constant(width: $crate::staged::wasm::Width, value: i64) -> u64;
+                operate(operator: $crate::wasm::integer::I64BinaryOperator, width: $crate::staged::wasm::Width, left: u64, right: u64) -> u64;
+                operate_unary(operator: $crate::wasm::integer::I64UnaryOperator, width: $crate::staged::wasm::Width, value: u64) -> u64;
+                operate_float(operator: $crate::wasm::float::F64BinaryOperator, float: $crate::staged::wasm_float::Float, left: u64, right: u64) -> u64;
+                operate_float_unary(operator: $crate::wasm::float::F64UnaryOperator, float: $crate::staged::wasm_float::Float, value: u64) -> u64;
+                float_unordered(float: $crate::staged::wasm_float::Float, left: u64, right: u64) -> u64;
+                float_constant(float: $crate::staged::wasm_float::Float, bits: u64) -> u64;
+                select(flag: u64, taken: u64, other: u64) -> u64;
+                truncation_overflows(truncation: $crate::staged::wasm_float::Truncation, value: u64) -> u64;
+                convert(operator: $crate::wasm::conversion::ScalarConversionOperator, value: u64) -> u64;
+                trap_when(flag: u64, trap: $crate::WasmTrap) -> Result<(), $crate::WasmTrap>;
+            }
+        }
+    )+};
+}
+pub(crate) use scalar_stage;

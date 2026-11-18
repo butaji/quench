@@ -33,6 +33,12 @@ pub fn wasm_library() -> Vec<WasmCode> {
             }
         }
     }
+    for (index, (_, _, signed)) in ACCESSES.iter().enumerate() {
+        rows.push((LOAD, index as u32, W64, REGISTER));
+        if !signed {
+            rows.push((STORE, index as u32, W64, REGISTER));
+        }
+    }
     rows
 }
 

@@ -110,9 +110,8 @@ mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
-// The driver places stitched functions once they take memory and calls; until then the tests do.
+// `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(test), allow(dead_code))]
 mod wasm_stitch;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
@@ -2657,6 +2656,33 @@ enum CompiledArgs<'a> {
         base: usize,
         count: usize,
     },
+}
+
+/// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
+/// for every instruction: the `WasmEntry` ABI the compiled entry has.
+#[cfg(target_arch = "x86_64")]
+fn stitched_entry<H: Host>(
+    vm: &Vm<H>,
+    program: ProgramId,
+    code: &crate::bytecode::ResidualProgram,
+    index: usize,
+    plan: &Plan,
+    memory_slot: Option<u32>,
+) -> Option<Vec<u8>> {
+    if !crate::jit_mode::base_only() {
+        return None;
+    }
+    let function = code.function_get(index)?;
+    let constant = |at: usize| {
+        let value = vm.programs.constant(program, at)?;
+        Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
+    };
+    wasm_stitch::stitch(function, usize::from(function.params), plan.result.is_some(), &constant, memory_slot)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: &Plan, _: Option<u32>) -> Option<Vec<u8>> {
+    None
 }
 
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
@@ -8379,6 +8405,13 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            // `--b-jit` enters a function through its stitched rows where every instruction has
+            // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
+            // compiled body stays for the calls of the other functions until the rows take calls.
+            let entry = match stitched_entry(self, program, &code, index, plans[index].as_ref()?, memory_slot) {
+                Some(stitched) => stitched,
+                None => entry,
+            };
             entries[index] = Some(place(&mut bytes, entry));
         }
         for (offset, call) in calls {
