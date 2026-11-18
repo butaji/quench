@@ -81,6 +81,8 @@ impl Step {
 pub(super) trait Stage: MatchStage<Pos = usize, Unit = u32, Flag = bool, Test = UnitTest> {
     /// The end of the run of units from `from` to at most `to` that pass `test`.
     fn run_end(&self, test: UnitTest, from: usize, to: usize) -> usize;
+    /// The start of the run of units from at least `to` up to `from` that pass `test`.
+    fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize;
     fn register(&self, register: u32) -> usize;
     /// Writes a register with no restore entry.
     fn assign(&mut self, register: u32, value: usize);
@@ -94,6 +96,9 @@ pub(super) trait Stage: MatchStage<Pos = usize, Unit = u32, Flag = bool, Test = 
     fn dispatch(&mut self, table: u32, position: usize) -> Option<u32>;
     /// The `index`th entry of `Program::lists`.
     fn listed(&self, index: u32) -> u32;
+    /// The positions a match of string class `class` at `position` ends at, longest first
+    /// (read backward: where the matches ending at `position` start).
+    fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize>;
     /// Runs the lookahead body at `body` as a nested run; whether the lookahead holds
     /// (`found != negative`), its stack effects applied.
     fn look(&mut self, body: Cursor, negative: bool) -> bool;
@@ -168,6 +173,24 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
             }
             Replay::Resume(Cursor::at(pc, at))
         }
+        Some(Frame::GreedyBack { pc, ceiling, position }) => {
+            let at = position + 1;
+            if at < ceiling {
+                stage.push(Frame::GreedyBack { pc, ceiling, position: at });
+            }
+            Replay::Resume(Cursor::at(pc, at))
+        }
+        Some(Frame::LazyBack { pc, test, floor, position }) => {
+            let unit = stage.unit_at(position - 1);
+            if !stage.passes(unit, test) {
+                return Replay::Undone;
+            }
+            let at = position - 1;
+            if at > floor {
+                stage.push(Frame::LazyBack { pc, test, floor, position: at });
+            }
+            Replay::Resume(Cursor::at(pc, at))
+        }
         Some(Frame::Lazy { pc, test, ceiling, position }) => {
             let unit = stage.unit_at(position);
             if !stage.passes(unit, test) {
@@ -188,6 +211,8 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
     match inst {
         Inst::Unit(test) => unit(stage, test, at),
         Inst::UnitRepeat { test, min, max, greedy } => unit_repeat(stage, (test, min, max, greedy), at),
+        Inst::UnitBack(test) => unit_back(stage, test, at),
+        Inst::UnitRepeatBack { test, min, max, greedy } => unit_repeat_back(stage, (test, min, max, greedy), at),
         Inst::Assert(test) => Step::when(assertion_holds(stage, test, at.position), at.next()),
         Inst::Split { alternative } => {
             stage.push(Frame::Choice { pc: alternative, position: at.position });
@@ -196,6 +221,7 @@ pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         Inst::GuardedSplit { alternative, guard } => guarded_split(stage, (alternative, guard), at),
         Inst::Dispatch { table } => dispatch(stage, table, at),
         Inst::Jump(target) => Step::Continue(at.jump(target)),
+        Inst::ClassWidths { class, backward } => class_widths(stage, (class, backward), at),
         Inst::Look { negative, end } => Step::when(stage.look(at.next(), negative), at.jump(end)),
         Inst::LookSucceed | Inst::Match => Step::Accept,
         inst => registers(stage, inst, at),
@@ -212,6 +238,11 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
             set_capture(stage, capture, (start, at.position));
             Step::Continue(at.next())
         }
+        Inst::CaptureCloseBack { capture, temporary } => {
+            let end = stage.register(temporary);
+            set_capture(stage, capture, (at.position, end));
+            Step::Continue(at.next())
+        }
         Inst::ResetCaptures { first, count } => reset_captures(stage, (first, count), at),
         Inst::LoopInit { counter } => {
             set(stage, counter, 0);
@@ -225,6 +256,7 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         Inst::EmptyCheck { start } => Step::when(at.position != stage.register(start), at.next()),
         Inst::LoopTail { counter, start, min, head } => loop_tail(stage, (counter, start, min, head), at),
         Inst::Backreference { first, count, ignore_case, unicode } => backreference(stage, (first, count, ignore_case, unicode), at),
+        Inst::BackreferenceBack { first, count, ignore_case, unicode } => backreference_back(stage, (first, count, ignore_case, unicode), at),
         _ => unreachable!("`step` handles the control instructions"),
     }
 }
@@ -273,6 +305,48 @@ fn unit_repeat<S: Stage>(stage: &mut S, (test, min, max, greedy): (UnitTest, u32
         stage.push(Frame::Lazy { pc, test, ceiling, position: end });
     }
     Step::Continue(at.then_at(end))
+}
+
+/// `unit` read backward: the unit before the position, which moves onto it.
+#[inline(always)]
+fn unit_back<S: Stage>(stage: &mut S, test: UnitTest, at: Cursor) -> Step {
+    let takes = at.position > 0 && {
+        let unit = stage.unit_at(at.position - 1);
+        stage.passes(unit, test)
+    };
+    Step::when(takes, at.then_at(at.position.wrapping_sub(1)))
+}
+
+/// `unit_repeat` read backward: the run of units ends at the position; greedy gives units
+/// back toward the position, lazy takes more away from it.
+#[inline(always)]
+fn unit_repeat_back<S: Stage>(stage: &mut S, (test, min, max, greedy): (UnitTest, u32, u32, bool), at: Cursor) -> Step {
+    let Some(floor) = at.position.checked_sub(min as usize) else {
+        return Step::Fail;
+    };
+    let deepest = at.position.saturating_sub(max as usize);
+    let end = stage.run_start(test, at.position, if greedy { deepest } else { floor });
+    if end > floor {
+        return Step::Fail;
+    }
+    let pc = at.pc + 1;
+    if greedy && end < floor {
+        stage.push(Frame::GreedyBack { pc, ceiling: floor, position: end });
+    } else if !greedy && end > deepest {
+        stage.push(Frame::LazyBack { pc, test, floor: deepest, position: end });
+    }
+    Step::Continue(at.then_at(end))
+}
+
+/// A class of strings: its longest match, the shorter ones kept as choices in order.
+#[inline(never)]
+fn class_widths<S: Stage>(stage: &mut S, (class, backward): (u32, bool), at: Cursor) -> Step {
+    let ends = stage.class_ends(class, at.position, backward);
+    let Some((&first, rest)) = ends.split_first() else { return Step::Fail };
+    for &end in rest.iter().rev() {
+        stage.push(Frame::Choice { pc: at.pc + 1, position: end });
+    }
+    Step::Continue(at.then_at(first))
 }
 
 #[inline(always)]
@@ -336,6 +410,19 @@ fn backreference<S: Stage>(stage: &mut S, (first, count, ignore_case, unicode): 
     let matches = at.position + width <= stage.length()
         && (from..to).zip(at.position..).all(|(expected, actual)| equal(stage.unit_at(expected), stage.unit_at(actual), ignore_case, unicode));
     Step::when(matches, at.then_at(at.position + width))
+}
+
+/// `backreference` read backward: the captured units end at the position, which moves to
+/// their start.
+#[inline(always)]
+fn backreference_back<S: Stage>(stage: &mut S, (first, count, ignore_case, unicode): (u32, u32, bool, bool), at: Cursor) -> Step {
+    let set_bound = (first..first + count).map(|index| start_register(stage.listed(index))).find(|bound| stage.register(*bound) != UNSET);
+    let Some(bound) = set_bound else { return Step::Continue(at.next()) };
+    let (from, to) = (stage.register(bound), stage.register(bound + 1));
+    let width = to - from;
+    let Some(begin) = at.position.checked_sub(width) else { return Step::Fail };
+    let matches = (from..to).zip(begin..).all(|(expected, actual)| equal(stage.unit_at(expected), stage.unit_at(actual), ignore_case, unicode));
+    Step::when(matches, at.then_at(begin))
 }
 
 /// The interpreter's machine: the program, the subject and the run's registers and stack.
@@ -420,6 +507,11 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize {
+        self.program.run_start_back(test, self.text, from, to)
+    }
+
+    #[inline(always)]
     fn register(&self, register: u32) -> usize {
         self.registers[register as usize]
     }
@@ -447,6 +539,10 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
     #[inline(always)]
     fn dispatch(&mut self, table: u32, position: usize) -> Option<u32> {
         self.program.dispatch_target(table, self.text, position, self.stack)
+    }
+
+    fn class_ends(&mut self, class: u32, position: usize, backward: bool) -> Vec<usize> {
+        self.program.classes[class as usize].ends(self.text, position, backward)
     }
 
     #[inline(always)]

@@ -7,7 +7,9 @@
 //! explicit stack of choice points and register restores, so a match allocates nothing
 //! once its workspace exists.
 //!
-//! Lookbehind and classes that can match a string of several units are not compiled; such
+//! A lookbehind body is compiled to run backward (the spec's `direction` of -1): its
+//! sequences right to left, each unit read before the position, its captures closed at the
+//! left end. Classes that can match a string of several units are not compiled; such
 //! patterns keep the repository matcher.
 
 use std::cell::RefCell;
@@ -30,7 +32,7 @@ pub(crate) use workspace::recycle_captures;
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
 
 use super::{
-    canonical, canonical_preimages_of, class_is_single_unit, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, merge_flags,
+    canonical, canonical_preimages_of, class_is_single_unit, class_match_widths, class_max_width, class_item_matches, class_matches, equal, escape_matches, is_line_terminator, merge_flags,
     literal_finder, Assertion, Backreference, ClassExpr, ClassItem, ClassKind, Expr, Flags, LiteralFinder, Lookaround,
     Unit, ASCII_MAX,
 };
@@ -432,6 +434,15 @@ fn escape_ascii_mask(escape: oxc::regular_expression::ast::CharacterClassEscapeK
 #[derive(Clone, Copy)]
 enum Inst {
     Unit(UnitTest),
+    /// `Unit` read backward, in a lookbehind body: the unit before the position.
+    UnitBack(UnitTest),
+    /// `UnitRepeat` read backward: the units before the position, the run ending there.
+    UnitRepeatBack {
+        test: UnitTest,
+        min: u32,
+        max: u32,
+        greedy: bool,
+    },
     /// `min..=max` units of a test, without captures and never empty, so its choices are
     /// only how many units it takes.
     UnitRepeat {
@@ -468,6 +479,12 @@ enum Inst {
         restores: bool,
     },
     CaptureClose {
+        capture: u32,
+        temporary: u32,
+    },
+    /// `CaptureClose` of a backward body: the open recorded the capture's end, the close
+    /// is at its start.
+    CaptureCloseBack {
         capture: u32,
         temporary: u32,
     },
@@ -509,7 +526,22 @@ enum Inst {
         ignore_case: bool,
         unicode: bool,
     },
-    /// A lookahead whose body follows, ending at `LookSucceed`; matching continues at `end`.
+    /// `Backreference` in a backward body: the captured units end at the position.
+    BackreferenceBack {
+        first: u32,
+        count: u32,
+        ignore_case: bool,
+        unicode: bool,
+    },
+    /// A class that can match strings of several units (`Program::classes[class]`): the
+    /// longest match first, each shorter one kept as a choice. Read backward in a lookbehind
+    /// body, where its matches end at the position.
+    ClassWidths {
+        class: u32,
+        backward: bool,
+    },
+    /// A lookaround whose body follows, ending at `LookSucceed`; matching continues at `end`.
+    /// A lookbehind's body is compiled backward, so both run the same way.
     Look {
         negative: bool,
         end: u32,
@@ -548,7 +580,20 @@ enum Frame {
         ceiling: usize,
         position: usize,
     },
-    /// The bottom of one run: a search, or a lookahead body.
+    /// A greedy `UnitRepeatBack` that may give back units up to `ceiling`.
+    GreedyBack {
+        pc: u32,
+        ceiling: usize,
+        position: usize,
+    },
+    /// A lazy `UnitRepeatBack` that may take units down to `floor`.
+    LazyBack {
+        pc: u32,
+        test: UnitTest,
+        floor: usize,
+        position: usize,
+    },
+    /// The bottom of one run: a search, or a lookaround body.
     Barrier,
 }
 
@@ -573,6 +618,8 @@ pub(crate) struct Program {
     /// The starts of guarded bodies, for `GuardedSplit`.
     guards: Box<[Admission<UnitTest>]>,
     dispatches: Box<[Dispatch]>,
+    /// The classes of strings `Inst::ClassWidths` matches.
+    classes: Box<[StringClass]>,
     capture_count: usize,
     register_count: usize,
     /// Where matches can start; `None` where any position can.
@@ -616,6 +663,36 @@ pub(crate) struct Program {
 /// The compiled form of a construct this matcher does not run.
 struct Unsupported;
 
+/// A class of strings with the flags that match it and its longest match (`class_max_width`).
+struct StringClass {
+    class: ClassExpr,
+    ignore_case: bool,
+    unicode: bool,
+    max_width: usize,
+}
+
+impl StringClass {
+    /// The units `from..to` of `text` as the lowered matcher's units.
+    fn window<T: Text + ?Sized>(text: &T, from: usize, to: usize) -> Vec<Unit> {
+        (from..to).map(|index| Unit { value: text.unit(index), offset_start: index, offset_end: index + 1 }).collect()
+    }
+
+    /// The positions a match of the class at `position` ends at, longest match first; read
+    /// backward, the positions its matches ending at `position` start at.
+    fn ends<T: Text + ?Sized>(&self, text: &T, position: usize, backward: bool) -> Vec<usize> {
+        let widths = |window: &[Unit]| class_match_widths(&self.class, window, 0, self.ignore_case, self.unicode);
+        if backward {
+            return (1..=self.max_width.min(position))
+                .rev()
+                .filter(|width| widths(&Self::window(text, position - width, position)).contains(width))
+                .map(|width| position - width)
+                .collect();
+        }
+        let window = Self::window(text, position, (position + self.max_width).min(text.len()));
+        widths(&window).into_iter().map(|width| position + width).collect()
+    }
+}
+
 #[derive(Default)]
 struct Compiler {
     instructions: Vec<Inst>,
@@ -623,6 +700,7 @@ struct Compiler {
     lists: Vec<u32>,
     guards: Vec<Admission<UnitTest>>,
     dispatches: Vec<Dispatch>,
+    classes: Vec<StringClass>,
     registers: u32,
     /// Bodies being compiled that one path may run more than once, or whose registers a
     /// caller keeps across their run: loops with more than one iteration and lookarounds.
@@ -631,6 +709,9 @@ struct Compiler {
     /// The latest pc read as a position (`pc`), which a jump may target: an instruction there
     /// starts afresh rather than joining the one before it.
     observed: std::cell::Cell<u32>,
+    /// Whether the body being compiled runs backward (a lookbehind's, outside any nested
+    /// lookahead).
+    backward: bool,
 }
 
 impl Compiler {
@@ -671,6 +752,10 @@ impl Compiler {
     /// A split to `alternative` before a body `expr`, guarded by the body's starts when
     /// they are known.
     fn split(&mut self, alternative: u32, body: &Expr, flags: Flags) -> Inst {
+        // A guard tests the unit at the position, which a backward body reads last.
+        if self.backward {
+            return Inst::Split { alternative };
+        }
         match starts(body, flags) {
             Some(Starts { at_start, at_end, units, .. }) => {
                 let units = self.add_set(units);
@@ -704,22 +789,23 @@ impl Compiler {
             Expr::Dot => self.set(Beyond::Dot {
                 dot_all: flags.dot_all,
             }),
-            Expr::Class(class) => {
-                if !class_is_single_unit(class) {
-                    return Err(Unsupported);
-                }
-                self.set(Beyond::class(class, flags.ignore_case, flags.unicode))
-            }
+            Expr::Class(class) if class_is_single_unit(class) => self.set(Beyond::class(class, flags.ignore_case, flags.unicode)),
             _ => return Ok(None),
         }))
     }
 
     fn compile(&mut self, expr: &Expr, flags: Flags) -> Result<(), Unsupported> {
         if let Some(test) = self.unit_test(expr, flags)? {
-            self.emit(Inst::Unit(test));
+            self.emit(if self.backward { Inst::UnitBack(test) } else { Inst::Unit(test) });
             return Ok(());
         }
         match expr {
+            // ES2018 lookbehind: a backward sequence matches its parts right to left.
+            Expr::Sequence(parts) if self.backward => {
+                for part in parts.iter().rev() {
+                    self.compile(part, flags)?;
+                }
+            }
             Expr::Sequence(parts) => {
                 for part in parts {
                     self.compile(part, flags)?;
@@ -741,7 +827,7 @@ impl Compiler {
                     }
                 }
                 self.compile(body, flags)?;
-                self.emit(Inst::CaptureClose { capture, temporary });
+                self.emit(if self.backward { Inst::CaptureCloseBack { capture, temporary } } else { Inst::CaptureClose { capture, temporary } });
             }
             Expr::Repeat {
                 body,
@@ -767,11 +853,11 @@ impl Compiler {
                 }
                 if captures.is_empty() {
                     if let Some(test) = self.unit_test(body, flags)? {
-                        self.emit(Inst::UnitRepeat {
-                            test,
-                            min,
-                            max,
-                            greedy: *greedy,
+                        let greedy = *greedy;
+                        self.emit(if self.backward {
+                            Inst::UnitRepeatBack { test, min, max, greedy }
+                        } else {
+                            Inst::UnitRepeat { test, min, max, greedy }
                         });
                         return Ok(());
                     }
@@ -857,15 +943,19 @@ impl Compiler {
                 }));
             }
             Expr::Lookaround { kind, body } => {
-                let negative = match kind {
-                    Lookaround::Ahead => false,
-                    Lookaround::NegativeAhead => true,
-                    Lookaround::Behind | Lookaround::NegativeBehind => return Err(Unsupported),
+                let (negative, backward) = match kind {
+                    Lookaround::Ahead => (false, false),
+                    Lookaround::NegativeAhead => (true, false),
+                    Lookaround::Behind => (false, true),
+                    Lookaround::NegativeBehind => (true, true),
                 };
                 let look = self.emit(Inst::Look { negative, end: 0 });
                 self.repeated += 1;
-                self.compile(body, flags)?;
+                let outer = std::mem::replace(&mut self.backward, backward);
+                let compiled = self.compile(body, flags);
+                self.backward = outer;
                 self.repeated -= 1;
+                compiled?;
                 self.emit(Inst::LookSucceed);
                 let end = self.pc();
                 self.instructions[look as usize] = Inst::Look { negative, end };
@@ -883,17 +973,27 @@ impl Compiler {
                             .collect::<Result<Vec<_>, _>>()?,
                     )?,
                 };
-                self.emit(Inst::Backreference {
-                    first,
-                    count,
-                    ignore_case: flags.ignore_case,
-                    unicode: flags.unicode,
+                let (ignore_case, unicode) = (flags.ignore_case, flags.unicode);
+                self.emit(if self.backward {
+                    Inst::BackreferenceBack { first, count, ignore_case, unicode }
+                } else {
+                    Inst::Backreference { first, count, ignore_case, unicode }
                 });
             }
             Expr::Mode { body, flags: local } => {
                 self.compile(body, merge_flags(flags, *local))?;
             }
-            Expr::Literal(_) | Expr::Dot | Expr::Class(_) => {
+            Expr::Class(class) => {
+                self.classes.push(StringClass {
+                    class: class.clone(),
+                    ignore_case: flags.ignore_case,
+                    unicode: flags.unicode,
+                    max_width: class_max_width(class),
+                });
+                let class = self.classes.len() as u32 - 1;
+                self.emit(Inst::ClassWidths { class, backward: self.backward });
+            }
+            Expr::Literal(_) | Expr::Dot => {
                 unreachable!("single-unit expressions compile as unit tests")
             }
         }
@@ -1537,7 +1637,7 @@ impl Program {
             sets: {
                 let mut sets = std::mem::take(&mut compiler.sets);
                 for instruction in &compiler.instructions {
-                    if let Inst::UnitRepeat { test: UnitTest::Set(set), .. } = *instruction {
+                    if let Inst::UnitRepeat { test: UnitTest::Set(set), .. } | Inst::UnitRepeatBack { test: UnitTest::Set(set), .. } = *instruction {
                         let set = &mut sets[set as usize];
                         let ascii = set.table;
                         set.bytes.get_or_insert_with(|| Box::new(std::array::from_fn(|unit| unit < ASCII_UNITS as usize && ascii.contains(unit as u8))));
@@ -1551,6 +1651,7 @@ impl Program {
             lists: compiler.lists.into_boxed_slice(),
             guards: compiler.guards.into_boxed_slice(),
             dispatches: compiler.dispatches.into_boxed_slice(),
+            classes: compiler.classes.into_boxed_slice(),
             capture_count,
             register_count: compiler.registers as usize,
             anchored,
@@ -1635,6 +1736,23 @@ impl Program {
             (test, None) => (from..to).position(|index| !self.test(test, text.unit(index))),
         };
         taken.map_or(to, |taken| from + taken)
+    }
+
+    /// `run_end` read backward: the start of the run of units that pass `test` ending at
+    /// `from`, going down to at most `to` (`to <= from`).
+    fn run_start_back<T: Text + ?Sized>(&self, test: UnitTest, text: &T, from: usize, to: usize) -> usize {
+        let kept = match (test, text.bytes()) {
+            (UnitTest::Set(set), Some(bytes)) => {
+                let table = self.sets[set as usize].bytes.as_deref();
+                debug_assert!(table.is_some());
+                // SAFETY: a scanned set has its table (`Program::compile`).
+                let table = unsafe { table.unwrap_unchecked() };
+                bytes[to..from].iter().rposition(|unit| !table[usize::from(*unit)])
+            }
+            (UnitTest::Exact(expected), Some(bytes)) => bytes[to..from].iter().rposition(|unit| u32::from(*unit) != expected),
+            (test, None) => (to..from).rposition(|index| !self.test(test, text.unit(index))),
+        };
+        kept.map_or(to, |failed| to + failed + 1)
     }
 
     /// The first match at a position from `first`, trying only `first` when `sticky`, with
@@ -1925,9 +2043,7 @@ mod tests {
 
     /// Every pattern, flag set and subject: the compiled program's match against the
     /// repository matcher's, from each start position.
-    #[test]
-    fn matches_the_repository_matcher() {
-        let patterns = [
+    const PATTERNS: &[&str] = &[
             r"^ba",
             r"(((\w+):\/\/)([^\/:]*)(:(\d+))?)?([^#?]*)(\?([^#]*))?(#(.*))?",
             r"^\s*|\s*$",
@@ -2038,8 +2154,33 @@ mod tests {
             r"kelvin",
             r"ss\w",
             r"Ab|c",
+            // Lookbehind, compiled backward: units, repeats both ways, captures closed at
+            // their left end, backreferences, alternatives, nested lookarounds.
+            r"(?<=a)b",
+            r"(?<!a)b",
+            r"(?<=\$)\d+(\.\d+)?",
+            r"(?<!\w)\d{2}\b",
+            r"(?<=(a+))b",
+            r"(?<=(a+?))b",
+            r"(?<=(\w)(\w))\s",
+            r"(?<=\1(a))b",
+            r"(?<=(a)\1)b",
+            r"(?<=ab|b|q)\w",
+            r"(?<=a(?=b)b)c",
+            r"(?=(?<=a)b)\w",
+            r"(?<=(?<!x)a)\w",
+            r"(?<=^|\s)\w+",
+            r"(?<=a{2,3})x?",
+            r"(?<=[a-c]*?)c",
+            r"(?<=(?:a|b)+)c",
+            r"(?<=(?:(a)|b)*)c",
+            r"(?<![a-z]+)\d",
+            r"(?<=\b)x",
+            r"(?<=([ab])+)$",
+            r"(?<=(?<x>\w)\k<x>)\w",
         ];
-        let subjects = [
+
+    const SUBJECTS: &[&str] = &[
             "",
             "a",
             "b",
@@ -2084,19 +2225,94 @@ mod tests {
             "xxZfVr zfvrzfv aBC Abc abC",
             "##YV4## ##yv4# K#S k#\u{17F}",
             "\u{212A}elvin kElvin KELVIN \u{17F}\u{17F}x sSx",
+            "abcabc xab bc",
+            "\u{1F1EB}\u{1F1F7}x\u{1F1E9}\u{1F1EA}x \u{1F600}\u{1F600}",
         ];
-        for flags in ["", "i", "m", "s", "u", "im", "iu"] {
-            for pattern in patterns {
+
+    #[test]
+    fn matches_classes_of_strings() {
+        // (pattern, subject, expected match), checked against V8's results.
+        let cases: &[(&str, &str, Option<(usize, usize)>)] = &[
+            (r"[\q{abc|ab|a}]c?", "abc", Some((0, 3))),
+            (r"[\q{abc|ab|a}]c?", "abd", Some((0, 2))),
+            (r"[\q{abc|ab|a}]+?b", "ab", Some((0, 2))),
+            (r"[\q{abc|ab|a}]+b", "abcab", Some((0, 5))),
+            (r"(?<=[\q{ab|b}])c", "xabc", Some((3, 4))),
+            (r"(?<=[\q{ab|b}])c", "xc", None),
+            (r"(?<=(?:^|x)[\q{ab|b}])c", "xabc", Some((3, 4))),
+            (r"(?<![\q{ab}])c", "abc ac", Some((5, 6))),
+            (r"\p{RGI_Emoji_Flag_Sequence}x", "\u{1F1EB}\u{1F1F7}x", Some((0, 5))),
+            (r"[\q{bc}a&&\q{bc}]", "abc", Some((1, 3))),
+        ];
+        for &(pattern, subject, expected) in cases {
+            let regex = Regex::with_flags(pattern, Flags::from("v")).unwrap();
+            let found = regex.find_from(subject, 0).next().map(|found| (found.range.start, found.range.end));
+            assert_eq!(found, expected, "/{pattern}/v on {subject:?}");
+        }
+    }
+
+    #[test]
+    fn matches_the_repository_matcher() {
+        let patterns = PATTERNS;
+        let subjects = SUBJECTS;
+        golden_check();
+        let _ = (patterns, subjects);
+    }
+
+    /// FNV-1a over the bytes of `text`.
+    fn fnv(hash: u64, text: &str) -> u64 {
+        text.bytes().fold(hash, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3))
+    }
+
+    /// Each pattern's results over every subject and start, as one digest per pattern and flags:
+    /// the micro-VM's answers against the recorded ones (`golden.txt`, recorded from the
+    /// reference matcher before it was retired, lookbehind included).
+    fn golden_check() {
+        let mut lines = Vec::new();
+        for flags in ["", "i", "m", "s", "u", "im", "iu", "v", "iv"] {
+            for pattern in PATTERNS {
+                let Ok(regex) = Regex::with_flags(pattern, Flags::from(flags)) else { continue };
+                let unicode = regex.flags.unicode || regex.flags.unicode_sets;
+                let mut hash = 0xcbf2_9ce4_8422_2325u64;
+                for subject in SUBJECTS {
+                    let units = units_from_str(subject, unicode);
+                    for first in 0..=units.len() {
+                        let found = regex.golden_find(&units, first).map(|found| (found.range, found.captures));
+                        hash = fnv(hash, &format!("{first}:{found:?};"));
+                    }
+                }
+                lines.push(format!("{flags}\t{pattern}\t{hash:016x}"));
+            }
+        }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/backtrack/golden.txt");
+        if std::env::var_os("QUENCH_REGEXP_GOLDEN").is_some() {
+            std::fs::write(path, lines.join("\n") + "\n").unwrap();
+            return;
+        }
+        let recorded = std::fs::read_to_string(path).unwrap();
+        for (line, expected) in lines.iter().zip(recorded.lines()) {
+            assert_eq!(line, expected);
+        }
+        assert_eq!(lines.len(), recorded.lines().count());
+    }
+
+    #[test]
+    fn matches_the_repository_matcher_old() {
+        let patterns = PATTERNS;
+        let subjects = SUBJECTS;
+        for flags in ["", "i", "m", "s", "u", "im", "iu", "v", "iv"] {
+            for &pattern in patterns {
                 let Ok(regex) = Regex::with_flags(pattern, Flags::from(flags)) else {
                     continue;
                 };
+                let unicode = regex.flags.unicode || regex.flags.unicode_sets;
                 let program = regex
                     .complete()
                     .backtracking
                     .as_ref()
                     .unwrap_or_else(|| panic!("/{pattern}/{flags} compiles"));
-                for subject in subjects {
-                    let units = units_from_str(subject, regex.flags.unicode);
+                for &subject in subjects {
+                    let units = units_from_str(subject, unicode);
                     for first in 0..=units.len() {
                         let expected = regex
                             .find_units(&units, first)
@@ -2119,7 +2335,7 @@ mod tests {
                         let raw = |found: Option<super::Found>| {
                             found.map(|found| (found.start..found.end, found.captures))
                         };
-                        if !regex.flags.unicode {
+                        if !unicode {
                             // Outside unicode mode a decoded unit is a code unit.
                             let code_units = subject.encode_utf16().collect::<Vec<_>>();
                             let wide = program.find(&code_units[..], first, false, true);

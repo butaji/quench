@@ -619,6 +619,12 @@ impl Regex {
             .map(|matched| matched.range)
     }
 
+    /// The match `golden_check` records: the reference matcher's.
+    #[cfg(test)]
+    fn golden_find(&self, input: &[Unit], first: usize) -> Option<Match> {
+        self.find_units(input, first)
+    }
+
     fn find_units(&self, input: &[Unit], first: usize) -> Option<Match> {
         let required_literal = &self.complete().required_literal;
         if !required_literal.is_empty()
@@ -2349,6 +2355,24 @@ fn is_basic_emoji_code_point(value: u32) -> bool {
 
 /// Whether every item of `class` matches exactly one unit, so its widths at any position are
 /// `[1]` or none.
+/// The most units one match of `class` takes: its longest string, sixteen for a property
+/// of strings (`string_property_widths`' bound), one for a class of single units.
+fn class_max_width(class: &ClassExpr) -> usize {
+    class
+        .items
+        .iter()
+        .map(|item| match item {
+            ClassItem::String(units) => units.len(),
+            ClassItem::Property { name, .. } if name == "Emoji_Keycap_Sequence" => 3,
+            ClassItem::Property { name, .. } if is_string_property(name) => 16,
+            ClassItem::Nested(nested) => class_max_width(nested),
+            _ => 1,
+        })
+        .max()
+        .unwrap_or(1)
+        .max(1)
+}
+
 fn class_is_single_unit(class: &ClassExpr) -> bool {
     class.items.iter().all(|item| match item {
         ClassItem::String(_) => false,

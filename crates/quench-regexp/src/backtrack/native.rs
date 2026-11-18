@@ -148,7 +148,15 @@ impl Program {
             }
             Inst::Jump(target) => NativeInst::Jump(target),
             Inst::Match => NativeInst::Match,
-            Inst::Dispatch { .. } | Inst::Backreference { .. } | Inst::Look { .. } | Inst::LookSucceed => return None,
+            Inst::Dispatch { .. }
+            | Inst::Backreference { .. }
+            | Inst::BackreferenceBack { .. }
+            | Inst::Look { .. }
+            | Inst::LookSucceed
+            | Inst::UnitBack(_)
+            | Inst::UnitRepeatBack { .. }
+            | Inst::CaptureCloseBack { .. }
+            | Inst::ClassWidths { .. } => return None,
             registers => self.native_registers_inst(registers),
         })
     }
