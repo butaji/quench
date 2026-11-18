@@ -173,6 +173,11 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
     let GlobalRead::NativeMember { value, native, holder } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
     let kind = match native {
         Native::MathSqrt => Kind::Sqrt,
+        Native::MathFloor => Kind::Floor,
+        Native::MathCeil => Kind::Ceil,
+        Native::MathTrunc => Kind::Trunc,
+        Native::MathAbs => Kind::Abs,
+        Native::MathRound => Kind::Round,
         _ => return None,
     };
     let guard = Decoded { hole: value.to_bits(), holder: Some(holder), ..Decoded::heap(Heap::Identity, None, Some(Source::Register(shape.callee)), None) };

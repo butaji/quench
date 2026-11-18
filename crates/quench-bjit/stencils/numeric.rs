@@ -241,10 +241,17 @@ fn neg_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) ->
     finish(frame, done)
 }
 
-/// `Math.sqrt` of the first operand, a double: the staged `NumberOperation::Math`.
+/// The Math function `K` of the first operand, a double: the staged `NumberOperation::Math`.
 #[inline(always)]
-fn math_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let operation = FloatUnary::Sqrt;
+fn math_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let operation = match K {
+        FLOOR => FloatUnary::Floor,
+        CEIL => FloatUnary::Ceil,
+        TRUNC => FloatUnary::Trunc,
+        ABS => FloatUnary::Abs,
+        ROUND => FloatUnary::Round,
+        _ => FloatUnary::Sqrt,
+    };
     let done = staged(&mut frame, NumberOperation::Math { destination: DEST, source: Operand::register(LEFT), operation }).is_some();
     finish(frame, done)
 }
@@ -314,7 +321,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),
         REM => remainder_row::<D, A, B, SPEC>(frame),
-        SQRT => math_row::<D, A, B>(frame),
+        MATH_FIRST..=MATH_LAST => math_row::<K, D, A, B>(frame),
         _ => tag_init(frame.s),
     }
 }
