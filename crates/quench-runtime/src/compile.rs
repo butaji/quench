@@ -58,7 +58,6 @@ mod class; mod class_private;
 mod early;
 mod frame_registers;
 pub(crate) mod lazy_bodies;
-mod eval_reach;
 mod literal_singletons;
 mod semantic_stats;
 pub(crate) use lazy_bodies::{expire_warm_arena, release_warm_arena};
@@ -1949,7 +1948,7 @@ struct Compiler<'a> {
     /// What the program-wide layout analyses read of each compiled function.
     function_facts: replay::FunctionRecords<capture_layout::FunctionFacts>,
     /// Functions being compiled whose bodies may give nested functions binding sites
-    /// (`early::body_may_bind_dynamically`). While any is open, a function finished inside
+    /// (`early::DirectEvalFacts::binds_dynamically`). While any is open, a function finished inside
     /// it may still resolve names dynamically, so none is released early.
     dynamic_binding_scopes: u32,
     /// The replays of functions finished and released during the load.
@@ -4119,7 +4118,8 @@ impl<'a> Compiler<'a> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
-        let dynamic_eval = eval_reach::function_contains_direct_eval(options.defaults, body, expression_body);
+        let direct_eval = early::direct_eval_facts(options.defaults, body, expression_body);
+        let dynamic_eval = direct_eval.eval;
         let simple_parameters = !options.rest_override
             && options
                 .defaults
@@ -4161,8 +4161,7 @@ impl<'a> Compiler<'a> {
             &lexical_atoms,
             self_binding_slot,
         );
-        let binds_dynamically =
-            dynamic_eval || early::body_may_bind_dynamically(body, expression_body);
+        let binds_dynamically = direct_eval.binds_dynamically();
         self.dynamic_binding_scopes += u32::from(binds_dynamically);
         let mut function = FunctionCompiler::new(
             self,
@@ -4360,6 +4359,7 @@ impl<'a> Compiler<'a> {
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
+            evals_in_scope: Default::default(),
             js_tier_candidate: Default::default(),
             call_plan: Default::default(),
             initializer: Default::default(),

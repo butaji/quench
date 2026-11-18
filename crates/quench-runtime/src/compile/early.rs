@@ -432,24 +432,43 @@ pub(super) fn expression_makes_function(expression: &Expression<'_>) -> bool {
     makes.0
 }
 
-pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
-    let mut finder = DirectEvalFinder(false);
-    finder.visit_formal_parameters(params);
-    finder.0
+/// The direct-eval facts of one function's own code: its parameters (when it has a list), body
+/// and expression body, not the functions nested in them.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct DirectEvalFacts {
+    /// A direct eval, which may name the function's bindings at run time.
+    pub(super) eval: bool,
+    /// A direct eval, `with` statement or `delete` of a name in the body or expression body,
+    /// which may give the functions nested in it binding sites to resolve through.
+    binds_in_body: bool,
 }
 
-pub(super) fn body_contains_direct_eval(body: &[Statement<'_>]) -> bool {
-    let mut finder = DirectEvalFinder(false);
+impl DirectEvalFacts {
+    /// Whether the function may bind names dynamically: a direct eval anywhere in its code, or
+    /// a dynamic binding form in its body.
+    pub(super) fn binds_dynamically(self) -> bool {
+        self.eval || self.binds_in_body
+    }
+}
+
+/// Gathers `DirectEvalFacts` in one walk of a function's own code.
+pub(super) fn direct_eval_facts(
+    params: Option<&FormalParameters<'_>>,
+    body: &[Statement<'_>],
+    expression: Option<&Expression<'_>>,
+) -> DirectEvalFacts {
+    let mut finder = DirectEvalFinder { facts: DirectEvalFacts::default(), in_body: false };
+    if let Some(params) = params {
+        finder.visit_formal_parameters(params);
+    }
+    finder.in_body = true;
     for statement in body {
         finder.visit_statement(statement);
     }
-    finder.0
-}
-
-pub(super) fn expression_contains_direct_eval(expression: &Expression<'_>) -> bool {
-    let mut finder = DirectEvalFinder(false);
-    finder.visit_expression(expression);
-    finder.0
+    if let Some(expression) = expression {
+        finder.visit_expression(expression);
+    }
+    finder.facts
 }
 
 /// How a body reaches its own `arguments` binding, ordered so the widest use found wins.
@@ -920,61 +939,40 @@ pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
         && matches!(call.callee.without_parentheses(), Expression::Identifier(id) if id.name == "eval")
 }
 
-struct DirectEvalFinder(bool);
-
-/// Whether a body (not its nested functions) may give the functions nested in it binding
-/// sites to resolve through: a direct eval, a `with` statement, or `delete` of a name.
-pub(super) fn body_may_bind_dynamically(
-    body: &[Statement<'_>],
-    expression: Option<&Expression<'_>>,
-) -> bool {
-    let mut finder = DynamicBindingFinder(false);
-    for statement in body {
-        finder.visit_statement(statement);
-    }
-    if let Some(expression) = expression {
-        finder.visit_expression(expression);
-    }
-    finder.0
+struct DirectEvalFinder {
+    facts: DirectEvalFacts,
+    /// Whether the walk is in the body or expression body rather than the parameters.
+    in_body: bool,
 }
 
-struct DynamicBindingFinder(bool);
+impl DirectEvalFinder {
+    fn mark_dynamic(&mut self) {
+        self.facts.binds_in_body |= self.in_body;
+    }
+}
 
-impl<'a> Visit<'a> for DynamicBindingFinder {
+impl<'a> Visit<'a> for DirectEvalFinder {
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
         if is_direct_eval_call(call) {
-            self.0 = true;
+            self.facts.eval = true;
+            self.mark_dynamic();
         } else {
             walk::walk_call_expression(self, call);
         }
     }
 
-    fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
-        self.0 = true;
+    fn visit_with_statement(&mut self, statement: &oxc_ast::ast::WithStatement<'a>) {
+        self.mark_dynamic();
+        walk::walk_with_statement(self, statement);
     }
 
     fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
         if expression.operator == oxc_syntax::operator::UnaryOperator::Delete
             && matches!(expression.argument.without_parentheses(), Expression::Identifier(_))
         {
-            self.0 = true;
-        } else {
-            walk::walk_unary_expression(self, expression);
+            self.mark_dynamic();
         }
-    }
-
-    fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
-
-    fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
-}
-
-impl<'a> Visit<'a> for DirectEvalFinder {
-    fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
-        if is_direct_eval_call(call) {
-            self.0 = true;
-        } else {
-            walk::walk_call_expression(self, call);
-        }
+        walk::walk_unary_expression(self, expression);
     }
 
     fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}

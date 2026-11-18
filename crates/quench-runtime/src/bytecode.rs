@@ -1440,6 +1440,8 @@ pub struct Function {
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
     /// Lazily derived `has_dynamic_scope_access`; never serialized.
     pub(crate) dynamic_scope_access: std::cell::OnceCell<bool>,
+    /// Lazily derived `evals_in_scope`; never serialized.
+    pub(crate) evals_in_scope: std::cell::OnceCell<bool>,
     /// Whether the JavaScript tier's candidate filter admits the function
     /// (`js_compiled::function_candidate`), derived on its first entry; never serialized.
     pub(crate) js_tier_candidate: std::cell::OnceCell<bool>,
@@ -1941,6 +1943,18 @@ pub(crate) enum PlainLocalSlotIneligibility {
 /// The fixed-width form of `packed`, a wide one read through its function's `wide` table: the one
 /// decoder of the packed encoding, for readers that hold the table apart from its function.
 #[inline(always)]
+/// Whether `function` can reach bindings by name at run time, given the instructions `scanned`
+/// of its code: the one predicate behind `Function::has_dynamic_scope_access`, which the
+/// validator's scan over unvalidated code shares.
+pub(crate) fn dynamic_scope_access_in(
+    function: &Function,
+    mut scanned: impl Iterator<Item = WideInstruction>,
+) -> bool {
+    function.inherited_with_scope
+        || !function.binding_sites.is_empty()
+        || scanned.any(WideInstruction::resolves_dynamic_scope)
+}
+
 pub(crate) fn widen(packed: Instr, wide: &[WideInstruction]) -> WideInstruction {
     if packed.is_wide() { wide[packed.wide_index()] } else { packed.as_wide() }
 }
@@ -2284,6 +2298,10 @@ impl Function {
     /// environment and reads its scope by name, or records binding sites, the lexical scope
     /// its closures and evals resolve names in.
     pub(crate) fn evals_in_scope(&self) -> bool {
+        *self.evals_in_scope.get_or_init(|| self.derive_evals_in_scope())
+    }
+
+    fn derive_evals_in_scope(&self) -> bool {
         !self.binding_sites.is_empty()
             || self.instructions_of(Op::is_call_with_eval_flags).any(|instruction| instruction.direct_eval() || instruction.parameter_eval())
     }
@@ -3101,12 +3119,11 @@ impl Function {
     }
 
     fn derive_dynamic_scope_access(&self) -> bool {
-        self.inherited_with_scope
-            || !self.binding_sites.is_empty()
-            // Only these ops resolve a dynamic scope: the scan decodes no other.
-            || self
-                .instructions_of(|op| op == Op::ResolveName || op.is_call_with_eval_flags())
-                .any(WideInstruction::resolves_dynamic_scope)
+        // Only these ops resolve a dynamic scope: the scan decodes no other.
+        dynamic_scope_access_in(
+            self,
+            self.instructions_of(|op| op == Op::ResolveName || op.is_call_with_eval_flags()),
+        )
     }
 
     /// Whether the body enters a `with` statement, whose by-name loads may denote
