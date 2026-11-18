@@ -96,18 +96,7 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Declined,
 }
 
-/// A replanned body inlines with this fraction of the budget whose compile failed.
-const REPLAN_BUDGET_DIVISOR: usize = 2;
-
-/// The IR size above which a lane body's registers are allocated in one pass. The backtracking
-/// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
-/// units of 23k-28k IR instructions) set the process's peak resident size while its code
-/// compiled: V8-v7 raytrace peaked at 40.0 MB with it and 33.0 MB without, richards and
-/// deltablue, whose largest bodies are 17k, keep it and the speed it buys (2026-11-11, lane
-/// mode, 5 interleaved runs). Smaller bodies keep backtracking: single-pass for all lost 20-30%
-/// on richards and deltablue.
-const LANE_BACKTRACKING_MAX_INSTS: usize = 20_000;
-
+use crate::vm::compiled::tier_policy::{REPLAN_BUDGET_DIVISOR, LANE_BACKTRACKING_MAX_INSTS};
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] mod ahead;
 use super::super::dispatch_fast::lane_body_stats::{miss as plan_miss, Miss};
 use lane_facts::{unit_closed, bind_callees, Census, pays_compile, plan_key, amortizes_entry, each_once, entry_pc, numeric_callee, numeric_restartable, unit_direct_calls, unit_leaves};
@@ -266,7 +255,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let (plan, native) = planned?;
-            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > lane_region::LANE_BODY_MAX_CODE_BYTES;
+            let oversized = native.dfg.num_insts() * lane_region::LANE_BODY_CODE_BYTES_PER_IR > crate::vm::compiled::tier_policy::LANE_BODY_MAX_CODE_BYTES;
             if !oversized || plan.unit.frames.is_empty() || budget == 0 { return Some((plan, native)); }
             last = Some((plan, native));
             budget /= REPLAN_BUDGET_DIVISOR;

@@ -17,8 +17,7 @@ mod machine;
 mod repeats;
 mod stage;
 
-/// The largest native search, in bytes of machine code.
-const MAX_CODE_BYTES: usize = 256 * 1024;
+use crate::vm::compiled::tier_policy::REGEXP_NATIVE_MAX_CODE_BYTES;
 const WORD: i32 = std::mem::size_of::<usize>() as i32;
 const FRAME_BYTES: i64 = (NATIVE_FRAME_WORDS * std::mem::size_of::<usize>()) as i64;
 /// Frame ids below `FIRST_RESUME` are the frames the backtrack block handles itself.
@@ -61,7 +60,7 @@ fn compile(plan: &NativePlan) -> Option<Vec<u8>> {
         return None;
     }
     let function = emit(plan, &*isa);
-    compile_function(function, &*isa, Some(MAX_CODE_BYTES), |compiled, _| {
+    compile_function(function, &*isa, Some(REGEXP_NATIVE_MAX_CODE_BYTES), |compiled, _| {
         if !compiled.buffer.relocs().is_empty() {
             return Err(NativeCompileRejection::Relocations);
         }

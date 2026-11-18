@@ -3,9 +3,7 @@
 
 use crate::vm::compiled::loop_model;
 
-/// The widest backoff after declined entries: `2^16 - 1` entries pass untried between attempts.
-const MAX_ENTRY_BACKOFF: u32 = 16;
-
+use crate::vm::compiled::tier_policy::MAX_ENTRY_BACKOFF;
 /// The entries passed untried after `declines` declined entries in a row.
 fn backoff(declines: u8) -> u32 {
     (1u32 << u32::from(declines).min(MAX_ENTRY_BACKOFF)) - 1

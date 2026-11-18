@@ -33,16 +33,7 @@ pub(super) struct LaneBodyHistory {
 mod audit;
 pub(super) use audit::{Epochs, Verdict};
 
-/// The entries and the milliseconds of warming past which a function specializes by its
-/// recurrence alone (`LaneView::recurrent`).
-const RECURRENT_ENTRIES: u32 = 16;
-/// The completed handler runs of a body per credit to the callees it calls natively: a callee's
-/// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
-const NATIVE_CREDIT_RUNS: u64 = 64;
-const RECURRENT_TICKS: u32 = 256;
-/// The most times a dropped body doubles the warm-up of the next.
-const MAX_DOUBLINGS: u8 = 7;
-
+use crate::vm::compiled::tier_policy::{RECURRENT_ENTRIES, NATIVE_CREDIT_RUNS, RECURRENT_TICKS, MAX_DOUBLINGS};
 /// The warming entries every function has counted so far: a clock of the work the program does
 /// while its functions warm, which, unlike wall time, a rerun repeats.
 fn warm_ticks() -> u32 {

@@ -140,10 +140,6 @@ pub(super) const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
 /// The machine bytes an IR instruction of a lane body costs at most, measured over the V8-v7
 /// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
 pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
-/// The executable memory a lane body may take, a resource limit: the code and compile time a
-/// hot loop's inlined call graph (Richards' ~900 instructions) costs. A larger body is planned
-/// again with less inlined (`Vm::compile_lane_method`).
-pub(super) const LANE_BODY_MAX_CODE_BYTES: usize = 115 * 1024;
 
 thread_local! {
     /// The SSA builder context of this thread's lowerings, reused as Cranelift means a

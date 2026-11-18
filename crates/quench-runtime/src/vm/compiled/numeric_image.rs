@@ -69,7 +69,7 @@ impl NumericImage {
     fn build(lowering: NumericLowering, function_id: u32) -> Option<Self> {
         let NumericLowering { function, isa, params, number_result } = lowering;
         let dump = native_dump_directory().map(|_| function.to_string());
-        let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::js_compiled::MAX_CODE_BYTES), |compiled, function| {
+        let code = crate::vm::jit_backend::compile_function(function, &*isa, Some(crate::vm::compiled::tier_policy::JS_COMPILED_MAX_CODE_BYTES), |compiled, function| {
             crate::vm::jit_backend::relocatable_code::RelocatableCode::extract(compiled, function).ok_or(NativeCompileRejection::Relocations)
         }).ok()?;
         if let (Some(directory), Some(clif)) = (native_dump_directory(), dump) {

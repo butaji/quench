@@ -1653,14 +1653,7 @@ impl AnalysisState {
 use crate::wasm::trap::COMPILED_TRAPS as TRAPS;
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
-const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
-const MAX_JIT_ROOT_BYTECODES_PER_FUNCTION: usize = 80_000;
-const MAX_JIT_ROOT_CODE_BYTES: usize = 2 * 1024 * 1024;
-/// A selective root may include a few hot callees learned from earlier
-/// indirect-call executions. Keep the profile-guided closure bounded so one
-/// polymorphic module cannot turn a tier promotion into eager compilation.
-const MAX_JIT_PROFILED_INDIRECT_TARGETS: usize = 8;
-pub(super) const MAX_JIT_TIER_BYTECODES_PER_FUNCTION: usize = 2_048;
+use crate::vm::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, MAX_JIT_TIER_BYTECODES_PER_FUNCTION, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
 fn jit_root_override() -> Result<Option<usize>, ()> {
     #[cfg(test)]
@@ -5819,14 +5812,6 @@ fn internal_signature(
     signature
 }
 
-/// Instructions a threaded copy may repeat between a constant's jump and the
-/// branch table the constant decides; bounds the code each copy adds. A
-/// dispatch copy repeats its table too, which counts as its edges: TSF's
-/// 290-way state table, copied at each of its 503 jumps, compiled one
-/// function to 10.6 MB of edge moves (3.5 s, 220 MiB peak); charged by its
-/// edges it compiles in 0.1 s.
-const THREAD_BUDGET: usize = 16;
-
 /// Where a threaded copy continues once its path is done.
 #[derive(Clone, Copy)]
 enum ThreadEnd {
@@ -5839,14 +5824,6 @@ enum ThreadEnd {
     /// case's back edge predicts its own successor.
     Dispatch,
 }
-
-/// Instructions all copies of an unrolled loop body may hold together, and the most copies.
-/// A body of up to a fourth of the budget runs as four copies: one interrupt check, one back
-/// edge and one set of loop-carried moves per four iterations (V8's optimizing tier unrolls
-/// small innermost Wasm loops for the same reasons); a body of more than half of it is not
-/// unrolled.
-const UNROLL_BUDGET: usize = 48;
-const MAX_UNROLL_FACTOR: usize = 4;
 
 /// Bytecodes up to which a compiled Wasm program unrolls its innermost loops. Every function
 /// compiles eagerly, and each copy is compiled whether its loop runs or not: in programs of
@@ -6879,20 +6856,6 @@ fn compile_built(
 /// worker busy while the building thread stays ahead, and bounds the Cranelift functions
 /// alive at once (each holds its whole body's IR) to a few per worker.
 const BUILT_FUNCTIONS_QUEUED_PER_WORKER: usize = 2;
-
-/// The Cranelift IR instructions the compile workers may hold at once, queued and compiling,
-/// under each memory policy (`MemoryPolicy`). Every worker holds its function's whole IR and
-/// Cranelift's working set grows with it, so the parallel compile of a whole module peaks
-/// with the functions in flight; a function heavier than the bound compiles alone. A bound
-/// on the count of queued functions did not move the peak (one queued per worker instead
-/// of two, memory-first `--jit`, tsf-wasm 43.5-44.5 MB either way).
-/// Memory-first bounds them at 50,000, about a third of tsf-wasm's 157k (its largest function
-/// 53.6k). JetStream `--jit`, memory-first, unpinned x86_64, 4 cores, median of 6,
-/// 2026-10-27: tsf-wasm max RSS 46.6 -> 42.0 MB, Score 23.2 -> 22.1, First 11.2 -> 10.0;
-/// sqlite3-wasm 73.6 -> 58.4 MB, Score 16.7 -> 16.2, First 2.96 -> 2.80. Throughput keeps
-/// every worker fed (unbounded; the same rows, median of 8, were unchanged).
-const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
-    [None, Some(50_000)];
 
 /// A function's compiled body with its calls, and its compiled entry (`build_entry`).
 type CompiledBody = (Vec<u8>, Vec<Call>, Vec<u8>);
@@ -9194,15 +9157,6 @@ impl<H: Host> Vm<H> {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
-/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
-/// The lane records a loop-free body runs below which a frameless activation is cheaper than
-/// the JavaScript tier's native entry of it. A direct native entry (`lane_tier_prologue`,
-/// `direct_call`, the shared entry) costs about 380 machine instructions past the
-/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
-/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
-/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
-const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
 /// loop, a call (which a plan inlines or binds), or length. A short call-free function never
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.

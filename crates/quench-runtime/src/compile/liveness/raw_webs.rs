@@ -117,44 +117,37 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
 }
 
 /// Union-find over value nodes.
+/// The web classes: the shared union-find (`crate::webs::DefSets`), and per root whether the
+/// class is touched boxed.
 struct Classes {
-    parent: Vec<u32>,
+    sets: crate::webs::DefSets,
     boxed: Vec<bool>,
 }
 
 impl Classes {
     fn add(&mut self) -> u32 {
-        let id = self.parent.len() as u32;
-        self.parent.push(id);
         self.boxed.push(false);
-        id
+        self.sets.add() as u32
     }
 
-    fn find(&mut self, mut node: u32) -> u32 {
-        while self.parent[node as usize] != node {
-            let parent = self.parent[node as usize];
-            self.parent[node as usize] = self.parent[parent as usize];
-            node = parent;
-        }
-        node
+    fn len(&self) -> usize {
+        self.sets.len()
     }
 
     fn union(&mut self, left: u32, right: u32) {
-        let (left, right) = (self.find(left), self.find(right));
-        if left != right {
-            self.parent[left as usize] = right;
-            self.boxed[right as usize] |= self.boxed[left as usize];
+        if let Some((kept, absorbed)) = self.sets.union(right as usize, left as usize) {
+            self.boxed[kept] |= self.boxed[absorbed];
         }
     }
 
     fn mark_boxed(&mut self, node: u32) {
-        let root = self.find(node);
-        self.boxed[root as usize] = true;
+        let root = self.sets.root(node as usize);
+        self.boxed[root] = true;
     }
 
     fn is_boxed(&mut self, node: u32) -> bool {
-        let root = self.find(node);
-        self.boxed[root as usize]
+        let root = self.sets.root(node as usize);
+        self.boxed[root]
     }
 }
 
@@ -177,13 +170,13 @@ pub(crate) fn raw_webs(
     if !function.handlers.is_empty() || live.len() < count || transfers.len() < count {
         return RawWebs::default();
     }
-    let mut classes = Classes { parent: Vec::new(), boxed: Vec::new() };
+    let mut classes = Classes { sets: crate::webs::DefSets::default(), boxed: Vec::new() };
     // The node of each live-in register at each pc.
     let mut live_in: Vec<Vec<Option<u32>>> = Vec::with_capacity(count);
     for set in &live[..count] {
         let row = (0..registers).map(|register| set.contains(register).then(|| classes.add())).collect();
         live_in.push(row);
-        if classes.parent.len() > NODE_BUDGET {
+        if classes.len() > NODE_BUDGET {
             return RawWebs::default();
         }
     }

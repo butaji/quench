@@ -22,9 +22,7 @@ mod dispatch;
 pub(super) use dispatch::{lower_body, lower_region_dispatch, region_call_arguments};
 use object_parts::{entry_table_data, import_operations, lower_lane_bodies, lower_object_entry, lower_object_regions};
 
-// Bounds the working CFG, not the source function. Large unpartitioned native
-// graphs exhausted 14 GiB on a 50 KiB input; callers may choose any nonzero budget.
-const DEFAULT_REGION_INSTRUCTION_BUDGET: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
+use crate::vm::compiled::tier_policy::DEFAULT_REGION_INSTRUCTION_BUDGET;
 /// The image's ABI header import is its first function symbol.
 const ABI_SYMBOL_INDEX: u32 = 0;
 /// Data records an image publishes between its functions' operands and the fallback tables: the narrow table, then the atom table.
