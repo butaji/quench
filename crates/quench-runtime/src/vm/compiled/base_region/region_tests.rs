@@ -29,19 +29,17 @@ fn run_regions(source: &str) -> Regions {
 }
 
 /// A hot loop that calls a small function by its global name: the call site inlines the callee (its
-/// dead implicit `return undefined` dropped, its constants folded), but the region is not entered while
-/// its activation is a VM frame keeping its locals in its register file past its registers, where the
-/// inlined callee's window would go (`dispatch_fast::lane_region_admits`): the interpreter runs the loop
-/// and the output is the interpreter's. Placing the windows past the frame's environment window lifts this.
+/// dead implicit `return undefined` dropped, its constants folded), whose window starts past the frame's
+/// environment window, and the region runs with no leave but where the loop ends.
 #[test]
-fn a_hot_loop_calling_a_small_function_by_name_inlines_but_waits_while_its_frame_keeps_locals_in_window() {
+fn a_hot_loop_calling_a_small_function_by_name_runs_as_a_region_with_the_callee_inlined() {
     let ran = run_regions(
         "function sq(x) { return x * x; }
          function run(n) { var s = 0; for (var i = 0; i < n; i++) s = (s + sq(i & 7)) | 0; return s; }
          print(run(40000)); print(run(10));",
     );
     assert_eq!(ran.interpreted, ran.compiled);
-    assert_eq!(ran.runs, 0, "no region runs over a frame whose locals sit where the callee window goes: {:?}", ran.kinds);
+    assert!(ran.runs > 0, "the loop runs as a region: {:?}", ran.kinds);
 }
 
 /// A guard that fails inside the inlined callee of a region (an int32 overflow after some iterations
