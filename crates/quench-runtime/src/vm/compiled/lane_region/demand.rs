@@ -128,13 +128,55 @@ impl Demands {
 
     /// The row on entry to the block `start..end`: its successors' rows, past each instruction
     /// from the last, a definition retiring the register's demand and a use adding its own.
+    /// The live registers a leave recovers add tagged demand a mask word at a time: an
+    /// instruction touches its operands and the registers its live set newly tags, not every
+    /// register of the unit (`block_entry_dense` for a unit past one set's width).
     fn block_entry(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool) -> Vec<Demand> {
+        start: usize, end: usize, masks: Option<&crate::compile::liveness::RegisterMasks>) -> Vec<Demand> {
+        use crate::compile::liveness::RegisterSet;
+        if self.registers > RegisterSet::BITS as usize {
+            let live = |pc: usize, register: Register| masks.is_none_or(|masks| masks.is_live(pc, register));
+            return self.block_entry_dense(program, unit, start, end, &live);
+        }
+        let mut row = self.successor_row(unit, end);
+        let all = below(self.registers);
+        let recovered = all & !below(usize::from(unit.caller_registers).min(self.registers));
+        let mut tagged = RegisterSet::default();
+        for (register, demand) in row.iter().enumerate() { if demand.tagged() { tagged.insert(register); } }
+        for pc in (start..end).rev() {
+            let instruction = unit.instructions[pc];
+            let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
+            let after = instruction.defined_register().and_then(|result| row.get(usize::from(result))).copied().unwrap_or_default();
+            each(defs & all, |register| row[register] = Demand::default());
+            tagged = tagged & !defs;
+            each(uses & all, |register| {
+                row[register] = row[register].union(read_demand(instruction, register, &|| after));
+                if row[register].tagged() { tagged.insert(register); }
+            });
+            // A missing mask keeps every register live.
+            let live = masks.map_or(Some(RegisterSet::MAX), |masks| masks.get(pc)).unwrap_or(RegisterSet::MAX);
+            let eligible = if homes_registers(instruction) { all } else { recovered };
+            let fresh = live & eligible & !tagged;
+            each(fresh, |register| row[register] = row[register].union(Demand::TAGGED));
+            tagged |= fresh;
+        }
+        row
+    }
+
+    /// The join of the rows of the successors of the block ending before `end`.
+    fn successor_row(&self, unit: &super::super::lane_unit::Unit, end: usize) -> Vec<Demand> {
         let mut row = vec![Demand::default(); self.registers];
         let last = unit.instructions[end - 1];
         for successor in successors(end - 1, last).into_iter().flatten().filter_map(|pc| self.row(pc)) {
             for (demand, successor) in row.iter_mut().zip(successor) { *demand = demand.union(*successor); }
         }
+        row
+    }
+
+    /// `block_entry` one register at a time, for a unit wider than a register set.
+    fn block_entry_dense(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
+        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool) -> Vec<Demand> {
+        let mut row = self.successor_row(unit, end);
         for pc in (start..end).rev() {
             let instruction = unit.instructions[pc];
             let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
@@ -153,6 +195,24 @@ impl Demands {
     }
 }
 
+/// The registers below `count`.
+fn below(count: usize) -> crate::compile::liveness::RegisterSet {
+    let mut set = crate::compile::liveness::RegisterSet::default();
+    for register in 0..count { set.insert(register); }
+    set
+}
+
+/// Calls `visit` with each register of `set`, a word at a time.
+fn each(set: crate::compile::liveness::RegisterSet, mut visit: impl FnMut(usize)) {
+    for index in 0..(crate::compile::liveness::RegisterSet::BITS / u64::BITS) as usize {
+        let mut word = set.word(index);
+        while word != 0 {
+            visit(index * u64::BITS as usize + word.trailing_zeros() as usize);
+            word &= word - 1;
+        }
+    }
+}
+
 /// Each block leader's use demand, solved backward to a fixed point over the unit's CFG. A
 /// worklist reaches the round-robin solution: the demand only grows as rows join, so a block
 /// needs solving again only when a successor's row changed, and each change queues its
@@ -160,7 +220,7 @@ impl Demands {
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
     leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
     let Liveness::Unit(masks) = liveness else { return Demands::default() };
-    let live = |pc: usize, register: Register| masks.as_deref().is_none_or(|masks| masks.is_live(pc, register));
+    let masks = masks.as_deref();
     let length = unit.instructions.len();
     let mut demands = Demands { offsets: vec![None; length], rows: Vec::new(),
         registers: usize::from(unit.registers) };
@@ -187,7 +247,7 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
     while let Some(index) = work.iter().next() {
         work.remove(index);
         let (start, end) = blocks[index];
-        let entry = demands.block_entry(program, unit, start, end, &live);
+        let entry = demands.block_entry(program, unit, start, end, masks);
         if demands.set(start, &entry) {
             for &predecessor in &predecessors[index] { work.insert(predecessor); }
         }
