@@ -288,13 +288,12 @@ k09_reduce 0.8 Heap::collect_with_object_roots<alloc::vec::Vec<quench_runtime::v
 k09_reduce 0.7 Vm::run_user_frame
 k09_reduce 0.6 Vec::spec_extend
 k09_reduce 0.5 RecordSpace::prepare_minor
-k10_f64_sum 661.0 __memcpy_avx_unaligned_erms
-k10_f64_sum 397.0 lane_loop_kernel
-k10_f64_sum 239.0 trip_count
+k10_f64_sum 386.0 lane_loop_kernel
 k10_f64_sum 222.0 Vm::typed_array_getter_value
 k10_f64_sum 214.0 Vm::typed_array_geometry_read
 k10_f64_sum 194.0 LoopKernel::columns
 k10_f64_sum 144.0 LoopKernel::write_back
+k10_f64_sum 102.0 trip_count
 k10_f64_sum 101.0 Fold::run
 k10_f64_sum 93.0 Vm::typed_array_span
 k10_f64_sum 63.0 LoopKernel::finals
@@ -330,14 +329,13 @@ k11_saxpy 176.0 lane_require_object_coercible
 k11_saxpy 51.0 geometry_slot
 k11_saxpy 25.0 lane_inc_dec_loop<false, 4, true>
 k11_saxpy 6.0 lane_load_const
-k12_copy 894.0 lane_loop_kernel
-k12_copy 661.0 __memcpy_avx_unaligned_erms
+k12_copy 920.0 lane_loop_kernel
 k12_copy 240.0 Vm::typed_array_geometry_read
-k12_copy 239.0 trip_count
 k12_copy 186.0 Vm::typed_array_span
 k12_copy 176.0 LoopKernel::columns
 k12_copy 172.0 LoopKernel::chunk_length
 k12_copy 125.0 LoopKernel::write_back
+k12_copy 102.0 trip_count
 k12_copy 96.0 LoopKernel::limit
 k12_copy 59.0 LoopKernel::finals
 k12_copy 52.0 LoopKernel::stores_present
@@ -410,17 +408,16 @@ k15_isort 15.0 lane_operator_int32<8, false>
 k15_isort 12.0 lane_load_const
 k15_isort 9.0 lane_jump_binary_false_small<false, 4, false>
 k16_sieve 2100.0 lane_set_index_typed_kind<0>
-k16_sieve 1842.0 lane_loop_kernel
+k16_sieve 1894.0 lane_loop_kernel
 k16_sieve 1140.0 lane_operator<8>
-k16_sieve 661.0 __memcpy_avx_unaligned_erms
 k16_sieve 654.0 lane_jump_binary_false_small<false, 4, false>
 k16_sieve 540.0 lane_jump_always<true>
 k16_sieve 372.0 lane_load_const
-k16_sieve 239.0 trip_count
 k16_sieve 231.0 lane_operator<10>
 k16_sieve 217.0 lane_get_index_typed_kind<0>
 k16_sieve 140.0 LoopKernel::chunk_length
 k16_sieve 138.0 lane_inc_dec_jump<false, true>
+k16_sieve 102.0 trip_count
 k16_sieve 99.0 LoopKernel::write_back
 k16_sieve 93.0 Vm::typed_array_span
 k16_sieve 56.0 lane_jump_binary_false_small<false, 2, false>
@@ -511,7 +508,7 @@ k_dispatch 12.0 lane_operator_integer_constant<19>
 k_dispatch 7.5 lane_operator<18>
 k_json 1067.1 parse_json_text<quench_runtime::vm::json::heap_builder::JsonHeapBuilder>
 k_json 544.0 Vm::json_write_plain
-k_json 305.9 __memcpy_avx_unaligned_erms
+k_json 306.0 __memcpy_avx_unaligned_erms
 k_json 268.0 lane_field_value
 k_json 174.8 Heap::alloc_object_with_properties
 k_json 162.0 lane_get_field_miss
