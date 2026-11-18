@@ -18805,7 +18805,7 @@ fn specialize_environment_window<H: Host>(
     for (pc, &instruction) in decoded.iter().enumerate() {
         match window_record(function, instruction) {
             WindowRecord::Keeps => {}
-            WindowRecord::Eval => replacements.push((pc, Some(lane_eval::direct_eval::<H>()), instruction.imm())),
+            WindowRecord::Eval => replacements.push((pc, Some(lane_eval::direct_eval_row_handler::<H>()), instruction.imm())),
             WindowRecord::Local(own) => {
                 if own > ENVIRONMENT_WINDOW_FIELD {
                     return None;

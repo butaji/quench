@@ -124,19 +124,29 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
 }
 
 script_handler! {
-    /// A direct eval call of a window activation (`specialize_environment_window`): its value in
-    /// the call's register. Any other callee or activation takes the general path.
+    /// The direct-eval call row of a window record (`window_records`, `WindowRecord::Eval`): the call-out
+    /// the window's activation makes (`direct_eval_in_window`), its value in the call's register. A call the
+    /// window declines, or whose eval raised, leaves to `direct_eval_miss`.
     #[inline(never)]
-    fn direct_eval_handler<>(cx, r, ip, i, view) {
+    fn direct_eval_row<>(cx, r, ip, i, view) {
         let Some(value) = direct_eval_in_window(cx, r, ip, i) else {
-            return exit(ip);
+            sibling!(direct_eval_miss::<H>, r, ip, Carried::script(cx))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
     }
 }
 
+script_handler! {
+    /// The miss arm of the direct-eval row: the general step runs the call, which makes the eval's
+    /// own frames and raises its errors.
+    #[inline(never)]
+    fn direct_eval_miss<>(cx, r, ip, i, view) {
+        exit(ip)
+    }
+}
+
 /// The handler of a direct eval call in a function whose window activations run it.
-pub(super) const fn direct_eval<H: Host>() -> Handler {
-    direct_eval_handler::<H>
+pub(super) const fn direct_eval_row_handler<H: Host>() -> Handler {
+    direct_eval_row::<H>
 }
