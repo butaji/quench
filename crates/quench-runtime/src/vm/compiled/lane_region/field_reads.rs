@@ -82,7 +82,7 @@ impl Lowering<'_, '_> {
     /// to one retires this code rather than each run re-reading the member.
     /// `None` where the read is not one, or completes its frame or writes `this` besides.
     pub(super) fn fold_native_member(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> Option<bool> {
-        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, holder, .. }) = self.global_reads.get(&pc) else { return None };
+        let Some(&crate::vm::global_facts::GlobalRead::NativeMember { value, holder, folds: true, .. }) = self.global_reads.get(&pc) else { return None };
         if !self.holds_holders() || instruction.returns_from_frame() || instruction.writes_current_this() { return None; }
         let exit = self.guard_exit(state, pc as u32);
         self.hold_holder_any(state, exit, holder);
