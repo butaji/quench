@@ -87,8 +87,8 @@ impl<H: Host> Vm<H> {
 
     /// `entry`'s target for `callee`, another closure of its function, read from the entry
     /// alone where the closures' environments are activations of one function in one
-    /// program: their capture facts then match (`target_capture`), and a receiver-binding
-    /// callee has no lexical `this` to read. Anything else resolves in `closure_target`.
+    /// program: their capture facts then match (`target_capture`); an arrow's lexical `this`
+    /// is read from its own environment. Anything else resolves in `closure_target`.
     #[inline(always)]
     fn sibling_closure_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
         // A sibling over the entry's own environment, as closures made over their maker's
@@ -97,9 +97,22 @@ impl<H: Host> Vm<H> {
         if env == entry.env {
             return Some(ScriptCallTarget { callee, ..*entry });
         }
+        let mut target = self.sibling_capture_target(entry, callee, env)?;
+        // An arrow's `this` is its own environment's: read for the new one, as
+        // `closure_target` does, with every other fact kept.
         if !entry.this_binding.binds_receiver() {
-            return None;
+            (target.this_binding, target.lexical_this) = match self.captured_lexical_this(env) {
+                Some(this) if this.is_deleted() => return None,
+                Some(this) => (ThisBinding::Lexical, this),
+                None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
+            };
         }
+        Some(target)
+    }
+
+    /// `sibling_closure_target`'s entry for `callee` over `env`, its captures read.
+    #[inline(always)]
+    fn sibling_capture_target(&mut self, entry: &ScriptCallTarget, callee: Value, env: Value) -> Option<ScriptCallTarget> {
         // A closure of the same function over the same environment, as an immediately
         // invoked function expression makes at each run of its enclosing body: every fact
         // of the entry holds for it but its identity.
