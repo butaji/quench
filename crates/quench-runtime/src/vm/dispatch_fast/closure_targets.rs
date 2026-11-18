@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
         // An arrow's `this` is its own environment's: read for the new one, as
         // `closure_target` does, with every other fact kept.
         // An arrow that reads none of its maker's implicit bindings keeps the entry's.
-        if !entry.this_binding.binds_receiver() && self.arrow_reads_implicit_bindings(entry.program(), entry.function) {
+        if entry.forms & TARGET_READS_IMPLICIT != 0 {
             (target.this_binding, target.lexical_this) = match self.captured_lexical_this(env) {
                 Some(this) if this.is_deleted() => return None,
                 Some(this) => (ThisBinding::Lexical, this),
@@ -109,14 +109,6 @@ impl<H: Host> Vm<H> {
             };
         }
         Some(target)
-    }
-
-    /// Whether function `function` of `program`, an arrow, may read its maker's implicit
-    /// bindings (`arrow_chain_reads_implicit_bindings`); `true` when unknown.
-    fn arrow_reads_implicit_bindings(&self, program: ProgramId, function: u32) -> bool {
-        self.programs.residual(program).is_none_or(|code| {
-            code.function_get(function as usize).is_none_or(|body| body.arrow_reads_implicit_bindings(code, function))
-        })
     }
 
     /// `sibling_closure_target`'s entry for `callee` over `env`, its captures read.
@@ -131,11 +123,11 @@ impl<H: Host> Vm<H> {
         if entry.capture.is_null() {
             return None;
         }
-        let Some(crate::heap::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap.environment(entry.env) else {
+        let Some(crate::heap::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap.reachable_environment(entry.env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
-        let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.environment(env) else {
+        let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.reachable_environment(env) else {
             return None;
         };
         if *function != old || scope.program() != old_program {
