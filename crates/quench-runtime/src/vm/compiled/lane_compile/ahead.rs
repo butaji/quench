@@ -89,6 +89,29 @@ mod tests {
 
     /// A body whose loop lowers under static facts ships that loop's code in the image, and the
     /// file round trip keeps it.
+    /// A shipped loop's code links at load against the running VM's helper table and atoms,
+    /// the step an install needs before it can publish the loop.
+    #[test]
+    fn a_shipped_loop_links_against_the_vm_helpers() {
+        let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nprint(loopfn(10));";
+        let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
+        let file = AheadImages::compile(&program).to_bytes();
+        let images = AheadImages::from_bytes(&file).unwrap();
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        let table = crate::vm::compiled::LaneHelper::addresses::<TestHost>();
+        let (function, header) = (0..program.function_count() as u32)
+            .find_map(|function| images.loops_of(function).first().map(|(header, _, _)| (function, *header)))
+            .expect("a shipped loop");
+        let (code, atoms, _) = images.loop_code(function, header).expect("the loop's code");
+        let atoms: Vec<(u32, u32)> = atoms.iter().map(|(atom, text)| (*atom, vm.intern_atom(text))).collect();
+        let linked = code.link(0, |namespace, key| match crate::vm::compiled::lane_region::relocs::atom_key(namespace, key) {
+            Some(atom) => atoms.iter().find(|(named, _)| *named == atom).map(|(_, here)| u64::from(*here)),
+            None => table.get(crate::vm::compiled::lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
+        });
+        assert!(matches!(&linked, Ok(code) if !code.is_empty()), "the loop's relocations did not resolve: {linked:?}");
+    }
+
     #[test]
     fn a_loop_of_a_body_ships_with_its_code() {
         let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nprint(loopfn(10));";

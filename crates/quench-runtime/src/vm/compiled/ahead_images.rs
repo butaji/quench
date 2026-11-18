@@ -129,6 +129,14 @@ impl AheadImages {
         self.get(function).map(|image| image.loops.iter().map(|loop_| (loop_.header, loop_.backedge, loop_.fault_poll)).collect()).unwrap_or_default()
     }
 
+    /// The code of `function`'s loop at `header`, its relocations and the atom texts it names,
+    /// for a load that links them.
+    #[cfg(all(test, feature = "aot"))]
+    pub(in crate::vm) fn loop_code(&self, function: u32, header: u32) -> Option<(&RelocatableCode, &[(u32, String)], bool)> {
+        let loop_ = self.get(function)?.loops.iter().find(|loop_| loop_.header == header)?;
+        Some((&loop_.code, &loop_.atoms, loop_.fault_poll))
+    }
+
     /// Whether no function has an image.
     pub fn is_empty(&self) -> bool { self.images.is_empty() }
 
