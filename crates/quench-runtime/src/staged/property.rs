@@ -403,7 +403,7 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
-    if let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
+    if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
         && frame.proven_shape(stage, owner) != Some(*shape)
         && frame.kept_layout(owner, *shape).is_none() {
         return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
