@@ -369,5 +369,15 @@ impl<T: PartialOrd> NumberRelationStage<T> for PartialOrderStage {
 /// Floating remainder preserves negative zero and the Number NaN/infinity rules.
 #[inline]
 pub(crate) extern "C" fn number_remainder(left: f64, right: f64) -> f64 {
+    // Integers below 2^53 in magnitude are exact as i64, whose remainder is the exact one and
+    // takes the dividend's sign, as `fmod` does: one `idiv` instead of the generic loop. The
+    // sign is copied back for a zero result, so `-4 % 2` stays `-0`.
+    const EXACT: f64 = 9_007_199_254_740_992.0;
+    if left.abs() < EXACT && right.abs() < EXACT && right != 0.0 {
+        let (dividend, divisor) = (left as i64, right as i64);
+        if dividend as f64 == left && divisor as f64 == right {
+            return ((dividend % divisor) as f64).copysign(left);
+        }
+    }
     left % right
 }
