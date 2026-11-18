@@ -16,6 +16,9 @@ pub(crate) enum WasmStateOperation {
     GlobalSet { source: Register, binding: Register },
     /// Every register of the window from `base`, `count` of them, `= constant` (`WasmFillRegisters`).
     Fill { constant: Constant, base: Register, count: u16 },
+    /// `destination = slot of the running instance` (`WasmInstanceBinding`): the instance's slot
+    /// the frame reads, which a memory binding's view update leaves to its hand handler.
+    InstanceBinding { destination: Register, slot: u32 },
 }
 
 impl WasmStateOperation {
@@ -30,6 +33,10 @@ impl WasmStateOperation {
             Op::WasmGlobalSet => Self::GlobalSet {
                 source: instruction.register_a(),
                 binding: instruction.register_b(),
+            },
+            Op::WasmInstanceBinding => Self::InstanceBinding {
+                destination: instruction.result_register(),
+                slot: instruction.wide().imm(),
             },
             Op::WasmFillRegisters => {
                 let window = instruction.wide().register_window();
@@ -90,6 +97,15 @@ pub(crate) fn step<F: Frame<Concrete>>(
                 frame.write(stage, register, word, fact);
             }
             Step::Value(word)
+        }
+        WasmStateOperation::InstanceBinding { destination, slot } => {
+            let Some(word) = frame.wasm_instance_slot(stage, slot) else {
+                return Step::Unresolved;
+            };
+            match frame.wasm_write(stage, destination, word, WasmRep::Tagged) {
+                Some(tagged) => Step::Value(tagged),
+                None => Step::Unresolved,
+            }
         }
     }
 }

@@ -2621,7 +2621,7 @@ struct LaneContext<H: Host> {
     /// access found it (`lane_frame_storage`).
     frame_storage: FrameStorage,
     /// The instance environment the run's Wasm bindings last read and its dense slot storage
-    /// (`lane_instance_binding`), found this run as `frame_storage` is.
+    /// (`wasm_instance_slot`), found this run as `frame_storage` is.
     instance_slots: (Value, *const usize),
     /// Backward jumps left before the running Wasm function is credited with an
     /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
@@ -8182,7 +8182,7 @@ script_handler! {
 #[path = "vector_region.rs"]
 mod vector_region;
 mod wasm_instance;
-use wasm_instance::{lane_instance_binding, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store, lane_wasm_simd, lane_wasm_simd_shuffle};
+use wasm_instance::{lane_instance_binding_memory, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store};
 
 /// `if condition { chosen } else { other }` of two loaded values, picked after both load, so
 /// neither load waits on the condition; the compiler would otherwise load once from a picked
@@ -16732,9 +16732,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
-        Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
-        Class::WasmSimd => Some(lane_wasm_simd::<H>),
-        Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
         Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
         Class::CallArray => Some(lane_call_array::<H>),
@@ -17301,9 +17298,10 @@ fn derive_lane_view<'live, H: Host>(
                     op.immediate_role() == ImmediateRole::JumpTarget
                         && instruction.imm() as usize <= pc
                 };
-            let selected = operand.and_then(|_| if binds_memory {
+            // A memory binding installs its view whether or not the record has an operand.
+            let selected = (binds_memory || operand.is_some()).then_some(()).and_then(|_| if binds_memory {
                 Some(LaneHandler {
-                    handler: lane_instance_binding::<H, true> as Handler,
+                    handler: lane_instance_binding_memory::<H> as Handler,
                     produces: false,
                 })
             } else if op.is_wasm_f64_unary()
@@ -17450,7 +17448,7 @@ fn derive_lane_view<'live, H: Host>(
     // before the fusions below, which then leave each region's first record alone. Only a
     // body with SIMD operators derives the liveness they read.
     let vectors = wasm
-        && decoded.iter().any(|instruction| matches!(instruction.op().class(), Class::WasmSimd | Class::WasmSimdShuffle));
+        && decoded.iter().any(|instruction| crate::staged::wasm_simd(instruction.op()) || crate::staged::wasm_simd_shuffle(instruction.op()));
     let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
         Some(live) => vector_region::vector_regions(
             &decoded,

@@ -937,6 +937,8 @@ pub(crate) enum Operation<W, P> {
     WasmState(wasm_state::WasmStateOperation),
     /// A Wasm direct load or store of the function's memory (`wasm_access`).
     WasmAccess(wasm_access::WasmAccessOperation),
+    /// A Wasm SIMD operator or byte shuffle on the lane's vector registers (`wasm_simd`).
+    WasmVector(wasm_simd::VectorOperation),
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
@@ -961,6 +963,7 @@ impl<W, P> Operation<W, P> {
             Decoder::WasmJump => Self::decode_wasm_jump(instruction),
             Decoder::WasmState => Self::decode_wasm_state(instruction, context),
             Decoder::WasmMemory => Self::decode_wasm_access(instruction, context),
+            Decoder::WasmVector => Self::decode_wasm_vector(instruction, context),
             // A lane row is the lane's own (`decode_lane`): the plan keeps its generic or exit route for it.
             Decoder::Lane => None,
         }

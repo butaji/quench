@@ -222,6 +222,8 @@ pub(crate) enum RowStep {
     WasmState,
     /// The Wasm direct loads and stores of the function's memory (`wasm_access::step`).
     WasmMemory,
+    /// The Wasm SIMD operators and byte shuffles on the lane's vector registers (`wasm_simd::step`).
+    WasmVector,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -240,6 +242,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::WasmJump) => RowStep::WasmJump,
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,
+        Some(Decoder::WasmVector) => RowStep::WasmVector,
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,
@@ -340,6 +343,16 @@ pub(crate) fn step_wasm_state<F: Frame<Concrete>>(stage: &mut Concrete, frame: &
 pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmAccess(operation) => super::wasm_access::step(stage, frame, operation),
+        _ => Step::Unresolved,
+    }
+}
+
+/// `step` of a Wasm vector row (`RowStep::WasmVector`) on the interpreter's stage and frame; any
+/// other operation is unresolved.
+#[inline(always)]
+pub(crate) fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
+    match operation {
+        Operation::WasmVector(operation) => super::wasm_simd::step(stage, frame, operation),
         _ => Step::Unresolved,
     }
 }

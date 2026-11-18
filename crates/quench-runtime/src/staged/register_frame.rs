@@ -186,6 +186,24 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn wasm_global_store(&mut self, _stage: &mut S, _binding: S::Word, _value: S::Word) -> Option<()> { None }
 
+    /// The running instance's slot `slot` as its register encoding (`WasmInstanceBinding`); `None`
+    /// where the frame cannot read it, which leaves the row to its miss.
+    #[inline(always)]
+    fn wasm_instance_slot(&mut self, _stage: &mut S, _slot: u32) -> Option<S::Word> { None }
+
+    /// The 16 bytes of the vector `register` holds; `None` where it holds no vector.
+    #[inline(always)]
+    fn vector(&mut self, _stage: &mut S, _register: Register) -> Option<[u8; crate::wasm::V128_BYTES]> { None }
+
+    /// The 16 bytes of the vector constant `constant` names; `None` where it names none.
+    #[inline(always)]
+    fn vector_constant(&mut self, _stage: &mut S, _constant: Constant) -> Option<[u8; crate::wasm::V128_BYTES]> { None }
+
+    /// Define `register` with the vector `bytes` in a fresh cell, returning its tagged word; `None`
+    /// where the frame cannot make it, which leaves the row to its miss.
+    #[inline(always)]
+    fn set_vector(&mut self, _stage: &mut S, _register: Register, _bytes: [u8; crate::wasm::V128_BYTES]) -> Option<S::Word> { None }
+
     /// The bytes of the linear memory a direct access addresses (the function's memory, which the
     /// frame resolved); `None` where the frame holds none, which leaves the row to its miss.
     #[inline(always)]

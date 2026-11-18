@@ -211,6 +211,8 @@ struct YieldSuspension {
     /// The proof span of the array a proved element row (`FLAG_SET`) reads or stores through, with the
     /// lane context it proves in (`proof_span`).
     element_span: Option<(*mut u8, ElementSpan)>,
+    /// The lane context's vector heap callbacks, for a SIMD row (`Decoder::WasmVector`).
+    vectors: Option<WasmVectors>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
     /// The window of an environment activation's run, where a window record reads its locals
@@ -250,6 +252,17 @@ struct WasmGlobals {
     context: *mut (),
     load: unsafe fn(*mut (), Value) -> Option<Value>,
     store: unsafe fn(*mut (), Value, Value) -> bool,
+    /// The running instance's slot a `WasmInstanceBinding` row reads (`wasm_instance_slot`).
+    instance_slot: unsafe fn(*mut (), u32) -> Option<Value>,
+}
+
+/// The lane context's heap callbacks for the vector rows (`Decoder::WasmVector`): the 16 bytes of a
+/// vector cell, and a fresh vector cell of given bytes.
+#[derive(Clone, Copy)]
+struct WasmVectors {
+    context: *mut (),
+    read: unsafe fn(*mut (), Value) -> Option<[u8; 16]>,
+    alloc: unsafe fn(*mut (), [u8; 16]) -> Option<Value>,
 }
 
 /// The running frame's captured environment for a staged environment row: the storage of its
@@ -299,8 +312,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE, window: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -324,8 +336,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE, window: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None }
     }
 }
 
@@ -663,6 +674,43 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: as for `wasm_global_load`.
         let stored = unsafe { (globals.store)(globals.context, Value::from_bits(binding), Value::from_bits(value)) };
         stored.then_some(())
+    }
+
+    /// The running instance's slot `slot`, as its register encoding, where the lane holds the
+    /// instance-state rules (`globals`).
+    #[inline(always)]
+    fn wasm_instance_slot(&mut self, _stage: &mut Concrete, slot: u32) -> Option<u64> {
+        let globals = self.globals?;
+        // SAFETY: the context is the running lane's, which `row_frame` took it from.
+        let value = unsafe { (globals.instance_slot)(globals.context, slot) }?;
+        Some(value.to_bits())
+    }
+
+    /// The 16 bytes of the vector `register` holds, where the lane holds the vector rules (`vectors`).
+    #[inline(always)]
+    fn vector(&mut self, _stage: &mut Concrete, register: Register) -> Option<[u8; 16]> {
+        let vectors = self.vectors?;
+        // SAFETY: the context is the running lane's, which `row_frame` took it from.
+        unsafe { (vectors.read)(vectors.context, self.registers.get(register)) }
+    }
+
+    /// The 16 bytes of the vector constant `constant` names: the constant's word, read as a vector.
+    #[inline(always)]
+    fn vector_constant(&mut self, stage: &mut Concrete, constant: Constant) -> Option<[u8; 16]> {
+        let vectors = self.vectors?;
+        let (word, _) = <Self as Frame<Concrete>>::constant(self, stage, constant);
+        // SAFETY: as for `vector`.
+        unsafe { (vectors.read)(vectors.context, Value::from_bits(word)) }
+    }
+
+    /// Define `register` with the vector `bytes` in a fresh cell, answering its word.
+    #[inline(always)]
+    fn set_vector(&mut self, _stage: &mut Concrete, register: Register, bytes: [u8; 16]) -> Option<u64> {
+        let vectors = self.vectors?;
+        // SAFETY: as for `vector`.
+        let value = unsafe { (vectors.alloc)(vectors.context, bytes) }?;
+        self.registers.set(register, value);
+        Some(value.to_bits())
     }
 
     /// The bytes of the function's memory, where the row addresses them directly (`memory`).
@@ -1162,8 +1210,14 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
         // An instance-state row reads and writes the VM's globals through the lane context.
         let globals = WasmGlobals { context: cx.cast(), load: super::wasm_instance::wasm_global_load::<H>,
-            store: super::wasm_instance::wasm_global_store::<H> };
+            store: super::wasm_instance::wasm_global_store::<H>, instance_slot: super::wasm_instance::wasm_instance_slot::<H> };
         return LaneFrame::<ACC> { globals: Some(globals), ..LaneFrame::<ACC>::new(r, view) };
+    }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmVector)) } {
+        // A SIMD row reads and defines vector cells through the lane context's heap.
+        let vectors = WasmVectors { context: cx.cast(), read: super::wasm_instance::wasm_vector_read::<H>,
+            alloc: super::wasm_instance::wasm_vector_alloc::<H> };
+        return LaneFrame::<ACC> { vectors: Some(vectors), ..LaneFrame::<ACC>::new(r, view) };
     }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
@@ -1295,6 +1349,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::WasmJump) } { crate::staged::step_wasm_jump($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmState) } { crate::staged::step_wasm_state($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmMemory) } { crate::staged::step_wasm_access($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::WasmVector) } { crate::staged::step_wasm_vector($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
@@ -1352,6 +1407,8 @@ macro_rules! row_decode {
             Operation::decode_wasm_state($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
             Operation::decode_wasm_access($fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmVector)) } {
+            Operation::decode_wasm_vector($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
             Operation::decode_literal(crate::staged::Fields::wide($fields), ())
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
