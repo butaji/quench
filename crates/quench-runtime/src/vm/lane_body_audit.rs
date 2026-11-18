@@ -1,8 +1,10 @@
 //! Whether a function's compiled body makes the program faster than the interpreter does:
 //! after the body publishes, its entries alternate in epochs of `audit_period` entries between
 //! the body and the interpreter, each run by the lane's own path (the cell or prologue entry of
-//! the body; the plain activation of the interpreter), and each epoch's clock time from its
-//! first entry to the next epoch's is booked to its side. Once each side has `audit_samples`
+//! the body; the plain activation of the interpreter), and each epoch's CPU time on the
+//! program's thread from its first entry to the next epoch's is booked to its side
+//! (`thread_cpu_nanos`: wall time would book the time the thread waited for a core, which
+//! other processes decide, and the same run would keep or retire a body by the load on the host). Once each side has `audit_samples`
 //! epochs, a body whose median epoch is not `audit_margin_permille` below the interpreter's
 //! retires, and its function stays interpreted (`Tiers::lane_body`). An epoch holds everything
 //! the program did between those entries, so the comparison prices what the body costs where it
@@ -11,10 +13,23 @@
 //! deciding it. Per function this holds the invariant that compiled code is never slower than
 //! the interpreter, from the one statistic it is about.
 
-use std::time::Instant;
-
 use super::{LaneBody, LaneView};
 use super::super::compiled::tier_policy::PER_MILLE;
+
+/// The CPU time the calling thread has run, in nanoseconds (`CLOCK_THREAD_CPUTIME_ID`); where
+/// the clock cannot be read, the monotonic clock's time.
+fn thread_cpu_nanos() -> u64 {
+    #[cfg(unix)]
+    {
+        // SAFETY: `time` is a valid out-pointer for the call.
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) } == 0 && time.tv_sec >= 0 {
+            return time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64;
+        }
+    }
+    static BASE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    u64::try_from(BASE.get_or_init(std::time::Instant::now).elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
 
 /// The most epochs a side keeps (`audit_samples` is capped by it).
 const MAX_EPOCHS: usize = 32;
@@ -29,7 +44,7 @@ pub(in crate::vm) struct Audit {
 /// The audit's epochs: when the running one began, and each side's booked durations.
 #[derive(Clone, Copy, Default)]
 pub(in crate::vm) struct Epochs {
-    started: Option<Instant>,
+    started: Option<u64>,
     nanos: [[u32; MAX_EPOCHS]; SIDES],
     filled: [u8; SIDES],
 }
@@ -69,7 +84,7 @@ impl LaneView {
     /// the verdict once both sides have their epochs.
     #[cold]
     fn audit_epoch_boundary(&self, epoch: u32) {
-        let now = Instant::now();
+        let now = thread_cpu_nanos();
         let mut epochs = self.tier().audit_epochs.get();
         if let Some(started) = epochs.started
             && epoch > 0
@@ -77,7 +92,7 @@ impl LaneView {
             let side = ((epoch - 1) % SIDES as u32) as usize;
             let filled = usize::from(epochs.filled[side]);
             if filled < MAX_EPOCHS {
-                epochs.nanos[side][filled] = u32::try_from(now.duration_since(started).as_nanos()).unwrap_or(u32::MAX);
+                epochs.nanos[side][filled] = u32::try_from(now.saturating_sub(started)).unwrap_or(u32::MAX);
                 epochs.filled[side] += 1;
             }
         }
