@@ -1995,34 +1995,6 @@ impl Function {
             .filter_map(|(slot, _)| u16::try_from(slot).ok())
     }
 
-    /// The local slots of a Script's or eval's root that the realm and later code address by
-    /// slot: a Script's every global declaration (`GlobalDeclarations`); a sloppy eval's var
-    /// and function names, which are the global object's; none of a strict eval's, whose
-    /// declarations are all its own (`ResidualProgram::root_variables_are_local`).
-    pub(crate) fn global_declaration_slots(&self, eval: bool) -> impl Iterator<Item = u16> + '_ {
-        // A set, once: a bundle's thousands of locals against its declarations was quadratic.
-        let declared: rustc_hash::FxHashSet<Atom> = self
-            .global_declarations_or_none()
-            .filter(|_| !(eval && self.strict))
-            .into_iter()
-            .flat_map(|declarations| {
-                let lexical: &[Atom] = if eval { &[] } else { &declarations.lexical };
-                let immutable: &[Atom] = if eval { &[] } else { &declarations.immutable };
-                lexical.iter()
-                    .chain(&declarations.var)
-                    .chain(&declarations.function)
-                    .chain(&declarations.annex_b_var)
-                    .chain(immutable)
-                    .copied()
-            })
-            .collect();
-        self.local_atoms
-            .iter()
-            .enumerate()
-            .filter(move |(_, atom)| declared.contains(*atom))
-            .filter_map(|(slot, _)| u16::try_from(slot).ok())
-    }
-
     pub fn global_immutable_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }

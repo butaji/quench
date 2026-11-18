@@ -408,14 +408,7 @@ impl FunctionCompiler<'_, '_> {
                     u32::from(slot),
                 );
             }
-            // A root `var` is the global object's property too, except in strict eval code,
-            // whose vars are the eval's own (`ResidualProgram::root_variables_are_local`).
-            if lexical.is_none()
-                && !compiler_binding
-                && self.function_id == 0
-                && !self.owner.module_goal
-                && !(self.strict && self.owner.eval_context.is_some())
-            {
+            if lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
                 self.emit(
                     Op::StoreName,
