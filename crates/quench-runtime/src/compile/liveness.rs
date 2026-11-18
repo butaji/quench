@@ -86,7 +86,10 @@ pub(crate) fn register_roots(function: &Function, methods: &(impl MethodArgument
 /// stands (`analyze`, `None` where it was not solved): their masks are `RegisterMasks::of`'s,
 /// so the function is not solved again.
 pub(crate) fn register_roots_from(function: &Function, methods: &(impl MethodArguments + ?Sized), fields: &[FieldSite], superinstructions: &[Superinstruction], solved: Option<Vec<RegisterSet>>) -> crate::bytecode::RegisterRoots {
-    let Some(live) = solved else { return register_roots(function, methods, fields, superinstructions) };
+    // `RegisterMasks::of` declines over the budget and solves windows past the root map's width.
+    let Some(live) = solved.filter(|_| budget::admits(function) && function.registers <= ROOT_MAP_REGISTERS) else {
+        return register_roots(function, methods, fields, superinstructions);
+    };
     debug_assert!(analyze(function, methods, fields, superinstructions).as_ref() == Some(&live), "the solved live sets match the code");
     let live = RegisterMasks::new(live);
     crate::bytecode::RegisterRoots::with_entry_live(true, entry_live(function, &live), dead_call_results(function, &live))
