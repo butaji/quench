@@ -44,13 +44,13 @@ fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
 pub(super) unsafe fn bind_captures<H: Host>(
     native: &mut JsNativeActivation, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
 ) -> Vec<crate::Value> {
-    // A region that calls reads its captures live too: a callee may store one, which a copy
-    // would not see; without the slots its capture reads leave to their step.
+    // A region that calls reads its captures live too where the lane has them: a callee may
+    // store one, which a copy would not see. Where it has none, the copy as before.
     let calls = region.instructions().iter().any(|instruction| instruction.op().is_call());
     let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
-    let none = calls || (region.captures.is_empty() && region.stored_captures.is_empty());
+    let none = region.captures.is_empty() && region.stored_captures.is_empty();
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
     if let Some(((values, len), stores)) = live {
         (native.dispatch.capture_values, native.dispatch.capture_len, native.dispatch.capture_stores) = (values, len, usize::from(stores));
