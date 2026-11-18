@@ -716,6 +716,12 @@ impl Operation<u64, ()> {
     pub(crate) fn is_number_binary(instruction: WideInstruction) -> bool {
         instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
     }
+
+    /// Whether `instruction` is a Number unary operation (`NumericUnary`), whose operator the tier
+    /// reads from the instruction's unary operator field.
+    pub(crate) fn is_number_unary(instruction: WideInstruction) -> bool {
+        instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericUnary
+    }
 }
 
 /// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering

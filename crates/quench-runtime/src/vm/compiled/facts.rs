@@ -11,7 +11,8 @@
 //! one that cannot leaves at the target, so a fact the analysis gets wrong costs an exit,
 //! never the body. Constants, definitions and joins use the one `crate::typed_ir` lattice.
 
-use crate::bytecode::{Class, Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
+use crate::bytecode::{Constant, ControlFlowLayout, Operand, OperandKind, Register, WideInstruction};
+use crate::staged::{DecodeContext, NumberOperation, Operation};
 use crate::typed_ir::{Type, WIDENING_ROUNDS};
 use cranelift_codegen::bitset::CompoundBitSet;
 use std::num::NonZeroUsize;
@@ -238,28 +239,29 @@ fn transfer(
     native_calls: bool,
 ) -> Flow {
     let op = instruction.op();
-    match op.class() {
-        Class::LoadConst => {
+    let operation = Operation::<u64, ()>::decode(instruction, DecodeContext::of_constants(constants));
+    match operation {
+        Some(Operation::LoadConst { .. }) => {
             let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
-        Class::Move => {
+        Some(Operation::Move { .. }) => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             set(types, instruction.result_register(), source);
             Flow::Next
         }
-        Class::IncDec if instruction.numeric_local_target().is_none() => {
+        Some(Operation::Number(NumberOperation::IncDec { .. })) => {
             // The operand is proved int32 or the instruction leaves.
             ranges::step(types, instruction);
             Flow::Next
         }
-        _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
-        Class::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
+        _ if Operation::<u64, ()>::is_number_binary(instruction) => binary::numeric_binary(types, instruction, constants, written),
+        Some(Operation::CompareJump { .. }) if super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
         }
-        Class::JumpBinaryFalse => {
+        Some(Operation::CompareJump { .. }) => {
             // An equality, loose or strict, and `instanceof` decide operands of any type
             // (`lane_region::relation`: two objects compare by identity) and prove nothing of
             // them; every other relation compares Numbers.
@@ -283,8 +285,11 @@ fn transfer(
                 // An instruction the analysis does not model continues with the registers it
                 // writes unknown, and with no object shape kept unless it cannot change one: the
                 // code after it is typed whether the lowering runs it natively or leaves at it.
-                ControlFlowLayout::Fallthrough => forget_shapes(types, !matches!((op.is_named_field_access(), op.class()),
-                    (true, _) | (_, Class::Nop | Class::LoadThis | Class::LoadCapture | Class::GetIndex | Class::SetIndex))),
+                ControlFlowLayout::Fallthrough => forget_shapes(types, !(matches!(operation,
+                    Some(Operation::GetField { .. } | Operation::SetField { .. })))
+                    && !(Operation::<u64, ()>::is_nop(instruction)
+                        || matches!(operation, Some(Operation::LoadThis { .. } | Operation::LoadCapture { .. }
+                            | Operation::ElementRead { .. } | Operation::ElementWrite { .. })))),
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
@@ -305,17 +310,16 @@ fn forget_shapes(types: &mut [Type], forget: bool) -> Flow {
 /// instruction leaves (`Lowering::instruction`, `Lowering::unary`); `None` for any other.
 fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Flow> {
     let op = instruction.op();
-    match op.class() {
+    match Operation::<u64, ()>::of(instruction) {
         // A Number is its own ToNumeric; an untyped operand is taken for an int32 and tested once.
-        Class::ToNumeric if !instruction.returns_from_frame() => {
+        Some(Operation::Number(NumberOperation::ToNumeric { .. })) if !instruction.returns_from_frame() => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             let ty = if source.is_subtype(Type::NUMBER) { source } else { Type::INT32 };
             set(types, instruction.register_b(), ty);
             set(types, instruction.result_register(), ty);
             Some(Flow::Next)
         }
-        Class::Unary if instruction.result_flags() == 0 && !instruction.writes_current_this()
-            && op.js_denotation() == crate::bytecode::JsDenotation::NumericUnary
+        _ if Operation::<u64, ()>::is_number_unary(instruction) && instruction.result_flags() == 0 && !instruction.writes_current_this()
             && super::super::operations::NumberUnary::from_js_instruction(op, instruction.unary_operator()).is_some() => {
             let source = instruction.register_b();
             if !types.get(usize::from(source)).is_some_and(|ty| ty.is_subtype(Type::NUMBER)) { set(types, source, Type::NUMBER); }
@@ -323,7 +327,7 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
             Some(Flow::Next)
         }
         // A null or undefined operand leaves; the operand's type is unchanged.
-        Class::RequireObjectCoercible => Some(Flow::Next),
+        Some(Operation::RequireObjectCoercible { .. }) => Some(Flow::Next),
         _ => None,
     }
 }
@@ -367,7 +371,7 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
     written: &dyn Fn(WideInstruction) -> Vec<Register>, native_calls: bool, observed: Option<Type>) -> Flow {
     let flow = unary_transfer(types, instruction)
         .unwrap_or_else(|| transfer(types, instruction, constants, written, native_calls));
-    if let Some(ty) = observed.filter(|_| instruction.op().class().eq(Class::GetIndex)) {
+    if let Some(ty) = observed.filter(|_| matches!(Operation::<u64, ()>::of(instruction), Some(Operation::ElementRead { .. }))) {
         for register in written(instruction) { set(types, register, ty); }
     }
     flow
