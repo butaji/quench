@@ -2452,6 +2452,18 @@ impl Function {
         CallPlan::from_bits(u32::from(*self.call_plan.get_or_init(|| u16::try_from(self.derive_call_plan(tables).to_bits()).expect("the plan's flags fit 16 bits"))))
     }
 
+    /// Whether an async body settles its call's promise from its activation: one that never
+    /// suspends runs to completion there, and one whose suspension keeps only its registers
+    /// (`suspended_registers`) leaves its caller the promise at its first `await`, its
+    /// registers becoming the continuation the reaction resumes.
+    fn settles_in_loop(&self, suspended_registers: bool) -> bool {
+        self.is_async
+            && !self.is_generator
+            && !self.is_class_constructor
+            && !self.derived_constructor
+            && (!self.suspends() || suspended_registers)
+    }
+
     fn derive_call_plan(&self, tables: &impl FactTables) -> CallPlan {
         {
             let promoted_parameters = self.local_registers.iter().filter(|entry| entry.local < self.params).count();
@@ -2492,11 +2504,6 @@ impl Function {
                 && !self.is_generator
                 && !self.is_class_constructor
                 && !self.derived_constructor;
-            let settles_in_loop = self.is_async
-                && !self.is_generator
-                && !self.is_class_constructor
-                && !self.derived_constructor
-                && !self.suspends();
             let legacy_reflection = !self.has_restricted_legacy_caller_access();
             let live_parameters = self.reflects_live_parameters(tables);
             let kept_arguments = self.kept_arguments();
@@ -2527,6 +2534,7 @@ impl Function {
                 && self.arguments_slot.is_none()
                 && !addresses_locals
                 && !self.has_dynamic_scope_access();
+            let settles_in_loop = self.settles_in_loop(suspended_registers);
             // Its locals and closures ride an environment window as an ordinary body's do, and so
             // does the `arguments` object it made on entry (`arguments_ride_window`); so do its
             // `with` objects and dynamic bindings, which its record and activation carry.

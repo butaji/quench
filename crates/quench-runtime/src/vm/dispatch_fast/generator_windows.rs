@@ -135,6 +135,7 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
 /// holds, else the last one derived for its function under the same environment
 /// (`LaneStack::last_window_plan`), else laid out as its function's plan says
 /// (`Vm::window_layout`).
+#[inline(always)]
 pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<WindowPlan> {
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
