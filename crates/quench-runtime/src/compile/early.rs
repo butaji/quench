@@ -223,6 +223,9 @@ fn regexp_literal_error_uncached(text: &str) -> Option<RegExpEarlyError> {
     Some(if quench_regexp::is_stack_exhaustion_message(&error) { RegExpEarlyError::StackExhausted } else { RegExpEarlyError::Syntax(error) })
 }
 
+/// V8's report for a regular expression whose modifier flags are malformed.
+const INVALID_MODIFIERS_MESSAGE: &str = "SyntaxError: invalid regular expression modifiers";
+
 /// Validate `(?flags-flags:...)` groups. A character class is atoms, never groups:
 /// `[(?-i)]` is a class of `(`, `?`-`i` and `)`. Classes nest only under the `v` flag.
 fn validate_modifier_groups(pattern: &str, nested_classes: bool) -> Result<(), String> {
@@ -285,7 +288,7 @@ fn validate_modifier_group(pattern: &str, start: usize) -> Result<usize, String>
         || !valid_modifier_flags(&disable, disable.is_empty())
         || enable.chars().any(|flag| disable.contains(flag))
     {
-        return Err("SyntaxError: invalid regular expression modifiers".into());
+        return Err(INVALID_MODIFIERS_MESSAGE.into());
     }
     Ok(cursor)
 }
@@ -296,7 +299,7 @@ fn read_modifier_flags(bytes: &[u8], start: usize) -> Result<(String, usize), St
         end += 1;
     }
     let flags = std::str::from_utf8(&bytes[start..end])
-        .map_err(|_| "SyntaxError: invalid regular expression modifiers".to_owned())?;
+        .map_err(|_| INVALID_MODIFIERS_MESSAGE.to_owned())?;
     Ok((flags.to_owned(), end))
 }
 
@@ -1281,6 +1284,9 @@ fn validate_loop_body(body: &Statement<'_>, strict: bool) -> Option<String> {
     validate_nested(std::slice::from_ref(body), strict)
 }
 
+/// V8's report for a lexical declaration that repeats a name in its block.
+const DUPLICATE_LEXICAL_DECLARATION: &str = "SyntaxError: duplicate lexical declaration";
+
 fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> {
     let mut lexical = FxHashSet::default();
     let mut functions = FxHashSet::default();
@@ -1300,7 +1306,7 @@ fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> 
                     collect_pattern_names(&item.id, &mut names);
                     for name in names {
                         if !lexical.insert(name.clone()) {
-                            return Some("SyntaxError: duplicate lexical declaration".into());
+                            return Some(DUPLICATE_LEXICAL_DECLARATION.into());
                         }
                     }
                 }
@@ -1309,14 +1315,14 @@ fn validate_block(statements: &[Statement<'_>], strict: bool) -> Option<String> 
                 if let Some(identifier) = &class.id
                     && !lexical.insert(identifier.name.to_string())
                 {
-                    return Some("SyntaxError: duplicate lexical declaration".into());
+                    return Some(DUPLICATE_LEXICAL_DECLARATION.into());
                 }
             }
             Statement::FunctionDeclaration(function) => {
                 if let Some(identifier) = &function.id {
                     let name = identifier.name.to_string();
                     if !lexical.insert(name.clone()) && (strict || !functions.contains(&name)) {
-                        return Some("SyntaxError: duplicate lexical declaration".into());
+                        return Some(DUPLICATE_LEXICAL_DECLARATION.into());
                     }
                     functions.insert(name);
                 }

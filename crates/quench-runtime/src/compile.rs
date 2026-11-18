@@ -244,6 +244,11 @@ pub struct Engine;
 /// The class name some compiler messages lead with.
 const SYNTAX_ERROR_PREFIX: &str = "SyntaxError: ";
 
+/// V8's report for a `return` at the top level of an eval.
+const RETURN_OUTSIDE_FUNCTION_IN_EVAL: &str = "SyntaxError: return outside function in eval";
+/// The rejection for a lazily parsed function body that fails when compiled alone.
+const LAZY_FUNCTION_BODY_NOT_ALONE: &str = "SyntaxError: a lazily parsed function body does not compile alone";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DynamicFunctionKind {
     Ordinary,
@@ -1220,7 +1225,7 @@ impl Engine {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Syntax,
                 source: name.into(),
-                message: "SyntaxError: return outside function in eval".into(),
+                message: RETURN_OUTSIDE_FUNCTION_IN_EVAL.into(),
                 span,
             }]);
         }
@@ -1368,7 +1373,7 @@ impl Engine {
                     return Err(vec![Diagnostic {
                         kind: DiagnosticKind::Syntax,
                         source: name.into(),
-                        message: "SyntaxError: return outside function in eval".into(),
+                        message: RETURN_OUTSIDE_FUNCTION_IN_EVAL.into(),
                         span,
                     }]);
                 }
@@ -2899,7 +2904,7 @@ impl<'a> Compiler<'a> {
             Err(lazy_bodies::ReparseFailure::Diagnostics) => None,
         };
         let Some(reparsed) = reparsed.filter(|reparsed| reparsed.function().is_some_and(|again| again.span == function.span)) else {
-            self.reject(function.span, "SyntaxError: a lazily parsed function body does not compile alone");
+            self.reject(function.span, LAZY_FUNCTION_BODY_NOT_ALONE);
             return self.compile_plain_function(function, context);
         };
         let again = reparsed.function().expect("checked above");

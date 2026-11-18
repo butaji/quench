@@ -5,7 +5,7 @@
 //! bytes has: a little under a source of mostly code (minified text has 0.21 to 0.37 nodes
 //! a byte), and the tables grow past them.
 
-use super::{Diagnostic, DiagnosticKind, Span};
+use super::{SYNTAX_ERROR_PREFIX, Diagnostic, DiagnosticKind, Span};
 use oxc_ast::ast::Program;
 use oxc_semantic::{SemanticBuilder, Stats};
 
@@ -35,7 +35,7 @@ pub(super) fn checked_semantic<'a>(program: &'a Program<'a>, name: &str) -> Resu
     if semantic.diagnostics.is_empty() {
         return Ok(semantic);
     }
-    let syntax = |error| Diagnostic { kind: DiagnosticKind::Syntax, source: name.into(), message: format!("SyntaxError: {error}"), span: Span::default() };
+    let syntax = |error| Diagnostic { kind: DiagnosticKind::Syntax, source: name.into(), message: format!("{SYNTAX_ERROR_PREFIX}{error}"), span: Span::default() };
     Err(semantic.diagnostics.into_iter().map(syntax).collect())
 }
 
