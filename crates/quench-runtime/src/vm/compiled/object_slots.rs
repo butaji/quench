@@ -47,6 +47,8 @@ pub(super) struct ObjectHeader {
     pub(super) inline: ir::Value,
     /// The record's address, computed once for the header loads and every later read.
     pub(super) address: ir::Value,
+    /// The whole auxiliary word `shape` masks, where it was loaded (`IcOp::GuardFormed`).
+    pub(super) word: Option<ir::Value>,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
@@ -99,12 +101,12 @@ impl ObjectRecord {
 
     pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
-        let (loaded, inline) = shape_and_inline(builder, address);
-        let shape = match known.and_then(|fact| fact.ty.object_shape()) {
-            Some(shape) => emit(builder).raw_const(Lane::I32, i64::from(shape)),
-            None => loaded,
+        let (loaded, word, inline) = shape_and_inline(builder, address);
+        let (shape, word) = match known.and_then(|fact| fact.ty.object_shape()) {
+            Some(shape) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None),
+            None => (loaded, Some(word)),
         };
-        ObjectHeader { record: self, shape, inline, address }
+        ObjectHeader { record: self, shape, inline, address, word }
     }
 }
 
@@ -143,8 +145,8 @@ impl ObjectHeader {
         let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
-        let (shape, inline) = shape_and_inline(builder, record);
-        Self { record: ObjectRecord::Address(record), shape, inline, address: record }
+        let (shape, word, inline) = shape_and_inline(builder, record);
+        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word) }
     }
 }
 
@@ -156,9 +158,14 @@ pub(super) fn emit<'a, 'b>(builder: &'a mut FunctionBuilder<'b>) -> Emit<'a, 'b>
 /// The exact shape (`Object::exact_shape`) of the record at `address`, as an `I32`: its
 /// auxiliary word without the storage-form bits, which no recorded shape carries.
 pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> ir::Value {
+    exact_shape_word(builder, flags, address).0
+}
+
+/// `exact_shape` with the whole auxiliary word it masks.
+pub(super) fn exact_shape_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> (ir::Value, ir::Value) {
     let word = auxiliary_word(builder, flags, address);
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)))
+    (builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form))), word)
 }
 
 /// The auxiliary word (shape and storage form) of the record at `address`, as an `I32`.
@@ -174,16 +181,15 @@ fn auxiliary_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, ad
     builder.ins().load(types::I32, table, entry, layout.auxiliary_offset as i32)
 }
 
-/// The record's exact shape and inline-storage flag from one auxiliary word: the word's
-/// storage-form bits carry the header's inline flag (`Object::storage_form`), so the flag
-/// needs no second header word.
-pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value) {
+/// The record's exact shape, its whole auxiliary word and its inline-storage flag, from one
+/// auxiliary word: the word's storage-form bits carry the header's inline flag
+/// (`Object::storage_form`), so the flag needs no second header word.
+pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value) {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let word = auxiliary_word(builder, regions::shape_word(), address);
-    let shape = builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)));
+    let (shape, word) = exact_shape_word(builder, regions::shape_word(), address);
     let form = builder.ins().band_imm_u(word, i64::from(layout.inline_form));
     let inline = emit(builder).raw_compare_imm(Relation::NotEqual, form, 0);
-    (shape, inline)
+    (shape, word, inline)
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -212,6 +218,13 @@ pub(crate) struct NativeFieldLoad {
     /// Whether a live function record had the receiver shape when the plan was made: a read
     /// then proves a readable record (an object or a function's), never a direct object.
     pub(crate) function_shape: bool,
+    /// Whether the slot's arena words are raw doubles (its owner's type is Number under float
+    /// slots): its load reads the double and boxes it (`staged::object::read_slot`).
+    pub(crate) raw_double: bool,
+    /// For an own read, the whole auxiliary word (`Object::hint_shape`) of the receivers the
+    /// site's lane record last answered: the read guards it in one compare, proving the shape
+    /// and the storage form, and reads that form's layout with no test (`IcOp::GuardFormed`).
+    pub(crate) formed: Option<u32>,
 }
 
 /// The most shape-guarded load groups one field read lowers before it calls the field cache
@@ -233,7 +246,7 @@ pub(crate) fn field_load_groups(loads: &[NativeFieldLoad]) -> Option<Vec<(Native
     let mut groups: Vec<(NativeFieldLoad, Vec<u32>)> = Vec::new();
     for load in loads {
         let family = groups.iter_mut().find(|(known, _)| load.holder.is_none() && known.holder.is_none()
-            && known.slot == load.slot && known.storage == load.storage);
+            && known.slot == load.slot && known.storage == load.storage && known.raw_double == load.raw_double);
         match family {
             Some((known, shapes)) => {
                 shapes.push(load.shape);
@@ -365,7 +378,7 @@ mod tests {
 
     #[test]
     fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false };
+        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: crate::typed_ir::Type::ANY, inherited: None, function_shape: false, raw_double: false, formed: None };
         assert!(field.valid());
         for shape in [super::super::super::NO_FIELD_RECEIVER,
             crate::value_vec::DICTIONARY_STORAGE, crate::value_vec::DICTIONARY_STORAGE | 1] {

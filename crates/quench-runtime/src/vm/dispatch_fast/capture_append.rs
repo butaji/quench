@@ -23,7 +23,7 @@ pub(super) fn recognizes(body: &Function, constants: &[crate::bytecode::Constant
         return false;
     };
     let [test, branch, load, add, store, result, done] =
-        [test, branch, load, add, store, result, done].map(|packed| decoded_instruction(body, packed));
+        [test, branch, load, add, store, result, done].map(|packed| body.widened(packed));
     tests_chunk_is_not_null(test, constants)
         && skips_append_unless(branch, test)
         && loads_own_capture(load)

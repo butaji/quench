@@ -154,15 +154,19 @@ fn reaches_scopes_by_name(text: &str) -> bool {
     text.contains("eval") || text.contains("with")
 }
 
+/// The free name of a class method's that reads `super.x`: no binding's, a reserved word.
+const SUPER_NAME: &str = "super";
+
 /// The free names of `body`, a function the parser skimmed: those of `free_names` of its tree.
-/// None where that has none: a direct `eval` reaches its scopes by name, the skim decides no
-/// body with a `with` statement, and it cannot tell what parameter defaults read of the scopes
-/// around the function (`SkimmedBody::names_exact`).
+/// None where that has none: a direct `eval` reaches its scopes by name, and the skim decides
+/// no body with a `with` statement. A method that reads `super.x` names `super`
+/// (`SUPER_NAME`): its home binding, which its stub captures.
 pub(in crate::compile) fn skimmed_free_names(body: &oxc_parser::SkimmedBody<'_>) -> Option<Box<[Box<str>]>> {
-    if !body.names_exact || body.free_names.contains(&"eval") {
+    if body.free_names.contains(&"eval") {
         return None;
     }
-    let mut names: Vec<Box<str>> = body.free_names.iter().copied().filter(|name| *name != "arguments").chain(body.id).map(Box::from).collect();
+    let home = body.names_super.then_some(SUPER_NAME);
+    let mut names: Vec<Box<str>> = body.free_names.iter().copied().filter(|name| *name != "arguments").chain(body.id).chain(home).map(Box::from).collect();
     names.sort_unstable();
     names.dedup();
     Some(names.into_boxed_slice())
@@ -274,7 +278,7 @@ impl Compiler<'_> {
         if !self.nested_stub_function(function, context) {
             return None;
         }
-        self.stub_captures(function.span.start, &context.scopes, context.with_depth, context.inherited_strict)
+        self.stub_captures(function.span.start, &context.scopes, context.with_depth, context.inherited_strict, None)
     }
 
     /// The stub of `arrow`, whose body was parsed lazily: one that reads no `this`,
@@ -286,32 +290,36 @@ impl Compiler<'_> {
             && !context.class_initializer
             && !self.invoked_functions.contains(&arrow.span.start)
             && !self.private_name_ids.keys().any(|(start, _)| span.contains(start));
-        plain.then(|| self.stub_captures(arrow.span.start, &context.scopes, context.with_depth, context.inherited_strict)).flatten()
+        plain.then(|| self.stub_captures(arrow.span.start, &context.scopes, context.with_depth, context.inherited_strict, None)).flatten()
     }
 
     /// The stub of `method`, a class's method whose body was parsed lazily: a plain method,
     /// getter or setter named by a key neither computed nor private (the parser skims no
-    /// other), strict as its class is.
+    /// other), strict as its class is. One that reads `super.x` captures its home object too.
     pub(in crate::compile) fn nested_method_stub_captures(&self, method: &oxc_ast::ast::MethodDefinition<'_>, place: &lazy_bodies::MethodPlace<'_>) -> Option<NestedStub> {
         let plain = !method.value.r#async
             && !method.value.generator
             && !method.computed
             && method.kind != oxc_ast::ast::MethodDefinitionKind::Constructor
             && !matches!(method.key, oxc_ast::ast::PropertyKey::PrivateIdentifier(_));
-        plain.then(|| self.stub_captures(method.value.span.start, place.scopes, place.with_depth, true)).flatten()
+        plain.then(|| self.stub_captures(method.value.span.start, place.scopes, place.with_depth, true, Some(place.home_atom))).flatten()
     }
 
     /// The captures of the function at `start`, from its free names resolved through `scopes`,
     /// and the bindings its chunk reads: those names', and the capture markers of them
-    /// (`captured_binding_kind`).
-    fn stub_captures(&self, start: u32, scopes: &capture_scope::ScopeChain, with_depth: u16, strict: bool) -> Option<NestedStub> {
+    /// (`captured_binding_kind`); a method's that reads `super.x`, its `home` binding's too.
+    fn stub_captures(&self, start: u32, scopes: &capture_scope::ScopeChain, with_depth: u16, strict: bool, home: Option<Atom>) -> Option<NestedStub> {
         if !self.nested_stub_place(scopes, with_depth) || self.first_call.chunk_function == Some(start) {
             return None;
         }
         let names = self.first_call.free_names.get(&start)?;
+        let home = match names.iter().any(|name| &**name == SUPER_NAME) {
+            true => Some(home.filter(|&home| scopes.find(home).is_some())?),
+            false => None,
+        };
         let mut captures = Vec::new();
         let mut bindings: Vec<(&str, u16, u16)> = Vec::new();
-        for atom in names.iter().filter_map(|name| self.atoms.find(name)) {
+        for atom in names.iter().filter(|name| &***name != SUPER_NAME).filter_map(|name| self.atoms.find(name)).chain(home) {
             if let Some((depth, slot)) = scopes.find(atom) {
                 captures.push((depth as u32 + 1, slot));
                 bindings.push((&self.atoms[atom as usize], depth as u16, slot));
@@ -368,6 +376,20 @@ impl Compiler<'_> {
 
     /// Gives `adopt` the chain, and the strictness, a chunk compiles its stub's function at
     /// `start` against in place of the chunk's own scopes, once: the stub's (`Stubs::outer`).
+    /// Takes the stub's scopes for its chunk's `context`, a class method's compiled as an object
+    /// literal's (`ChunkText::of`): its home the class's binding the stub kept, where its body
+    /// reads `super.x` (`stub_captures`), not the literal's.
+    pub(in crate::compile) fn adopt_outer_method(&mut self, context: &mut replay::ObjectMethodContext) {
+        let start = context.property_span.start;
+        let home = self.first_call.outer.as_ref().filter(|(target, _)| *target == start).and_then(|(_, scopes)| {
+            scopes.names.iter().map(|(name, ..)| name).find(|name| name.starts_with(crate::bytecode::HOME_BINDING_PREFIX)).map(str::to_owned)
+        });
+        if let Some(home) = home {
+            context.home_atom = self.atom(&home);
+        }
+        self.take_outer(start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
+    }
+
     pub(in crate::compile) fn take_outer(&mut self, start: u32, adopt: impl FnOnce(ScopeChain, bool)) {
         if self.first_call.outer.as_ref().is_some_and(|(target, _)| *target == start)
             && let Some((_, scopes)) = self.first_call.outer.take()

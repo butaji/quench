@@ -77,6 +77,12 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(super) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
+/// Whether a lane body runs a call of `native` inline and the call changes no array: a loop
+/// whose calls are all such runs natively in a body (`loop_body::offer_body`).
+pub(in crate::vm) fn inlines_keeping_arrays(native: Native) -> bool {
+    Inline::of(native).is_some_and(|inline| !inline.mutates_arrays())
+}
+
 /// Whether the call at `pc` runs inline and changes no array, so a loop holds it natively and
 /// the Stable facts its code folded survive it.
 pub(super) fn keeps_arrays(intrinsics: &Intrinsics, pc: usize) -> bool {
@@ -111,9 +117,9 @@ impl Lowering<'_, '_> {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
         // The callee's identity is held by its holder, a dependency that retires this code
         // before the function can die and its id be reused.
-        if !self.division().folds(BindingTime::Stable) { return false; }
+        if !self.holds_holders() { return false; }
         let exit = self.guard_exit(state, pc as u32);
-        self.hold_holder(state, exit, holder);
+        self.hold_holder_any(state, exit, holder);
         let held = self.tagged(state, instruction.register_b());
         let same = self.is_identity(held, callee);
         emit_js_guard(&mut self.builder, same, exit);

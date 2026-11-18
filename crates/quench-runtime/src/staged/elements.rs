@@ -300,8 +300,7 @@ pub(super) fn recount<S: Stage>(stage: &mut S, others: S::Word, added: S::Word, 
 /// One where `value` counts among a backing's others (it is no int32), else zero.
 #[inline(always)]
 pub(super) fn other<S: Stage>(stage: &mut S, value: S::Word) -> S::Word {
-    let tag = stage.and_imm(value, crate::value::ValueLayout::TAG_MASK);
-    let int = stage.eq_imm(tag, crate::value::ValueLayout::INT_TAG);
+    let int = super::value::is_int(stage, value);
     let (zero, one) = (stage.constant(0), stage.constant(1));
     stage.select(int, zero, one)
 }

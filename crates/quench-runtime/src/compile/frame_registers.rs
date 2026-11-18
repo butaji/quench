@@ -5,7 +5,7 @@
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
 
 use super::liveness::ROOT_MAP_REGISTERS;
-use super::rewrite::{fixed_width, relocate};
+use super::rewrite::relocate;
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
@@ -70,6 +70,7 @@ pub(super) fn promote<'a>(
     superinstructions: &[Superinstruction],
     undefined_constant: u32,
     atom_name: impl Fn(usize) -> Option<&'a str>,
+    flow: &initialization::FlowCell,
 ) {
     // A by-name read inside `with` resolves a local through its frame slot.
     if eligible.is_empty()
@@ -222,12 +223,7 @@ pub(super) fn promote<'a>(
     // A frame slot starts undefined, a register only once written (`prepare_registers_for`):
     // a promoted slot some read can reach before any store gets `undefined` on entry.
     let promoted = crate::bitset::BitSet::from_fn(registers.len(), |slot| registers[slot].is_some());
-    let written_first = initialization::initialized_before_reads(
-        function,
-        superinstructions,
-        &promoted,
-        &promoted,
-    );
+    let written_first = initialization::initialized_before_reads(function, superinstructions, &promoted, &promoted, flow);
     let old = function.code.clone();
     let mut code = Vec::with_capacity(old.len());
     for (slot, target) in registers.iter().enumerate() {
@@ -241,7 +237,7 @@ pub(super) fn promote<'a>(
     let mut map = vec![0; old.len() + 1];
     for (pc, &packed) in old.iter().enumerate() {
         map[pc] = code.len();
-        let mut instruction = fixed_width(packed, &function.wide);
+        let mut instruction = function.widened(packed);
         let promoted = (instruction.op().immediate_role() == ImmediateRole::LocalSlot)
             .then(|| register(instruction.local_slot()))
             .flatten();

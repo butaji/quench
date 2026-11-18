@@ -68,7 +68,10 @@ impl<H: Host> Vm<H> {
             SuspendKind::AsyncGenerator | SuspendKind::Generator => self.generator_record_mut(job.object)?.resume_windowed()?,
         };
         // SAFETY: the owner keeps the box, which nothing moves or drops until the run ends.
-        unsafe { &mut *frame }.receive(resume_register, sent);
+        let epoch = self.heap.collection_epoch();
+        let record = unsafe { &mut *frame };
+        record.settle_registers(epoch);
+        record.receive(resume_register, sent);
         Some(frame)
     }
 

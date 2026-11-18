@@ -122,7 +122,7 @@ impl Lowering<'_, '_> {
         let records = self.dispatch_word(std::mem::offset_of!(JsStepDispatch, string_record_base));
         let mut stage = super::super::object_slots::emit(&mut self.builder);
         let string = continues(strings::flat_string(&mut stage, records, base, miss));
-        let length = continues(builtins::length_value(&mut stage, string.length, miss));
+        let length = continues(crate::staged::value::length_value(&mut stage, string.length, miss));
         self.raw_unary(Unary::Narrow(Lane::I32), length)
     }
 

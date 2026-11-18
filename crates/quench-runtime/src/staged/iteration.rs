@@ -43,7 +43,9 @@ pub(crate) fn to_property_key<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut 
 
 /// The elements of a for-in state (`Vm::for_in_state`), a private array the loop steps: the object
 /// whose keys were listed, the snapshot array of those keys and the cursor, the int index of the
-/// key the next step reads. The memo of the snapshot's validity follows them as two raw words, which
+/// key the next step reads; last, the array of each snapshot key's slot in the listed shape (an
+/// int, or `undefined` for a key no slot read answers: an index key, or any key of a shape with
+/// accessors), or `undefined` where the keys came from the general walk. The memo of the snapshot's validity follows them as two raw words, which
 /// read as Numbers to the collector: the shape the keys were listed for and the collection epoch of
 /// the listing (`FOR_IN_NO_MEMO` where the keys came from the general walk, whose snapshot holds for
 /// no shape). In that epoch (which no reused handle or compacted shape shares) any object of that
@@ -54,7 +56,8 @@ pub(crate) const FOR_IN_KEYS: usize = 1;
 pub(crate) const FOR_IN_CURSOR: usize = 2;
 pub(crate) const FOR_IN_SHAPE: usize = 3;
 pub(crate) const FOR_IN_EPOCH: usize = 4;
-pub(crate) const FOR_IN_STATE_LEN: usize = 5;
+pub(crate) const FOR_IN_SLOTS: usize = 5;
+pub(crate) const FOR_IN_STATE_LEN: usize = 6;
 /// The word of a state whose snapshot has no memo: no raw shape or epoch equals it, as it names a heap tag.
 pub(crate) const FOR_IN_NO_MEMO: u64 = crate::value::TAG_UNDEFINED;
 
@@ -72,13 +75,29 @@ fn same_word<S: Stage>(stage: &mut S, held: S::Word, expected: S::Word, miss: S:
     stage.guard(same, miss)
 }
 
-/// The state `state` of a `for-in` whose snapshot is whole and current: its collection epoch is
-/// `epoch` and the object it lists still has the shape it listed, as a plain record.
+/// The backing of the private array `word` of a state (its snapshot, `FOR_IN_KEYS`, or once
+/// `current_state` proved the memo, its slots, `FOR_IN_SLOTS`): only `Vm::for_in_state` stores
+/// those words, always a direct array no script reaches, so only the record's encoding is
+/// still a question (`elements::array_backing` without its value test).
 #[inline(always)]
-fn current_state<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
+fn private_backing<S: Stage>(stage: &mut S, arrays: S::Word, word: S::Word, miss: S::Miss) -> Option<elements::Backing<S::Word>> {
+    let record = elements::array_record(stage, arrays, word);
+    let backing = elements::record_backing(stage, record);
+    let encoded = stage.ugt_imm(backing.length, u64::from(!crate::heap::ENCODED_LEN));
+    let wide = stage.not(encoded);
+    stage.guard(wide, miss)?;
+    Some(backing)
+}
+
+/// The state `state` of a `for-in` whose snapshot is whole and current: its collection epoch is
+/// `epoch` and the object it lists still has the shape it listed, as a plain record. A step that
+/// writes the cursor (`WRITE`) also proves the state's backing its own (`writable_backing`); a
+/// read of the state needs no such proof.
+#[inline(always)]
+fn current_state<S: Stage, const WRITE: bool>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
     miss: S::Miss) -> Option<elements::Backing<S::Word>> {
     let backing = elements::array_backing(stage, arrays, state, miss)?;
-    elements::writable_backing(stage, backing, miss)?;
+    if WRITE { elements::writable_backing(stage, backing, miss)?; }
     let length = stage.constant(FOR_IN_STATE_LEN as u64);
     let short = stage.ult(backing.length, length);
     let whole = stage.not(short);
@@ -108,7 +127,7 @@ fn current_state<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word),
 #[inline(always)]
 pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, epoch: S::Word,
     miss: S::Miss) -> Option<S::Word> {
-    let backing = current_state(stage, (arrays, objects), state, epoch, miss)?;
+    let backing = current_state::<S, true>(stage, (arrays, objects), state, epoch, miss)?;
     let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
     let int_tag = stage.constant(crate::value::ValueLayout::INT_TAG);
     let index = stage.sub(cursor, int_tag);
@@ -116,12 +135,52 @@ pub(crate) fn for_in_next<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, 
     let narrow = stage.not(wide);
     stage.guard(narrow, miss)?;
     let keys = state_word(stage, backing.values, FOR_IN_KEYS);
-    let snapshot = elements::array_backing(stage, arrays, keys, miss)?;
+    let snapshot = private_backing(stage, arrays, keys, miss)?;
     let (_, key) = elements::dense_element(stage, snapshot.values, snapshot.length, index, miss)?;
     let next = stage.add_imm(cursor, 1u32);
     let address = stage.add_imm(backing.values, (FOR_IN_CURSOR * std::mem::size_of::<crate::Value>()) as u64);
     elements::replace_element(stage, backing.values, address, cursor, next);
     Some(key)
+}
+
+/// `base[key]` in the body of the for-in `state` (`Op::GetEnumerated`), where `base` is the object
+/// the loop lists and `key` the key its last step yielded: the state's memo proves `base` still
+/// has the listed shape (`current_state`), and the key's listed slot (`FOR_IN_SLOTS`) holds its
+/// value, a data property, read at that run-time slot (`object::read_slot_at`), as V8 loads a
+/// property with an enumerated key. Any other `base` or `key`, a key without a slot, and an
+/// object whose values extras displaced or a narrow run on a specializer's residual leave at
+/// `miss`, where the general element read decides.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::Word, S::Word), state: S::Word, base: S::Word,
+    key: S::Word, epoch: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let backing = current_state::<S, false>(stage, (arrays, objects), state, epoch, miss)?;
+    let object = state_word(stage, backing.values, FOR_IN_OBJECT);
+    same_word(stage, object, base, miss)?;
+    // The cursor already names the key after the one the last step yielded.
+    let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
+    let past = stage.constant(crate::value::ValueLayout::INT_TAG + 1);
+    let index = stage.sub(cursor, past);
+    let wide = stage.ugt_imm(index, u64::from(u32::MAX));
+    let narrow = stage.not(wide);
+    stage.guard(narrow, miss)?;
+    let keys = state_word(stage, backing.values, FOR_IN_KEYS);
+    let snapshot = private_backing(stage, arrays, keys, miss)?;
+    let (_, listed) = elements::dense_element(stage, snapshot.values, snapshot.length, index, miss)?;
+    same_word(stage, listed, key, miss)?;
+    let slots = state_word(stage, backing.values, FOR_IN_SLOTS);
+    let slots = private_backing(stage, arrays, slots, miss)?;
+    let (_, slot) = elements::dense_element(stage, slots.values, slots.length, index, miss)?;
+    let int_tag = stage.constant(crate::value::ValueLayout::INT_TAG);
+    let slot = stage.sub(slot, int_tag);
+    let wide = stage.ugt_imm(slot, u64::from(u16::MAX));
+    let narrow = stage.not(wide);
+    stage.guard(narrow, miss)?;
+    let (_, record) = entry::direct_record(stage, objects, base, miss)?;
+    let inline = super::object::inline_storage(stage, record);
+    let layout = super::object::own_layout(stage, record, inline, super::object::Form::Either, 0,
+        super::object::PackedAccess::Reload, miss)?;
+    Some(super::object::read_slot_at(stage, layout, slot, super::object::Rep::Tagged))
 }
 
 /// The interpreter's reading of `for_in_next`: the key the step over `state` yields, among the array
@@ -157,7 +216,7 @@ mod tests {
     }
 
     fn state(heap: &mut Heap, (object, keys): (Value, Value), memo: [u64; 2]) -> Value {
-        let elements = [object, keys, Value::integer(0), Value::from_bits(memo[0]), Value::from_bits(memo[1])];
+        let elements = [object, keys, Value::integer(0), Value::from_bits(memo[0]), Value::from_bits(memo[1]), Value::UNDEFINED];
         heap.alloc(Cell::Array { object: ArrayObject::fresh(Value::NULL, ArrayElements::from_slice(&elements)) })
     }
 

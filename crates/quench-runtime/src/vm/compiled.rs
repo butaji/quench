@@ -53,7 +53,9 @@ mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
+pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
+pub(in crate::vm) use lane_region::inlines_keeping_arrays;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -108,6 +110,10 @@ mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
+// The driver places stitched functions once they take memory and calls; until then the tests do.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(test), allow(dead_code))]
+mod wasm_stitch;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
@@ -214,7 +220,7 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
+    FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
     MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
@@ -305,10 +311,52 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
     (integer, exact)
 }
 
+// The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
+// each tagged result with the binary64 word it boxed, which dominates it. A lowering that reads
+// the Number back takes that word (`State::proofs.numbers`) instead of unboxing.
+thread_local! {
+    static BOXED_NUMBERS: std::cell::RefCell<Option<Vec<(ir::Value, ir::Value)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts recording the boxes `emit_js_box_number` makes, until `take_boxed_numbers`.
+pub(super) fn record_boxed_numbers() {
+    BOXED_NUMBERS.with(|boxed| *boxed.borrow_mut() = Some(Vec::new()));
+}
+
+/// The boxes made since `record_boxed_numbers`, which stops recording.
+pub(super) fn take_boxed_numbers() -> Vec<(ir::Value, ir::Value)> {
+    BOXED_NUMBERS.with(|boxed| boxed.borrow_mut().take().unwrap_or_default())
+}
+
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let recording = BOXED_NUMBERS.with(|boxed| boxed.borrow().is_some());
+    if !recording { return emit_js_box_number_word(builder, number); }
+    // A recorded box is pure (no branch), so a lowering that reads the Number back leaves it
+    // unread and it folds away.
+    let result = emit_js_box_number_pure(builder, number);
+    BOXED_NUMBERS.with(|boxed| if let Some(boxed) = boxed.borrow_mut().as_mut() { boxed.push((result, number)); });
+    result
+}
+
+/// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
+fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
+    let (integer, is_integer) = emit_js_exact_int32(builder, number);
+    let mut stage = object_slots::emit(builder);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
+    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = stage.raw_select(is_integer, integer_bits, bits);
+    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
+    stage.raw_select(is_nan, canonical_nan, encoded)
+}
+
+fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
@@ -644,7 +692,7 @@ fn emit_js_cached_field_slot(
         emit_js_guard(builder, own, fallback);
     }
 
-    let object_slots::ObjectHeader { record, shape, inline, address: object } = header
+    let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
         .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
@@ -1001,10 +1049,6 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
-    /// `+` of strings (`dispatch_fast::lane_body_string_concat`), named by the b-jit call planner
-    /// (`base_region::call_plan`), which the whole-function planner will consume.
-    #[allow(dead_code)]
-    StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
     /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
@@ -1054,7 +1098,7 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
-    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
+    let instruction = body.widened(body.code[entry.call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
     let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
@@ -1296,20 +1340,33 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
     pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
+    /// The names method caches hold now, where offline code stores in place under a dependency on
+    /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
+    /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
+    pub(super) held_atoms: Option<HeldAtoms<'a>>,
+}
+
+/// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
+/// hold now, and the word its publication sets when a cache names one it stores
+/// (`code_dependencies::Invalidation`), which a run that calls reads after each call.
+#[derive(Clone, Copy)]
+pub(super) struct HeldAtoms<'a> {
+    pub(super) names: &'a super::method_cache::AtomBits,
+    pub(super) invalidation: usize,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None }
     }
 }
 
@@ -1586,17 +1643,7 @@ impl AnalysisState {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 9] = [
-    crate::WasmTrap::Unreachable,
-    crate::WasmTrap::OutOfBoundsMemory,
-    crate::WasmTrap::IntegerDivideByZero,
-    crate::WasmTrap::IntegerOverflow,
-    crate::WasmTrap::CallStackExhausted,
-    crate::WasmTrap::InvalidConversionToInteger,
-    crate::WasmTrap::UndefinedElement,
-    crate::WasmTrap::UninitializedElement,
-    crate::WasmTrap::IndirectCallTypeMismatch,
-];
+use crate::wasm::trap::COMPILED_TRAPS as TRAPS;
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
@@ -1756,11 +1803,7 @@ const TERMINATED_STATUS: i64 = quench_bjit::call_record::TERMINATED_STATUS as i6
 const _: () = assert!(TERMINATED_STATUS == RAISED_STATUS + 1, "the stencils' terminated status follows the raised one");
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
-    TRAPS
-        .iter()
-        .position(|candidate| *candidate == trap)
-        .map(|index| index as i64 + 1)
-        .expect("compiled code raises only listed traps")
+    i64::from(trap.compiled_status().expect("compiled code raises only listed traps"))
 }
 
 /// Stack compiled code may use below its entry before a call traps as
@@ -3163,7 +3206,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
@@ -3650,11 +3693,16 @@ unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) ->
 /// Admit a bound slot's write domain before any guest effect or raw store.
 unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
-    let Some(domain) = crate::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
+    let raw_double = domain & RAW_DOUBLE_WRITES != 0;
+    let Some(domain) = crate::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    u64::from(vm.heap.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
+    u64::from(vm.heap.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
 }
+
+/// The bit of a write admission's domain word (`lane_field_write_admission`) that says the
+/// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
+pub(super) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
@@ -3715,7 +3763,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let value = Value::from_bits(value);
     let message = vm.detail_string(value);
-    vm.lane_raised = Some(JsError::thrown(value, message));
+    vm.lane_completion.raise(JsError::thrown(value, message));
     vm.lane_raise_site = site;
     0
 }
@@ -3725,7 +3773,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
 unsafe extern "C" fn lane_take_raised<H: Host>(vm: u64, _residual: u64) -> u64 {
     // SAFETY: as `lane_field_get`.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let error = vm.lane_raised.take().expect("a raised call left its exception");
+    let error = vm.lane_completion.take_raised().expect("a raised call left its exception");
     error.thrown_value().expect("a body raises a thrown value").to_bits()
 }
 
@@ -4010,6 +4058,10 @@ impl<H: Host> Vm<H> {
         let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above.
         unsafe {
+            // An entry from outside any body (the interpreter's call) found the run's words
+            // unbound: they stay bound to the run it made, so the next such entry of the same run
+            // binds none of them again (`LaneFrame::bind_run`); the per-entry words go back.
+            let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
             if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
@@ -4114,6 +4166,12 @@ impl LaneEntry {
         }
     }
 
+    /// This entry's per-entry words with the run words `dispatch` holds now: its program, field
+    /// cache entries and residual.
+    fn keeping_run_of(self, dispatch: &JsStepDispatch) -> Self {
+        Self { program_id: dispatch.program_id, field_entries: dispatch.field_entries, residual: dispatch.residual, ..self }
+    }
+
     fn install(self, dispatch: &mut JsStepDispatch) {
         dispatch.program_id = self.program_id;
         dispatch.field_entries = self.field_entries;
@@ -4127,10 +4185,10 @@ impl LaneEntry {
 }
 
 /// The words of the dispatch payload and context that stay as they are for every entry of one
-/// lane run: its VM, program, residual, lane context and store specialization, and what follows
+/// lane run: its VM, program, residual and store specialization, and what follows
 /// from them, the program's field cache entries (`LaneFrame::bind_run`). An entry writes them
-/// only where its run is not the one that bound them; the words it writes per entry are its
-/// registers and the stack's room.
+/// only where its run is not the one that bound them; the words it writes per entry are its lane
+/// context (compared here only after it is written), its registers and the stack's room.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LaneRun {
     vm: usize,
@@ -4170,12 +4228,14 @@ impl LaneFrame {
     #[inline(always)]
     fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
         let owner = std::ptr::from_ref(interrupt);
+        // The lane context is the entry's own activation, written by every entry; the other
+        // words stand for the whole run.
+        self.dispatch.lane_context = run.lane_context;
         let rebound = LaneRun::of(&self.dispatch) != run;
         if rebound {
             self.dispatch.field_entries = field_entries();
             self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
-            self.dispatch.lane_context = run.lane_context;
             self.dispatch.residual = run.residual;
             self.dispatch.stores_specialized = run.stores_specialized;
         }
@@ -4707,11 +4767,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 JsError::validation("invalid native semantic opcode".into()))?;
             // Linked operands are already resolved. Admission needs only the
             // source opcode, not a second decoding of every operand field.
-            let source_opcode = if packed.is_wide() {
-                body.wide[packed.wide_index()].op()
-            } else {
-                packed.op()
-            };
+            let source_opcode = body.op_of(packed);
             if selected.opcode != source_opcode {
                 return Err(JsError::validation("native semantic opcode does not match instruction".into()));
             }
@@ -4720,7 +4776,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
             #[cfg(feature = "profile-native-ops")]
             {
-                let source_instruction = super::dispatch_fast::decoded_instruction(body, packed);
+                let source_instruction = body.widened(packed);
                 super::native_op_profile::record_site(
                     dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
                     body.name.or(body.inferred_name)
@@ -4733,7 +4789,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             unsafe { &*arguments.cast::<super::native_operands::NativeJsOperands>() }
                 .instruction(selected.opcode)
         } else {
-            super::dispatch_fast::decoded_instruction(body, packed)
+            body.widened(packed)
         };
         let next_pc = pc.checked_add(1).ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
@@ -5014,7 +5070,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                         }));
                     };
                     current_instruction =
-                        super::dispatch_fast::decoded_instruction(body, packed);
+                        body.widened(packed);
                     next = current_pc
                         .checked_add(1)
                         .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
@@ -5385,7 +5441,7 @@ impl<H: Host> Analysis<'_, H> {
         let instructions: Vec<WideInstruction> = function
             .code
             .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .map(|packed| function.widened(*packed))
             .collect();
         let mut entry = AnalysisState::new();
         for (offset, ty) in params.iter().enumerate() {
@@ -6851,7 +6907,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let instructions: Vec<WideInstruction> = function
             .code
             .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .map(|packed| function.widened(*packed))
             .collect();
         let mut selectors: Vec<u16> = instructions
             .iter()
@@ -8048,7 +8104,7 @@ impl<H: Host> Vm<H> {
                 }
                 *selected_function = true;
                 for packed in &function.code {
-                    let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                    let instruction = function.widened(*packed);
                     if let Some(callee) = Step::of(instruction.op(), instruction.imm())
                         .and_then(|step| step.callee(instruction))
                     {
@@ -8101,7 +8157,7 @@ impl<H: Host> Vm<H> {
                     *selected_function = true;
                     for packed in &function.code {
                         let instruction =
-                            super::dispatch_fast::decoded_instruction(function, *packed);
+                            function.widened(*packed);
                         if let Some(callee) = Step::of(instruction.op(), instruction.imm())
                             .and_then(|step| step.callee(instruction))
                         {
@@ -8191,7 +8247,7 @@ impl<H: Host> Vm<H> {
             let full_plan = full_plans[index].as_ref()?;
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
                     continue;
                 }
@@ -9003,7 +9059,7 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
-        || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
+        || body.code.iter().any(|packed| body.widened(*packed).op().is_call())
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
@@ -10574,7 +10630,7 @@ mod tests {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
         body.code.iter().copied().enumerate().find_map(|(pc, packed)| {
-            let instruction = super::super::dispatch_fast::decoded_instruction(body, packed);
+            let instruction = body.widened(packed);
             (instruction.op() == opcode).then_some((pc, instruction))
         }).expect("test operation exists")
     }
@@ -10586,7 +10642,7 @@ mod tests {
     ) -> (i64, u64, Option<JsNativeStep>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
-        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let operands = super::super::NativeJsOperands::new(
             instruction.a(), instruction.b(), instruction.c(), instruction.imm(),
         );
@@ -11473,7 +11529,7 @@ mod tests {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
         let pc = body.instructions().position(|instruction| instruction.op().is_throw()).unwrap();
-        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);
         body.code[pc] = crate::bytecode::Instr::wide(wide_index).unwrap();

@@ -19,7 +19,7 @@ fn reads_this_or_parameter(base: FieldBase, body: &Function) -> bool {
 pub(super) fn body_entry(body: &Function, constants: &[crate::bytecode::Constant]) -> CallEntry {
     if body.is_class_constructor {
         CallEntry::Frame
-    } else if body.code.first().is_some_and(|packed| returning_kind(decoded_instruction(body, *packed)) == Some(RETURNING_FIELD)) {
+    } else if body.code.first().is_some_and(|packed| returning_kind(body.widened(*packed)) == Some(RETURNING_FIELD)) {
         CallEntry::Reads
     } else if element_read_body(body) {
         CallEntry::ReadsElement
@@ -52,7 +52,7 @@ fn forwarding_read_body(body: &Function) -> bool {
     let Some((moves, [call, ..])) = rest.split_at_checked(usize::from(body.params)) else {
         return false;
     };
-    let [field, method, call] = [field, method, call].map(|packed| decoded_instruction(body, *packed));
+    let [field, method, call] = [field, method, call].map(|packed| body.widened(*packed));
     let window = ImmediateLayout::call_window_base(call.imm());
     let window_end = u32::from(window) + u32::from(body.params);
     let survives_copies =
@@ -88,7 +88,7 @@ fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function
 /// Each parameter, in order, moved to its place in the call window at `window`.
 fn moves_parameters(body: &Function, moves: &[crate::bytecode::Instr], window: u16) -> bool {
     moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
-        let moved = decoded_instruction(body, packed);
+        let moved = body.widened(packed);
         moved.op().is_move() && moved.b() == parameter && moved.a() == window + parameter
     })
 }
@@ -109,7 +109,7 @@ fn element_read_body(body: &Function) -> bool {
     let [field, element, done, ..] = body.code.as_slice() else {
         return false;
     };
-    let [field, element, done] = [field, element, done].map(|packed| decoded_instruction(body, *packed));
+    let [field, element, done] = [field, element, done].map(|packed| body.widened(*packed));
     field.op().is_get_field()
         && !field.returns_from_frame()
         && reads_this_or_parameter(FieldBase(field.b()), body)
@@ -125,7 +125,7 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
     let [first, second, ..] = body.code.as_slice() else {
         return None;
     };
-    Some([first, second].map(|packed| decoded_instruction(body, *packed)))
+    Some([first, second].map(|packed| body.widened(*packed)))
 }
 
 /// Whether `body` is `LoadCapture` and `Return` of it (`CallEntry::ReadsCapture`), as

@@ -276,9 +276,8 @@ impl Continuation {
     /// A lane resumes the frame as an activation over its register file, which stays in this
     /// continuation's record: the frame's address, which its box keeps until the run ends,
     /// and the register that takes the value the run resumes with. Every register is live
-    /// while it runs.
+    /// while it runs: the caller settles them (`FrameRecord::settle_registers`).
     pub(crate) fn begin_window(&mut self) -> (*mut FrameRecord, Option<u16>) {
-        self.frame.live_registers = None;
         (&raw mut *self.frame, self.resume_register)
     }
 
@@ -399,5 +398,28 @@ mod tests {
         assert_eq!((frame.function, frame.pc, frame.with_base), (3, 7, 0));
         assert_eq!(frame.initialized_registers, frame.registers.len());
         assert!(frame.pc_is_resume && !frame.fixed_this);
+    }
+
+    /// A suspension keeps its dead registers' values, untraced, and clears them on resume
+    /// only when a collection ran since it suspended.
+    #[test]
+    fn dead_registers_clear_on_resume_only_after_a_collection() {
+        use crate::compile::liveness::RegisterSet;
+        let suspended = |epoch| {
+            let mut frame = Box::new(super::super::Frame::empty(ProgramId::MAIN, 0));
+            frame.registers = crate::vm::register_file::RegisterFile::from_registers(&[Value::heap(1), Value::heap(2), Value::heap(3)]);
+            let mut continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, Value::UNDEFINED);
+            continuation.frame.suspend_registers((Some(RegisterSet::from(0b101u64)), epoch));
+            continuation
+        };
+        let mut quiet = suspended(4);
+        let roots = quiet.roots();
+        assert!(roots.contains(&Value::heap(1)) && roots.contains(&Value::heap(3)) && !roots.contains(&Value::heap(2)));
+        quiet.frame.settle_registers(4);
+        assert_eq!(&quiet.frame.registers[..], [Value::heap(1), Value::heap(2), Value::heap(3)]);
+        assert!(quiet.frame.live_registers.is_none());
+        let mut collected = suspended(4);
+        collected.frame.settle_registers(5);
+        assert_eq!(&collected.frame.registers[..], [Value::heap(1), Value::UNDEFINED, Value::heap(3)]);
     }
 }

@@ -39,6 +39,13 @@ impl<H: Host> Vm<H> {
     /// general path: an own property of the name, an exotic or dictionary link, a data
     /// property or a script getter on the way.
     pub(super) fn typed_array_geometry_read(&mut self, object: Value, atom: Atom) -> Option<Value> {
+        self.typed_array_geometry_read_inline(object, atom)
+    }
+
+    /// `typed_array_geometry_read` inlined into its caller: a typed array's `length` site
+    /// (`lane_get_length_typed`) reads it once per loop test.
+    #[inline(always)]
+    pub(super) fn typed_array_geometry_read_inline(&mut self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.virtual_field_view(object)?;
         if data.has_side_descriptors() {
             return None;
@@ -1083,7 +1090,7 @@ impl<H: Host> Vm<H> {
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
                 Value::number(self.typed_array_byte_offset(this).unwrap_or_default() as f64)
             }
-            Native::TypedArrayLengthGetter if !out_of_bounds => Value::number(view_length as f64),
+            Native::TypedArrayLengthGetter if !out_of_bounds => Value::length(view_length),
             Native::TypedArrayByteLengthGetter if !out_of_bounds => {
                 Value::number((view_length * kind.width()) as f64)
             }
@@ -1107,22 +1114,6 @@ impl<H: Host> Vm<H> {
     /// ToUint8: the low bits of ToUint32, as 2^8 divides 2^32.
     pub(super) fn uint8_from_value(number: f64) -> u8 {
         crate::value::number_to_u32(number) as u8
-    }
-
-    pub(super) fn uint8_clamped_from_value(number: f64) -> u8 {
-        if number.is_nan() || number <= 0.0 {
-            return 0;
-        }
-        if number >= 255.0 {
-            return 255;
-        }
-        let floor = number.floor();
-        let fraction = number - floor;
-        if fraction < 0.5 || (fraction == 0.5 && (floor as u64).is_multiple_of(2)) {
-            floor as u8
-        } else {
-            floor as u8 + 1
-        }
     }
 
     /// ToUint16: the low bits of ToUint32, as 2^16 divides 2^32.

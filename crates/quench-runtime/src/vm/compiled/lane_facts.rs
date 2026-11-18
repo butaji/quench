@@ -94,7 +94,7 @@ pub(super) fn pays_compile(tiers: &Tiers, program: &ResidualProgram, function: u
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a
 /// declined short callee warms again while the caller publishes at once, calling it through
 /// its entry cell. A callee the plan inlines has no call of it to bind.
-pub(super) fn bind_callees(direct: &[DirectCallee], caller: &super::super::dispatch_fast::LaneView) {
+pub(in crate::vm) fn bind_callees(direct: &[DirectCallee], caller: &super::super::dispatch_fast::LaneView) {
     for callee in direct {
         // SAFETY: a resolved target's view outlives its program.
         if let Some(view) = unsafe { callee.target.view.as_ref() } { view.note_caller(caller); view.demand_body(); }

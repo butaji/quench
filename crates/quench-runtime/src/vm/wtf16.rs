@@ -929,6 +929,17 @@ impl JsString {
         self.flat().view()
     }
 
+    /// IsLessThan's order of two strings, by code units: the one definition every string
+    /// comparison (relational operators, the default sort) takes. Two inline ASCII texts
+    /// compare in place, without forming their unit views.
+    #[inline]
+    pub(crate) fn order(&self, other: &Self) -> std::cmp::Ordering {
+        if let (Repr::Flat(FlatUnits::Short(left)), Repr::Flat(FlatUnits::Short(right))) = (&self.repr, &other.repr) {
+            return left.order(right);
+        }
+        self.units().cmp(&other.units())
+    }
+
     /// The unit at `index`. A long rope not yet flat answers its first `ROPE_WALK_READS`
     /// reads by walking its halves, so a reader that looks at a unit or two (a file-sized
     /// source built as `prefix + text + suffix` checked at its ends) leaves its leaves shared

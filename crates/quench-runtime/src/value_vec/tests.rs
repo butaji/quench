@@ -293,14 +293,13 @@ const RAW_WORD_ACCESS: &[&str] = &[
 /// Raw arena word accesses per production file outside `staged` and `value_vec`. The counts only
 /// go down; a new access belongs in `staged` or `value_vec`, or goes through `decode_slot`.
 const RAW_WORD_ACCESS_ALLOWED: &[(&str, usize)] = &[
-    ("heap.rs", 6),
+    ("heap.rs", 5),
     ("heap/access.rs", 2),
     ("heap/store_gate.rs", 3),
     ("vm/dispatch_fast.rs", 1),
     ("vm/loop_tier.rs", 1),
     ("vm/object.rs", 4),
     ("vm/primitive_bench.rs", 1),
-    ("vm/private_slots.rs", 2),
 ];
 
 /// Whether `file` (relative to `src`) holds only tests: a `tests` or `*_tests` module file or directory.

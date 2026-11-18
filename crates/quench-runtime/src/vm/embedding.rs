@@ -1052,15 +1052,7 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
-        let left = self.embedding_value(left)?;
-        let right = self.embedding_value(right)?;
-        let program = self.embedding_program()?;
-        self.binary(
-            &program,
-            oxc_ast::ast::BinaryOperator::Subtraction as u32,
-            left,
-            right,
-        )
+        self.embedding_binary(oxc_ast::ast::BinaryOperator::Subtraction as u32, left, right)
     }
 
     pub(crate) fn embedding_greater_than(
@@ -1093,10 +1085,7 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<bool, JsError> {
-        let left = self.embedding_value(left)?;
-        let right = self.embedding_value(right)?;
-        let program = self.embedding_program()?;
-        let result = self.binary(&program, operator as u32, left, right)?;
+        let result = self.embedding_binary(operator as u32, left, right)?;
         Ok(self.truthy(result))
     }
 
@@ -1105,15 +1094,15 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<Value, JsError> {
+        self.embedding_binary(oxc_ast::ast::BinaryOperator::BitwiseOR as u32, left, right)
+    }
+
+    /// The binary operator `operator` of two rooted values.
+    fn embedding_binary(&mut self, operator: u32, left: RootId, right: RootId) -> Result<Value, JsError> {
         let left = self.embedding_value(left)?;
         let right = self.embedding_value(right)?;
         let program = self.embedding_program()?;
-        self.binary(
-            &program,
-            oxc_ast::ast::BinaryOperator::BitwiseOR as u32,
-            left,
-            right,
-        )
+        self.binary(&program, operator, left, right)
     }
 
     pub(crate) fn embedding_iterator_record(

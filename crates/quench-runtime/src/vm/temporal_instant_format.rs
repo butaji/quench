@@ -6,6 +6,7 @@ use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MINUTE;
 use crate::units::NANOSECONDS_PER_SECOND;
 use crate::units::NANOSECONDS_PER_MILLISECOND;
 use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MICROSECOND;
+use crate::vm::temporal_instant_difference::{read_option, read_string_option};
 const SUBSECOND_COMPONENTS_PER_UNIT: u32 = 1_000;
 const MAX_FRACTIONAL_SECOND_DIGITS: usize = 9;
 const TIME_STRING_UNITS: [(&str, i128); 5] = [
@@ -70,7 +71,7 @@ pub(super) fn read_options<H: Host>(
     } else {
         "auto".into()
     };
-    let fractional_value = option(vm, p, value, "fractionalSecondDigits")?;
+    let fractional_value = read_option(vm, p, value, "fractionalSecondDigits")?;
     let fractional_second_digits = if fractional_value.is_undefined() {
         None
     } else if fractional_value.as_number().is_some() {
@@ -93,7 +94,7 @@ pub(super) fn read_options<H: Host>(
     let time_zone = if show_calendar {
         None
     } else {
-        let time_zone = option(vm, p, value, "timeZone")?;
+        let time_zone = read_option(vm, p, value, "timeZone")?;
         (!time_zone.is_undefined())
             .then(|| vm.temporal_timezone_id(p, time_zone))
             .transpose()?
@@ -117,30 +118,6 @@ pub(super) fn read_options<H: Host>(
         calendar_name,
         time_zone,
     })
-}
-
-fn option<H: Host>(
-    vm: &mut Vm<H>,
-    p: &ResidualProgram,
-    options: Value,
-    name: &str,
-) -> Result<Value, JsError> {
-    let key = vm.intern_atom(name);
-    vm.get_property(p, options, key)
-}
-
-fn read_string_option<H: Host>(
-    vm: &mut Vm<H>,
-    p: &ResidualProgram,
-    options: Value,
-    name: &str,
-) -> Result<Option<String>, JsError> {
-    let value = option(vm, p, options, name)?;
-    if value.is_undefined() {
-        Ok(None)
-    } else {
-        vm.to_string(p, value).map(Some)
-    }
 }
 
 pub(super) fn format_temporal_datetime(

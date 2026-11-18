@@ -65,6 +65,9 @@ pub(super) struct EmitFrame<'a> {
     /// The view of a loop's hoisted dense array the element row reads through, proved at the loop's
     /// entering edge (`ElementFrame::kept_view`).
     pub(super) held: Option<super::frame_elements::Held>,
+    /// Whether a read through `held` leaves at a hole or past the backing instead of calling
+    /// the VM's read, whose call would spill every value live across the loop.
+    pub(super) hole_leaves: bool,
     /// Whether no operation of the unit may move an array's backing or the record table
     /// (`fixed_arrays`), so the table's base word is read-only.
     pub(super) arrays_fixed: bool,

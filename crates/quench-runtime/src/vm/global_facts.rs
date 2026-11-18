@@ -5,14 +5,8 @@ use super::{Atom, Host, Value, Vm};
 use crate::code_dependencies::SlotDependency;
 use crate::heap::{GlobalCell, GlobalFact, GlobalLayoutFact};
 use crate::typed_ir::Type;
-use crate::ValueType;
 
-/// The kinds whose `typeof` name one string spells for every value of the kind: an object's
-/// does not (an `[[IsHTMLDDA]]` object reads as `undefined`), and `undefined` may be a hole.
-const TYPEOF_NAMED_KINDS: [ValueType; 5] =
-    [ValueType::Number, ValueType::Boolean, ValueType::String, ValueType::BigInt, ValueType::Symbol];
-
-/// A global object's own data property that a lane body stores to, or asks the `typeof` of,
+/// A global object's own data property that a lane body stores to, or loads for a `typeof`,
 /// at a slot it holds under the global object's layout (`GlobalLayoutFact`) and the slot's
 /// observed type: neither can change without retiring the code, which then checks nothing
 /// per use but the realm. For a store, no code holds the slot's value (the cell is `Mutable`,
@@ -26,8 +20,6 @@ pub(crate) struct GlobalSlot {
     pub(crate) ty: Type,
     /// What the code holds of `ty` (`None` where any value fits or none was observed).
     pub(crate) dependency: Option<SlotDependency>,
-    /// The one string `typeof` yields for every value of `ty`, where one does.
-    pub(crate) typeof_name: Option<Value>,
     pub(crate) layout: GlobalLayoutFact,
     /// The global object, and the realm field that names it while its realm is active.
     pub(crate) global: Value,
@@ -179,10 +171,8 @@ impl<H: Host> Vm<H> {
         let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));
         let dependency = (ty != Type::ANY && ty != Type::NEVER)
             .then_some(SlotDependency { shape: hint.receiver, slot: hint.slot, ty });
-        let typeof_name = TYPEOF_NAMED_KINDS.into_iter().find(|kind| ty != Type::NEVER && ty.is_subtype(Type::language(*kind)))
-            .and_then(|kind| self.typeof_constant(super::coercion::typeof_text(kind)));
         Some(GlobalSlot { slot: hint.slot, storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
-            typeof_name, layout: crate::heap::global_layout_fact(table)?, global: globals,
+            layout: crate::heap::global_layout_fact(table)?, global: globals,
             realm_offset: Self::realm_globals_offset() })
     }
 

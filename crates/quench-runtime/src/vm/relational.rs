@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
             |vm, left, right| {
                 if let (Some(left), Some(right)) = (vm.heap.string(left), vm.heap.string(right))
                 {
-                    return Ok(operator.matches(left.units().cmp(&right.units())));
+                    return Ok(operator.matches(left.order(&right)));
                 }
                 if let Some(ordering) = compare_bigint_string(&vm.heap, left, right) {
                     return Ok(ordering.is_some_and(|ordering| operator.matches(ordering)));

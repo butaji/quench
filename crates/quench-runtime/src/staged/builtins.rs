@@ -15,7 +15,6 @@ use super::region::Region;
 use super::{Concrete, Stage};
 use crate::Value;
 use crate::heap::ArrayObject;
-use crate::value::ValueLayout;
 use crate::vm::operations::{NumberArithmetic, NumberRelation};
 use crate::vm::wtf16::Units;
 
@@ -29,6 +28,7 @@ pub(crate) enum UnitWidth {
 }
 
 impl UnitWidth {
+    #[inline(always)]
     const fn bytes(self) -> u64 {
         match self {
             Self::Narrow => size_of::<u8>() as u64,
@@ -47,17 +47,11 @@ const INT32_MAX: u64 = i32::MAX as u64;
 /// against a length rejects it.
 #[inline(always)]
 fn int32_payload<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
-    let is_int = stage.eq_imm(tag, ValueLayout::INT_TAG);
+    let is_int = super::value::is_int(stage, bits);
     stage.guard(is_int, miss)?;
     Some(stage.and_imm(bits, u64::from(u32::MAX)))
 }
 
-/// The value word of the non-negative int32 `payload`.
-#[inline(always)]
-fn integer_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
-    stage.or_imm(payload, ValueLayout::INT_TAG)
-}
 
 /// The unit at `index` of the `units` run, which `index` is within.
 #[inline(always)]
@@ -80,7 +74,7 @@ pub(crate) fn char_code_at<S: Stage>(stage: &mut S, width: UnitWidth, units: S::
     let inside = stage.ult(index, length);
     Some(stage.choose(inside, |stage| {
         let unit = unit_at(stage, width, units, index);
-        integer_word(stage, unit)
+        super::value::int_word(stage, unit)
     }, |stage| stage.constant(Value::NAN.to_bits())))
 }
 
@@ -103,15 +97,6 @@ pub(crate) fn char_at_ascii<S: Stage>(stage: &mut S, width: UnitWidth, units: S:
     Some(unit)
 }
 
-/// The value word of a string's or array's `length` word: an int32. `None` (leaving at
-/// `miss`) past int32, which `Value::length` holds as a double.
-#[inline(always)]
-pub(crate) fn length_value<S: Stage>(stage: &mut S, length: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let past = stage.ugt_imm(length, INT32_MAX);
-    let within = stage.not(past);
-    stage.guard(within, miss)?;
-    Some(integer_word(stage, length))
-}
 
 /// The longest length a push grows within int32 (`Value::length`).
 const PUSH_FROM_MAX: u64 = INT32_MAX - 1;
@@ -130,7 +115,7 @@ pub(crate) fn array_push_one<S: Stage>(stage: &mut S, backing: Backing<S::Word>,
     let within = stage.not(past);
     stage.guard(within, miss)?;
     let grown = append_element(stage, backing.values, backing.length, room, backing.length, value, miss)?;
-    Some(integer_word(stage, grown))
+    Some(super::value::int_word(stage, grown))
 }
 
 /// Continues where the value word `value` holds no heap reference, so a store of it passes
@@ -138,8 +123,7 @@ pub(crate) fn array_push_one<S: Stage>(stage: &mut S, backing: Backing<S::Word>,
 /// heap logs (`Heap::record_array_store_mut`).
 #[inline(always)]
 pub(crate) fn unreferenced<S: Stage>(stage: &mut S, value: S::Word, miss: S::Miss) -> Option<()> {
-    let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-    let reference = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+    let reference = super::value::is_heap(stage, value);
     let plain = stage.not(reference);
     stage.guard(plain, miss)
 }
@@ -285,7 +269,7 @@ mod tests {
 
     #[test]
     fn length_is_an_int32_word_up_to_int32_and_leaves_past_it() {
-        let length = |length: u64| length_value(&mut stage(), length, ());
+        let length = |length: u64| super::super::value::length_value(&mut stage(), length, ());
         assert_eq!(length(0), Some(Value::integer(0).to_bits()));
         assert_eq!(length(i32::MAX as u64), Some(Value::integer(i32::MAX).to_bits()));
         assert_eq!(length(i32::MAX as u64 + 1), None);

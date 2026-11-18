@@ -309,7 +309,6 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         "a Number pointer store must not consume the owner's reference barrier");
     // A real reference store still logs its owner, and the collector follows it.
     assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
-    assert!(!vm.heap.collection_is_full(false));
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
     assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));
@@ -1345,7 +1344,7 @@ fn only_arrow_closures_keep_their_creator_s_implicit_bindings() {
         let Some(crate::heap::FunctionRecord { env, .. }) = vm.heap.function(closure) else {
             panic!("{name} is a closure");
         };
-        let Some(Cell::Environment { scope, .. }) = vm.heap.get(*env) else {
+        let Some(crate::heap::EnvironmentRecord { scope, .. }) = vm.heap.environment(*env) else {
             panic!("{name} captured its creator's environment");
         };
         match scope.dynamic_bindings() {

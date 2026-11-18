@@ -1,11 +1,9 @@
 use super::{ControlFlowLayout, Function, Instr, WideInstruction};
 
+/// `Function::widened` of a packed instruction not yet validated: `None` where its wide index
+/// is past the wide table.
 pub(super) fn instruction_at(function: &Function, packed: Instr) -> Option<WideInstruction> {
-    if packed.is_wide() {
-        function.wide.get(packed.wide_index()).copied()
-    } else {
-        Some(packed.as_wide())
-    }
+    (!packed.is_wide() || packed.wide_index() < function.wide.len()).then(|| function.widened(packed))
 }
 
 /// The PCs of a branch table's `Jump` entries: its cases, then the default.

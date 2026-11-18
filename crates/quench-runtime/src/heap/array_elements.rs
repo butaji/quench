@@ -42,102 +42,14 @@ fn others(values: &[Value]) -> u32 {
 }
 
 
-thread_local! {
-    /// Concurrent cycles on this thread that hold freed backings (`begin_quarantine`).
-    static QUARANTINES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// The backings freed while a quarantine holds, with their layouts.
-    static QUARANTINED: std::cell::RefCell<Vec<(NonNull<u8>, Layout)>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Holds every backing this thread frees, until `end_quarantine`: a concurrent marker may
-/// still read a backing whose array dropped or grew it since the marker loaded its pointer.
-pub(crate) fn begin_quarantine() {
-    QUARANTINES.with(|count| count.set(count.get() + 1));
-}
-
-/// Ends a `begin_quarantine`; the last one frees what they held. The caller's marker no
-/// longer reads any backing.
-pub(crate) fn end_quarantine() {
-    let left = QUARANTINES.with(|count| {
-        let left = count.get().checked_sub(1).expect("no array backing quarantine to end");
-        count.set(left);
-        left
-    });
-    if left == 0 {
-        for (start, layout) in QUARANTINED.with(|held| std::mem::take(&mut *held.borrow_mut())) {
-            // SAFETY: each held allocation was made with this layout and no owner remains.
-            unsafe { dealloc(start.as_ptr(), layout) };
-        }
-    }
-}
-
-/// Bytes the quarantine holds.
-pub(crate) fn quarantined_bytes() -> usize {
-    QUARANTINED.with(|held| held.borrow().iter().map(|(_, layout)| layout.size()).sum())
-}
-
-fn quarantining() -> bool {
-    QUARANTINES.with(|count| count.get() != 0)
-}
-
-/// Frees a backing allocation no owner holds, or quarantines it (`begin_quarantine`).
+/// Frees a backing allocation no owner holds.
 ///
 /// # Safety
 /// `start` was allocated with `layout` and nothing uses it after this call.
+#[inline(always)]
 unsafe fn release(start: *mut u8, layout: Layout) {
-    if quarantining() {
-        // SAFETY: allocations are never null.
-        let start = unsafe { NonNull::new_unchecked(start) };
-        QUARANTINED.with(|held| held.borrow_mut().push((start, layout)));
-    } else {
-        // SAFETY: the caller's contract.
-        unsafe { dealloc(start, layout) };
-    }
-}
-
-/// Pushes the heap values of the backing whose header pointer is `raw`
-/// (`ArrayElements::into_raw`) for a concurrent marker, reading the header and values with
-/// relaxed atomic loads while the mutator may write them.
-///
-/// # Safety
-/// `raw` was a backing's header pointer at some point during the quarantine
-/// (`begin_quarantine`) or before it, and its array record is not freed.
-pub(crate) unsafe fn concurrent_heap_values(raw: u64, mut visit: impl FnMut(Value)) {
-    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
-    let header = raw as usize as *mut Header;
-    // SAFETY: a header pointer stays readable through the quarantine, and no header moves
-    // back over values while it holds (`UniqueElements::prepend`, `unbias`), so the length
-    // read here bounds values in the same allocation.
-    unsafe {
-        if AtomicU32::from_ptr(std::ptr::addr_of_mut!((*header).others)).load(Relaxed) == 0 {
-            return;
-        }
-        let len = AtomicU32::from_ptr(std::ptr::addr_of_mut!((*header).len)).load(Relaxed);
-        if len & DOUBLE_LEN != 0 {
-            // Numbers and holes only.
-            return;
-        }
-        if len & NARROW_LEN != 0 {
-            // A narrow backing's values change only by whole-word replacement
-            // (`replace_narrow_in_place`), each logged by the store barrier as a wide one is.
-            let values = header.cast::<u8>().add(VALUES_OFFSET).cast::<u32>();
-            for index in 0..(len & !NARROW_LEN) as usize {
-                let narrow = values.add(index).read();
-                if Value::narrow_is_heap(narrow) {
-                    visit(Value::from_narrow(narrow));
-                }
-            }
-            return;
-        }
-        let len = len as usize;
-        let values = header.cast::<u8>().add(VALUES_OFFSET).cast::<u64>();
-        for index in 0..len {
-            let value = Value::from_bits(AtomicU64::from_ptr(values.add(index)).load(Relaxed));
-            if value.is_heap() {
-                visit(value);
-            }
-        }
-    }
+    // SAFETY: the caller's contract.
+    unsafe { dealloc(start, layout) };
 }
 
 /// The values start right after the header, at their own alignment.
@@ -279,6 +191,7 @@ pub(crate) struct UniqueElements(ArrayElements);
 
 impl ArrayElements {
     /// No values, in the shared empty header.
+    #[inline(always)]
     pub(crate) fn new() -> Self {
         Self {
             header: NonNull::from(&EMPTY),
@@ -562,6 +475,15 @@ impl ArrayElements {
         (!self.is_encoded()).then(|| unsafe { std::slice::from_raw_parts(self.values(), self.len()) })
     }
 
+    /// The packed words of a narrow backing (`Value::to_narrow`) as a slice; `None` for any
+    /// other. A collection's trace reads them word by word: a heap test and a decode per
+    /// element, with no per-element form dispatch (`read`).
+    #[inline(always)]
+    pub(crate) fn narrow_words(&self) -> Option<&[u32]> {
+        // SAFETY: the first `len` words of a narrow backing are initialized.
+        (self.is_encoded() && self.is_narrow()).then(|| unsafe { std::slice::from_raw_parts(self.narrow_values(), self.len()) })
+    }
+
     /// `values_cow`.
     #[inline]
     pub(crate) fn as_slice(&self) -> std::borrow::Cow<'_, [Value]> {
@@ -651,6 +573,7 @@ impl ArrayElements {
     }
 
     /// The bytes the values take (capacity times the value width: 4 narrow, 8 wide).
+    #[inline]
     pub(crate) fn value_bytes(&self) -> usize {
         self.capacity() * if self.is_narrow() { size_of::<u32>() } else { size_of::<Value>() }
     }
@@ -887,6 +810,12 @@ impl ArrayElements {
 /// (`ArrayObject`): the word an `ArrayElements` is, owned by whoever holds it.
 const _: () = assert!(size_of::<ArrayElements>() == size_of::<u64>());
 
+/// The raw word (`ArrayElements::into_raw`) of the shared empty header, which no array owns.
+#[inline(always)]
+pub(super) fn empty_header_word() -> u64 {
+    std::ptr::addr_of!(EMPTY) as usize as u64
+}
+
 impl ArrayElements {
     /// The header pointer as a raw word, which takes over this owner (`from_raw`). Its upper
     /// 16 bits are clear, so it is never an object's extras word (`EXTRAS_TAG`).
@@ -1048,6 +977,12 @@ impl UniqueElements {
         }
     }
 
+    /// The values in reverse order; the count of other values is unchanged.
+    pub(crate) fn reverse(&mut self) {
+        // SAFETY: a unique backing is wide; its first `len` values are initialized.
+        unsafe { std::slice::from_raw_parts_mut(self.0.values(), self.0.len()) }.reverse();
+    }
+
     /// `values` at the indices from `start`.
     pub(crate) fn copy_from(&mut self, start: usize, values: &[Value]) {
         assert!(start + values.len() <= self.0.len(), "array copy out of bounds");
@@ -1104,21 +1039,8 @@ impl UniqueElements {
         }
         let layout = ArrayElements::layout(capacity);
         let old_layout = ArrayElements::layout(old);
-        let pointer = if quarantining() {
-            // A marker may hold the old pointer: copy, and quarantine the old allocation.
-            // SAFETY: the new allocation is larger than the old, whose bytes all initialized.
-            unsafe {
-                let pointer = alloc(layout);
-                if !pointer.is_null() {
-                    std::ptr::copy_nonoverlapping(self.0.header.as_ptr().cast::<u8>(), pointer, old_layout.size());
-                    release(self.0.header.as_ptr().cast(), old_layout);
-                }
-                pointer
-            }
-        } else {
-            // SAFETY: this unique backing was allocated with the layout of its old capacity.
-            unsafe { realloc(self.0.header.as_ptr().cast(), old_layout, layout.size()) }
-        }
+        // SAFETY: this unique backing was allocated with the layout of its old capacity.
+        let pointer = unsafe { realloc(self.0.header.as_ptr().cast(), old_layout, layout.size()) }
         .cast::<Header>();
         let Some(header) = NonNull::new(pointer) else {
             handle_alloc_error(layout);

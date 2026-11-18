@@ -28,6 +28,9 @@ pub(super) struct LoopTier {
     widened: Vec<usize>,
     /// The element reads among them that left again as Numbers, which the next compilation reads untyped.
     abandoned: Vec<usize>,
+    /// The field stores the code left at often enough once, which the next compilation planned
+    /// again from their sites' caches (`left_store`), sorted.
+    refed: Vec<usize>,
     /// Entries the published code's guards declined in a row, and whether the next compilation
     /// versions no loop bound on entry (`RegionPlan::entry_bounds`): a loop that appends past its
     /// bound misses every versioned entry.
@@ -99,6 +102,22 @@ impl LoopTier {
         let list = if widened { &mut self.abandoned } else { &mut self.widened };
         list.push(pc);
         list.sort_unstable();
+        if let Some(code) = self.code.take() { code.retire(); }
+    }
+
+    /// Counts a run that left at the field store at `pc`, whose in-place arms missed
+    /// (`Lowering::store_leaves`). The first time it has left `widen_after_leaves` times the code
+    /// goes and the next compilation plans the store again from what its cache learned since
+    /// (a store the loop had not run yet had no plan); after that it widens as `left_at` does.
+    pub(super) fn left_store(&mut self, tiers: &Tiers, pc: usize) {
+        if self.refed.binary_search(&pc).is_ok() { return self.left_at(tiers, pc, false); }
+        if self.compilations >= tiers.loops.max_compilations { return; }
+        let at = self.leaves.iter().position(|(left, _)| *left == pc).unwrap_or_else(|| { self.leaves.push((pc, 0)); self.leaves.len() - 1 });
+        self.leaves[at].1 += 1;
+        if self.leaves[at].1 < tiers.loops.widen_after_leaves { return; }
+        self.leaves.swap_remove(at);
+        self.refed.push(pc);
+        self.refed.sort_unstable();
         if let Some(code) = self.code.take() { code.retire(); }
     }
 
@@ -215,14 +234,20 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let native_field_loads = native_field_loads(machine, region);
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
+    let (native_field_loads, store_loads) = (native_field_loads(machine, own, region), native_store_loads(machine, region));
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
-    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
-        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded };
+    let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
+        .map(|inlining| inlining.frames.iter().map(|frame| machine.lane_callee_captures(frame.callee)).collect()).unwrap_or_default();
+    let observation = super::super::compiled::Observation { native_field_loads: &native_field_loads, store_loads: &store_loads, number_arrays, abandoned: &tier.abandoned, int_entries, typed_captures, int_captures,
+        int_registers: &ints, double_registers: &doubles, operand_kinds: &operand_kinds, entry_bounds: !tier.unbounded, frame_captures: &frame_captures };
     let policy = machine.heap.memory_policy();
     // A BaseJIT region inlines the calls its sites recorded.
-    let calls = program.as_deref().filter(|_| crate::jit_mode::base_regions()).map(|program| region_calls(cx, machine, program, function)).unwrap_or_default();
+    // A Cranelift region calls the callees its sites reached by their entries.
+    let calls = program.as_deref().map(|program| if crate::jit_mode::base_regions() { region_calls(cx, machine, program, function) }
+        else { unit_region_calls(cx, machine, program, function) }).unwrap_or_default();
     // Stores run in place for the atoms no method cache names, while the VM and the program run specialized.
     let stores = program.as_deref().filter(|program| machine.specialized && program.specialized).map(|_| machine.method_cache_atoms.bits().clone());
     let started = program.as_deref().and_then(|program| super::super::compiled::start_osr_region(region, tier.views,
@@ -246,18 +271,53 @@ fn region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: 
     machine.region_calls(program, function, own, &candidates)
 }
 
+/// The calls of `function` a Cranelift region of it calls by their entries: the callees its call
+/// sites reached, whose bodies are then in demand (`bind_callees`), as a lane body's are.
+fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, program: &ResidualProgram, function: u32) -> super::super::compiled::RegionCalls {
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
+    let (Some(own), Some(body)) = (own, program.function_get(function as usize)) else { return Default::default() };
+    // A callee with no published body yet is called through its entry cell, which holds its body
+    // once that publishes: the region compiled before its callees still calls them natively.
+    let candidates = lane_direct_callees(machine, own, function, body);
+    for callees in &candidates { super::super::compiled::bind_region_callees(callees, own); }
+    super::super::compiled::RegionCalls::direct(candidates)
+}
+
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
-fn native_field_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled::LoopRegion)
+fn native_field_loads<H: Host>(machine: &Vm<H>, own: Option<&super::LaneView>, region: &super::super::compiled::LoopRegion)
     -> Vec<Vec<super::super::compiled::NativeFieldLoad>> {
     let (properties_base, properties_len) = machine.heap.native_property_values();
     let available = machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
+    // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
+    // which code that embeds its shapes guards whole. Base regions read the live cache instead,
+    // whose entries name no form.
+    let own = own.filter(|_| !crate::jit_mode::base_regions());
+    let reads: std::collections::HashMap<usize, usize> = region.field_reads().iter()
+        .map(|(offset, index)| (*index, region.header as usize + *offset as usize)).collect();
     region.fields.iter().enumerate()
         .map(|(index, field)| if available && region.inlining.is_none() && region.is_dynamic_field(index) {
-            machine.native_field_load_descriptors(field.cache_site)
+            let hint = own.zip(reads.get(&index)).and_then(|(view, pc)| view.own_field_hint(*pc));
+            machine.native_field_load_descriptors(field.cache_site).into_iter()
+                .map(|load| super::super::compiled::NativeFieldLoad { formed: hint, ..load }).collect()
         } else {
             Default::default()
         })
         .collect()
+}
+
+/// The descriptors of the stores of `region`, by cache site: native
+/// code stores in place through the arms they give (`site_store_plan`), as a read does.
+fn native_store_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled::LoopRegion)
+    -> Vec<(u16, Vec<super::super::compiled::NativeFieldLoad>)> {
+    let available = machine.heap.object_record_base().is_some() && region.inlining.is_none();
+    // A receiver the region keeps stores through the same arms: a store with no read of its
+    // field carries no projected slot (`Lowering::loop_stores`), and with no arm it would leave.
+    let mut sites: Vec<u16> = region.dynamic_store_sites().chain(region.field_store_sites.iter().map(|store| store.cache_site)).collect();
+    sites.sort_unstable();
+    sites.dedup();
+    sites.into_iter().filter(|_| available)
+        .map(|site| (site, machine.native_field_load_descriptors(site))).collect()
 }
 
 /// The element views of `region`'s arrays on entry (`ElementViews`), each pushed to `entry`:

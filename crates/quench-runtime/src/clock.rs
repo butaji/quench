@@ -58,6 +58,15 @@ pub fn system_now() -> SystemTime {
 
 /// Milliseconds since the Unix epoch, as `Date.now` reads them.
 pub fn unix_millis() -> f64 {
+    // One `CLOCK_REALTIME` read, as `SystemTime::now` makes, without its `Duration` steps.
+    #[cfg(unix)]
+    if !is_virtual() {
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        // SAFETY: `time` is a valid out-pointer for the call.
+        if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut time) } == 0 && time.tv_sec >= 0 {
+            return time.tv_sec as f64 * 1000.0 + time.tv_nsec as f64 / 1e6;
+        }
+    }
     system_now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64() * 1000.0
 }
 

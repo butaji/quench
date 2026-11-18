@@ -139,8 +139,15 @@ pub(crate) mod vm {
 
 /// The register and operand names the staged numeric rows take. Only a register operand exists
 /// here: a row names its places by register.
+/// The `typeof` names and their indices, the runtime's own file.
+#[path = "../../quench-runtime/src/bytecode/typeof_names.rs"]
+#[allow(dead_code)]
+mod typeof_names;
+
 pub(crate) mod bytecode {
     pub(crate) type Register = u16;
+
+    pub(crate) use super::typeof_names::typeof_name_index;
 
     #[derive(Clone, Copy)]
     pub(crate) struct Operand(Register);

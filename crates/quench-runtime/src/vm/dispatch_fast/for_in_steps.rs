@@ -46,12 +46,13 @@ script_handler! {
     }
 }
 
-/// The handler of a `ForInStart` record.
-pub(super) const fn for_in_start_handler<H: Host>() -> Handler {
-    lane_for_in_start::<H>
-}
-
-/// The handler of a `ForInNext` record whose exit jump runs `BACKWARD` or not.
-pub(super) const fn for_in_next_handler<H: Host, const BACKWARD: bool>() -> Handler {
-    lane_for_in_next::<H, BACKWARD>
+/// The handler of a for-in record: the loop's start, or its step (`LANE_LOOP_EXIT`), whose exit
+/// jump runs `BACKWARD` or not. It is chosen before the general in-place step, which would make
+/// a frameless activation frames for the step's jump.
+pub(super) const fn for_in_handler<H: Host, const BACKWARD: bool>(opcode: Op) -> Option<Handler> {
+    match opcode.class() {
+        Class::ForInStart => Some(lane_for_in_start::<H>),
+        _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(lane_for_in_next::<H, BACKWARD>),
+        _ => None,
+    }
 }

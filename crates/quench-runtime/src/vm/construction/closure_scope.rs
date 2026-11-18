@@ -77,18 +77,18 @@ impl<H: Host> Vm<H> {
         if with_objects.is_empty() {
             return env;
         }
-        self.heap.alloc(Cell::Environment {
-            parent: env,
-            function: u32::MAX,
-            slots: Vec::<Value>::new().into_boxed_slice().into(),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        self.heap.alloc_environment(
+            env,
+            u32::MAX,
+            Vec::<Value>::new().into_boxed_slice().into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: None,
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: Vec::new().into(),
                 with_objects: with_objects.into_boxed_slice(),
             }),
-        })
+        ).0
     }
 
     /// The parts of a closure of `plan`, allocating its prototype object where it has one.
