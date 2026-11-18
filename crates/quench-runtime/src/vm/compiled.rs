@@ -110,6 +110,10 @@ mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
+// The driver places stitched functions once they take memory and calls; until then the tests do.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(test), allow(dead_code))]
+mod wasm_stitch;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;

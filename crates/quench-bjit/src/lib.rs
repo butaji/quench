@@ -310,6 +310,10 @@ mod rustc_tests {
         for code in crate::wasm::wasm_library() {
             assert!(rustc::stencil(&crate::wasm::wasm_name(code)).is_some(), "{code:?}");
         }
+        #[cfg(target_arch = "x86_64")]
+        for name in crate::wasm::ROUTINES {
+            assert!(rustc::stencil(name).is_some(), "{name}");
+        }
     }
 
     /// Every patched field of every stencil lies inside its code, and names a hole the copy
