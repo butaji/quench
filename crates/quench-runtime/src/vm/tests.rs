@@ -23947,3 +23947,35 @@ fn straight_line_body_past_the_stream_size_runs_as_written() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError".to_string(), format!("{count} {expected_sum} 6000")]);
 }
+
+#[test]
+fn hot_loops_keep_planned_receivers_as_their_fields_and_allocate_them_where_needed() {
+    // A loop's `new Pair(...)` whose result only has its fields read is its field values
+    // (`lane_region::virtual_objects`); a branch with the receiver live, a read of a field the
+    // plan does not name, a leave and a prototype setter added mid-run each see the object
+    // the construction would have made.
+    let source = r#"
+      class Pair { constructor(x, y) { this.x = x; this.y = y; } }
+      class K { constructor(a) { this.a = a; this.k = 7; } }
+      function kept(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 3); s = (s + p.x + p.y) | 0; } return s; }
+      function escapes(n) { var out = [], s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, i + 1); if (i % 97 === 0) out.push(p); s = (s + p.y) | 0; }
+        return [s, out.length, out[3].x, out[3].y, out[3] instanceof Pair, Object.keys(out[3]).join()].join(); }
+      function other(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 2); s = (s + p.x + (p.z === undefined ? 1 : 0)) | 0; } return s; }
+      function constant(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new K(i); s = (s + p.a + p.k) | 0; } return s; }
+      function missing(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i); s = (s + p.x + (p.y === undefined ? 5 : 0)) | 0; } return s; }
+      function overflow(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i * 100000, 3); s = s + p.x + p.y; } return s; }
+      function setter(n) { var s = 0; for (var i = 0; i < n; i++) {
+          if (i === n - 50) Object.defineProperty(Pair.prototype, 'y', { set(v) { this._y = v * 2; }, get() { return this._y; }, configurable: true });
+          const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; }
+        delete Pair.prototype.y; return s; }
+      var out = [];
+      for (var k = 0; k < 3; k++) { out.push(kept(20000), escapes(20000), other(20000), constant(20000), missing(20000), overflow(20000), setter(20000)); }
+      print(out.join(";"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "kept-receivers.js").unwrap();
+    vm.execute(&program).unwrap();
+    let round = "200050000;200010000,207,291,292,true,x,y;200010000;200130000;200090000;19999000060000;200010050";
+    assert_eq!(output.borrow().as_slice(), [[round, round, round].join(";")]);
+}

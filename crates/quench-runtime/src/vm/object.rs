@@ -2483,6 +2483,7 @@ impl<H: Host> Vm<H> {
     /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
     /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
     /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[allow(dead_code)]
     pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
         self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }

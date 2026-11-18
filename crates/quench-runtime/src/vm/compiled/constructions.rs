@@ -32,6 +32,21 @@ pub(super) unsafe extern "C" fn lane_construct<H: Host>(vm: u64, residual: u64, 
     built.unwrap_or(Value::DELETED).to_bits()
 }
 
+/// Whether a construction of `callee` here would build its receiver by its plan
+/// (`dispatch_fast::construct_plan_holds`), the frame constructing in place as `lane_construct`
+/// asks: 1, else 0. A body keeping the receiver as its field values tests it where the
+/// construction would run (`lane_region::virtual_objects`).
+pub(super) unsafe extern "C" fn lane_construct_plan_holds<H: Host>(vm: u64, _residual: u64, payload: u64, callee: u64) -> u64 {
+    // SAFETY: the body passes its own VM and dispatch; the test changes nothing.
+    let (vm, dispatch) = unsafe { (&*(vm as *const Vm<H>), &*(payload as *const JsStepDispatch)) };
+    let constructs = if dispatch.lane_context == 0 {
+        dispatch.allow_inline_calls
+    } else {
+        unsafe { super::dispatch_fast::lane_context_constructs::<H>(dispatch.lane_context as *mut ()) }
+    };
+    u64::from(constructs && super::dispatch_fast::construct_plan_holds(vm, Value::from_bits(callee)))
+}
+
 /// The receiver a body's construction through forwarding constructor `callee` passes its
 /// forwarded initializer (`dispatch_fast::lane_body_receiver`), or `Value::DELETED`, which
 /// takes the construction's helper path before any effect.

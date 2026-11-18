@@ -1037,6 +1037,8 @@ lane_helper_inventory! { H;
     /// A planned construction (`lane_construct`).
     Construct => constructions::lane_construct::<H>,
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
+    /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
+    ConstructPlanHolds => constructions::lane_construct_plan_holds::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
@@ -1301,6 +1303,26 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
 }
 
+/// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
+/// callee, its receiver's exact shape and, per field in slot order, the field's name and where
+/// its value comes from. A body that reads such a receiver's fields and lets it escape nowhere
+/// keeps the values and allocates the receiver only at a leave.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ScalarConstructPlan {
+    pub(super) callee: Value,
+    pub(super) shape: u32,
+    pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
+}
+
+/// Where a field of a `ScalarConstructPlan` takes its value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum ScalarField {
+    /// The argument of this parameter (`undefined` past the passed ones).
+    Parameter(u16),
+    /// This constant, whatever is passed.
+    Constant(Value),
+}
+
 impl OnlineFacts<'_> {
     /// Whether a method cache names `atom` now.
     pub(super) fn names(&self, atom: Atom) -> bool {
@@ -1350,6 +1372,11 @@ pub(super) struct VmFacts<'a> {
     /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
     /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
     pub(super) held_atoms: Option<HeldAtoms<'a>>,
+    /// The construct plan a construction record of a function holds now, by function and PC
+    /// (`ScalarConstructPlan`): what code may keep as its field values while the object
+    /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
+    /// holds where it would construct, so it takes no dependency on it.
+    pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1365,14 +1392,14 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None }
     }
 }
 
