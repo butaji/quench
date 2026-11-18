@@ -6605,10 +6605,28 @@ script_handler! {
     fn lane_load_root_binding<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let slot = usize::from(ImmediateLayout::capture_slot(imm));
+        let depth = ImmediateLayout::capture_depth(imm);
+        let env = r.env();
+        // The activation's own environment is the root one: one record read, which costs less
+        // than the remembered walk's test, and nothing to remember.
+        if depth == 0 && !env.is_deleted() {
+            let vm = unsafe { vm(cx) };
+            let Some(crate::heap::EnvironmentRecord { function, slots, .. }) = vm.heap.reachable_environment(env) else {
+                sibling!(lane_load_capture_walk::<H>, r, ip, view)
+            };
+            if *function != super::ROOT_FUNCTION_ID {
+                sibling!(lane_load_capture_walk::<H>, r, ip, view)
+            }
+            let Some(value) = slots.dense().and_then(|dense| dense.dense_plain(slot)) else {
+                sibling!(lane_load_capture_walk::<H>, r, ip, view)
+            };
+            r.set(i.a, value);
+            next!(cx, r, following(ip), view)
+        }
         // SAFETY: the root record's slots, live while no collection runs (`lane_root_slots`).
         // A dense slot's ordinary value; a sparse storage, a shared slot or a binding in its
         // temporal dead zone takes the walk.
-        let value = lane_root_slots(cx, ImmediateLayout::capture_depth(imm))
+        let value = lane_root_slots(cx, depth)
             .and_then(|slots| unsafe { &*slots }.dense()?.dense_plain(slot));
         let Some(value) = value else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
@@ -6644,14 +6662,20 @@ fn lane_root_slots<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<*cons
 #[inline(never)]
 fn lane_root_slots_walk<H: Host>(cx: *mut LaneContext<H>, depth: u16, key: Value) -> Option<*const crate::heap::EnvironmentSlots> {
     let root = lane_root_environment(cx, depth)?;
-    let slots = match unsafe { vm(cx) }.heap.reachable_environment(root)? {
-        crate::heap::EnvironmentRecord { function, slots, .. } if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),
-        _ => return None,
-    };
+    let slots = lane_root_record_slots(cx, root)?;
     if !key.is_deleted() {
         unsafe { (*cx).root_walk = OuterWalk { env: key, depth, slots } };
     }
     Some(slots)
+}
+
+/// The slots of `env` where it is a root environment's record (`ROOT_FUNCTION_ID`).
+#[inline(always)]
+fn lane_root_record_slots<H: Host>(cx: *mut LaneContext<H>, env: Value) -> Option<*const crate::heap::EnvironmentSlots> {
+    match unsafe { vm(cx) }.heap.reachable_environment(env)? {
+        crate::heap::EnvironmentRecord { function, slots, .. } if *function == super::ROOT_FUNCTION_ID => Some(std::ptr::from_ref(slots)),
+        _ => None,
+    }
 }
 
 script_handler! {
@@ -17084,12 +17108,7 @@ fn lane_activate_keeping_window<H: Host, const GENERAL: bool>(
         vm.lane_stack.values.set_top(registers.0.add(window_size + lane_values::CONTEXT));
         registers
     };
-    let entered = lane_enter_window::<H, GENERAL, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
-    if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
-        script.forwards = true;
-        script.kept = target.registers;
-    }
-    Ok(entered)
+    Ok(lane_enter_window::<H, GENERAL, false>(cx, r, ip, target, callee_registers, argc, this, false, None, Some(target.registers)))
 }
 
 /// The plain activation (`lane_push_passed`) of a rest body of the running program that keeps
@@ -17131,20 +17150,14 @@ fn lane_activate_gathering<H: Host>(
             copy_arguments(callee_registers.0.add(count), passed, argc);
             vm.lane_stack.values.set_top(callee_registers.0.add(count + usize::from(argc) + lane_values::CONTEXT));
         }
-        let entered = lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
-        if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
-            script.forwards = true;
-            script.kept = target.registers;
-        script.kept = target.registers;
-        }
-        return Ok(entered);
+        return Ok(lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None, Some(target.registers)));
     }
     let rest = vm.rest_parameter_array(unsafe {
         std::slice::from_raw_parts(passed.add(usize::from(fixed.min(argc))), usize::from(argc.saturating_sub(fixed)))
     });
     let callee_registers = lane_fill_window(vm, target, passed, argc.min(fixed));
     callee_registers.set(fixed, rest);
-    Ok(lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc.min(target.params), this, false, None))
+    Ok(lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc.min(target.params), this, false, None, None))
 }
 
 script_handler! {
@@ -18836,7 +18849,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     // so the other call forms decide the completion without reading the target's entry.
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
     let callee_registers = lane_fill_window(unsafe { vm(cx) }, target, passed, argc);
-    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, argc, this, constructs, None)
+    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, argc, this, constructs, None, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -18965,6 +18978,9 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     callee_registers: Registers,
     argc: u16,
     this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
+    // The register of the first value a keeping activation kept past its registers
+    // (`ScriptActivation::kept`), which marks it forwarding; `None` for any other.
+    kept: Option<u16>,
 ) -> (Registers, Ip) {
     // The receiver goes to its context word first, so it holds no register past the push.
     callee_registers.set_this(this);
@@ -18982,8 +18998,8 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
             callee: target.callee,
             argc,
             completion: if skipped.is_some() { Completion::Forwarder } else { Completion::of(constructs, cross, SETTLES) },
-            forwards: false,
-            kept: 0,
+            forwards: kept.is_some(),
+            kept: kept.unwrap_or(0),
             environment: false,
             record: std::ptr::null_mut(),
         }),

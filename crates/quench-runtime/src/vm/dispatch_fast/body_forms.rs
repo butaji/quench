@@ -184,7 +184,7 @@ impl<'a> BodyCall<'a> {
             stack.values.set_top(top.add(usize::from(target.registers) + super::super::lane_values::CONTEXT));
             Registers(top)
         };
-        lane_enter_window::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None).0
+        lane_enter_window::<H, false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None, None).0
     }
 }
 
