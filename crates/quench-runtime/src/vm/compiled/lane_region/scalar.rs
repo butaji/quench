@@ -152,7 +152,7 @@ pub(super) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_
 fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectCallee> {
     let read = unit.instructions[pc];
     let own = |at: usize| matches!(unit.origins[at], super::super::lane_unit::Origin::Caller(_));
-    if !read.op().is_load_capture() || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
+    if !matches!(crate::vm::compiled::decoded(read), Some(crate::staged::Operation::LoadCapture { .. })) || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
     let call = direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1;
     // SAFETY: the body owns its direct callees for as long as its code runs.
     Some(unsafe { &**call })
@@ -351,13 +351,13 @@ impl Lowering<'_, '_> {
     /// Whether `instruction` at `pc` loads the callee of a self-call by the scalar entry: its
     /// capture, in the entry or in the body that calls it, or its global binding, in the entry.
     pub(super) fn is_scalar_callee_load(&self, pc: usize, instruction: WideInstruction) -> bool {
-        if instruction.op().is_load_capture() { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
+        if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
         instruction.op().is_throwing_name_load() && matches!(self.completion, Completion::Scalar(_))
     }
 
     /// The load `is_scalar_callee_load` admits.
     pub(super) fn scalar_callee_load(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        if instruction.op().is_load_capture() { self.scalar_callee_capture(state, pc, instruction) } else { self.scalar_callee(state, pc, instruction) }
+        if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) { self.scalar_callee_capture(state, pc, instruction) } else { self.scalar_callee(state, pc, instruction) }
     }
 
     /// The address of each capture slot a callee read names, from the entry's dense slots: their

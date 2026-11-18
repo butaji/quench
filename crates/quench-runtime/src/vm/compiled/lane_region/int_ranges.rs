@@ -108,7 +108,7 @@ impl Lowering<'_, '_> {
     /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
     /// type: an integer kind's range, a typed-array load being its elements' own integers.
     fn element_reads(&self, instructions: &[WideInstruction]) -> Vec<ObservedRead> {
-        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| instruction.op().is_get_index())
+        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::vm::compiled::performed(**instruction), Some(crate::staged::Operation::ElementRead { .. })))
             .filter_map(|(pc, instruction)| {
                 let array = self.loop_array(pc, instruction.operand_b().register_index())?;
                 Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type() })

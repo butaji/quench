@@ -24,7 +24,7 @@ fn held_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: W
 
 /// The slot type every load of `instruction`'s plain field read observed, where they agree.
 fn agreed_slot_type(program: &ResidualProgram, fields: &FieldSites, instruction: WideInstruction) -> Option<Type> {
-    if !instruction.op().class().eq(Class::GetField) || instruction.returns_from_frame() || instruction.writes_current_this() {
+    if !matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) || instruction.returns_from_frame() || instruction.writes_current_this() {
         return None;
     }
     let loads = last_read_site(program, instruction).and_then(|last| site_loads(fields, last))?;
