@@ -1,5 +1,5 @@
 //! The VM operations staged rows call out for (`staged::CallOut`), and the interpreter's frame
-//! that runs those rows in place. The lane's helper (`dispatch_fast::lane_vm_step`) makes the same
+//! that runs those rows in place. The lane's helper (`dispatch_fast::vm_operation_step`) makes the same
 //! step by `Vm::call_out`, so every tier shares the one definition.
 
 use super::*;

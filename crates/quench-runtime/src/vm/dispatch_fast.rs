@@ -11168,7 +11168,7 @@ mod array_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
 mod vm_steps;
 mod value_steps;
-pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_string_concat, lane_decide, lane_vm_step};
+pub(in crate::vm) use vm_steps::{body_general_step, body_string_concat, decide_comparison, vm_operation_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;

@@ -1,6 +1,6 @@
 //! The staged rows whose slow case is the VM's own operation (`staged::CallOut`), lowered: the
 //! row's words decide the common case inline, and the rest is one call of the lane's helper
-//! (`dispatch_fast::lane_vm_step`) that continues in place, so no such record leaves its body.
+//! (`dispatch_fast::vm_operation_step`) that continues in place, so no such record leaves its body.
 use crate::bytecode::Class;
 use super::*;
 use super::super::lane_unit::Origin;

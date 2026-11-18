@@ -989,15 +989,15 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
-    /// `+` of strings (`dispatch_fast::lane_body_string_concat`), named by the b-jit call planner
+    /// `+` of strings (`dispatch_fast::body_string_concat`), named by the b-jit call planner
     /// (`base_region::call_plan`), which the whole-function planner will consume.
     #[allow(dead_code)]
-    StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
-    /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
-    VmStep => super::dispatch_fast::lane_vm_step::<H>,
-    /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
+    StringConcat => super::dispatch_fast::body_string_concat::<H>,
+    /// A VM operation a staged row calls out for (`dispatch_fast::vm_operation_step`).
+    VmStep => super::dispatch_fast::vm_operation_step::<H>,
+    /// An instruction whose general step runs in place (`dispatch_fast::body_general_step`), which the b-jit's
     /// helper steps and stepped calls make (`base_region::steps`).
-    Step => super::dispatch_fast::lane_body_step::<H>,
+    Step => super::dispatch_fast::body_general_step::<H>,
     /// ToBoolean of a value its cell decides (`lane_truthy`).
     Truthy => lane_truthy::<H>,
     /// The array storage proofs a shorter array falsifies (`lane_retire_array_proofs`).
@@ -1013,8 +1013,8 @@ lane_helper_inventory! { H;
     /// A regexp literal's fresh object of its site's template (`lane_new_regexp`).
     NewRegExp => lane_new_regexp::<H>,
     /// A decision of two words the call-out carries, which needs no VM record
-    /// (`dispatch_fast::lane_decide`).
-    Decide => super::dispatch_fast::lane_decide::<H>,
+    /// (`dispatch_fast::decide_comparison`).
+    Decide => super::dispatch_fast::decide_comparison::<H>,
     /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::lane_handler_edge`).
     HandlerEdge => super::dispatch_fast::lane_handler_edge::<H>,
 }

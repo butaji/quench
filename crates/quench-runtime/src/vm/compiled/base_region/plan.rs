@@ -217,7 +217,7 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
 
 /// Whether a row of `variant` speculates int32 operands, given whether the representations make
 /// it `general`: the double variant never does, the others as the representations say. A
-/// `Variant::Concat` site would call the runtime (`lane_body_string_concat`) through the helper row
+/// `Variant::Concat` site would call the runtime (`body_string_concat`) through the helper row
 /// (`call_plan`), whose payload only a region that crosses with the activation's dispatch has;
 /// until then it takes the generic row, whose tag guard exits at the PC for a string operand and
 /// writes nothing.

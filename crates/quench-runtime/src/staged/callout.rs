@@ -1,7 +1,7 @@
 //! The VM operations a staged row calls out for when its own words do not decide it, named as
 //! data. A frame answers one in place (`Frame::vm_step`): the interpreter's frame calls the VM
 //! method, the lane specializer's frame calls the lane helper that decodes the record and makes
-//! the same step (`dispatch_fast::lane_vm_step`), and a frame with no host declines.
+//! the same step (`dispatch_fast::vm_operation_step`), and a frame with no host declines.
 
 use super::spread::Passing;
 use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register, Step};

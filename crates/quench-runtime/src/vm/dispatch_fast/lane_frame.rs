@@ -124,7 +124,7 @@ impl CaptureStores {
 }
 
 /// The lane context's steady decisions of a pair the words leave, erased of its host so the frame
-/// names no `H` (`lane_decision`).
+/// names no `H` (`comparison_decision`).
 #[derive(Clone, Copy)]
 struct Decisions {
     context: *mut (),
@@ -139,7 +139,7 @@ impl Decisions {
     /// The decisions of the running lane's `cx`.
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
-            super::vm_steps::lane_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
+            super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
             records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64) }
