@@ -146,23 +146,21 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
 const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
-/// Records each typed space holds, one constant per space. Each direct-record family's capacity
-/// is also its prototype window's size (`cell.rs`, `PROTO_*_RECORD_BASE`): a link to record `id`
-/// is `window base + id`, so a space never issues an id its window cannot hold. The windows and
-/// the legacy slot cap share the prototype link's 28 bits (`PROTO_INDEX_BITS`); the table in
-/// `cell.rs` does the arithmetic. Every capacity is a power of two and a multiple of
-/// `RECORDS_PER_BLOCK`, and every window is aligned to its own size (`staged/object.rs`
-/// masks a link to its object window).
-pub(super) const OBJECT_RECORD_CAPACITY: usize = 1 << 26;
-pub(super) const ARRAY_RECORD_CAPACITY: usize = 1 << 25;
-pub(super) const FUNCTION_RECORD_CAPACITY: usize = 1 << 26;
-pub(super) const PROMISE_RECORD_CAPACITY: usize = 1 << 24;
-pub(super) const ITERATOR_RECORD_CAPACITY: usize = 1 << 24;
-pub(super) const COLLECTION_RECORD_CAPACITY: usize = 1 << 24;
-/// Await states and Wasm vectors are never prototypes, so their capacity is not bounded by the
-/// prototype link.
-pub(super) const AWAIT_RECORD_CAPACITY: usize = 1 << 24;
-pub(super) const V128_RECORD_CAPACITY: usize = 1 << 24;
+/// Records each typed space holds, one constant per space. A capacity is no longer bounded by
+/// the prototype link: a record inside its family's link window (`cell.rs`, `*_PROTO_WINDOW`)
+/// is linked as `window base + id`, and a record past it that becomes a prototype takes an
+/// overflow link (`heap::prototypes`). The spaces reserve address space only (`MAP_NORESERVE`,
+/// `records/reservation.rs`), so a large capacity costs no memory until records are used.
+/// Every capacity is a power of two and a multiple of `RECORDS_PER_BLOCK`.
+pub(super) const OBJECT_RECORD_CAPACITY: usize = 1 << 30;
+pub(super) const ARRAY_RECORD_CAPACITY: usize = 1 << 30;
+pub(super) const FUNCTION_RECORD_CAPACITY: usize = 1 << 30;
+pub(super) const PROMISE_RECORD_CAPACITY: usize = 1 << 28;
+pub(super) const ITERATOR_RECORD_CAPACITY: usize = 1 << 28;
+pub(super) const COLLECTION_RECORD_CAPACITY: usize = 1 << 28;
+/// Await states and Wasm vectors are never prototypes.
+pub(super) const AWAIT_RECORD_CAPACITY: usize = 1 << 28;
+pub(super) const V128_RECORD_CAPACITY: usize = 1 << 28;
 
 #[cfg(test)]
 pub(super) const TEST_RECORD_CAPACITY: usize = 1 << 24;

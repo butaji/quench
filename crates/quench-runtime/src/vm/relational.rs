@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
         if prototype.is_deleted() {
             return None;
         }
-        Some(ProtoLink::object_record(prototype.direct_object_index()?))
+        ProtoLink::object_record(prototype.direct_object_index()?)
     }
 
     /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct

@@ -39,7 +39,7 @@ pub(crate) struct NativeObjectLayout {
 }
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: 67108864,
+    record_capacity: 1073741824,
     record_size: 12,
     record_align: 4,
     layout_offset: 8,
@@ -101,7 +101,7 @@ pub(crate) struct NativeArrayLayout {
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: 33554432,
+    record_capacity: 1073741824,
     record_size: 12,
     record_align: 4,
     elements_offset: 0,
