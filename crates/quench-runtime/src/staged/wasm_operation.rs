@@ -130,7 +130,7 @@ impl WasmOperation {
                     float: Float::F32,
                 })
             }
-            Class::WasmFloatBinary64 => {
+            Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
                 FloatBinary::from_tag(tag).map(|operator| Self::FloatBinary {
                     operator,
                     float: Float::F64,
@@ -142,7 +142,7 @@ impl WasmOperation {
                     float: Float::F32,
                 })
             }
-            Class::WasmFloatUnary64 => FloatUnary::from_tag(tag).map(|operator| Self::FloatUnary {
+            Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => FloatUnary::from_tag(tag).map(|operator| Self::FloatUnary {
                 operator,
                 float: Float::F64,
             }),

@@ -1040,7 +1040,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(this) {
                 Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
                 Some(Cell::Date { .. }) => "[object Date]".to_owned(),
-                Some(Cell::Symbol(description)) => {
+                _ if let Some(description) = self.heap.symbol_data(this) => {
                     format!("Symbol({})", description.as_deref().unwrap_or(""))
                 }
                 Some(Cell::BigInt(_)) => self.to_string(p, this)?,

@@ -94,6 +94,7 @@ impl ProgramEntry {
             root_slots: _,
             module,
             lane_views: _,
+            raw_masks: _,
             js_entry_facts: _,
             lane_deferred: _,
             compiled: _,
@@ -233,6 +234,7 @@ impl ProgramEntry {
             #[cfg(feature = "native-execution")]
             native_js: None,
             lane_views: super::LaneViews::default(),
+            raw_masks: Default::default(),
             js_entry_facts: super::JsEntryFactsTable::default(),
             lane_deferred: super::zeroed_counts(functions),
             residual,

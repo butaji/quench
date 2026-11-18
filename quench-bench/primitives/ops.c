@@ -1264,6 +1264,261 @@ static double NOINL op_bi_set_has(long n) {
   return a;
 }
 
+/* bi_* twins, batch 2. Fragment: paste after op_bi_set_has in ops.c (uses its includes and macros:
+ * NOINL, BODY_BARRIER, ESCAPE; headers stdint, stdio, stdlib, string). C99, no extra headers. */
+
+static int bia_is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+static int bia_cmp_int(const void *x, const void *y) { int32_t p = *(const int32_t *)x, q = *(const int32_t *)y; return (p > q) - (p < q); }
+typedef struct { int32_t a, b, c, d; } bia_obj4;
+
+static double NOINL op_bi_fill(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double *arr = malloc(16 * sizeof *arr);
+    for (int j = 0; j < 16; j++) arr[j] = 0;
+    ESCAPE(arr); a += 16; free(arr);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_join(long n) {
+  static const char *parts[4] = {"a", "bb", "ccc", "dddd"};
+  static const size_t plen[4] = {1, 2, 3, 4};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char *out = malloc(16); size_t len = 0;
+    for (int k = 0; k < 4; k++) {
+      if (k) out[len++] = '-';
+      memcpy(out + len, parts[k], plen[k]); len += plen[k];
+    }
+    out[len] = '\0'; ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_from(long n) {
+  static const char *words[4] = {"a", "bb", "ccc", "dddd"};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char **out = malloc(4 * sizeof *out);
+    for (int k = 0; k < 4; k++) out[k] = words[k];
+    ESCAPE(out); a += 4; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_upper(long n) {
+  static const char s[] = "hello";
+  size_t len = sizeof s - 1;
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    char *out = malloc(len + 1);
+    for (size_t k = 0; k < len; k++) { char c = s[k]; out[k] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c; }
+    out[len] = '\0'; ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_trim(long n) {
+  static const char s[] = "  abc  ";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    size_t lo = 0, hi = sizeof s - 1;
+    while (lo < hi && bia_is_ws(s[lo])) lo++;
+    while (hi > lo && bia_is_ws(s[hi - 1])) hi--;
+    char *out = malloc(hi - lo + 1);
+    memcpy(out, s + lo, hi - lo); out[hi - lo] = '\0';
+    ESCAPE(out); a += (uint32_t)(hi - lo); free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_pad(long n) {
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    char digs[12]; int nd = 0; unsigned v = (unsigned)(i & 7);
+    do { digs[nd++] = (char)('0' + v % 10); v /= 10; } while (v);
+    char *out = malloc(16); size_t len = 0;
+    while (len + (size_t)nd < 3) out[len++] = '0';
+    while (nd) out[len++] = digs[--nd];
+    out[len] = '\0'; ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sindex(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    const char *hit = strstr(s, "gam");
+    a += (uint32_t)(hit ? (int32_t)(hit - s) : -1);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sslice(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    size_t len = 10 - 6;
+    char *out = malloc(len + 1);
+    memcpy(out, s + 6, len); out[len] = '\0';
+    ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_split(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    char *buf = malloc(sizeof s); memcpy(buf, s, sizeof s);
+    char **out = malloc(4 * sizeof *out);
+    int k = 0; out[k++] = buf;
+    for (char *q = buf; *q; q++) if (*q == ',') { *q = '\0'; out[k++] = q + 1; }
+    ESCAPE(buf); ESCAPE(out); a += (uint32_t)k; free(out); free(buf);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_replace(long n) {
+  static const char s[] = "alpha,beta,gamma,delta";
+  static const char rep[] = "B";
+  const char *pat = "beta";
+  size_t slen = sizeof s - 1, plen = 4, rlen = 1;
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(s);
+    const char *hit = strstr(s, pat);
+    size_t at = (size_t)(hit - s);
+    size_t len = slen - plen + rlen;
+    char *out = malloc(len + 1);
+    memcpy(out, s, at); memcpy(out + at, rep, rlen);
+    memcpy(out + at + rlen, s + at + plen, slen - at - plen); out[len] = '\0';
+    ESCAPE(out); a += (uint32_t)len; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sort_int(long n) {
+  static const int32_t src[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t *arr = malloc(16 * sizeof *arr);
+    memcpy(arr, src, sizeof src);
+    ESCAPE(arr);
+    char keys[16][12];
+    for (int j = 0; j < 16; j++) snprintf(keys[j], sizeof keys[j], "%d", (int)arr[j]);
+    /* insertion sort of (key, value) pairs by decimal text, i.e. JS default sort order */
+    for (int j = 1; j < 16; j++) {
+      char kbuf[12]; int32_t v = arr[j];
+      memcpy(kbuf, keys[j], sizeof kbuf);
+      int k = j - 1;
+      while (k >= 0 && strcmp(keys[k], kbuf) > 0) {
+        memcpy(keys[k + 1], keys[k], sizeof kbuf); arr[k + 1] = arr[k]; k--;
+      }
+      memcpy(keys[k + 1], kbuf, sizeof kbuf); arr[k + 1] = v;
+    }
+    ESCAPE(arr); a += (uint32_t)arr[0]; free(arr);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_sort_cmp(long n) {
+  static const int32_t src[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    int32_t *arr = malloc(16 * sizeof *arr);
+    memcpy(arr, src, sizeof src);
+    ESCAPE(arr);
+    qsort(arr, 16, sizeof *arr, bia_cmp_int);
+    ESCAPE(arr); a += (uint32_t)arr[0]; free(arr);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_map(long n) {
+  static const double src[16] = {11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double *out = malloc(16 * sizeof *out);
+    for (int j = 0; j < 16; j++) out[j] = src[j] + 1;
+    ESCAPE(out); a += (uint32_t)(int32_t)out[0]; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_parse(long n) {
+  static const char text[] = "{\"a\":1,\"b\":[1,2,3],\"c\":\"xyz\"}";
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER(); ESCAPE(text);
+    const char *p = text + 1; /* past '{' */
+    int av = 0;
+    double *arr = NULL; char *str = NULL;
+    while (*p != '}') {
+      char key = p[1];          /* p[0] is the key's opening quote */
+      p += 4;                   /* skip  "k":  */
+      if (*p == '[') {
+        arr = malloc(3 * sizeof *arr);
+        int k = 0; p++;
+        while (*p != ']') { if (*p >= '0' && *p <= '9') arr[k++] = (double)(*p - '0'); p++; }
+        p++;
+      } else if (*p == '"') {
+        const char *st = ++p;
+        while (*p != '"') p++;
+        size_t len = (size_t)(p - st);
+        str = malloc(len + 1); memcpy(str, st, len); str[len] = '\0';
+        p++;
+      } else {                  /* single-digit number */
+        if (key == 'a') av = *p - '0';
+        p++;
+      }
+      if (*p == ',') p++;
+    }
+    a += (uint32_t)av;
+    ESCAPE(arr); ESCAPE(str); free(arr); free(str);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_keys(long n) {
+  static const char *names[4] = {"a", "b", "c", "d"};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    const char **out = malloc(4 * sizeof *out);
+    for (int k = 0; k < 4; k++) out[k] = names[k];
+    ESCAPE(out); a += 4; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+static double NOINL op_bi_assign(long n) {
+  static const bia_obj4 o = {1, 2, 3, 4};
+  int32_t N = (int32_t)n; uint32_t a = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    bia_obj4 *out = malloc(sizeof *out);
+    out->a = o.a; out->b = o.b; out->c = o.c; out->d = o.d;
+    ESCAPE(out); a += (uint32_t)out->a; free(out);
+  }
+  return (double)(int32_t)a;
+}
+
+
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
@@ -1300,6 +1555,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"date_now", op_date_now}, {"arr_includes", op_arr_includes}, {"arr_indexof", op_arr_indexof},
   {"bi_dv_get_f64", op_bi_dv_get_f64}, {"bi_dv_set_f64", op_bi_dv_set_f64}, {"bi_dv_get_u32", op_bi_dv_get_u32},
   {"bi_arr_slice", op_bi_arr_slice}, {"bi_arr_concat", op_bi_arr_concat}, {"bi_tmpl", op_bi_tmpl}, {"bi_map_get", op_bi_map_get}, {"bi_set_has", op_bi_set_has},
+  {"bi_fill", op_bi_fill}, {"bi_join", op_bi_join}, {"bi_from", op_bi_from}, {"bi_upper", op_bi_upper}, {"bi_trim", op_bi_trim}, {"bi_pad", op_bi_pad}, {"bi_sindex", op_bi_sindex}, {"bi_sslice", op_bi_sslice}, {"bi_split", op_bi_split}, {"bi_replace", op_bi_replace}, {"bi_sort_int", op_bi_sort_int}, {"bi_sort_cmp", op_bi_sort_cmp}, {"bi_map", op_bi_map}, {"bi_parse", op_bi_parse}, {"bi_keys", op_bi_keys}, {"bi_assign", op_bi_assign},
   {"k01_sum_or", op_k01_sum_or},
   {"k02_fib", op_k02_fib},
   {"k03_call_add", op_k03_call_add},

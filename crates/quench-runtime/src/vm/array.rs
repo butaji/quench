@@ -497,7 +497,7 @@ impl<H: Host> Vm<H> {
     /// default attributes and whose prototypes hold no index (`prototypes_hold_no_index`), so
     /// a present element is replaced and a hole defined in place. `false` leaves every index
     /// to the generic Set, having stored none.
-    fn fill_plain_array_elements(
+    pub(super) fn fill_plain_array_elements(
         &mut self,
         array: Value,
         indices: std::ops::Range<usize>,

@@ -501,7 +501,8 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => false,
         };
-        let per_iteration = matches!(item.init.as_ref(), Some(ForStatementInit::VariableDeclaration(declaration)) if declaration.kind == VariableDeclarationKind::Let);
+        let per_iteration = matches!(item.init.as_ref(), Some(ForStatementInit::VariableDeclaration(declaration)) if declaration.kind == VariableDeclarationKind::Let)
+            && super::iteration::for_loop_may_capture_bindings(item, self.iteration_call_only());
         self.for_initializer(item.init.as_ref());
         if per_iteration {
             self.clone_lexical_environment();

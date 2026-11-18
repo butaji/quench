@@ -4,7 +4,7 @@
 //! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
-use super::generator_windows::{open_window_locals, cached_window_plan, WindowPlan};
+use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan, WindowPlan};
 use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
@@ -175,6 +175,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
+    #[inline(always)]
     pub(super) fn lane_context(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
@@ -359,13 +360,13 @@ impl<H: Host> Vm<H> {
         let frame = self.job_frame(job)?;
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
         // SAFETY: the owner holds the frame, which nothing moves before the resume below.
-        let plan = cached_window_plan(self, code, unsafe { &*std::ptr::from_ref(frame) })?;
-        let WindowPlan { view, parent, locals, capture, environment, .. } = plan;
+        let cached = cached_window_plan(self, code, unsafe { &*std::ptr::from_ref(frame) })?;
+        let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
         let frame = self.resume_job_window(job, sent)?;
-        unsafe { (*frame).window_plan = Some(plan) };
+        store_window_plan(frame, cached);
         if let Some(locals) = locals {
             open_window_locals(self, frame, locals);
         }

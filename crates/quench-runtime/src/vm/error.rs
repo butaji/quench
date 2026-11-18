@@ -1162,7 +1162,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
         if !self.heap.is_string(value)
-            && !matches!(self.heap.get(value), Some(Cell::Symbol(_) | Cell::BigInt(_)))
+            && !(self.heap.is_symbol(value) || matches!(self.heap.get(value), Some(Cell::BigInt(_))))
             && value.as_number().is_none() && value.as_bool().is_none()
         { return Ok(self.object()); }
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);

@@ -80,3 +80,27 @@ fn an_i64_value_passed_to_a_call_stays_boxed() {
     // The product is a call argument: its web is boxed, so the multiply keeps its boxed form.
     assert!(!webs.raw_ops.iter().any(|raw| *raw), "{webs:?}");
 }
+
+#[test]
+fn the_collection_finds_the_lowering_webs_again_from_the_raw_forms() {
+    use Operator::*;
+    let get = |local_index| LocalGet { local_index };
+    let set = |local_index| LocalSet { local_index };
+    let bodies = || vec![body(0, vec![ValType::I64, ValType::I32], vec![
+        I64Const { value: 88172645463325252 }, set(1),
+        Block { blockty: wasmparser::BlockType::Empty },
+        Loop { blockty: wasmparser::BlockType::Empty },
+        get(2), get(0), I32Eq, BrIf { relative_depth: 1 },
+        get(1), get(1), I64Const { value: 13 }, I64Shl, I64Xor, set(1),
+        get(2), I32Const { value: 1 }, I32Add, set(2),
+        Br { relative_depth: 0 },
+        End, End,
+        get(1), End,
+    ])];
+    let types = vec![FuncType::new([ValType::I32], [ValType::I64])];
+    let (lowering, _) = webs(bodies(), types.clone(), 0, true);
+    let module = Engine::lower_wasm_module_with_tables("webs", bodies(), &WasmTypes::from_functions(types), &[], &[], &[], &[]).unwrap();
+    let collected = raw_live(module.program.function(0)).expect("raw ops");
+    assert_eq!(collected, lowering.raw_live);
+    assert!(collected.iter().any(|set| *set != RegisterSet::default()), "the accumulator is raw somewhere");
+}

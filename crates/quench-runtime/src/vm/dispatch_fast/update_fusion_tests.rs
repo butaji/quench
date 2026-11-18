@@ -46,3 +46,24 @@ fn an_update_fuses_with_its_back_edge_and_test() {
     assert_eq!(fused(None), Some(update_jump::<TestHost>(false, true) as *const ()));
     assert!(update_fusion::<TestHost>(&jump, &jump, |_| None).is_none(), "only an `IncDec` fuses with the jump after it");
 }
+
+/// A postfix update fused with its `ToNumeric` (`lane_postfix_update`) skips the `IncDec` row, an
+/// accumulator producer, so the copy after it (`k = k + 1`'s `Move`) may read the update as its
+/// accumulator: the fused record carries it. Before, the copy read an unset accumulator once the loop
+/// ran in the lane, and `k` held a stale machine word (a `let` counter in a for-of inside a for hung).
+#[test]
+fn a_fused_postfix_update_carries_its_result_to_the_next_record() {
+    let source = "function f() { const out = []; for (let round = 0; round < 8; round++) {
+            for (const p of [1, 2]) { let k = 0; while (k++ < 3) {} out.push(k); } }
+            return out.join(); }
+        const expected = '4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4';
+        for (let call = 0; call < 3; call++) { const got = f(); if (got !== expected) throw new Error(got); }";
+    let program = Engine::specialize(source, "postfix-update-accumulator.js").unwrap();
+    for jit in [JitMode::Interp, JitMode::Full] {
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let mut vm = Vm::new(TestHost::default());
+            vm.set_execution_mode(mode);
+            crate::jit_mode::with_mode(jit, || vm.execute(&program)).unwrap_or_else(|error| panic!("{jit:?} {mode:?}: {error:?}"));
+        }
+    }
+}

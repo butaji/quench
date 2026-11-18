@@ -41,7 +41,7 @@ pub(crate) struct RawWebs {
 }
 
 const fn wide(ty: WasmType) -> bool {
-    matches!(ty, WasmType::I64)
+    matches!(ty, WasmType::I64 | WasmType::F64)
 }
 
 /// The raw form of `op`: the opcode that runs the same operation over raw i64 registers.
@@ -50,20 +50,34 @@ pub(crate) const fn raw_form(op: Op) -> Option<Op> {
         Op::WasmI64Binary => Op::WasmI64BinaryRaw,
         Op::WasmI64BinaryImmediate => Op::WasmI64BinaryImmediateRaw,
         Op::WasmI64Unary => Op::WasmI64UnaryRaw,
+        Op::WasmF64Binary => Op::WasmF64BinaryRaw,
+        Op::WasmF64Unary => Op::WasmF64UnaryRaw,
         Op::Return => Op::WasmReturn64,
         _ => return None,
     })
 }
 
+/// Whether `operation` is an f64 operator whose result depends on a NaN operand only through
+/// its being a NaN (Wasm leaves such a result's payload open): its raw and boxed forms read any
+/// word of an f64 register.
+fn nan_agnostic(operation: WasmOperation) -> bool {
+    use crate::staged::wasm_float::Float;
+    match operation {
+        WasmOperation::FloatBinary { operator, float: Float::F64 } => operator.nan_agnostic(),
+        WasmOperation::FloatUnary { operator, float: Float::F64 } => operator.nan_agnostic(),
+        _ => false,
+    }
+}
+
 /// Whether `op` is a raw form: analyzing code the lowering already switched finds its webs again.
 const fn is_raw(op: Op) -> bool {
-    matches!(op, Op::WasmI64BinaryRaw | Op::WasmI64BinaryImmediateRaw | Op::WasmI64UnaryRaw | Op::WasmReturn64)
+    matches!(op, Op::WasmI64BinaryRaw | Op::WasmI64BinaryImmediateRaw | Op::WasmI64UnaryRaw | Op::WasmF64BinaryRaw | Op::WasmF64UnaryRaw | Op::WasmReturn64)
 }
 
 /// How an instruction touches its registers, where it is not all boxed.
 enum Roles {
     /// A raw-capable op: these registers are its wide operands (uses) and result (definitions).
-    Wide { uses: Vec<u16>, definitions: Vec<u16> },
+    Wide { uses: Vec<u16>, definitions: Vec<u16>, neutral_uses: Vec<u16> },
     /// A copy of `sources` into `destination`.
     Copy { destination: u16, sources: Vec<u16> },
     /// Definitions whose word reads the same raw and boxed.
@@ -73,10 +87,13 @@ enum Roles {
 /// The roles of `instruction`, or `None` where it touches every register boxed. `constant_neutral`
 /// says a constant-pool entry's `Value` is its own word (`Value::from_bits64`); `returns_wide`
 /// that the function's result is an i64.
-fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) -> Option<Roles> {
+/// With `rewritten`, of code the lowering already switched: only raw forms are wide (an op
+/// it left boxed is boxed), and every constant load and fill is neutral, since a web holding a
+/// constant whose `Value` is not its word was boxed when the lowering decided.
+fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool, rewritten: bool) -> Option<Roles> {
     let op = instruction.op();
     let (a, b) = (instruction.a(), instruction.b());
-    if (raw_form(op).is_some() || is_raw(op))
+    if (if rewritten { is_raw(op) } else { raw_form(op).is_some() || is_raw(op) })
         && let Some(operation) = WasmOperation::of(op, instruction.imm())
     {
         let operand_wide = wide(operation.operand_type());
@@ -92,6 +109,16 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
                     }
                 }
             }
+            // A float operator that treats a NaN operand only as a NaN reads a raw word and a
+            // `Value` alike (a boxed payload's bits are a NaN, `Value::float_bits64`): its
+            // operands join no web and box none.
+            operation if nan_agnostic(operation) => {
+                let read = match operation {
+                    WasmOperation::FloatBinary { .. } => vec![b, instruction.c()],
+                    _ => vec![b],
+                };
+                return Some(Roles::Wide { uses, definitions, neutral_uses: read });
+            }
             WasmOperation::Unary { .. } | WasmOperation::FloatUnary { .. } | WasmOperation::Convert { .. } => {
                 if operand_wide {
                     uses.push(b);
@@ -104,14 +131,14 @@ fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool,
             }
             _ => return None,
         }
-        return (!uses.is_empty() || !definitions.is_empty()).then_some(Roles::Wide { uses, definitions });
+        return (!uses.is_empty() || !definitions.is_empty()).then_some(Roles::Wide { uses, definitions, neutral_uses: vec![] });
     }
     match op.class() {
         Class::Move => Some(Roles::Copy { destination: a, sources: vec![b] }),
         Class::WasmSelect => Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] }),
-        Class::LoadConst | Class::WasmFillRegisters if constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
-        Class::Return if returns_wide && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
-        Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
+        Class::LoadConst | Class::WasmFillRegisters if rewritten || constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
+        Class::Return if returns_wide && !rewritten && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
+        Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![], neutral_uses: vec![] }),
         _ => None,
     }
 }
@@ -171,6 +198,29 @@ pub(crate) fn raw_webs(
     constant_neutral: &dyn Fn(usize) -> bool,
     returns_wide: bool,
 ) -> RawWebs {
+    webs(function, live, transfers, constant_neutral, returns_wide, false)
+}
+
+/// The registers live before each pc of the lowered Wasm function `function` that hold raw
+/// words there, which a collection must not read as `Value`s; `None` where it has no raw op.
+pub(crate) fn raw_live(function: &Function) -> Option<Vec<RegisterSet>> {
+    if !function.instructions().any(|instruction| is_raw(instruction.op())) {
+        return None;
+    }
+    let no_method_sites: &[MethodSite] = &[];
+    let transfers = super::transfers(function, no_method_sites, &[], &[])?;
+    let live = super::solve::analyze_wide(function, &transfers, &Successors::of_code(function));
+    Some(webs(function, &live, &transfers, &|_| true, false, true).raw_live)
+}
+
+fn webs(
+    function: &Function,
+    live: &[RegisterSet],
+    transfers: &[(RegisterSet, RegisterSet)],
+    constant_neutral: &dyn Fn(usize) -> bool,
+    returns_wide: bool,
+    rewritten: bool,
+) -> RawWebs {
     let instructions: Vec<WideInstruction> = function.instructions().collect();
     let count = instructions.len();
     let registers = usize::from(function.registers);
@@ -197,7 +247,7 @@ pub(crate) fn raw_webs(
     let mut wide_group: Vec<Option<u32>> = vec![None; count];
     for (pc, instruction) in instructions.iter().enumerate() {
         let (uses, definitions) = transfers[pc];
-        let roles = roles(*instruction, constant_neutral, returns_wide);
+        let roles = roles(*instruction, constant_neutral, returns_wide, rewritten);
         // Each definition is a node, flowing into the successors where its register is live.
         let mut defined = vec![None; registers];
         for register in (0..registers).filter(|register| definitions.contains(*register)) {
@@ -228,7 +278,10 @@ pub(crate) fn raw_webs(
         let mut covered_uses = RegisterSet::default();
         let mut covered_definitions = RegisterSet::default();
         match &roles {
-            Some(Roles::Wide { uses: wide_uses, definitions: wide_definitions }) => {
+            Some(Roles::Wide { uses: wide_uses, definitions: wide_definitions, neutral_uses }) => {
+                for &register in neutral_uses {
+                    covered_uses.insert(usize::from(register));
+                }
                 let group = classes.add();
                 for &register in wide_uses {
                     let node = use_node(&mut classes, register);

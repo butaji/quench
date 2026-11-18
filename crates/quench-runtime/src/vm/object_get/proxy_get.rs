@@ -111,7 +111,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let property = match property {
             Some(property) => property,
-            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None if self.heap.is_symbol(key) => PropertyKey::symbol(key),
             None => PropertyKey::string(self.key_atom(p, key)?),
         };
         match property {
@@ -245,9 +245,11 @@ impl<H: Host> Vm<H> {
             Some(data) => !data.is_arguments_object(),
             None => {
                 self.heap.array(target).is_some()
+                    || self.heap.is_map(target)
+                    || self.heap.is_set(target)
                     || matches!(
                         self.heap.get(target),
-                        Some(Cell::Map { .. } | Cell::Set { .. } | Cell::WeakMap { .. } | Cell::WeakSet { .. })
+                        Some(Cell::WeakMap { .. } | Cell::WeakSet { .. })
                     )
             }
         }

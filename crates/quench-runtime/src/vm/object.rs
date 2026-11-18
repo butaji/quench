@@ -2483,6 +2483,7 @@ impl<H: Host> Vm<H> {
     /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
     /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
     /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[allow(dead_code)]
     pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
         self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
@@ -3402,14 +3403,8 @@ impl<H: Host> Vm<H> {
                 let value = if native == Native::DataViewByteLengthGetter { length } else { offset };
                 Some(Value::number(value as f64))
             }
-            Native::MapSizeGetter => match self.heap.get(this) {
-                Some(Cell::Map { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
-            Native::SetSizeGetter => match self.heap.get(this) {
-                Some(Cell::Set { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
+            Native::MapSizeGetter => self.heap.map_entries(this).map(|entries| Value::number(entries.len() as f64)),
+            Native::SetSizeGetter => self.heap.set_entries(this).map(|entries| Value::number(entries.len() as f64)),
             _ => None,
         }
     }

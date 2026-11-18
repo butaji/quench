@@ -155,7 +155,7 @@ pub(super) fn lane_spread_set_native_call<H: Host>(
     list: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    if !matches!(vm.heap.get(list), Some(Cell::Set { .. })) {
+    if !vm.heap.is_set(list) {
         return None;
     }
     let native = lane_spread_native(vm, callee)?;
@@ -165,10 +165,7 @@ pub(super) fn lane_spread_set_native_call<H: Host>(
     if i.a & crate::bytecode::RETURN_REGISTER != 0 && !lane_returning_call_admitted(cx) {
         return Some(Resumed::Exit(exit(ip)));
     }
-    let args = match vm.heap.get(list)? {
-        Cell::Set { entries, .. } => entries.to_vec(),
-        _ => return None,
-    };
+    let args = vm.heap.set_entries(list)?.to_vec();
     let value = lane_native_value(cx, ip, i, native, callee, receiver, &args);
     Some(lane_native_complete(cx, ip, i, value))
 }

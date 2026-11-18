@@ -130,6 +130,14 @@ pub(super) struct LaneInstruction {
 /// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
 /// polymorphic), so one keeps an entry at 32 bytes instead of 112.
 const INLINE_SITE_TARGETS: usize = 1;
+/// `LaneStack::noted` entries.
+const NOTED_SITE_CALLEES: usize = 64;
+
+/// The `LaneStack::noted` entry of a link address and callee function.
+#[inline(always)]
+fn noted_slot(address: usize, function: u32) -> usize {
+    ((address >> 1) ^ (function as usize).wrapping_mul(0x9E37)) & (NOTED_SITE_CALLEES - 1)
+}
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
@@ -644,7 +652,7 @@ use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
 mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
-pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
+pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs, scalar_construct_plan, construct_plan_holds};
 use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
@@ -1904,8 +1912,10 @@ pub(super) struct ScriptCallTarget {
     params: u16,
     /// How a call binds its `this` (`ThisBinding`).
     this_binding: ThisBinding,
-    /// An arrow's own `this` (`ThisBinding::Lexical`), found in its environment when it was
-    /// resolved; unused for any other binding.
+    /// The `this` a plain call (an `undefined` receiver) binds: an arrow's own
+    /// (`ThisBinding::Lexical`), found in its environment when it was resolved, the realm's
+    /// global object for a sloppy function, `undefined` for any other binding. A plain call
+    /// reads it in one load (`lane_plain_activation`).
     lexical_this: Value,
     /// `TARGET_CONSTRUCTS` where `new` may activate it too (`Vm::inline_constructible`), and
     /// `TARGET_INITIALIZES` where `new` may run its body as the stores alone
@@ -2217,6 +2227,13 @@ pub(super) struct LaneStack {
     /// callee since; this record alone names the site's own. A collection drops the callees it
     /// swept (`forget_dead_callees`).
     call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[super::compiled::CallTarget; INLINE_SITE_TARGETS]>>>,
+    /// Pairs of a call record's link address and a callee its `call_sites` record holds, direct-mapped
+    /// (`noted_slot`): a polymorphic site's steady state re-notes the callees it alternates between, and
+    /// a hit here skips the map. Any callee leaving a record empties it.
+    noted: Box<[std::cell::Cell<Option<(usize, super::compiled::CallTarget)>>; NOTED_SITE_CALLEES]>,
+    /// `noted` for the script-target entries a link resolved (`Vm::note_linked_callee`): a link address and
+    /// the callee its record holds as `CalleeBinding::Identity`, by link address and entry index.
+    linked: Box<[std::cell::Cell<(usize, Value)>; NOTED_SITE_CALLEES]>,
     values: LaneValues,
     pub(in crate::vm) activations: LaneActivations,
     /// Wasm activation payload represented by `values` before lane materialization.
@@ -2315,10 +2332,27 @@ pub(super) struct LaneStack {
     /// The exported Wasm function a JavaScript call last entered (`Vm::wasm_export_frame_call`),
     /// so the next call of it reads its closure and signature once. A collection forgets it.
     pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
-    /// The window plan last derived for a frame that made no environment of its own
-    /// (`generator_windows::cached_window_plan`): every new activation of the same function
-    /// under the same environment, as each call of an async function is, shares it.
-    pub(super) last_window_plan: Option<(ProgramId, u32, generator_windows::WindowPlan)>,
+    /// The window plans last derived for frames that made no environment of their own
+    /// (`generator_windows::cached_window_plan`), one slot per function index modulo
+    /// `SHARED_PLANS`: every new activation of the same function under the same environment,
+    /// as each call of an async function is, shares it.
+    pub(super) last_window_plan: [Option<(ProgramId, u32, generator_windows::WindowPlan)>; generator_windows::SHARED_PLANS],
+    /// The record of the generator the lane last resumed as a window, under the collection
+    /// epoch of the resume (`Vm::windowed_generator_record`): its yield finds the record without
+    /// a heap lookup. A collection, the only way a generator's cell is freed and its index
+    /// reused, retires it.
+    pub(in crate::vm) last_generator: (Value, u64, *mut crate::vm::activation::GeneratorRecord),
+}
+
+/// Drops the entries of `held` that activations from index `depth` on own. Activations push
+/// their entries innermost last, so the owners ascend and those entries are a suffix: the
+/// common case, none, is one comparison.
+#[inline(always)]
+fn drop_owned_entries<T>(held: &mut Vec<(usize, T)>, depth: usize) {
+    if held.last().is_some_and(|(owner, _)| *owner >= depth) {
+        let first = held.partition_point(|(owner, _)| *owner < depth);
+        held.truncate(first);
+    }
 }
 
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
@@ -2340,6 +2374,8 @@ impl Default for LaneStack {
             activations: LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS),
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
+            noted: Box::new([const { std::cell::Cell::new(None) }; NOTED_SITE_CALLEES]),
+            linked: Box::new([const { std::cell::Cell::new((0, Value::UNDEFINED)) }; NOTED_SITE_CALLEES]),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
@@ -2367,7 +2403,8 @@ impl Default for LaneStack {
             body_boundary: None,
             boundary_frames: None,
             wasm_export: None,
-            last_window_plan: None,
+            last_window_plan: [None; generator_windows::SHARED_PLANS],
+            last_generator: (Value::UNDEFINED, u64::MAX, std::ptr::null_mut()),
         }
     }
 }
@@ -2467,10 +2504,10 @@ impl LaneStack {
     #[cold]
     #[inline(never)]
     fn drop_owned_held_from(&mut self, depth: usize) {
-        self.iterators.retain(|(owner, _)| *owner < depth);
-        self.with_objects.retain(|(owner, _)| *owner < depth);
-        self.records.retain(|(owner, _)| *owner < depth);
-        self.trap_checks.retain(|(owner, _)| *owner < depth);
+        drop_owned_entries(&mut self.iterators, depth);
+        drop_owned_entries(&mut self.with_objects, depth);
+        drop_owned_entries(&mut self.records, depth);
+        drop_owned_entries(&mut self.trap_checks, depth);
     }
 
     /// The generation of a lane run under `key`: the current one while the key holds, else
@@ -2492,12 +2529,26 @@ impl LaneStack {
     /// first seen. The link names the latest callee, so a callee already recorded changes
     /// nothing: a polymorphic site's steady state only reads its record.
     fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: super::compiled::CallTarget) {
+        let address = std::ptr::from_ref(link).addr();
+        let noted = &self.noted[noted_slot(address, target.function)];
+        if noted.get() == Some((address, target)) {
+            return;
+        }
         let mut sites = self.call_sites.borrow_mut();
-        let site = sites.entry(std::ptr::from_ref(link).addr()).or_default();
+        let site = sites.entry(address).or_default();
         if !site.contains(&target) {
-            if site.len() == super::compiled::tier_policy::POLYMORPHISM { site.remove(0); }
+            if site.len() == super::compiled::tier_policy::POLYMORPHISM {
+                site.remove(0);
+                self.forget_noted();
+            }
             site.push(target);
         }
+        noted.set(Some((address, target)));
+    }
+
+    fn forget_noted(&self) {
+        self.noted.iter().for_each(|noted| noted.set(None));
+        self.linked.iter().for_each(|linked| linked.set((0, Value::UNDEFINED)));
     }
 
     /// Drops the callees a collection swept from the sites' records before any allocation
@@ -2506,6 +2557,7 @@ impl LaneStack {
         self.wasm_export = None;
         self.js_import = None;
         self.bound_call = None;
+        self.forget_noted();
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
@@ -3984,7 +4036,7 @@ script_handler! {
             let key = vm.heap.alloc_string(crate::vm::wtf16::JsString::from_str(&integer.to_string()));
             note_allocation(vm);
             key
-        } else if matches!(vm.heap.get(value), Some(Cell::Symbol(_))) {
+        } else if vm.heap.is_symbol(value) {
             value
         } else {
             sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
@@ -4600,7 +4652,9 @@ script_handler! {
         };
         r.set(i.a, value);
         r.set(i.c, updated);
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
+        // The skipped `IncDec` is an accumulator producer (its row): the record after it may read
+        // the update from the accumulator, so it carries it as the `IncDec` would.
+        next!(cx, r, following(following(ip)), Carried { acc: Slot::of(updated), ..Carried::script_in(cx, view) })
     }
 }
 
@@ -11554,10 +11608,11 @@ lane_handler! {
     fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
-        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) } {
+        let raw = const { opcode(OP).class().eq(Class::WasmFloatBinary64Raw) };
+        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) || opcode(OP).class().eq(Class::WasmFloatBinary64Raw) } {
             let (Some(left), Some(right), Some(operator)) = (
-                left.bits64(),
-                right.bits64(),
+                if raw { Some(left.to_bits()) } else { left.bits64() },
+                if raw { Some(right.to_bits()) } else { right.bits64() },
                 F64BinaryOperator::from_tag(i.imm()),
             ) else {
                 return exit(ip);
@@ -11573,7 +11628,7 @@ lane_handler! {
             };
             operator.evaluate(f32::from_bits(left as u32), f32::from_bits(right as u32))
         };
-        let Some(value) = lane_encode(view, value) else {
+        let Some(value) = (if raw { wide_result::<true>(view, value) } else { lane_encode(view, value) }) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -11599,7 +11654,7 @@ const FLOAT_ARITHMETIC: usize = 10;
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
     Some(match op.class() {
-        Class::WasmFloatBinary64 => match F64BinaryOperator::from_tag(selector)? {
+        Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -11632,7 +11687,7 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
 lane_handler! {
     /// Float arithmetic `ARITH` of width f64 (`WIDE`) or f32, with the
     /// operators' own semantics (`crate::wasm::float`): the hardware result.
-    fn lane_float_arithmetic<WIDE: bool, ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
+    fn lane_float_arithmetic<WIDE: bool, RAW: bool, ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
         /// The arithmetic result, or a comparison's truth value.
@@ -11664,6 +11719,8 @@ lane_handler! {
             let left = f64::from_bits(left.float_bits64());
             let right = f64::from_bits(right.float_bits64());
             match apply!(left, right) {
+                // A raw register holds any word: no NaN is canonicalized.
+                Outcome::Float(result) if RAW => Value::from_bits(result.to_bits()),
                 Outcome::Float(result) => Value::from_float_bits64(result.to_bits()),
                 Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
             }
@@ -11694,6 +11751,15 @@ fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
         FLOAT_GREATER => Err(left > right),
         FLOAT_LESS_EQUAL => Err(left <= right),
         _ => Err(left >= right),
+    }
+}
+
+/// The width index of float binary `op` in `FloatArithmetic::HANDLERS`.
+fn float_width_index(op: Op) -> usize {
+    match op.class() {
+        Class::WasmFloatBinary64Raw => 2,
+        Class::WasmFloatBinary64 => 1,
+        _ => 0,
     }
 }
 
@@ -11958,36 +12024,38 @@ impl<H: Host> FloatPairs<H> {
 struct FloatArithmetic<H>(std::marker::PhantomData<H>);
 
 macro_rules! float_arithmetic_handlers {
-    ($host:ty, $wide:expr) => {
+    ($host:ty, $wide:expr, $raw:expr) => {
         [
-            float_arithmetic_handlers!($host, $wide, FLOAT_ADD),
-            float_arithmetic_handlers!($host, $wide, FLOAT_SUBTRACT),
-            float_arithmetic_handlers!($host, $wide, FLOAT_MULTIPLY),
-            float_arithmetic_handlers!($host, $wide, FLOAT_DIVIDE),
-            float_arithmetic_handlers!($host, $wide, FLOAT_EQUAL),
-            float_arithmetic_handlers!($host, $wide, FLOAT_NOT_EQUAL),
-            float_arithmetic_handlers!($host, $wide, FLOAT_LESS),
-            float_arithmetic_handlers!($host, $wide, FLOAT_GREATER),
-            float_arithmetic_handlers!($host, $wide, FLOAT_LESS_EQUAL),
-            float_arithmetic_handlers!($host, $wide, FLOAT_GREATER_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_ADD),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_SUBTRACT),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_MULTIPLY),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_DIVIDE),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_NOT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_LESS),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_GREATER),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_LESS_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_GREATER_EQUAL),
         ]
     };
-    ($host:ty, $wide:expr, $arith:expr) => {
+    ($host:ty, $wide:expr, $raw:expr, $arith:expr) => {
         [
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_NONE> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_A> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_B> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_C> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_PAIR> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_NONE> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_A> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_B> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_C> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_PAIR> as Handler,
         ]
     };
 }
 
 impl<H: Host> FloatArithmetic<H> {
-    /// By width (f32, then f64), arithmetic index and accumulator field.
-    const HANDLERS: [[[Handler; ACC_POSITIONS]; FLOAT_ARITHMETIC]; 2] = [
-        float_arithmetic_handlers!(H, false),
-        float_arithmetic_handlers!(H, true),
+    /// By width (f32, then f64, then f64 over raw registers: `FLOAT_RAW_F64`), arithmetic
+    /// index and accumulator field.
+    const HANDLERS: [[[Handler; ACC_POSITIONS]; FLOAT_ARITHMETIC]; 3] = [
+        float_arithmetic_handlers!(H, false, false),
+        float_arithmetic_handlers!(H, true, false),
+        float_arithmetic_handlers!(H, true, true),
     ];
 }
 
@@ -12003,9 +12071,10 @@ lane_handler! {
 lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
-        let value = if const { opcode(OP).is_wasm_f64_unary() } {
+        let raw = const { opcode(OP).class().eq(Class::WasmFloatUnary64Raw) };
+        let value = if const { opcode(OP).is_wasm_f64_unary() || opcode(OP).class().eq(Class::WasmFloatUnary64Raw) } {
             let (Some(input), Some(operator)) =
-                (input.bits64(), F64UnaryOperator::from_tag(i.imm()))
+                (if raw { Some(input.to_bits()) } else { input.bits64() }, F64UnaryOperator::from_tag(i.imm()))
             else {
                 return exit(ip);
             };
@@ -12018,7 +12087,7 @@ lane_handler! {
             };
             operator.evaluate(f32::from_bits(input as u32))
         };
-        let Some(value) = lane_encode(view, value) else {
+        let Some(value) = (if raw { wide_result::<true>(view, value) } else { lane_encode(view, value) }) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -12037,6 +12106,7 @@ fn wide_operand<const RAW: bool>(value: Value) -> Option<u64> {
 fn wide_result<const RAW: bool>(view: Carried, value: crate::WasmValue) -> Option<Value> {
     match value {
         crate::WasmValue::I64(word) if RAW => Some(Value::from_bits(word as u64)),
+        crate::WasmValue::F64(bits) if RAW => Some(Value::from_bits(bits)),
         value => lane_encode(view, value),
     }
 }
@@ -14058,9 +14128,7 @@ impl<H: Host> Vm<H> {
             };
             // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
             // linked may hold another site's callee since, so only the record names its own.
-            if self.tier_may_run(crate::jit_mode::Tier::ANY) {
-                self.note_linked_callee(link, index);
-            }
+            self.note_linked_callee(link, index);
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
@@ -14084,13 +14152,32 @@ impl<H: Host> Vm<H> {
         self.relink_closure(callee, linked)
     }
 
-    /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`).
+    /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`) where a tier may
+    /// run. A polymorphic site's steady state re-notes the callees it alternates between: one compare of
+    /// `LaneStack::linked` finds them noted, as the interpreter's own link test costs.
+    #[inline(always)]
+    fn note_linked_callee(&self, link: &std::cell::Cell<u16>, index: usize) {
+        if self.execution_mode != super::ExecutionMode::Compiled {
+            return;
+        }
+        let address = std::ptr::from_ref(link).addr();
+        // SAFETY: the caller resolved `index` within the cache.
+        let callee = unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) }.callee;
+        if self.lane_stack.linked[noted_slot(address, index as u32)].get() != (address, callee) {
+            self.note_linked_callee_slow(address, link, index);
+        }
+    }
+
     #[cold]
     #[inline(never)]
-    fn note_linked_callee(&self, link: &std::cell::Cell<u16>, index: usize) {
+    fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
         let current = &self.lane_stack.script_targets.entries[index];
-        self.note_site_callee(link, super::compiled::CallTarget {
-            callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
+        // Where no tier runs, no region reads the record: the pair is marked only.
+        if self.tier_may_run(crate::jit_mode::Tier::ANY) {
+            self.note_site_callee(link, super::compiled::CallTarget {
+                callee: super::compiled::CalleeBinding::Identity(current.callee), function: current.function });
+        }
+        self.lane_stack.linked[noted_slot(address, index as u32)].set((address, current.callee));
     }
 
     /// `script_call_entry` of a callee of another program than the running one, whose
@@ -14332,7 +14419,11 @@ impl<H: Host> Vm<H> {
                 None if body.strict => ThisBinding::Strict,
                 None => ThisBinding::Sloppy,
             },
-            lexical_this: lexical_this.flatten().unwrap_or(Value::UNDEFINED),
+            lexical_this: match lexical_this {
+                Some(this) => this.unwrap_or(Value::UNDEFINED),
+                None if body.strict => Value::UNDEFINED,
+                None => self.realm.globals,
+            },
             // A construction activates in place (`lane_activate`), which gathers no rest, and
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
@@ -14398,7 +14489,12 @@ impl<H: Host> Vm<H> {
         let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.environment(env) else {
             return std::ptr::null();
         };
-        if *function == u32::MAX || *function == super::ROOT_FUNCTION_ID {
+        // A root environment's slot may project a global var, a global lexical binding or an
+        // import, which reads go through; one whose every slot is the binding (a strict
+        // eval's) is read as any other.
+        if *function == u32::MAX
+            || (*function == super::ROOT_FUNCTION_ID && (scope.program() != Some(program.raw()) || !self.programs.root_slots_are_bindings(program)))
+        {
             return std::ptr::null();
         }
         let Some(capture) = slots.dense_storage() else {
@@ -14597,11 +14693,17 @@ macro_rules! lane_plain_activation {
     ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {{
         let (cx, vm, r, ip, i, target) = ($cx, $vm, $r, $ip, $i, $target);
         // A plain call's receiver is `undefined` by its record (`lane_script_call`'s `PLAIN`).
-        let receiver = if $plain { Value::UNDEFINED } else { r.get(i.c) };
+        // Its `this` is then its target's (`ScriptCallTarget::lexical_this`), one load.
         // A receiver whose binding needs the heap takes the out-of-line form, so this
         // handler makes no call and keeps its registers.
-        let Some(this) = lane_direct_call_this(vm, target, receiver) else {
-            sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+        let this = if $plain {
+            debug_assert_eq!(lane_direct_call_this(vm, target, Value::UNDEFINED), Some(target.lexical_this));
+            target.lexical_this
+        } else {
+            let Some(this) = lane_direct_call_this(vm, target, r.get(i.c)) else {
+                sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
+            };
+            this
         };
         // Values past the parameters and a full lane stack take the out-of-line form too,
         // whose activation keeps them or grows the stack (`lane_activate`), and so does another
@@ -16926,7 +17028,10 @@ script_handler! {
         {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
-            // Later runs of the site try the plan first.
+            // Later runs of the site try the plan first. The site notes its callee, which a body
+            // reads to keep the receiver as its field values (`scalar_construct_plan`).
+            vm.note_site_callee(unsafe { &(*ip).call_link }, super::compiled::CallTarget {
+                callee: super::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & crate::bytecode::RETURN_REGISTER == 0 {
                 requicken::<H>(ip, lane_planned_construct::<H>);
                 r.set(i.a, this);
@@ -19807,10 +19912,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     // A construction yields its receiver, the activation's `this`, for a non-object result.
     if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).registers }.this(); }
     let stack: &mut LaneStack = &mut vm.lane_stack;
-    let depth = stack.activations.len().checked_sub(1)?;
-    // SAFETY: `depth` is below the length; a reference, not `last`'s `Option`, so the
-    // address needs no null test.
-    let top = unsafe { stack.activations.get_unchecked(depth) };
+    let top = stack.activations.last()?;
     let expected = returning_completion(CROSSES, CONSTRUCTS, SETTLES);
     let ActivationKind::Script(script) = &top.kind else { return None };
     if script.completion != expected { return None; }
@@ -21791,10 +21893,10 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
             Class::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
-            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 => {
+            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
                 return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
             }
-            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 => {
+            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => {
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
             Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, false, ACC>),
@@ -22503,7 +22605,7 @@ fn derive_lane_view<'live, H: Host>(
                         })
                     })
             } else if let Some(handler) = float_arithmetic(op, instruction.imm())
-                .map(|arith| FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())][usize::from(arith)][usize::from(acc)])
+                .map(|arith| FloatArithmetic::<H>::HANDLERS[float_width_index(op)][usize::from(arith)][usize::from(acc)])
                 .or_else(|| i64_operator_handler::<H>(op, instruction.imm(), acc))
             {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
@@ -23999,8 +24101,8 @@ fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
 
 /// Gives each `IncDec` record the handler of its direction, and runs each `ToNumeric` whose
 /// result the next record, an `IncDec`, reads as one record (`lane_postfix_update`). The
-/// `IncDec` record stays for jumps that reach it; it reads no accumulator, and neither does
-/// its successor, since it produces none.
+/// `IncDec` record stays for jumps that reach it. The record after it may read the update as
+/// its accumulator (the `IncDec` row produces one), which the fused record carries.
 fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
     for pc in 0..records.len().saturating_sub(1) {
         let (conversion, update) = (&records[pc], &records[pc + 1]);
