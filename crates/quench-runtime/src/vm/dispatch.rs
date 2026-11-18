@@ -60,7 +60,7 @@ impl<H: Host> Vm<H> {
         // Hosts permitting proper tail calls leave strict terminal calls to `step`. Wasm programs run in
         // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
         // exhaustion accounting, so they are never inlined as user calls.
-        if !i.op().is_ordinary_call()
+        if !crate::staged::calls_ordinary(i.op())
             || i.direct_eval()
             || self.direct_eval
             || self.parameter_eval
@@ -79,7 +79,7 @@ impl<H: Host> Vm<H> {
         if entry.push == super::InLoopPush::Settles {
             // Settling calls consume the ordinary register window and cannot take
             // CallArray's materialized argument vector through this continuation.
-            if i.op() == Op::CallArray {
+            if crate::staged::calls_array(i.op()) {
                 return None;
             }
             return self.try_settling_call(p, f, i, pc, callee, target);
@@ -98,7 +98,7 @@ impl<H: Host> Vm<H> {
         // indexed values before pushing the frame, just as `Vm::step` does. The
         // copied Values are rooted through activation setup below because the
         // caller resumes past the temporary array register before its frame is pushed.
-        let array_arguments = if i.op() == Op::CallArray {
+        let array_arguments = if crate::staged::calls_array(i.op()) {
             match self.array_values(self.read(f, window.base)) {
                 Ok(arguments) => Some(arguments),
                 Err(error) => return Some(Err(error)),
@@ -373,7 +373,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if !matches!(i.op(), Op::Call | Op::CallForwardingArguments)
+        if !crate::staged::calls_positional(i.op())
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -396,7 +396,7 @@ impl<H: Host> Vm<H> {
         // `f.call(...)`, a bound function without bound arguments, or an uncurried builtin
         // (`Vm::forwarded_call`). A forwarded `arguments` reaches here unmaterialized, which
         // only `apply` takes as its list.
-        let forwarded = if i.op() == Op::Call { self.forwarded_call(callee, target, window) } else { None };
+        let forwarded = if crate::staged::calls(i.op()) { self.forwarded_call(callee, target, window) } else { None };
         let arguments = match forwarded {
             Some(super::function::Forwarded { callee: forwarded_target, receiver: forwarded_this, args: forwarded_arguments, .. }) => {
                 (target, this) = (forwarded_target, forwarded_this);
@@ -412,7 +412,7 @@ impl<H: Host> Vm<H> {
                 }) => {
                     // A forwarded `arguments` reaches here unmaterialized, which only `apply`
                     // takes as its list.
-                    if i.op() != Op::Call {
+                    if !crate::staged::calls(i.op()) {
                         return None;
                     }
                     let (bound_target, bound_this, bound) = self.bound_function_parts(*env)?;
@@ -427,7 +427,7 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => {
                     let list = window.get(2).copied().unwrap_or(Value::UNDEFINED);
-                    if i.op() != Op::Call || self.heap.array(list).is_none() {
+                    if !crate::staged::calls(i.op()) || self.heap.array(list).is_none() {
                         return None;
                     }
                     target = window.first().copied().unwrap_or(Value::UNDEFINED);
@@ -471,7 +471,7 @@ impl<H: Host> Vm<H> {
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
         let callee = self.read(f, i.register_b());
-        if i.op() != Op::Call
+        if !crate::staged::calls(i.op())
             || !matches!(
                 self.heap.function(callee),
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::ReflectApply), .. })
@@ -898,7 +898,7 @@ impl<H: Host> Vm<H> {
             }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
-                let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
+                let key = crate::staged::reads_argument(i.op()).then(|| self.read(f, i.register_b()));
                 let value = self.read_arguments_binding(p, f, binding, key)?;
                 self.write(f, i.result_register(), value);
             }
@@ -1494,7 +1494,7 @@ impl<H: Host> Vm<H> {
                 (*pc - 1) as u32,
                 integer,
             );
-            if i.op() != Op::Binary {
+            if !crate::staged::binary(i.op()) {
                 self.profile.numeric_binary_path(
                     operator as usize,
                     integer,
@@ -1512,7 +1512,7 @@ impl<H: Host> Vm<H> {
         if let Some(local) = i.numeric_local_target() {
             self.frames[f].locals[local as usize] = v;
             self.profile
-                .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
+                .virtual_opcode(self.frames[f].program.raw(), crate::staged::STORE_LOCAL_PLAIN_ROW as usize);
         } else {
             self.write(f, i.result_register(), v);
         }
@@ -1901,16 +1901,16 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "native-execution")]
     pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
-        match i.op() {
-            Op::Construct => {
-                let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
-                    unreachable!("a pushed construction passes registers")
-                };
-                (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
-            }
+        if crate::staged::Operation::<u64, ()>::is_construction(i) {
+            let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
+                unreachable!("a pushed construction passes registers")
+            };
+            (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
+        } else if crate::staged::Operation::<u64, ()>::is_field_read(i) {
             // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-            Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
-            _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
+            (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
+        } else {
+            (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value)
         }
     }
 }

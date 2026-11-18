@@ -780,6 +780,25 @@ pub(crate) const fn jumps_when_false(op: Op) -> bool { matches!(op, Op::JumpFals
 pub(crate) const fn does_nothing(op: Op) -> bool { matches!(op, Op::Nop) }
 /// Stores a function's `var` binding (`StoreVarBinding`), a store to its slot where the function is nested.
 pub(crate) const fn stores_var_binding(op: Op) -> bool { matches!(op, Op::StoreVarBinding) }
+/// Reads `this` (`LoadThis`).
+pub(crate) const fn loads_this(op: Op) -> bool { matches!(op, Op::LoadThis) }
+/// Reads an `arguments` element (`ArgumentGet`).
+pub(crate) const fn reads_argument(op: Op) -> bool { matches!(op, Op::ArgumentGet) }
+/// Makes a call through its callee register with its arguments positional (`Call`) or forwarded
+/// from the caller's `arguments` (`CallForwardingArguments`).
+pub(crate) const fn calls_positional(op: Op) -> bool { matches!(op, Op::Call | Op::CallForwardingArguments) }
+/// Makes a call through a method site (`CallMethod`), whose callee is a property of its receiver.
+pub(crate) const fn calls_method_site(op: Op) -> bool { matches!(op, Op::CallMethod) }
+/// Makes a call in any form that is not a construction (`Call`, `CallArray`, `CallSpread`,
+/// `CallForwardingArguments`, `CallMethod`).
+pub(crate) const fn makes_call(op: Op) -> bool {
+    matches!(op, Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments | Op::CallMethod)
+}
+/// Whether `op` is a leaf record that only moves or computes an immediate value, or a branch a
+/// leaf may hold (the catalog's `LEAF_VALUE` and `LEAF_JUMP` traits).
+pub(crate) const fn leaf_value_or_jump(op: Op) -> bool { op.is_leaf_value() || op.is_leaf_jump() }
+/// Whether `op` is a binary record a leaf admits with register or constant operands (`LEAF_BINARY`).
+pub(crate) const fn leaf_binary_operation(op: Op) -> bool { op.is_leaf_binary() }
 
 
 /// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering
