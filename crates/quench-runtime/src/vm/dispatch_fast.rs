@@ -670,7 +670,7 @@ pub(super) use body_calls::{lane_body_call, lane_body_construct};
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_kind, OperandKinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, note_widened, Records};
+use operand_feedback::{has_operand_feedback, note_kind, OperandKinds, note_number_kinds, note_operands, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -3933,17 +3933,6 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
 
 
 
-/// The update of a BigInt (`Vm::bigint_increment`, which allocates its result); `None` for
-/// any other value. Out of line: its arithmetic keeps stack temporaries a handler inlining
-/// it would hold on its common path.
-#[inline(never)]
-fn lane_bigint_increment<H: Host, const DECREMENT: bool>(cx: *mut LaneContext<H>, value: Value) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    let next = vm.bigint_increment(value, DECREMENT)?;
-    note_allocation(vm);
-    Some(next)
-}
-
 script_handler! {
     /// `IncDec` of a Number whose result the next record, a register `GetIndex`
     /// (`lane_get_index_registers`), reads as its index, the `a[++i]` of compiled loops
@@ -4145,25 +4134,6 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A register `Move` whose next record is a proved element read (`lane_get_index_proved`,
-    /// `specialize_moved_index_reads`), the key copy `x[t = i]` keeps for a store whose value
-    /// then updates `i` (V8-v7 NavierStokes' `x[currentRow] = ... x[++currentRow] ...`): the
-    /// copy and the read as one record. A read the proofs decline continues at the read's
-    /// own record, which proves its base as before.
-    fn lane_move_get_index_proved<>(cx, r, ip, i, view) {
-        let moved = r.get(i.b);
-        r.set(i.a, moved);
-        // SAFETY: the pair is two records, the second never the view's last.
-        let read = unsafe { &*following(ip) };
-        let Some(value) = (unsafe { (*cx).proofs.element(read.b, r.get(read.b), proof_key(r.get(read.c))) }) else {
-            next!(cx, r, following(ip), Carried { acc: Slot::of(moved), ..view })
-        };
-        r.set(read.a, value);
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
     }
 }
 
@@ -4676,301 +4646,16 @@ unsafe fn running_callee<H: Host>(cx: *mut ()) -> Option<Value> {
     }
 }
 
-/// A lane record's register field as a staged operand: a lane field names a register of the
-/// running function, below `Operand::PAYLOAD_MASK`, so the operand's kind test folds away.
-#[inline(always)]
-fn record_register_operand(register: u16) -> crate::bytecode::Operand {
-    // SAFETY: a register is at most `bytecode::REGISTER_MASK` (the bits above are the result
-    // field's flags, which an operand field never carries), and that mask is the payload's.
-    unsafe { std::hint::assert_unchecked(register <= crate::bytecode::Operand::PAYLOAD_MASK) };
-    crate::bytecode::Operand::register(register)
-}
-
-script_handler! {
-    /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
-    /// when the view was derived (`specialize_register_operands`): the fields hold the
-    /// operand registers themselves. Integers take the fast path here, which saves no
-    /// registers; the first other operand switches the record to `lane_operator_numbers`.
-    fn lane_operator<OP: u32>(cx, r, ip, i, view) {
-        // An arithmetic operator is its staged Number row in the int32 domain, widening as the
-        // operator's Number result does; operands other than two int32 are the row's miss. A
-        // division has no int32 form (its result is a binary64): its own path below takes it.
-        if let Some(operation) = super::operations::NumberArithmetic::from_operator(OP)
-            .filter(|operation| !matches!(operation, super::operations::NumberArithmetic::Divide))
-        {
-            let mut stage = crate::staged::Concrete::new(std::ptr::null());
-            let mut frame = lane_frame::LaneFrame::<ACC_NONE>::new(r, Carried::script_in(cx, view));
-            let row = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic {
-                destination: i.a, left: record_register_operand(i.b), right: record_register_operand(i.c),
-                operation, domain: crate::staged::Domain::Int32, overflow: crate::staged::Overflow::Widen,
-                zero: crate::staged::NegativeZero::Exit });
-            match crate::staged::step(&mut stage, &mut frame, row) {
-                crate::staged::Step::Value(_) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
-                _ => sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view)),
-            }
-        }
-        let (Some(left), Some(right)) = (r.int(i.b), r.int(i.c)) else {
-            sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        let Some(value) = super::operations::integer_pair_operator::<OP>(left, right) else {
-            sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator`'s first operands other than two integers, out of line: the feedback
-    /// note is a call, and a call on a path that rejoins none left the integer handler a frame
-    /// on its hit path (shrink-wrapping places the save in the entry block).
-    #[inline(never)]
-    fn lane_operator_first_miss<OP: u32>(cx, r, ip, i, view) {
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_first_miss(cx, ip, r.get(i.b), r.get(i.c)) };
-        requicken::<H>(ip, lane_operator_numbers::<H, OP>);
-        sibling!(lane_operator_numbers::<H, OP>, r, ip, Carried::script_in(cx, view))
-    }
-}
 
 
 
 
-script_handler! {
-    /// `lane_operator` at a site that has met operands other than two integers: any Numbers,
-    /// through their double values. Other operands take `lane_operator_other`, out of line,
-    /// so this handler saves no registers for them.
-    #[inline(never)]
-    fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
-        // Arithmetic on two Numbers, its operands read in memory (`Registers::number`), an
-        // overflowing int32 sum (SJCL's `w[i] + k[i] + h7`) included, past the general path.
-        if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION)
-            && let Some((left, left_int)) = r.number_kind(i.b)
-            && let Some((right, right_int)) = r.number_kind(i.c)
-        {
-            // Two int32 again, as a site that met a double once mostly sees afterwards
-            // (`-a + i` after its one `-0`): the checked int32 step, which widens itself,
-            // in place of the round trip through doubles. Only two int32 can widen.
-            if left_int && right_int {
-                let value = if OP == DIVISION {
-                    super::operations::number_operator::<OP>(left, right).map(Value::number)
-                } else {
-                    super::operations::integer_pair_operator::<OP>(r.i32(i.b), r.i32(i.c))
-                };
-                if let Some(value) = value {
-                    // SAFETY: an arithmetic record of the running view.
-                    unsafe { note_widened(cx, ip, value) };
-                    r.set(i.a, value);
-                    next!(cx, r, following(ip), Carried::script_in(cx, view))
-                }
-            } else if let Some(number) = super::operations::number_operator::<OP>(left, right) {
-                r.set(i.a, Value::number(number));
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-        }
-        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
-        else {
-            sibling!(lane_operator_other::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_pair_result(cx, ip, r.get(i.b), r.get(i.c), value) };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator_numbers` of operands not both Numbers: a concatenation of strings or
-    /// BigInt arithmetic in place; anything else takes the general path.
-    #[inline(never)]
-    fn lane_operator_other<OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        // Two heap operands neither a string: BigInt arithmetic first, which notes its kind
-        // without classifying the operands and skips the concatenation's tests.
-        if left.is_heap() && right.is_heap() && !(unsafe { vm(cx) }).heap.is_string(left) && !(unsafe { vm(cx) }).heap.is_string(right)
-            && let Some(value) = lane_bigint_value(cx, OP, left, right)
-        {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_kind(cx, ip, OperandKinds::BIGINT) };
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_operands(cx, ip, left, right) };
-        let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), r.get(i.c)) else {
-            return exit(ip);
-        };
-        // A `+` record of its own that joined a string: later runs go straight to the join
-        // (`lane_operator_strings`), past the Number and BigInt tests and the feedback note,
-        // which already holds the string kind.
-        if OP == super::operations::ADDITION && unsafe { vm(cx) }.heap.is_string(value) {
-            let own = unsafe { (*ip).handler };
-            if own == lane_operator_numbers::<H, OP> as Handler as *const () {
-                requicken::<H>(ip, lane_operator_strings::<H>);
-            }
-        }
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator_numbers` of `+` at a site that has joined strings: two strings joined
-    /// in place (`Vm::intern_dynamic_concat`), or a string and a Number by
-    /// `lane_concatenation`. Any other operands give the record back to
-    /// `lane_operator_numbers`, which notes them.
-    fn lane_operator_strings<>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), r.get(i.c));
-        let vm = unsafe { vm(cx) };
-        let value = if vm.heap.is_string(left) && vm.heap.is_string(right) {
-            let value = vm.intern_dynamic_concat(left, right);
-            note_allocation(vm);
-            value
-        } else {
-            lane_concatenation(cx, left, right)
-        };
-        if let Some(value) = value {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        requicken::<H>(ip, lane_operator_numbers::<H, { super::operations::ADDITION }>);
-        sibling!(lane_operator_numbers::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-/// Number operator `OP` as the lane's operator records compute it: two integers by
-/// `integer_operator`, any other Numbers through their double values.
-#[inline(always)]
-fn lane_number_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    // A branch, not `Option::or_else`: the closure was left out of line as a call per
-    // double operation (V8-v7 Crypto, 0.7M calls).
-    if let Some(value) = super::operations::integer_operator::<OP>(left, right) {
-        return Some(value);
-    }
-    super::operations::number_value_operator::<OP>(left, right)
-}
-
-
-
-script_handler! {
-    /// `lane_operator_constant` of an integer constant, which the view proved when it chose
-    /// the handler (`constant_operator_handler`) and carries as the record's immediate: only
-    /// the register operand's tag is tested.
-    fn lane_operator_integer_constant<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = r.int(i.b).and_then(|left| super::operations::integer_pair_operator::<OP>(left, i.imm() as i32))
-        else {
-            sibling!(lane_operator_integer_constant_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator_integer_constant`'s first operand other than an integer, out of line,
-    /// as `lane_operator_first_miss`.
-    #[inline(never)]
-    fn lane_operator_integer_constant_first_miss<OP: u32>(cx, r, ip, i, view) {
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_first_miss(cx, ip, r.get(i.b), Value::integer(i.imm() as i32)) };
-        requicken::<H>(ip, lane_operator_integer_constant_numbers::<H, OP>);
-        sibling!(lane_operator_integer_constant_numbers::<H, OP>, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator_constant_numbers` and `lane_operator_constant_other` of
-    /// `lane_operator_integer_constant`'s integer, out of line.
-    #[inline(never)]
-    fn lane_operator_integer_constant_numbers<OP: u32>(cx, r, ip, i, view) {
-        let (left, right) = (r.get(i.b), Value::integer(i.imm() as i32));
-        let value = super::operations::number_value_operator::<OP>(left, right).or_else(|| {
-            // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_operands(cx, ip, left, right) };
-            (OP == super::operations::ADDITION).then(|| lane_concatenation(cx, left, right)).flatten()
-        });
-        let Some(value) = value else {
-            return exit(ip);
-        };
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_pair_result(cx, ip, left, right, value) };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator_numbers` with a constant right operand; other operands take
-    /// `lane_operator_constant_other`, out of line.
-    #[inline(never)]
-    fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant())
-        else {
-            sibling!(lane_operator_constant_other::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 /// The double a `lane_operator_double_constant` record carries as its constant: a Number no
 /// integer holds, whose value bits are its double's (`constant_operator_handler`).
 #[inline(always)]
 fn double_constant(i: &LaneInstruction) -> f64 {
     f64::from_bits(i.constant().to_bits())
-}
-
-script_handler! {
-    /// `lane_operator_constant` of an arithmetic operator (`fused_arithmetic`) whose constant is
-    /// a double no integer holds, proved when the view chose the handler
-    /// (`constant_operator_handler`): no integer step, which such a constant always declines,
-    /// and no tag test of the constant. A left operand other than a Number takes
-    /// `lane_operator_constant_numbers`.
-    fn lane_operator_double_constant<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = r.get(i.b).as_number().and_then(|left| super::operations::number_operator::<OP>(left, double_constant(i)))
-        else {
-            sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, Value::number(value));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_operator_other` of `lane_operator_constant_numbers`, whose right operand is the
-    /// record's constant.
-    #[inline(never)]
-    fn lane_operator_constant_other<OP: u32>(cx, r, ip, i, view) {
-        // SAFETY: the record is an arithmetic record of the running view.
-        unsafe { note_operands(cx, ip, r.get(i.b), i.constant()) };
-        let Some(value) = lane_other_operator_value(cx, OP, r.get(i.b), i.constant()) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// An addition or subtraction (`OP`) of a register and a register or, where `CONSTANT`, an
-    /// integer constant (the record's immediate, `lane_operator_integer_constant`), whose
-    /// result the next record truncates to an int32 (`| 0`) and nothing after reads
-    /// (`specialize_int32_truncations`), as `(a + b) | 0` compiles: the exact sum of two int32s
-    /// is an integer a double holds, so its truncation is their wrapping sum, which the record
-    /// writes to the truncation's register. Other operands run the operator's own record
-    /// (`lane_operator`, `lane_operator_integer_constant`), then the truncation's.
-    fn lane_operator_int32<OP: u32, CONSTANT: bool>(cx, r, ip, i, view) {
-        let right = if CONSTANT { Some(i.imm() as i32) } else { r.int(i.c) };
-        let (Some(left), Some(right)) = (r.int(i.b), right) else {
-            let own: Handler = if CONSTANT { lane_operator_integer_constant::<H, OP> } else { lane_operator::<H, OP> };
-            sibling!(own, r, ip, Carried::script_in(cx, view))
-        };
-        let value = if OP == super::operations::SUBTRACTION { left.wrapping_sub(right) } else { left.wrapping_add(right) };
-        // SAFETY: the pair is two records, the second never the view's last.
-        let truncation = unsafe { &*following(ip) };
-        r.set(truncation.a, Value::integer(value));
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
-    }
 }
 
 /// `plain_keyed_get` at lane site `ip`, recording the own slot a symbol or index key's proof
@@ -5184,135 +4869,6 @@ script_handler! {
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
-}
-
-script_handler! {
-    /// An address computed as C computes one and its typed array read, three records as one
-    /// (`specialize_typed_addresses`): `t = x + K` (`lane_operator_integer_constant` of
-    /// addition), with `SHIFT` `u = t >> S` (of right shift), then `base[u]` (or `base[t]`)
-    /// through the view cache (`Vm::typed_cached_element`), as mandreel's `heapU16[(p+K)>>1]`.
-    /// The intermediates are written as their records write them. Any other case (a non-int
-    /// `x`, a sum past int32 unshifted, a view with no current entry) runs the addition's own
-    /// record and the records after it.
-    fn lane_typed_address_get<SHIFT: bool, KIND: usize>(cx, r, ip, i, view) {
-        if KIND == UNSEEN_TYPED_KIND {
-            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, true>, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(x) = r.int(i.b) else {
-            sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
-        };
-        let sum = x.wrapping_add(i.imm() as i32);
-        // SAFETY: the pass fused this record with the one or two after it in the view.
-        let (key, read) = if SHIFT {
-            let shift = unsafe { &*following(ip) };
-            (sum >> (shift.imm() & 31), unsafe { &*following(following(ip)) })
-        } else {
-            // An unshifted sum past int32 is a double key: the records' own path reads it.
-            if i64::from(x) + i64::from(i.imm() as i32) != i64::from(sum) {
-                sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
-            }
-            (sum, unsafe { &*following(ip) })
-        };
-        let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<KIND>(r.get(read.b), Value::integer(key)) else {
-            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, true>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, Value::integer(sum));
-        if SHIFT {
-            // SAFETY: as above.
-            r.set(unsafe { (*following(ip)).a }, Value::integer(key));
-        }
-        r.set(read.a, value);
-        let after = if SHIFT { following(following(following(ip))) } else { following(following(ip)) };
-        next!(cx, r, after, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_typed_address_get` of a store: `base[(x + K) >> S] = v` (or `base[x + K] = v`)
-    /// as one record (`specialize_typed_addresses`), through the view cache
-    /// (`Vm::typed_cached_store`). Any other case runs the addition's own record.
-    fn lane_typed_address_set<SHIFT: bool, KIND: usize>(cx, r, ip, i, view) {
-        if KIND == UNSEEN_TYPED_KIND {
-            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, false>, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(x) = r.int(i.b) else {
-            sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
-        };
-        let sum = x.wrapping_add(i.imm() as i32);
-        // SAFETY: the pass fused this record with the one or two after it in the view.
-        let (key, store) = if SHIFT {
-            let shift = unsafe { &*following(ip) };
-            (sum >> (shift.imm() & 31), unsafe { &*following(following(ip)) })
-        } else {
-            if i64::from(x) + i64::from(i.imm() as i32) != i64::from(sum) {
-                sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
-            }
-            (sum, unsafe { &*following(ip) })
-        };
-        if !(unsafe { vm(cx) }).typed_cached_store::<KIND>(r.get(store.b), Value::integer(key), r.get(store.a)) {
-            sibling!(lane_typed_address_miss::<H, SHIFT, KIND, false>, r, ip, Carried::script_in(cx, view))
-        }
-        r.set(i.a, Value::integer(sum));
-        if SHIFT {
-            // SAFETY: as above.
-            r.set(unsafe { (*following(ip)).a }, Value::integer(key));
-        }
-        let after = if SHIFT { following(following(following(ip))) } else { following(following(ip)) };
-        next!(cx, r, after, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_typed_address_get` (or `_set`) whose access found no current view entry. A base
-    /// that is no typed array (a plain array read `a[i + 1]` has the same shape) makes the
-    /// record its addition again for good; a typed array base gets its entry made
-    /// (`Vm::fill_typed_view`) and makes the record the variant of its kind, or any-kind for
-    /// a second kind. Either way the addition's own record runs.
-    #[inline(never)]
-    fn lane_typed_address_miss<SHIFT: bool, KIND: usize, READ: bool>(cx, r, ip, i, view) {
-        // SAFETY: the pass fused this record with the one or two after it in the view.
-        let access = unsafe { &*if SHIFT { following(following(ip)) } else { following(ip) } };
-        let vm = unsafe { vm(cx) };
-        let base = r.get(access.b);
-        match vm.typed_array_kind_of(base) {
-            None => requicken::<H>(ip, lane_operator_integer_constant::<H, { super::operations::ADDITION }>),
-            Some(kind) => {
-                if KIND == UNSEEN_TYPED_KIND {
-                    requicken::<H>(ip, typed_address_handler::<H, SHIFT, READ>(Some(kind)));
-                } else if KIND != super::typed_array_access::ANY_TYPED_KIND && kind != crate::heap::TYPED_ARRAYS[KIND % TypedArrayKind::COUNT].kind {
-                    requicken::<H>(ip, typed_address_handler::<H, SHIFT, READ>(None));
-                }
-                vm.fill_typed_view(base);
-            }
-        }
-        sibling!(lane_operator_integer_constant::<H, { super::operations::ADDITION }>, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-/// The `KIND` of a fused address record that has run no access yet: its first access runs
-/// the miss (`lane_typed_address_miss`), which picks the variant of the kind it sees.
-const UNSEEN_TYPED_KIND: usize = usize::MAX - 1;
-
-/// The fused address record (`lane_typed_address_get`, `lane_typed_address_set`) for a site
-/// that has seen kind `kind`, or the any-kind record for no kind or one no variant serves.
-fn typed_address_handler<H: Host, const SHIFT: bool, const READ: bool>(kind: Option<TypedArrayKind>) -> Handler {
-    macro_rules! kinds {
-        ($($kind:ident),*) => {
-            match kind {
-                $(Some(TypedArrayKind::$kind) => if READ {
-                    lane_typed_address_get::<H, SHIFT, { TypedArrayKind::$kind as usize }> as Handler
-                } else {
-                    lane_typed_address_set::<H, SHIFT, { TypedArrayKind::$kind as usize }> as Handler
-                },)*
-                _ => if READ {
-                    lane_typed_address_get::<H, SHIFT, { super::typed_array_access::ANY_TYPED_KIND }> as Handler
-                } else {
-                    lane_typed_address_set::<H, SHIFT, { super::typed_array_access::ANY_TYPED_KIND }> as Handler
-                },
-            }
-        };
-    }
-    kinds!(Uint8, Uint8Clamped, Uint16, Uint32, Int8, Int16, Int32, Float32, Float64)
 }
 
 script_handler! {
@@ -10118,47 +9674,6 @@ fn lane_safepoint_writing<H: Host>(
 // no calls.
 
 lane_handler! {
-    /// A direct i32 load `OP` whose value the next record, a branch table,
-    /// selects on: both records run here, the value written as the load
-    /// writes it. With `ADD`, the record is a plain add of a constant ahead
-    /// of the load (`switch (*pc++)`), and the three run here, each result
-    /// written as its own record writes it. A load the general path must
-    /// run exits at its record.
-    fn lane_load_table<OP: u16, ACC: u8, ADD: bool>(cx, r, ip, i, view) {
-        let load = const {
-            match MemoryLoad::from_direct_op(opcode(OP)) {
-                Some(load) => load,
-                None => panic!("not a direct load"),
-            }
-        };
-        // With `ADD` and `ACC_C`, the accumulator holds the register both
-        // the add and the load read.
-        let ip = if ADD {
-            let base = read_i32::<ACC, ACC_C>(r, i.b, view);
-            r.set(i.a, view.integers.encode(base.wrapping_add(i.imm() as i32)));
-            following(ip)
-        } else {
-            ip
-        };
-        // SAFETY: the view fuses an add only with a following load record.
-        let i = unsafe { &*ip };
-        // SAFETY: as for `MemoryView::read`.
-        let Some(crate::WasmValue::I32(selector)) =
-            (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
-        else {
-            return exit(ip);
-        };
-        r.set(i.a, view.integers.encode(selector));
-        let table = following(ip);
-        // SAFETY: the view fuses a load only with a following table record.
-        let case = (selector as u32).min(unsafe { (*table).imm() });
-        // SAFETY: validation places `imm + 1` entries after the table.
-        let entry = unsafe { table.add(1 + case as usize) };
-        resume!(cx, lane_jump::<H>(cx, r, entry, false, view, None))
-    }
-}
-
-lane_handler! {
     /// A jump absorbing the move (`ADD` false) or i32 add of the constant
     /// `c` (`ADD` true) at its target: the record holds the target's fields
     /// and jumps past it, carrying the result as the target would.
@@ -10175,64 +9690,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// Two moves in a row (a parallel copy resolved in order): both
-    /// records run here, the second's value carried as its record carries
-    /// it. With `JUMP`, the unconditional jump after them runs here too, in
-    /// direction `BACKWARD`.
-    fn lane_move_pair<JUMP: bool, BACKWARD: bool>(cx, r, ip, i, view) {
-        r.set(i.a, r.get(i.b));
-        let next = following(ip);
-        // SAFETY: the view fuses a move only with a following move, and
-        // with `JUMP` a jump after it.
-        let second = unsafe { &*next };
-        let value = r.get(second.b);
-        if JUMP {
-            r.set(second.a, value);
-            let view = Carried { acc: Slot::of(value), ..view };
-            resume!(cx, lane_jump::<H>(cx, r, following(next), BACKWARD, view, None));
-        }
-        produce!(cx, r, next, second.a, value, view)
-    }
-}
-
-lane_handler! {
-    /// A move, reading its source through field `ACC`, whose next record is a zero-test jump
-    /// (a zero-test jump without a carried register), as at a loop's latch: both records
-    /// run here, the move's value carried as its own record carries it. The jump reads its
-    /// operand from its register, which the move has written if it names it.
-    fn lane_move_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
-        let value = read::<ACC, ACC_B>(r, i.b, view);
-        r.set(i.a, value);
-        let view = Carried { acc: Slot::of(value), ..view };
-        let next = following(ip);
-        // SAFETY: the view fuses a move only with a following zero-test jump.
-        let jump = unsafe { &*next };
-        if (r.i32(jump.a) == 0) == WHEN_ZERO {
-            resume!(cx, lane_jump::<H>(cx, r, next, BACKWARD, view, None));
-        }
-        next!(cx, r, following(next), view)
-    }
-}
-
-/// The moves fused with a following zero-test jump, indexed by whether the jump is taken on
-/// zero, its direction, and whether the move reads the accumulator.
-struct MoveZeroJumps<H>(std::marker::PhantomData<H>);
-
-impl<H: Host> MoveZeroJumps<H> {
-    const HANDLERS: [[[Handler; 2]; 2]; 2] = {
-        macro_rules! moves {
-            ($zero:literal, $backward:literal) => {
-                [
-                    lane_move_jump_i32_zero::<H, $zero, $backward, ACC_NONE>,
-                    lane_move_jump_i32_zero::<H, $zero, $backward, ACC_B>,
-                ]
-            };
-        }
-        [[moves!(false, false), moves!(false, true)], [moves!(true, false), moves!(true, true)]]
-    };
-}
-
-lane_handler! {
     /// A move (`ADD` false) or an i32 add of a constant (`ADD` true) whose
     /// next record is an unconditional jump, as at a loop latch: both
     /// records run here, the result written as its own record writes it.
@@ -10245,6 +9702,12 @@ lane_handler! {
         r.set(i.a, value);
         resume!(cx, lane_jump::<H>(cx, r, following(ip), BACKWARD, Carried { acc: Slot::of(value), ..view }, None))
     }
+}
+
+/// The head record of a move pair followed by a jump (`(Move, Move, Jump)`, a `FUSED_CHAINS`
+/// entry) in direction `backward`. The pair's two moves and the jump run as one record.
+fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
+    lane_frame::chain_row::<H, { opc::Move }, { opc::Move }, { opc::Jump }, { crate::staged::NO_LINK }>(backward)
 }
 
 /// The most records before a record that one fused record can run through:
@@ -10299,32 +9762,6 @@ fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> 
         (WasmI32Load, WasmI32Store),
         (WasmI32Load8U, WasmI32Store8),
         (WasmI64Load, WasmI64Store)
-    )
-}
-
-/// The fused handler for i32 load `op`, with address field `acc`, the
-/// branch table selecting on its value, and with `add` the plain add of a
-/// constant ahead of the load.
-fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
-    macro_rules! loads {
-        ($($load:ident),+) => {
-            match (op as u16, acc, add) {
-                $(
-                    (opc::$load, ACC_NONE, false) => Some(lane_load_table::<H, { opc::$load }, ACC_NONE, false> as Handler),
-                    (opc::$load, ACC_C, false) => Some(lane_load_table::<H, { opc::$load }, ACC_C, false> as Handler),
-                    (opc::$load, ACC_NONE, true) => Some(lane_load_table::<H, { opc::$load }, ACC_NONE, true> as Handler),
-                    (opc::$load, ACC_C, true) => Some(lane_load_table::<H, { opc::$load }, ACC_C, true> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    loads!(
-        WasmI32Load,
-        WasmI32Load8S,
-        WasmI32Load8U,
-        WasmI32Load16S,
-        WasmI32Load16U
     )
 }
 
@@ -10440,29 +9877,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// A move, reading its source through field `ACC`, whose moved value the next record,
-    /// direct i32 load `OP`, takes as its address: both records run here, each value written
-    /// as its own record writes it.
-    fn lane_move_load<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let load = const { direct_load(OP) };
-        let moved = read::<ACC, ACC_B>(r, i.b, view);
-        r.set(i.a, moved);
-        let next = following(ip);
-        // SAFETY: the view fuses a move only with a following load reading its value.
-        let access = unsafe { &*next };
-        let address = u64::from(moved.wasm_bits32()) + u64::from(access.imm());
-        // SAFETY: as for `MemoryView::read`.
-        let Some(value) = (unsafe { view.memory.read(load, address) }) else {
-            return exit(next);
-        };
-        let Some(value) = lane_encode(view, value) else {
-            return exit(next);
-        };
-        produce!(cx, r, next, access.a, value, view)
-    }
-}
-
-lane_handler! {
     /// Two direct i32 loads `LOAD` and the i32 register operator `OP` combining their values
     /// (`a[i] * b[j]`), the first value as its left operand when `FIRST_LEFT`: three records
     /// run here, the loads issued together, each value written as its own record writes it.
@@ -10525,158 +9939,6 @@ fn load_pair_binary_handler<H: Host>(load: Op, op: Op, first_left: bool) -> Opti
     )
 }
 
-lane_handler! {
-    /// An i32 add or subtract of a constant (`FIRST`), reading through field `ACC`, the and of
-    /// a constant over its result, and the immediate comparison jump `JUMP` testing that
-    /// (`(c - '0') & 0xff <= 9`): three records run here, each result written as its own
-    /// record writes it.
-    fn lane_offset_mask_jump<FIRST: u16, JUMP: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
-        let offset = const {
-            match I32BinaryOperator::from_immediate_op(opcode(FIRST)) {
-                Some(operator) => operator,
-                None => panic!("not an i32 immediate operator"),
-            }
-        };
-        let comparison = const {
-            match I32BinaryOperator::from_immediate_jump_op(opcode(JUMP)) {
-                Some(comparison) => comparison,
-                None => panic!("not an i32 immediate comparison jump"),
-            }
-        };
-        let Ok(shifted) = offset.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), i.imm() as i32) else {
-            return exit(ip);
-        };
-        r.set(i.a, view.integers.encode(shifted));
-        let mask_ip = following(ip);
-        // SAFETY: the view fuses an offset only with a following mask and comparison jump.
-        let mask = unsafe { &*mask_ip };
-        let masked = shifted & (mask.imm() as i32);
-        let encoded = view.integers.encode(masked);
-        r.set(mask.a, encoded);
-        let view = Carried { acc: Slot::of(encoded), ..view };
-        let jump_ip = following(mask_ip);
-        // SAFETY: as above.
-        let jump = unsafe { &*jump_ip };
-        let Ok(taken) = comparison.evaluate(masked, i32::from(jump.b as i16)) else {
-            return exit(jump_ip);
-        };
-        if taken != 0 {
-            resume!(cx, lane_jump::<H>(cx, r, jump_ip, BACKWARD, view, None));
-        }
-        next!(cx, r, following(jump_ip), view)
-    }
-}
-
-/// The offset-mask-test handler for offset operator `first`, immediate comparison jump `jump`.
-fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u8) -> Option<Handler> {
-    macro_rules! jumps {
-        ($first:ident; $($jump:ident),+) => {
-            match (jump as u16, backward, acc) {
-                $(
-                    (opc::$jump, false, ACC_NONE) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, false, ACC_NONE> as Handler),
-                    (opc::$jump, true, ACC_NONE) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, true, ACC_NONE> as Handler),
-                    (opc::$jump, false, ACC_B) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, false, ACC_B> as Handler),
-                    (opc::$jump, true, ACC_B) => Some(lane_offset_mask_jump::<H, { opc::$first }, { opc::$jump }, true, ACC_B> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    macro_rules! tested {
-        ($first:ident) => {
-            jumps!(
-                $first;
-                WasmJumpI32EqualImmediate,
-                WasmJumpI32NotEqualImmediate,
-                WasmJumpI32LessUnsignedImmediate,
-                WasmJumpI32LessEqualUnsignedImmediate,
-                WasmJumpI32GreaterUnsignedImmediate,
-                WasmJumpI32GreaterEqualUnsignedImmediate
-            )
-        };
-    }
-    match first {
-        op if op.is_wasm_i32_add_immediate() => tested!(WasmI32AddImmediate),
-        op if op.is_wasm_i32_subtract_immediate() => tested!(WasmI32SubtractImmediate),
-        _ => None,
-    }
-}
-
-lane_handler! {
-    /// An i32 operator `OP` (reading through field `ACC`; a comparison, typically), a constant
-    /// load and a select choosing among their results and other registers (`cur = cur > clip
-    /// ? 0 : cur`): three records run here, each result written as its own record writes it,
-    /// and the select reads the two results as computed rather than back from registers.
-    fn lane_operator_constant_select<OP: u16, ACC: u8>(cx, r, ip, i, view) {
-        let (operator, immediate) = const {
-            match I32BinaryOperator::from_register_op(opcode(OP)) {
-                Some(operator) => (operator, false),
-                None => match I32BinaryOperator::from_immediate_op(opcode(OP)) {
-                    Some(operator) => (operator, true),
-                    None => panic!("not an i32 binary operator"),
-                },
-            }
-        };
-        let right = if immediate { i.imm() as i32 } else { read_i32::<ACC, ACC_C>(r, i.c, view) };
-        let Ok(result) = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), right) else {
-            return exit(ip);
-        };
-        let result = view.integers.encode(result);
-        r.set(i.a, result);
-        let constant_ip = following(ip);
-        // SAFETY: the view fuses an operator only with a following constant and select.
-        let load = unsafe { &*constant_ip };
-        let constant = load.constant();
-        r.set(load.a, constant);
-        let select_ip = following(constant_ip);
-        // SAFETY: as above.
-        let select = unsafe { &*select_ip };
-        // The constant's record runs second, so it wins a register both write.
-        let value_of = |register: u16| {
-            if register == load.a {
-                constant
-            } else if register == i.a {
-                result
-            } else {
-                r.get(register)
-            }
-        };
-        let (condition, _) = ImmediateLayout::register_pair(select.imm());
-        let value = select_loaded(
-            value_of(condition).wasm_bits32() != 0,
-            value_of(select.b),
-            value_of(select.c),
-        );
-        produce!(cx, r, select_ip, select.a, value, view)
-    }
-}
-
-/// The operator-constant-select handler for i32 operator `op` reading through field `acc`.
-fn operator_constant_select_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
-    macro_rules! operators {
-        ($($op:ident),+) => {
-            match (op as u16, acc) {
-                $(
-                    (opc::$op, ACC_NONE) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_NONE> as Handler),
-                    (opc::$op, ACC_B) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_B> as Handler),
-                    (opc::$op, ACC_C) => Some(lane_operator_constant_select::<H, { opc::$op }, ACC_C> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    operators!(
-        WasmI32GreaterSigned,
-        WasmI32GreaterUnsigned,
-        WasmI32LessSigned,
-        WasmI32LessUnsigned,
-        WasmI32Equal,
-        WasmI32NotEqual,
-        WasmI32GreaterEqualSigned,
-        WasmI32LessEqualSigned
-    )
-}
-
 /// The i32 loads the load fusions below serve.
 macro_rules! i32_loads {
     ($m:ident) => {
@@ -10716,22 +9978,6 @@ fn load_jump_handler<H: Host>(op: Op, acc: u8, zero: bool, backward: bool) -> Op
                     (opc::$load, ACC_C, false, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, false, true> as Handler),
                     (opc::$load, ACC_C, true, false) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, true, false> as Handler),
                     (opc::$load, ACC_C, true, true) => Some(lane_load_jump_i32_zero::<H, { opc::$load }, ACC_C, true, true> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    i32_loads!(loads)
-}
-
-/// The move-then-load handler for i32 load `op`, the move reading through field `acc`.
-fn move_load_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
-    macro_rules! loads {
-        ($($load:ident),+) => {
-            match (op as u16, acc) {
-                $(
-                    (opc::$load, ACC_NONE) => Some(lane_move_load::<H, { opc::$load }, ACC_NONE> as Handler),
-                    (opc::$load, ACC_B) => Some(lane_move_load::<H, { opc::$load }, ACC_B> as Handler),
                 )+
                 _ => None,
             }
@@ -19488,31 +18734,6 @@ fn derive_lane_view<'live, H: Host>(
                 accumulator_registers[pc] = NO_ACCUMULATOR;
             }
         }
-        // An i32 load whose value the next record's branch table selects on
-        // runs with that table as one record.
-        for pc in 0..records.len().saturating_sub(1) {
-            let instruction = decoded[pc];
-            let next = decoded[pc + 1];
-            let field = [ACC_NONE, ACC_C]
-                .into_iter()
-                .find(|acc| serves(records[pc].handler, instruction.op() as u16, *acc));
-            if let Some(field) = field
-                && next.a() == instruction.a()
-                && serves(records[pc + 1].handler, opc::WasmBranchTable, ACC_NONE)
-                && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
-            {
-                records[pc].handler = fused as *const ();
-                // A plain add of a constant ahead of a load reading its own
-                // field joins as well.
-                if pc > 0
-                    && field == ACC_NONE
-                    && serves(records[pc - 1].handler, opc::WasmI32AddImmediate, ACC_NONE)
-                    && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
-                {
-                    records[pc - 1].handler = fused as *const ();
-                }
-            }
-        }
         // A load whose value the next record stores runs with that store as
         // one record.
         for pc in 0..records.len().saturating_sub(1) {
@@ -19547,30 +18768,6 @@ fn derive_lane_view<'live, H: Host>(
         })
     };
     if wasm {
-        // An i32 add or subtract of a constant, the and of a constant over its result and an
-        // immediate comparison jump testing that run as one record.
-        for pc in 0..records.len().saturating_sub(2) {
-            let (first, mask, jump) = (decoded[pc], decoded[pc + 1], decoded[pc + 2]);
-            let Some(acc) = [ACC_NONE, ACC_B].into_iter().find(|&acc| serves(records[pc].handler, first.op() as u16, acc))
-            else {
-                continue;
-            };
-            if !matches!(first.op().class(), Class::WasmI32AddImmediate | Class::WasmI32SubtractImmediate)
-                || !mask.op().is_wasm_i32_and_immediate()
-                || mask.b() != first.a()
-                || jump.a() != mask.a()
-                || ![ACC_NONE, ACC_B].into_iter().any(|acc| serves(records[pc + 1].handler, opc::WasmI32AndImmediate, acc))
-            {
-                continue;
-            }
-            let Some((backward, _)) = plain_served(records[pc + 2].handler, jump.op() as u16, &[ACC_NONE, ACC_A])
-            else {
-                continue;
-            };
-            if let Some(fused) = offset_mask_jump_handler::<H>(first.op(), jump.op(), backward, acc) {
-                records[pc].handler = fused as *const ();
-            }
-        }
         // An i32 load whose value the next record's i32 load takes as its address runs with it as
         // one record; so does an i32 load whose value the next record's zero-test jump tests.
         for pc in 0..records.len().saturating_sub(1) {
@@ -19615,36 +18812,6 @@ fn derive_lane_view<'live, H: Host>(
                 continue;
             };
             if let Some(fused) = load_pair_binary_handler::<H>(first.op(), combine.op(), first_left) {
-                records[pc].handler = fused as *const ();
-            }
-        }
-        // An i32 operator, a constant load and a select reading them run as one record.
-        for pc in 0..records.len().saturating_sub(2) {
-            let (operator, constant) = (decoded[pc], decoded[pc + 1]);
-            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, operator.op() as u16, acc))
-            else {
-                continue;
-            };
-            if !serves(records[pc + 1].handler, opc::LoadConst, ACC_NONE)
-                || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
-                    .into_iter()
-                    .any(|acc| serves(records[pc + 2].handler, opc::WasmSelect, acc))
-                || !constant.op().is_load_const()
-            {
-                continue;
-            }
-            if let Some(fused) = operator_constant_select_handler::<H>(operator.op(), acc) {
-                records[pc].handler = fused as *const ();
-            }
-        }
-        // A plain move whose value the next record's i32 load takes as its address runs with it
-        // as one record.
-        for pc in 0..records.len().saturating_sub(1) {
-            if serves(records[pc].handler, opc::Move, ACC_NONE)
-                && i32_load(&records, pc + 1).is_some()
-                && decoded[pc + 1].c() == decoded[pc].a()
-                && let Some(fused) = move_load_handler::<H>(decoded[pc + 1].op(), ACC_NONE)
-            {
                 records[pc].handler = fused as *const ();
             }
         }
@@ -19704,27 +18871,6 @@ fn derive_lane_view<'live, H: Host>(
             call_link: std::cell::Cell::new(NO_CALL_LINK),
         };
     }
-    // Two plain moves in a row run as one record.
-    let mut pc = 0;
-    while pc + 1 < records.len() {
-        if serves(records[pc].handler, opc::Move, ACC_NONE)
-            && serves(records[pc + 1].handler, opc::Move, ACC_NONE)
-        {
-            // A jump after the pair joins it.
-            let jump = records
-                .get(pc + 2)
-                .and_then(|record| jump_direction(record.handler))
-                .filter(|backward| !loop_tier || !backward);
-            records[pc].handler = match jump {
-                None => lane_move_pair::<H, false, false> as Handler,
-                Some(false) => lane_move_pair::<H, true, false>,
-                Some(true) => lane_move_pair::<H, true, true>,
-            } as *const ();
-            pc += 2;
-        } else {
-            pc += 1;
-        }
-    }
     // A plain move or add of a constant whose next record jumps runs with
     // that jump as one record.
     for pc in 0..records.len().saturating_sub(1) {
@@ -19743,21 +18889,6 @@ fn derive_lane_view<'live, H: Host>(
             }
             records[pc].handler =
                 JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
-        }
-    }
-    if wasm {
-        // A move whose next record is a zero-test jump that carries no register runs with that
-        // jump as one record.
-        for pc in 0..records.len().saturating_sub(1) {
-            let Some(move_acc) = [ACC_NONE, ACC_B]
-                .into_iter()
-                .position(|acc| serves(records[pc].handler, opc::Move, acc))
-            else {
-                continue;
-            };
-            if let Some((zero, backward)) = plain_zero_jump(records[pc + 1].handler) {
-                records[pc].handler = MoveZeroJumps::<H>::HANDLERS[zero][backward][move_acc] as *const ();
-            }
         }
     }
     if wasm {
@@ -19928,12 +19059,7 @@ fn derive_lane_view<'live, H: Host>(
                     .any(|&handler| records[pc - 1].handler == handler as *const ());
                 let pair = pc >= 2
                     && [true, false].into_iter().any(|backward| {
-                        records[pc - 2].handler
-                            == if backward {
-                                lane_move_pair::<H, true, true> as Handler
-                            } else {
-                                lane_move_pair::<H, true, false> as Handler
-                            } as *const ()
+                        records[pc - 2].handler == move_pair_jump_handler::<H>(backward) as *const ()
                     });
                 // Entering a pair's second move runs that move's own record.
                 if pair && !then && entries.contains(pc - 1) && carried_through(records, pc - 1).is_none() {
@@ -19952,51 +19078,8 @@ fn derive_lane_view<'live, H: Host>(
             }
             carried
         };
-        for pc in 0..records.len().saturating_sub(1) {
-            let add = decoded[pc];
-            let load = decoded[pc + 1];
-            let Some(head) = load_table_handler::<H>(load.op(), ACC_NONE, true) else {
-                continue;
-            };
-            if records[pc].handler != head as *const ()
-                || load.c() != add.b()
-                || add.a() == add.b()
-                || edges_carry(&records, pc) != Some(add.b())
-            {
-                continue;
-            }
-            if let Some(carried) = load_table_handler::<H>(load.op(), ACC_C, true) {
-                records[pc].handler = carried as *const ();
-                reads_accumulator[pc] = true;
-                accumulator_registers[pc] = add.b();
-            }
-        }
-        // A move-and-load head whose every incoming edge carries the moved register reads it from
-        // the accumulator (a pointer walk carried around its loop); a latch of store, move and
-        // zero-test jump on that register, right after the load, tests and carries the register
-        // the load leaves there.
-        for pc in 0..records.len().saturating_sub(1) {
-            let (moving, load) = (decoded[pc], decoded[pc + 1]);
-            let Some(head) = move_load_handler::<H>(load.op(), ACC_NONE) else {
-                continue;
-            };
-            if !ACCUMULATOR
-                || records[pc].handler != head as *const ()
-                || moving.a() == moving.b()
-                || edges_carry(&records, pc) != Some(moving.b())
-            {
-                continue;
-            }
-            let Some(carried) = move_load_handler::<H>(load.op(), ACC_B) else {
-                continue;
-            };
-            records[pc].handler = carried as *const ();
-            reads_accumulator[pc] = true;
-            accumulator_registers[pc] = moving.b();
-        }
     specialize_returning_binaries::<H>(&decoded, constants, &mut records);
     specialize_updated_index_reads::<H>(&mut records);
-    specialize_updated_index_operators::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);
     // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
@@ -20019,11 +19102,9 @@ fn derive_lane_view<'live, H: Host>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_store_moves::<H>(&mut records);
-        specialize_typed_addresses::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
-        specialize_moved_index_reads::<H>(&mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
     let loop_kernels = if !wasm && (!loop_tier || crate::jit_mode::base_only()) {
@@ -20177,7 +19258,7 @@ fn install_loop_sites<'live, H: Host>(
                 .flatten()
                 .any(|&handler| records[pc - 1].handler == handler as *const ());
         let pair = pc >= 2
-            && [lane_move_pair::<H, true, false> as Handler, lane_move_pair::<H, true, true>]
+            && [move_pair_jump_handler::<H>(false), move_pair_jump_handler::<H>(true)]
                 .iter()
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
         // A branch table takes its entry's jump offset the same way (`row_jump`, `Edge::Entry`):
@@ -20352,116 +19433,6 @@ macro_rules! fused_arithmetic {
 mod raw_results;
 mod loop_kernel;
 
-/// The operator of a record running an arithmetic operator on two registers (`lane_operator`
-/// or `lane_operator_numbers`) that the lane fuses (`fused_arithmetic`); `None` for any other
-/// handler.
-fn arithmetic_operator<H: Host>(handler: *const ()) -> Option<u32> {
-    macro_rules! find {
-        ($($operator:ident),*) => {
-            $(if handler == lane_operator::<H, $operator> as Handler as *const ()
-                || handler == lane_operator_numbers::<H, $operator> as Handler as *const ()
-            {
-                return Some($operator);
-            })*
-        };
-    }
-    fused_arithmetic!(find);
-    None
-}
-
-/// Gives each fused update and read (`lane_update_get_index`) whose element the next record,
-/// an arithmetic operator on two registers, takes as an operand the fused update, read and
-/// operation (`lane_update_get_index_operator`). The read and operator records stay as they
-/// are, for a jump that enters them and for a step the fused record leaves to them.
-fn specialize_updated_index_operators<H: Host>(records: &mut [LaneInstruction]) {
-    let increment = lane_update_get_index::<H, false> as Handler as *const ();
-    let decrement = lane_update_get_index::<H, true> as Handler as *const ();
-    for pc in 0..records.len().saturating_sub(2) {
-        let (update, read, operator) = (&records[pc], &records[pc + 1], &records[pc + 2]);
-        if (update.handler != increment && update.handler != decrement)
-            || (operator.b != read.a && operator.c != read.a)
-        {
-            continue;
-        }
-        let Some(op) = arithmetic_operator::<H>(operator.handler) else {
-            continue;
-        };
-        let decrementing = update.handler == decrement;
-        let other = super::operations::number_result_is_commutative(op)
-            .then_some(if operator.b == read.a { operator.c } else { operator.b });
-        macro_rules! fused {
-            ($($operator:ident),*) => {
-                match (op, decrementing) {
-                    $(($operator, true) => lane_update_get_index_operator::<H, true, $operator> as Handler,
-                    ($operator, false) => lane_update_get_index_operator::<H, false, $operator> as Handler,)*
-                    _ => continue,
-                }
-            };
-        }
-        records[pc].handler = fused_arithmetic!(fused) as *const ();
-        if let Some(other) = other {
-            records[pc].c = other;
-        }
-    }
-}
-
-/// Gives each address computation `t = x + K; [u = t >> S;] r = base[u or t]` whose read is
-/// a register-operand element read (`lane_get_index_registers`) the fused record
-/// `lane_typed_address_get`, on the addition. The records after it keep their handlers, for
-/// jumps into them and for the cases the fused record leaves to them. The read's base must
-/// not be an intermediate, which the fused record writes only after reading the element.
-fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
-    use super::operations::{ADDITION, SHIFT_RIGHT};
-    let add = lane_operator_integer_constant::<H, ADDITION> as Handler as *const ();
-    let shift = lane_operator_integer_constant::<H, SHIFT_RIGHT> as Handler as *const ();
-    let read = lane_get_index_registers::<H> as Handler as *const ();
-    let write = lane_set_index::<H> as Handler as *const ();
-    for pc in 0..records.len() {
-        if records[pc].handler != add {
-            continue;
-        }
-        let t = records[pc].a;
-        if let (Some(second), Some(third)) = (records.get(pc + 1), records.get(pc + 2))
-            && second.handler == shift
-            && second.b == t
-            && third.handler == read
-            && third.c == second.a
-            && third.b != t
-            && third.b != second.a
-        {
-            records[pc].handler = lane_typed_address_get::<H, true, UNSEEN_TYPED_KIND> as Handler as *const ();
-            continue;
-        }
-        if let (Some(second), Some(third)) = (records.get(pc + 1), records.get(pc + 2))
-            && second.handler == shift
-            && second.b == t
-            && third.handler == write
-            && third.c == second.a
-            && ![t, second.a].contains(&third.b)
-            && ![t, second.a].contains(&third.a)
-        {
-            records[pc].handler = lane_typed_address_set::<H, true, UNSEEN_TYPED_KIND> as Handler as *const ();
-            continue;
-        }
-        if let Some(second) = records.get(pc + 1)
-            && second.handler == write
-            && second.c == t
-            && second.b != t
-            && second.a != t
-        {
-            records[pc].handler = lane_typed_address_set::<H, false, UNSEEN_TYPED_KIND> as Handler as *const ();
-            continue;
-        }
-        if let Some(second) = records.get(pc + 1)
-            && second.handler == read
-            && second.c == t
-            && second.b != t
-        {
-            records[pc].handler = lane_typed_address_get::<H, false, UNSEEN_TYPED_KIND> as Handler as *const ();
-        }
-    }
-}
-
 /// The proved records (`specialize_proved_arrays`), each with the generic record it proves
 /// the array of and the offset from the record to the one whose `b` names the base (the
 /// read's, after a fused update): the one table both directions read (`proved_handler`,
@@ -20559,19 +19530,6 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
         });
         if !shared {
             records[pc].handler = proved as *const ();
-        }
-    }
-}
-
-/// Gives each register `Move` that a proved element read follows (`specialize_proved_arrays`)
-/// the fused copy and read (`lane_move_get_index_proved`). The read record stays, for a jump
-/// that enters it and for the pair's declined proofs.
-fn specialize_moved_index_reads<H: Host>(records: &mut [LaneInstruction]) {
-    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let read = lane_get_index_proved::<H> as Handler as *const ();
-    for pc in 0..records.len().saturating_sub(1) {
-        if records[pc].handler == copy && records[pc + 1].handler == read {
-            records[pc].handler = lane_move_get_index_proved::<H> as Handler as *const ();
         }
     }
 }

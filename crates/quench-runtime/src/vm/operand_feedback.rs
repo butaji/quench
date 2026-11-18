@@ -191,47 +191,6 @@ pub(super) unsafe fn note_kind<H: Host>(cx: *mut LaneContext<H>, ip: Ip, kind: O
     }
 }
 
-/// `note_operands` for a handler's first miss, out of line so the handler's own code stays as it is.
-///
-/// # Safety
-/// As `note_operands`.
-#[cold]
-#[inline(never)]
-pub(super) unsafe fn note_first_miss<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value) {
-    // SAFETY: the caller's.
-    unsafe { note_operands(cx, ip, left, right) }
-}
-
-/// Notes on the record at `ip` that its int32 step declined two int32s: `result`, a Number an
-/// int32 handler completed itself (an overflowing sum, difference or product, a `-0`) or a
-/// division or remainder the lane's Number step computed, is no int32.
-///
-/// # Safety
-/// As `note_operands`.
-#[inline(always)]
-pub(super) unsafe fn note_widened<H: Host>(cx: *mut LaneContext<H>, ip: Ip, result: Value) {
-    if result.as_int().is_none() {
-        // SAFETY: the caller's.
-        let cell = unsafe { feedback_cell((*cx).base, ip) };
-        cell.set(cell.get() | OperandKinds::WIDENED.0);
-    }
-}
-
-/// `note_widened` of the Number step of `left` and `right` (any operator), which only two int32
-/// operands can widen; any other operand pair notes nothing.
-///
-/// # Safety
-/// As `note_operands`.
-#[inline(always)]
-pub(super) unsafe fn note_pair_result<H: Host>(cx: *mut LaneContext<H>, ip: Ip, left: Value, right: Value, result: Value) {
-    // Per operand on the tag field the Number step already tested, not `Value::int_pair`'s
-    // xor of both words: that recomputed both tags after every double operation.
-    if left.has_int_tag_field() && right.has_int_tag_field() {
-        // SAFETY: the caller's.
-        unsafe { note_widened(cx, ip, result) };
-    }
-}
-
 /// A view's records, with the feedback bytes of its sites in front of them: one byte per record,
 /// counted back from the first.
 pub(super) struct Records {

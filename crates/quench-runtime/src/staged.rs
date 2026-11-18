@@ -242,7 +242,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 49] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 62] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -305,12 +305,29 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 49] = [
     (Op::WasmI32Store as u16, Op::Move as u16, FUSED_PLAIN),
     (Op::WasmI32Store8 as u16, Op::Move as u16, FUSED_PLAIN),
     (Op::WasmI32Store16 as u16, Op::Move as u16, FUSED_PLAIN),
+    // Two moves in a row (a parallel copy resolved in order).
+    (Op::Move as u16, Op::Move as u16, FUSED_PLAIN),
+    // A move then a Wasm i32 zero test, which reads the register the move wrote.
+    (Op::Move as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    // A move whose moved value the next i32 load takes as its address.
+    (Op::Move as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load8S as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load8U as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load16S as u16, FUSED_PLAIN),
+    (Op::Move as u16, Op::WasmI32Load16U as u16, FUSED_PLAIN),
+    // An i32 load whose value the next branch table selects on (the table reads the register).
+    (Op::WasmI32Load as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8S as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load8U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16S as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
+    (Op::WasmI32Load16U as u16, Op::WasmBranchTable as u16, FUSED_PLAIN),
 ];
 
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 19] = [
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 32] = [
     // A local or capture read, then a register comparison, then its branch (`specialize_load_branch_pairs`).
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
@@ -334,6 +351,21 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 19] = [
     [Op::WasmI32AddImmediate as u16, Op::WasmF64Load as u16, Op::WasmF64Binary as u16, NO_LINK],
     // `c = (c + 1) | 0` of a capture: its read, the operator, the truncation, then the store.
     [Op::LoadCapture as u16, Op::Binary as u16, Op::Binary as u16, Op::StoreCapture as u16],
+    // A move pair then the unconditional jump after it (a parallel copy at a loop's latch).
+    [Op::Move as u16, Op::Move as u16, Op::Jump as u16, NO_LINK],
+    // `(c ± k) & m` then an immediate comparison jump on the masked value (`c - '0'` digit tests).
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32EqualImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32NotEqualImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessEqualUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32AddImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterEqualUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32EqualImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32NotEqualImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32LessEqualUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterUnsignedImmediate as u16, NO_LINK],
+    [Op::WasmI32SubtractImmediate as u16, Op::WasmI32AndImmediate as u16, Op::WasmJumpI32GreaterEqualUnsignedImmediate as u16, NO_LINK],
 ];
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
