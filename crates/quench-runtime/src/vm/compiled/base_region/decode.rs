@@ -27,7 +27,8 @@ pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
         NumberArithmetic::Multiply => Kind::Mul,
         NumberArithmetic::Divide => Kind::Div,
     });
-    arithmetic.or_else(|| NumberBitwise::from_operator(operator).map(|operation| match operation {
+    let remainder = (operator == crate::vm::operations::REMAINDER).then_some(Kind::Rem);
+    arithmetic.or(remainder).or_else(|| NumberBitwise::from_operator(operator).map(|operation| match operation {
         NumberBitwise::And => Kind::And,
         NumberBitwise::Or => Kind::Or,
         NumberBitwise::Xor => Kind::Xor,

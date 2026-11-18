@@ -84,6 +84,8 @@ pub enum Kind {
     /// Number negation of a Number operand (`Neg`).
     Not,
     Neg,
+    /// `%`, the staged Number remainder.
+    Rem,
 }
 
 impl Kind {
