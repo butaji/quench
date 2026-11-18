@@ -122,39 +122,6 @@ fn scoped_store<H: Host>(vm: &mut Vm<H>, scope: &WindowScope, atom: Atom, value:
     }
 }
 
-script_handler! {
-    /// The miss of a window's environment-local store (`scoped_store_local`), which the row leaves where the
-    /// scope takes no store: `StoreEnvLocal` of such a function (`specialize_environment_window`), which may write a
-    /// `with` object's binding instead of the local: the object that has the local's name takes
-    /// the store (`scoped_store`), else the window's own, which the general path stores. A frame's
-    /// run takes the general path, as it did for every function that resolves names at run time.
-    #[inline(never)]
-    fn scoped_local_store_miss<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        let (slot, _) = environment_window_fields(i);
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let Some(scope) = window_scope(cx, r, ip, false) else {
-            return exit(ip);
-        };
-        let Some(&atom) = code.function(scope.function as usize).local_atoms.get(slot) else {
-            return exit(ip);
-        };
-        let value = r.get(i.a);
-        match scoped_store(vm, &scope, atom, value) {
-            ScopedStore::Undecided => exit(ip),
-            // The window's own local (`FLAG_WINDOW`'s row) is not this record's: the general path stores it.
-            ScopedStore::Unscoped => exit(ip),
-            ScopedStore::Stored => {
-                if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-                    r.set(register, value);
-                }
-                next!(cx, r, following(ip), view)
-            }
-        }
-    }
-}
-
 /// The closure of `function` a window activation makes at `ip`: over its environment, which a
 /// frame's promotion would make, carrying the activation's dynamic bindings
 /// (`window_environment`) and, at a binding site, the site's scope
@@ -186,12 +153,6 @@ fn scoped_closure_value<H: Host>(
         .ok();
     note_allocation(vm);
     value
-}
-
-/// The window's environment-local store miss (`scoped_local_store_miss`), `ENVIRONMENT` where the
-/// window's environment holds the local. The row makes the store its scope takes (`Frame::scoped_local_store`).
-pub(super) const fn scoped_store_local<H: Host, const ENVIRONMENT: bool>() -> Handler {
-    scoped_local_store_miss::<H, ENVIRONMENT>
 }
 
 /// `ScopeReads::name` of the lane: the by-name read of `atom` through the window's scope into

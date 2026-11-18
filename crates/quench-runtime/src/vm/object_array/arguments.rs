@@ -20,18 +20,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    /// Own data element `index` of an arguments object, where no parameter mapping reaches
-    /// it and no descriptor stands for it: its stored element, as `[[Get]]` finds it before
-    /// any prototype. `None` for a mapped, absent, accessor or redefined element, or any other
-    /// value.
-    pub(in crate::vm) fn plain_arguments_element(&self, target: Value, index: usize) -> Option<Value> {
-        if self.heap.object(target)?.mapped_argument_slot(index).is_some() {
-            return None;
-        }
-        self.stored_arguments_element(target, index)
-    }
-
-    /// `plain_arguments_element` of an element a parameter may map: the stored element, which
+    /// The stored element of an element a parameter may map, which
     /// every write to the parameter reaches while the mapping holds, as the general path's
     /// stores do (`Vm::mapped_argument_store`).
     pub(in crate::vm) fn stored_arguments_element(&self, target: Value, index: usize) -> Option<Value> {

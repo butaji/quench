@@ -1022,11 +1022,11 @@ opcodes!($;
     WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64Binary; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64BinaryImmediate => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediate; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator; class WasmI64Unary; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI64BinaryRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryRaw, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64BinaryImmediateRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediateRaw, @ Register, @ fields(ResultRegister, Register, SignedConstant),
-    WasmI64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmI64UnaryOperator; class WasmI64UnaryRaw, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmF64BinaryRaw => Effect::PURE; layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64Raw, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64Raw, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI64BinaryRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryRaw; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64BinaryImmediateRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediateRaw; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    WasmI64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmI64UnaryOperator; class WasmI64UnaryRaw; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmF64BinaryRaw => Effect::PURE; layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64Raw; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64Raw; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmReturn64 => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; class WasmReturn64, @ Register, @ fields(Register, Unused, Unused),
     WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator; class WasmScalarConvert; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator; class WasmFloatBinary32; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
@@ -2573,7 +2573,7 @@ impl Function {
     }
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as
-    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): a
+    /// the local it was stored in, which the lane reads in place: a
     /// window local, or, for a binding a closure captures, its slot in the environment the
     /// window makes (`mapped_windows::window_binding`). A mapped object (`arguments_alias_parameters`) aliases
     /// parameters that live in the window as well, the captured ones among them, which ride the

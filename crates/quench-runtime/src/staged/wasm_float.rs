@@ -3,7 +3,7 @@
 //! float operator is a stage primitive (`operate_float`, `operate_float_unary`).
 
 use super::machine::MachineStage;
-use super::register_frame::{Frame, Step, WasmRep};
+use super::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
 use super::wasm::{WasmStage, Width};
 use super::wasm_concrete::ConcreteWasm;
 use super::wasm_operation::WasmOperation;
@@ -119,11 +119,10 @@ pub(crate) enum WasmFloatOperation {
     Select { destination: Register, condition: Register, chosen: Register, other: Register },
 }
 
-/// Whether opcode `op` is a raw f64 operator. No opcode is one yet: a raw opcode sets `raw` in
-/// the same operation, so the raw and boxed forms share every rule.
+/// Whether opcode `op` is a raw f64 operator (`staged::raw_representation`): the raw and boxed forms
+/// share every rule, and differ only in the f64 representation.
 const fn raw_float(op: Op) -> bool {
-    let _ = op;
-    false
+    super::raw_representation(op)
 }
 
 /// The representation a scalar of type `ty` takes, raw where the operator is raw.
@@ -163,8 +162,8 @@ type Computed = (Register, u64, WasmRep);
 fn computed_binary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Option<Computed> {
     let WasmFloatOperation::Binary { destination, left, right, operator, float, raw } = operation else { return None };
     let operand = rep_of(float.ty(), raw);
-    let left = frame.wasm_read(stage, left, operand)?;
-    let right = frame.wasm_read(stage, right, operand)?;
+    let left = wasm_operand(stage, frame, left, operand)?;
+    let right = wasm_operand(stage, frame, right, operand)?;
     let word = float_binary(&mut ConcreteWasm, operator, float, left, right);
     let result = if is_float_comparison(operator) { WasmRep::Int32 } else { operand };
     Some((destination, word, result))
@@ -175,7 +174,7 @@ fn computed_binary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
 fn computed_unary<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmFloatOperation) -> Option<Computed> {
     let WasmFloatOperation::Unary { destination, source, operator, float, raw } = operation else { return None };
     let rep = rep_of(float.ty(), raw);
-    let value = frame.wasm_read(stage, source, rep)?;
+    let value = wasm_operand(stage, frame, source, rep)?;
     Some((destination, ConcreteWasm.operate_float_unary(operator, float, value), rep))
 }
 
@@ -210,7 +209,7 @@ pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, oper
         WasmFloatOperation::Select { .. } => computed_select(stage, frame, operation),
     };
     let Some((destination, word, rep)) = computed else { return Step::Unresolved };
-    match frame.wasm_write(stage, destination, word, rep) {
+    match wasm_result(stage, frame, destination, word, rep) {
         Some(tagged) => Step::Value(tagged),
         None => Step::Unresolved,
     }

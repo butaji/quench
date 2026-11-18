@@ -10,18 +10,19 @@ use super::{Concrete, Frame, Stage, Step, elements, entry, value};
 use crate::bytecode::Register;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
-/// Continue where register `register` holds a direct object or array record, which is an
-/// object and so an iterator result `RequireIteratorResult` accepts; any other value leaves at
-/// `miss`, where another object kind passes and a primitive throws.
+/// Continue where register `register` holds an object, which `RequireIteratorResult` accepts: a
+/// direct object or array record by its own word, else any other object kind the frame's
+/// `object_like` answers (the VM's `is_object_like`). Any other value, a primitive, leaves at `miss`
+/// and the general step throws.
 #[inline(always)]
 pub(crate) fn require_iterator_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register,
-    miss: S::Miss) -> Step<S::Word, F::Control> {
+    _miss: S::Miss) -> Step<S::Word, F::Control> {
     let word = frame.tagged(stage, register);
     let object = value::is_direct_object(stage, word);
     let array = value::is_direct_array(stage, word);
     let record = stage.any(object, array);
-    match stage.guard(record, miss) {
-        Some(()) => Step::Value(word),
+    match stage.choose_leaving(record, |_| Some(word), |stage| frame.object_like(stage, word).map(|()| word)) {
+        Some(word) => Step::Value(word),
         None => Step::Unresolved,
     }
 }

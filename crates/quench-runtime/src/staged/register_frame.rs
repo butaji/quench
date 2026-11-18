@@ -97,6 +97,13 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn define_element(&mut self, _stage: &mut S, _array: S::Word, _index: u32, _value: S::Word) -> Option<()> { None }
 
+    /// Whether the object `word` is an object of any kind the VM's `is_object_like` admits, for an
+    /// operation that accepts an object but no primitive (`RequireIteratorResult`) and a word the
+    /// direct record test does not prove. `None` where the frame keeps no such answer, the operation's
+    /// miss.
+    #[inline(always)]
+    fn object_like(&mut self, _stage: &mut S, _word: S::Word) -> Option<()> { None }
+
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]
@@ -170,6 +177,17 @@ pub(crate) trait Frame<S: Stage> {
     /// its tagged word; `None` where the frame cannot make that value in place.
     #[inline(always)]
     fn wasm_write(&mut self, _stage: &mut S, _register: Register, _word: S::Word, _rep: WasmRep) -> Option<S::Word> { None }
+
+    /// `register`'s machine word as it is, with no tag check: a raw register (`WasmRep::RawBits64`,
+    /// `staged::raw_representation`) holds its i64 or f64 bits. `None` where the frame does not hold
+    /// registers so.
+    #[inline(always)]
+    fn raw_read(&mut self, _stage: &mut S, _register: Register) -> Option<S::Word> { None }
+
+    /// Define `register` with the raw machine word `word`, unboxed and untagged, returning the word;
+    /// `None` where the frame cannot define it so.
+    #[inline(always)]
+    fn raw_write(&mut self, _stage: &mut S, _register: Register, _word: S::Word) -> Option<S::Word> { None }
 
     /// The Wasm global bound in `binding` (the register encoding of its binding), as the register
     /// encoding its slot holds; `None` where the frame cannot load it, which leaves the row to its miss.
@@ -357,6 +375,20 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn store_local(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _miss: Option<S::Miss>)
         -> bool { false }
+}
+
+/// The Wasm scalar word of `register` in `rep`: a raw word through `Frame::raw_read` where `rep` is
+/// `RawBits64`, anything else through `Frame::wasm_read`.
+#[inline(always)]
+pub(crate) fn wasm_operand<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, rep: WasmRep) -> Option<S::Word> {
+    if rep == WasmRep::RawBits64 { frame.raw_read(stage, register) } else { frame.wasm_read(stage, register, rep) }
+}
+
+/// Define `register` with the Wasm scalar `word` in `rep`: a raw word through `Frame::raw_write` where
+/// `rep` is `RawBits64`, anything else through `Frame::wasm_write`. Returns the tagged word.
+#[inline(always)]
+pub(crate) fn wasm_result<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, register: Register, word: S::Word, rep: WasmRep) -> Option<S::Word> {
+    if rep == WasmRep::RawBits64 { frame.raw_write(stage, register, word) } else { frame.wasm_write(stage, register, word, rep) }
 }
 
 /// A conditional jump on the register's truthiness, taken when it is `taken`; unresolved where
