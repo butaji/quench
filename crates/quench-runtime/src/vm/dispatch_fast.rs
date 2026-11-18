@@ -10814,7 +10814,7 @@ unsafe fn lane_region_run<H: Host>(
     }
     if !lane_region_admits(cx, code) {
         // A run the lane lacks room for grows it and leaves at the loop's header, so the next entry admits.
-        let grown = !unsafe { lane_context_locals_in_window::<H>(cx as usize) } && lane_room_prepare(cx, code.calls.recovery_space());
+        let grown = lane_room_prepare(cx, code.calls.recovery_space());
         return RegionRun::own(if grown { LaneExit::At(region.header as usize) } else { LaneExit::Entry });
     }
     // SAFETY: the caller's contract.
@@ -10828,7 +10828,7 @@ unsafe fn lane_region_run<H: Host>(
 #[inline(always)]
 fn lane_region_admits<H: Host>(cx: *mut LaneContext<H>, code: &super::compiled::CompiledOsrRegion) -> bool {
     let room = code.calls.recovery_space();
-    room.activations == 0 || (lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS) && !unsafe { lane_context_locals_in_window::<H>(cx as usize) })
+    room.activations == 0 || lane_room_admits(cx, room, NO_PENDING_ACTIVATIONS)
 }
 
 /// Whether the running activation keeps its locals in the window past its registers, as

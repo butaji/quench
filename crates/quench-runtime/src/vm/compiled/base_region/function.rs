@@ -381,10 +381,23 @@ unsafe fn build(region: &LoopRegion, spec: &BodySpec, (ending, views): (Ending, 
     let started = std::time::Instant::now();
     // SAFETY: the caller's contract.
     let facts = unsafe { callees.facts() };
-    let sites = Sites { function: spec.known.program.function(spec.function as usize), id: spec.function, callees, facts: &facts, context: Context::root(spec.function, spec.registers, spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
+    let function = spec.known.program.function(spec.function as usize);
+    let sites = Sites { function, id: spec.function, callees, facts: &facts, context: Context::root(spec.function, inline_base(function, spec.registers, ending), spec.known.stitch), registers: spec.registers, known: spec.known, ending, views };
     let built = assemble(region, spec, sites, helpers);
     tally(&built, ending, (u64::from(region.backedge - region.header) + 1, started.elapsed().as_nanos() as u64));
     built
+}
+
+/// The first register an inlined callee's window may take in a stitch of `function`, which has `registers`
+/// registers: in a region, past the function's locals too, which an activation may keep in its register
+/// file right past its registers (an environment activation, a frame whose own storage does not cover
+/// them; `lane_context_locals_in_window`), so a region's inlined windows never overlap them and the region
+/// runs over every activation. A body is its own activation, whose locals are not in its window.
+fn inline_base(function: &crate::bytecode::Function, registers: u16, ending: Ending) -> u16 {
+    match ending {
+        Ending::Region => registers.saturating_add(function.locals),
+        Ending::Body => registers,
+    }
 }
 
 /// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
@@ -451,7 +464,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
     let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
-        return Err(format!("interprets in the loop: {:?}", generic.1.step));
+        return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
     let invalidation = spec.known.invalidation.filter(|_| decoded.iter().any(Decoded::holds_stable) && decoded.iter().any(Decoded::makes_calls));
     let realm = (!stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
