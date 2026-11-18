@@ -15448,6 +15448,11 @@ script_handler! {
         {
             resume!(cx, resumed)
         }
+        if native == Native::AsyncGeneratorThrow
+            && let Some(resumed) = async_requests::lane_async_generator_throw(cx, r, ip, i)
+        {
+            resume!(cx, resumed)
+        }
         if native == Native::WasmExportedFunction
             && let Some(resumed) = lane_wasm_export_frame(cx, r, ip, i)
         {

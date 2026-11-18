@@ -26,6 +26,18 @@ impl<H: Host> Vm<H> {
             })
     }
 
+    /// The function and resume point of `generator`'s frame where its `throw` runs in its
+    /// caller's lane (`requests_in_place`): suspended at a `yield` of its own, no `yield*`
+    /// delegating. A generator that has not started completes without running, on the native's
+    /// path.
+    pub(in crate::vm) fn throws_in_place(&mut self, generator: Value) -> Option<(u32, usize)> {
+        if !self.requests_in_place(generator) || self.yield_star_iterator(generator).is_some() {
+            return None;
+        }
+        let continuation = self.generator_record_mut(generator)?.suspended_continuation()?;
+        matches!(continuation.completion, Completion::Yield(_)).then(|| (continuation.frame.function, continuation.frame.pc))
+    }
+
     /// The request `promise` of `generator`, whose activation stopped at an `await` of `source`,
     /// or, where `yielded`, a `yield` of it: the generator awaits it in its record, as the
     /// request's job does (`settle_job_end`).

@@ -580,7 +580,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
+    pub(super) fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
         let record = match self.heap.iterator(generator) {
             Some(IteratorRecord { ext, .. }) => ext.generator.as_ref()?,
             _ => return None,

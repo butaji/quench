@@ -16,8 +16,8 @@ pub(super) fn running_request<H: Host>(vm: &Vm<H>) -> bool {
 }
 
 /// `next` of an async generator, called at `ip` with registers `r`: the generator resumes in
-/// place with the value the call passes, its request's promise rooted in
-/// `LaneStack::settling`. `None`, before any effect, leaves the call to the native.
+/// place with the value the call passes (`lane_resume_request`). `None`, before any effect,
+/// leaves the call to the native.
 #[inline(never)]
 pub(super) fn lane_async_generator_next<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
@@ -27,18 +27,50 @@ pub(super) fn lane_async_generator_next<H: Host>(cx: *mut LaneContext<H>, r: Reg
     }
     // SAFETY: the call's window is registers of the running function.
     let sent = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    let (registers, start) = lane_resume_request(cx, r, ip, i, generator, sent)?;
+    Some(Resumed::At(registers, start, Carried::script(cx)))
+}
+
+/// `throw` of an async generator suspended at a `yield` of its own (`Vm::throws_in_place`),
+/// called at `ip` with registers `r`: the generator resumes in place and the error the call
+/// passes raises at its `yield`, where a handler of its function catches it or its frame fails
+/// the request (`settle_abandoned_call`). `None`, before any effect, leaves the call to the
+/// native.
+#[inline(never)]
+pub(super) fn lane_async_generator_throw<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Resumed> {
+    let vm = unsafe { vm(cx) };
+    let generator = r.get(i.c);
+    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+        return None;
+    }
+    let (function, pc) = vm.throws_in_place(generator)?;
+    // SAFETY: the call's window is registers of the running function.
+    let thrown = unsafe { lane_call_window(r, i) }.first().copied().unwrap_or(Value::UNDEFINED);
+    lane_resume_request(cx, r, ip, i, generator, Value::UNDEFINED)?;
+    // The error raises at the `yield` the frame suspended at, the record before its resume point.
+    let suspended = pc.saturating_sub(1);
+    vm.lane_completion.raise(JsError::thrown(thrown, "async generator throw".into()));
+    vm.lane_raise_site = super::super::compiled::raise_site(function, suspended as u32);
+    // SAFETY: the resumed function's view is the running one, whose records start at `base`.
+    Some(Resumed::Exit(lane_raised_exit(cx, unsafe { (*cx).base.add(suspended) })))
+}
+
+/// The request of `generator`, whose `next` or `throw` the call at `ip` with registers `r`
+/// makes: its promise made and rooted in `LaneStack::settling`, the generator resumes as an
+/// activation receiving `sent` (`lane_resume_generator`). The registers and record the lane
+/// continues at, or `None`, before any effect but a promise left to the collector.
+fn lane_resume_request<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, generator: Value, sent: Value) -> Option<(Registers, Ip)> {
+    let vm = unsafe { vm(cx) };
     let promise = vm.promise_object().ok()?;
     note_allocation(vm);
     let root = vm.heap.root(promise);
     vm.lane_stack.settling.push(Some(root));
-    match generator_windows::lane_resume_generator(cx, r, ip, generator, r.get(i.b), sent, Completion::AsyncRequest) {
-        Some((registers, start)) => Some(Resumed::At(registers, start, Carried::script(cx))),
-        None => {
-            vm.lane_stack.settling.pop();
-            vm.heap.release_root(root);
-            None
-        }
+    let resumed = generator_windows::lane_resume_generator(cx, r, ip, generator, r.get(i.b), sent, Completion::AsyncRequest);
+    if resumed.is_none() {
+        vm.lane_stack.settling.pop();
+        vm.heap.release_root(root);
     }
+    resumed
 }
 
 /// The promise of the innermost in-place request, unrooted as its activation stops.
