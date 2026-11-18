@@ -11,7 +11,7 @@
 
 #[path = "property_slots.rs"]
 mod slots;
-use slots::{formed_slot, kept_slot};
+use slots::{formed_slot, kept_slot, word_formed_slot};
 use super::ic::{self, IcOp, Reached};
 use super::object::{object_record_at, Form, Layout};
 use super::{value, Frame, NumericFrame, NumericStage, Operation, Stage, Step};
@@ -403,7 +403,7 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     if let [IcOp::GuardFormed(word), IcOp::LoadSlot { slot, storage_len, .. }] = ops {
-        return formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *storage_len), miss);
+        return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
     if let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
@@ -417,39 +417,6 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
             kept_slot(stage, frame, (owner, *shape), &at, (*slot, *form, *storage_len, *rep), miss),
         _ => ic::run(stage, rest, at, records, miss),
     }
-}
-
-/// The value at `slot` of `owner`'s object whose whole auxiliary word is `word`: through the
-/// layout the frame kept for its shape, else one compare of the word proves the shape and the
-/// storage form, whose layout the read keeps, testing no form bit.
-fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
-    at: &Reached<S::Word, S::Cond>, word: u32, (slot, storage_len): (u16, usize), miss: S::Miss) -> Option<S::Word> {
-    let shape = word & !ic::FORM_BITS;
-    if frame.proven_shape(stage, owner) == Some(shape)
-        && let Some(layout) = frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
-        return Some(read_slot(stage, layout, slot, Rep::Tagged));
-    }
-    let bits = ic::guard_formed(stage, at, word, miss)?;
-    frame.prove_shape(stage, owner, shape, direct);
-    let formed = Reached { formed: Some(bits), ..*at };
-    let layout = ic::slot_layout(stage, &formed, Form::Either, storage_len, miss)?;
-    frame.keep_layout(owner, shape, layout);
-    Some(read_slot(stage, layout, slot, Rep::Tagged))
-}
-
-/// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
-/// where it covers the slot, else the one this read proves and keeps.
-fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32),
-    at: &Reached<S::Word, S::Cond>, (slot, form, storage_len): (u16, Form, usize), miss: S::Miss) -> Option<S::Word> {
-    let layout = match frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
-        Some(layout) => layout,
-        None => {
-            let layout = ic::slot_layout(stage, at, form, storage_len, miss)?;
-            frame.keep_layout(owner, shape, layout);
-            layout
-        }
-    };
-    Some(read_slot(stage, layout, slot, Rep::Tagged))
 }
 
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is

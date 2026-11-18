@@ -38,3 +38,21 @@ pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     };
     Some(read_slot_value(stage, layout, slot, rep))
 }
+
+/// The value at `slot` of `owner`'s object whose whole auxiliary word is `word`: through the
+/// layout the frame kept for its shape, else one compare of the word proves the shape and the
+/// storage form, whose layout the read keeps, testing no form bit.
+pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
+    at: &Reached<S::Word, S::Cond>, word: u32, (slot, storage_len): (u16, usize), miss: S::Miss) -> Option<S::Word> {
+    let shape = word & !ic::FORM_BITS;
+    if frame.proven_shape(stage, owner) == Some(shape)
+        && let Some(layout) = frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
+        return Some(read_slot_value(stage, layout, slot, Rep::Tagged));
+    }
+    let bits = ic::guard_formed(stage, at, word, miss)?;
+    frame.prove_shape(stage, owner, shape, direct);
+    let formed = Reached { formed: Some(bits), ..*at };
+    let layout = ic::slot_layout(stage, &formed, Form::Either, storage_len, miss)?;
+    frame.keep_layout(owner, shape, layout);
+    Some(read_slot_value(stage, layout, slot, Rep::Tagged))
+}
