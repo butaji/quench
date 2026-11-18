@@ -110,8 +110,9 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
     }
 
     /// Suspend the activation as `suspending` names (`suspend`): the control the step ends in;
-    /// `None` where the frame cannot, leaving the suspension to the interpreter
-    /// (`dispatch_fast::generator_yields`, `Vm::staged_suspend`).
+    /// `None` where the frame cannot, leaving the suspension to the interpreter. The interpreter's
+    /// frame suspends by the step result (`Vm::staged_suspend`), the lane's in place
+    /// (`dispatch_fast::lane_frame::lane_suspension`).
     #[inline(always)]
     fn suspend(&mut self, _stage: &mut S, _suspending: super::Suspending<S::Word>) -> Option<Self::Control> {
         None

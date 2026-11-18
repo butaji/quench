@@ -75,6 +75,28 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
         let host = self.host?;
         (host.awaits.resolve)(host.cx, Value::from_bits(value)).map(Value::to_bits)
     }
+
+    /// Whether the activation that suspends in place is async; `None` on a frame that suspends nothing.
+    fn asynchronous(&self) -> Option<bool> {
+        self.suspends.map(LaneSuspends::asynchronous)
+    }
+
+    /// The row's suspension made in place (`LaneSuspends::suspend`), which the handler chose
+    /// before the row ran, so it never declines after the row's effects.
+    fn suspend(&mut self, _stage: &mut Concrete, suspending: crate::staged::Suspending<u64>) -> Option<LaneControl> {
+        self.suspends.map(|suspends| LaneControl::Resumed(suspends.suspend(suspending)))
+    }
+
+    /// The delegation's reads the lane finishes without guest code (`LaneSuspends::delegation`).
+    fn delegation(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>) -> Option<(u64, ())> {
+        self.suspends?.delegation(step).map(|word| (word, ()))
+    }
+
+    /// A delegate generator's step made in place (`LaneSuspends::in_place`).
+    fn delegation_in_place(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>, _state: Register)
+        -> Option<LaneControl> {
+        self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
+    }
 }
 
 /// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged

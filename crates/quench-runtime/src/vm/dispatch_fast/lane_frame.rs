@@ -1,4 +1,5 @@
-//! The interpreter's register frame: `staged` moves and constants over the live file.
+//! The interpreter's register frame: `staged` rows over the live file, a move or constant, a
+//! jump, an allocation, a suspension (`suspends`).
 
 use super::*;
 use super::lane_reads::Reads;
@@ -417,6 +418,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// record's raw producer (`FUSED_RAW`'s `A`, or a last link with `FUSED_RAW_OUT` / `CHAIN_RAW_OUT`),
     /// whose one reader is the next Number row. A NaN still canonicalizes (`write`).
     raw_result: bool,
+    /// How the running activation suspends in place, for a staged suspension row.
+    suspends: Option<LaneSuspends>,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -804,7 +807,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None, raw_result: false, suspends: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -998,7 +1001,7 @@ pub(in crate::vm::dispatch_fast) enum Boxing {
 
 impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     type Fact = Boxing;
-    type Control = Edge;
+    type Control = LaneControl;
 
     #[inline(always)]
     fn fact(&self, _register: Register) -> Self::Fact { Boxing::Value }
@@ -1067,13 +1070,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
-        if condition { Edge::Target } else { Edge::Following }
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> LaneControl {
+        LaneControl::Edge(if condition { Edge::Target } else { Edge::Following })
     }
 
     #[inline(always)]
-    fn jump(&mut self, _stage: &mut Concrete) -> Edge {
-        Edge::Target
+    fn jump(&mut self, _stage: &mut Concrete) -> LaneControl {
+        LaneControl::Edge(Edge::Target)
     }
 
     #[inline(always)]
@@ -1931,6 +1934,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 #[path = "lane_frame/staged_ops.rs"]
 mod staged_ops;
 pub(super) use staged_ops::*;
+#[path = "lane_frame/suspends.rs"]
+mod suspends;
+pub(super) use suspends::*;
 
 /// A lane record read as the staged decoder's fields (`staged::Fields`), its opcode the
 /// handler's const generic. The lane admits a register-defining record only without result flags
