@@ -262,11 +262,6 @@ fn is_int32_truncation(shape: &Shape, first: u16, last: u16) -> bool {
         && ((node.a == Arg::Col(first) && zero(node.b)) || (node.b == Arg::Col(first) && zero(node.a)))
 }
 
-#[inline(always)]
-fn to_int32(value: f64) -> f64 {
-    f64::from(crate::value::number_to_u32(value) as i32)
-}
-
 impl Fold {
     fn run(&self, phis: &mut [f64], scalars: &[f64], scratch: &mut [f64], len: usize) {
         macro_rules! fold {
@@ -298,7 +293,7 @@ impl Fold {
     ) {
         let step = |value: f64, x: f64| {
             let sum = if LEFT { f(value, x) } else { f(x, value) };
-            (sum, if INT32 { to_int32(sum) } else { sum })
+            (sum, if INT32 { f64::from(crate::value::number_to_i32(sum)) } else { sum })
         };
         let mut value = phis[0];
         // The value before the last iteration, from which the last's nodes are redone.

@@ -48,6 +48,12 @@ pub fn number_to_u32(value: f64) -> u32 {
     }
 }
 
+/// ToInt32: ToUint32's bits reinterpreted as `i32`.
+#[inline(always)]
+pub fn number_to_i32(value: f64) -> i32 {
+    number_to_u32(value) as i32
+}
+
 /// Adding 2^52 to a binary64 in [0, 2^52) leaves no fraction bits, so the addition itself
 /// rounds the value to an integer, ties to even.
 const ROUNDING_BIAS: f64 = 4_503_599_627_370_496.0;

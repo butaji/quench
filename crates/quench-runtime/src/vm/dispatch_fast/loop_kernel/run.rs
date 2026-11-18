@@ -109,7 +109,7 @@ pub(super) fn arith(operation: NumberArithmetic, a: f64, b: f64) -> f64 {
 
 #[inline(always)]
 fn bits(operation: NumberBitwise, a: f64, b: f64) -> f64 {
-    let int32 = |value: f64| crate::value::number_to_u32(value) as i32;
+    let int32 = |value: f64| crate::value::number_to_i32(value);
     super::super::super::operations::number_bitwise_f64_result(operation, int32(a), int32(b))
 }
 

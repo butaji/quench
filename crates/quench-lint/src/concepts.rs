@@ -47,7 +47,7 @@ const CONCEPTS: &[Concept] = &[
     Concept {
         name: "to-int32",
         homes: &["quench-runtime/src/value/number_conversion.rs", "quench-runtime/src/lib.rs", "quench-runtime/src/staged/numeric.rs", "quench-runtime/src/vm/compiled/object_slots/emit.rs", STENCILS],
-        marks: &[Mark::Function("to_int32"), Mark::Function("to_uint32"), Mark::Function("number_to_u32"), Mark::Function("value_to_int32")],
+        marks: &[Mark::Function("to_int32"), Mark::Function("to_uint32"), Mark::Function("number_to_u32"), Mark::Function("number_to_i32"), Mark::Function("value_to_int32")],
     },
     Concept {
         name: "to-uint8-clamp",

@@ -19408,7 +19408,7 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
     let call = *vm.lane_stack.to_wasm.last().expect("an import activation has its entry");
     let encoded = match call.result {
         None => Some(Value::UNDEFINED),
-        Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_u32(number) as i32)),
+        Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_i32(number))),
         Some(crate::WasmType::F32) => value.as_number().map(|number| Value::integer((number as f32).to_bits() as i32)),
         Some(crate::WasmType::F64) => value.as_number().map(|number| vm.encode_bits64(number.to_bits())),
         Some(_) => None,
