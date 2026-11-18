@@ -41,7 +41,7 @@ use crate::layout::shared_words::KIND_NATIVE;
 use crate::layout::call_record::{CallRecord, CALLEE_EXIT, LANE_BODY_NOT_ENTERED, LANE_BODY_RETURNED, LANE_BODY_THREW, LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED, LANE_CALL_RAISED, NATIVE_JS_STOPPED, REGISTER_BYTES, TERMINATED_STATUS};
 use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
+use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ROWS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::stage::StencilStage;
 use crate::staged::{call::{admit_native, window_fill}, frame, value};
 use crate::words::{S, hole64, is_int, slot};
@@ -93,6 +93,14 @@ struct BodyReturn {
 
 /// A lane body's entry (`BodyEntry`): (context, receiver, capture word, registers).
 type BodyEntry = unsafe extern "C" fn(usize, u64, u64, usize) -> BodyReturn;
+/// A b-jit body's row entry (`entry_rows`, `EntryCell::rows`): (window, context, receiver, captures)
+/// -> (word, status), in the row ABI, which saves no callee-saved register.
+type RowsEntry = unsafe extern "rust-preserve-none" fn(usize, usize, u64, u64) -> RowsReturn;
+#[repr(C)]
+struct RowsReturn {
+    value: u64,
+    status: u64,
+}
 /// A semantic helper (`lane_body_call`): (vm, residual, lane context, call pc) -> status.
 type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
 
@@ -100,17 +108,18 @@ type Helper = unsafe extern "C" fn(u64, u64, u64, u64) -> u64;
 /// registers zero.
 #[inline(always)]
 fn dead(s: &S) -> S {
-    S { frame: s.frame, ctx: s.ctx, p: [junk(); 4], f: [junk_f64(); 8] }
+    S { frame: s.frame, ctx: s.ctx, p: [junk(), junk(), junk(), junk()], f: [junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64(), junk_f64()] }
 }
 
 /// A word no successor reads (every pinned register is dead past a call): an empty assembly
 /// output, so the row writes nothing into the register, where zeroing it cost an instruction
-/// per register (12 per call: 4 integer `xor`, 8 `vxorps`).
+/// per register (12 per call: 4 integer `xor`, 8 `vxorps`). Not `pure`: LLVM would merge the
+/// calls into one value and copy it into every register.
 #[inline(always)]
 fn junk() -> usize {
     let word: usize;
     // SAFETY: an empty template; the register's prior contents are the value.
-    unsafe { core::arch::asm!("/* {0} */", out(reg) word, options(pure, nomem, nostack, preserves_flags)) };
+    unsafe { core::arch::asm!("/* {0} */", out(reg) word, options(nomem, nostack, preserves_flags)) };
     word
 }
 
@@ -120,10 +129,10 @@ fn junk_f64() -> f64 {
     let word: f64;
     #[cfg(target_arch = "x86_64")]
     // SAFETY: as `junk`.
-    unsafe { core::arch::asm!("/* {0} */", out(xmm_reg) word, options(pure, nomem, nostack, preserves_flags)) };
+    unsafe { core::arch::asm!("/* {0} */", out(xmm_reg) word, options(nomem, nostack, preserves_flags)) };
     #[cfg(target_arch = "aarch64")]
     // SAFETY: as `junk`.
-    unsafe { core::arch::asm!("/* {0} */", out(vreg) word, options(pure, nomem, nostack, preserves_flags)) };
+    unsafe { core::arch::asm!("/* {0} */", out(vreg) word, options(nomem, nostack, preserves_flags)) };
     word
 }
 
@@ -361,8 +370,16 @@ unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
         let payload = payload(s);
         let Some(admitted) = admit(record, payload) else { return Entered::Refused };
         push::<ARGC>(s, record, payload, &admitted, this);
-        let entry: BodyEntry = transmute(word_at(admitted.cell, CELL_ENTRY_AT) as usize);
-        let returned = entry(s.ctx, this, word_at(record, offset_of!(CallRecord, captures)), admitted.top);
+        let captures = word_at(record, offset_of!(CallRecord, captures));
+        let rows = word_at(admitted.cell, CELL_ROWS_AT) as usize;
+        let returned = if rows != 0 {
+            let entry: RowsEntry = transmute(rows);
+            let RowsReturn { value, status } = entry(admitted.top, s.ctx, this, captures);
+            BodyReturn { status: status as u32, value }
+        } else {
+            let entry: BodyEntry = transmute(word_at(admitted.cell, CELL_ENTRY_AT) as usize);
+            entry(s.ctx, this, captures, admitted.top)
+        };
         finish(s, record, payload, &admitted, returned)
     }
 }

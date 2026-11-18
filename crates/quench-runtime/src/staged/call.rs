@@ -31,6 +31,10 @@ pub(crate) struct EntryCellLayoutWords {
     /// status and a number (`NumberReturn`); the stub, which answers a status that entered nothing, where
     /// the body has none. Written with `entry`.
     pub(crate) scalar: u64,
+    /// The published b-jit body's row entry (`entry_rows`, the `rust-preserve-none` row ABI: window,
+    /// context, receiver, captures; answers (word, status)), which a b-jit direct call row calls in
+    /// place of `entry` so the C ABI's callee-saved registers are never saved; 0 for any other body.
+    pub(crate) rows: u64,
 }
 
 pub(crate) struct CellLayout {
@@ -41,6 +45,7 @@ pub(crate) struct CellLayout {
     pub(crate) recovery_offset: i32,
     pub(crate) counters_offset: i32,
     pub(crate) scalar_offset: i32,
+    pub(crate) rows_offset: i32,
 }
 pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     entry_offset: std::mem::offset_of!(EntryCellLayoutWords, entry) as i32,
@@ -50,6 +55,7 @@ pub(crate) const ENTRY_CELL: CellLayout = CellLayout {
     recovery_offset: std::mem::offset_of!(EntryCellLayoutWords, recovery) as i32,
     counters_offset: std::mem::offset_of!(EntryCellLayoutWords, counters) as i32,
     scalar_offset: std::mem::offset_of!(EntryCellLayoutWords, scalar) as i32,
+    rows_offset: std::mem::offset_of!(EntryCellLayoutWords, rows) as i32,
 };
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/call_rows.rs`), which includes this file
 const CELL: CellLayout = ENTRY_CELL;

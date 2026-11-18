@@ -163,6 +163,49 @@ pub unsafe extern "C" fn entry_body() {
     )
 }
 
+/// The body's row entry (`EntryCell::rows`): `entry_body` for a caller of the row ABI, a b-jit direct
+/// call row (`rust-preserve-none`: window x20, context x21, receiver x22, captures x23), which keeps
+/// nothing live across the call, so only the frame record (x29, x30) is saved. Returns the leave
+/// routine's (x0 word, x1 status) as they are.
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn entry_rows() {
+    core::arch::naked_asm!(
+        "stp x29, x30, [sp, #-48]!",
+        "mov x29, sp",
+        "ldr x9, [x21, #{payload}]",
+        "ldr x10, [x9, #{stores}]",
+        "ldr x11, [x9, #{values}]",
+        "stp x10, x11, [sp, #16]",
+        "ldr x10, [x9, #{len}]",
+        "ldr x11, [x9, #{receiver}]",
+        "stp x10, x11, [sp, #32]",
+        "str x22, [x9, #{receiver}]",
+        "lsl x10, x23, #{pad}",
+        "lsr x10, x10, #{pad}",
+        "and x11, x10, #{stores_bit}",
+        "str x11, [x9, #{stores}]",
+        "eor x10, x10, x11",
+        "str x10, [x9, #{values}]",
+        "lsr x10, x23, #{bits}",
+        "str x10, [x9, #{len}]",
+        hole_into!("x16", "first"),
+        "blr x16",
+        "ldr x9, [x21, #{payload}]",
+        "ldp x10, x11, [sp, #32]",
+        "str x10, [x9, #{len}]",
+        "str x11, [x9, #{receiver}]",
+        "ldp x10, x11, [sp, #16]",
+        "str x10, [x9, #{stores}]",
+        "str x11, [x9, #{values}]",
+        "ldp x29, x30, [sp], #48",
+        "ret",
+        first = sym HOLE_NEXT, payload = const CALL_CONTEXT_ADAPTER_PAYLOAD, values = const JS_STEP_CAPTURE_VALUES,
+        len = const JS_STEP_CAPTURE_LEN, stores = const JS_STEP_CAPTURE_STORES, stores_bit = const CAPTURE_STORES_BIT,
+        receiver = const JS_STEP_RECEIVER, bits = const CAPTURE_ADDRESS_BITS, pad = const CAPTURE_ADDRESS_PAD
+    )
+}
+
 /// Returns hole 0 (a word the region leaves with: a PC or a lane exit), status `NATIVE_JS_STOPPED`.
 #[unsafe(naked)]
 #[unsafe(no_mangle)]

@@ -69,10 +69,6 @@ impl Ending {
         match self { Self::Region => LaneHelper::RegionCall, Self::Body => LaneHelper::Call }
     }
 
-    fn thunk(self) -> &'static str {
-        match self { Self::Region => "entry_thunk", Self::Body => "entry_body" }
-    }
-
     /// The routine that leaves with a word its holes give, and the one that leaves with the
     /// word an exit stub pushed.
     fn tails(self) -> (&'static str, &'static str) {
@@ -90,15 +86,26 @@ pub(super) fn routine(name: &str) -> Result<Stencil, String> {
     quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}"))
 }
 
-/// The entry thunk, its call to the first row (at `rows_at`) patched.
+/// The entry thunk, its call to the first row (at `rows_at`) patched; a body's is followed by its
+/// row entry (`entry_rows`, at `rows_entry_offset`), which calls the same first row.
 pub(super) fn thunk(ending: Ending, rows_at: usize) -> Result<Vec<u8>, String> {
-    let stencil = routine(ending.thunk())?;
-    let mut code = stencil.code.clone();
-    for reloc in &stencil.relocs {
-        let at = reloc.offset as usize;
-        patch_successor(&mut code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
+    let mut code = Vec::new();
+    let names: &[&str] = match ending { Ending::Region => &["entry_thunk"], Ending::Body => &["entry_body", "entry_rows"] };
+    for name in names {
+        let stencil = routine(name)?;
+        let start = code.len();
+        code.extend_from_slice(&stencil.code);
+        for reloc in &stencil.relocs {
+            let at = start + reloc.offset as usize;
+            patch_successor(&mut code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
+        }
     }
     Ok(code)
+}
+
+/// Where a body's row entry (`entry_rows`) lies in its code: past `entry_body`, which starts it.
+pub(in crate::vm::compiled) fn rows_entry_offset() -> Option<usize> {
+    routine("entry_body").ok().map(|stencil| stencil.code.len())
 }
 
 /// The code that writes `spills` back to the register file (a pinned double as a canonical

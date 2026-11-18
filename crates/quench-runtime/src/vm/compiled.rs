@@ -3518,6 +3518,9 @@ pub(super) struct LaneMethod {
     /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
     /// that proves its numeric arguments calls by the entry cell's `scalar` word.
     scalar: Option<usize>,
+    /// Where its row entry lies in the same code (`entry_rows`, a b-jit body's), which a b-jit direct
+    /// call calls by the entry cell's `rows` word; none for a Cranelift body.
+    rows: Option<usize>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -3581,6 +3584,11 @@ impl LaneMethod {
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
     pub(super) fn scalar_address(&self) -> Option<usize> {
         self.scalar
+    }
+
+    /// The address of its row entry, if it has one (`EntryCell::rows`).
+    pub(super) fn rows_address(&self) -> Option<usize> {
+        self.rows
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
