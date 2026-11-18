@@ -1506,12 +1506,7 @@ impl<H: Host> Vm<H> {
                     self.async_generator_throw_ready(p, generator, request.value, request.promise)?;
                 }
             }
-            if self
-                .generator_record_mut(generator)
-                .is_some_and(|record| record.is_executing())
-            {
-                return Ok(());
-            }
+            // A request that left the generator executing ends the loop at the next pop.
         }
     }
 

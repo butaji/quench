@@ -49,6 +49,8 @@ pub(crate) struct FrameRecord {
     pub(in crate::vm) live_registers: Option<RegisterSet>,
     /// The heap's collection epoch when the frame suspended (`Heap::collection_epoch`).
     suspended_epoch: u64,
+    /// The last suspension's pc and the registers live there (`Vm::park_frame`).
+    pub(in crate::vm) suspension_live: Option<(usize, Option<RegisterSet>)>,
     /// What its windowed resumes derive once (`generator_windows::window_plan`).
     pub(in crate::vm) window_plan: Option<crate::vm::dispatch_fast::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
@@ -196,6 +198,7 @@ impl FrameRecord {
             active_iterators: Vec::new(),
             with_objects: Vec::new(),
             live_registers: None,
+            suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,
@@ -252,7 +255,7 @@ impl FrameRecord {
         let mut record = Self {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
+            live_registers: None, suspended_epoch: 0, suspension_live: None, window_plan: None, js_jit_skip_entry_once, environment_window: false,
             binding_site_pc: None,
         };
         record.bind_window();
@@ -275,7 +278,7 @@ impl FrameRecord {
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _, suspended_epoch: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            live_registers: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -340,6 +343,7 @@ impl Clone for FrameRecord {
             active_iterators: self.active_iterators.clone(),
             with_objects: self.with_objects.clone(),
             live_registers: self.live_registers,
+            suspension_live: self.suspension_live,
             suspended_epoch: self.suspended_epoch,
             window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
@@ -395,6 +399,7 @@ impl Snap for FrameRecord {
             with_objects: Snap::unsnap(reader)?,
             captured: Snap::unsnap(reader)?,
             live_registers: None,
+            suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,

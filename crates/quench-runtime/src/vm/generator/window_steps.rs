@@ -84,10 +84,25 @@ impl<H: Host> Vm<H> {
     /// taken back.
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
-        let live = self.suspension_registers(frame.program, frame.function, pc);
+        let live = self.cached_suspension_registers(frame, pc);
         self.lane_stack.take_with_objects(depth, &mut frame.with_objects);
         self.lane_stack.take_iterators(depth, &mut frame.active_iterators);
         frame.suspend_at(pc, live);
+    }
+
+    /// `suspension_registers` of `frame` at `pc`, kept on the record for its next suspension
+    /// there: a generator or async body suspends at the same few points over and over, and its
+    /// function's code stays while the frame lives.
+    #[inline(always)]
+    fn cached_suspension_registers(&self, frame: &mut FrameRecord, pc: usize) -> (Option<crate::compile::liveness::RegisterSet>, u64) {
+        match frame.suspension_live {
+            Some((at, live)) if at == pc => (live, self.heap.collection_epoch()),
+            _ => {
+                let live = self.suspension_registers(frame.program, frame.function, pc);
+                frame.suspension_live = Some((pc, live.0));
+                live
+            }
+        }
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.
