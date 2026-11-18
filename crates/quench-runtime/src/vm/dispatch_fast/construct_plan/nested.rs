@@ -37,7 +37,7 @@ pub(in super::super) fn nested_root_holds<H: Host>(vm: &mut Vm<H>, nested: &Nest
 fn capture_value<H: Host>(vm: &mut Vm<H>, env: Value, capture: u32) -> Option<Value> {
     let (slots, root) = vm.walked_capture_slots(env, false, ImmediateLayout::capture_depth(capture))?;
     // SAFETY: as `Vm::walked_capture_slots`; nothing below collects.
-    vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(capture)).0
+    vm.plain_capture(unsafe { &*slots }, root, ImmediateLayout::capture_slot(capture))
 }
 
 /// A fresh object of `constructor` as its own plans build it from `arguments`, which run no

@@ -5835,35 +5835,30 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const usize> 
 /// OSR entry and the LoadCapture slow lane use the same binding and TDZ guards.
 #[inline(never)]
 fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
-    lane_read_capture_value::<H, false>(cx, depth, slot).0
+    lane_read_capture_value::<H, false>(cx, depth, slot)
 }
 
 /// `lane_capture_value`, with `PLAIN` also a root projection's plain read
-/// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held;
-/// with the global var whose global object property answered it, and whether an
-/// activation's walk ended at a root environment.
+/// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held.
 #[inline(always)]
-fn lane_read_capture_value<H: Host, const PLAIN: bool>(
-    cx: *mut LaneContext<H>,
-    depth: u16,
-    slot: u16,
-) -> (Option<Value>, Option<super::environment::RootRead>, bool) {
+fn lane_read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
-    
+
     if env.is_deleted() {
         let frame = unsafe { (*cx).frame() };
-        let (value, source) = if PLAIN {
+        let value = if PLAIN {
             vm.cached_plain_capture(frame, depth, slot)
         } else {
-            (vm.cached_direct_capture(frame, depth, slot), None)
+            vm.cached_direct_capture(frame, depth, slot)
         };
-        (value, source, depth == 0 && frame_capture_at_root(cx, frame))
+        if depth == 0 {
+            frame_capture_at_root(cx, frame);
+        }
+        value
     } else {
         // A frameless activation's function has no environment of its own.
-        let Some((slots, root)) = vm.walked_capture_slots(env, false, depth) else {
-            return (None, None, false);
-        };
+        let (slots, root) = vm.walked_capture_slots(env, false, depth)?;
         // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
         let slots = unsafe { &*slots };
         if depth == 0
@@ -5872,8 +5867,7 @@ fn lane_read_capture_value<H: Host, const PLAIN: bool>(
         {
             unsafe { (*cx).registers.set_capture(dense) };
         }
-        let (value, source) = if PLAIN { vm.plain_capture(slots, root, slot) } else { (vm.owned_capture(slots, root, slot), None) };
-        (value, source, root.is_some())
+        if PLAIN { vm.plain_capture(slots, root, slot) } else { vm.owned_capture(slots, root, slot) }
     }
 }
 
@@ -5885,36 +5879,10 @@ script_handler! {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
         let slot = ImmediateLayout::capture_slot(imm);
-        let (value, source, root) = lane_read_capture_value::<H, true>(cx, depth, slot);
-        // A global var's own data property on the global object becomes the record's hint
-        // (`lane_load_root_var`); a retained global lexical binding's name and index in the
-        // realm's bindings do (`lane_load_root_lexical`); a root slot that is the binding
-        // itself, as a module's top-level declarations are, is read in place
-        // (`lane_load_root_binding`).
-        if value.is_some() {
-            use super::environment::RootRead;
-            let vm = unsafe { vm(cx) };
-            if root && source.is_none() && lane_root_binding_slot(cx, depth, slot) {
-                requicken::<H>(ip, lane_load_root_binding::<H>);
-            }
-            match source {
-                Some(RootRead::GlobalVar(atom)) => {
-                    if let Some(hint) = vm.own_data_field_hint::<false>(vm.realm.globals, atom) {
-                        set_field_hint(ip, hint);
-                        requicken::<H>(ip, lane_load_root_var::<H>);
-                    }
-                }
-                Some(RootRead::GlobalLexical(atom, index)) => {
-                    if let Ok(index) = u16::try_from(index)
-                        && index != NO_CALL_LINK
-                    {
-                        set_field_hint(ip, super::FieldCache::own(atom, index));
-                        requicken::<H>(ip, lane_load_root_lexical::<H>);
-                    }
-                }
-                None => {}
-            }
-        }
+        // The root reads' fast paths (a global var's hint, a global lexical's index, a root
+        // binding slot read in place) are gone: every read takes the walk, which answers the same
+        // value through `lane_read_capture_value`. Their record requickening went with them.
+        let value = lane_read_capture_value::<H, true>(cx, depth, slot);
         #[cfg(feature = "profile-lane-exits")]
         {
             let vm = unsafe { vm(cx) };
@@ -5941,102 +5909,6 @@ script_handler! {
         if !lane_frame::staged_load_capture::<H>(cx, r, view, i.a, (depth, slot), true) {
             return exit(ip);
         }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// A `LoadCapture` of a root environment's binding slot (`lane_root_binding_slot`), as a
-    /// module function reads a top-level `const`: the slot of the root environment the parent
-    /// links reach while the root owns it and it holds a value; any other read, one in its
-    /// temporal dead zone or of a slot another environment shares, takes the walk.
-    fn lane_load_root_binding<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let slot = usize::from(ImmediateLayout::capture_slot(imm));
-        let vm = unsafe { vm(cx) };
-        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.get(env) {
-            Some(Cell::Environment { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
-                slots.owned(slot).filter(|value| !value.is_internal_marker())
-            }
-            _ => None,
-        });
-        let Some(value) = value else {
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// A `StoreCapture` of a root environment's binding slot (`lane_root_binding_slot`), as a
-    /// module function's `count++` of a top-level `let`: the slot of the root environment the
-    /// parent links reach while it holds an initialized value; any other store takes
-    /// `lane_store_outer_capture`.
-    fn lane_store_root_binding<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let slot = usize::from(ImmediateLayout::capture_slot(imm));
-        let value = r.get(i.a);
-        let stored = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).is_some_and(|env| {
-            let vm = unsafe { vm(cx) };
-            match vm.heap.get_mut(env) {
-                Some(Cell::Environment { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
-                    match slots.owned_mut(slot) {
-                        Some(binding) if !binding.is_internal_marker() => {
-                            *binding = value;
-                            true
-                        }
-                        _ => false,
-                    }
-                }
-                _ => false,
-            }
-        });
-        if !stored {
-            sibling!(lane_store_outer_capture::<H>, r, ip, view)
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// A `LoadCapture` of a script's retained top-level `let`, `const` or class, whose name and
-    /// index in the active realm's global lexical bindings its record's hint holds
-    /// (`lane_load_capture_walk`): the binding at that index while it is that name's and
-    /// initialized, else the walk. Bindings are never removed from an active realm, so the
-    /// name at the index is the one a lookup of it finds.
-    fn lane_load_root_lexical<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let hint = i.field_hint();
-        let value = vm
-            .realm
-            .global_lexical_bindings
-            .get_index(usize::from(hint.slot))
-            .filter(|(atom, value)| **atom == hint.receiver && !value.is_deleted())
-            .map(|(_, value)| *value);
-        let Some(value) = value else {
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
-    /// A `LoadCapture` of a script's top-level `var`, whose global object property its record's
-    /// hint names (`lane_load_capture_walk`): the property's slot while the global object keeps
-    /// the hinted shape and no direct eval's var scope intervenes, else the walk.
-    fn lane_load_root_var<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let value = vm
-            .direct_eval_var_program
-            .is_none()
-            .then(|| vm.record_field_entry_hit(i.field_hint(), vm.realm.globals))
-            .flatten();
-        let Some(value) = value else {
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        };
-        r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
 }
@@ -6203,18 +6075,15 @@ fn lane_store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Va
 }
 
 script_handler! {
-    /// `StoreCapture` past the running function's dense slots, or of a capture past its own
-    /// scope: the lane's store (`lane_capture_store`), else the general path.
+    /// The `StoreCapture` row's miss (`Miss::StoreThroughScopes`) for a capture past the running
+    /// function's dense slots: the lane's store (`lane_capture_store`), else the general path.
+    /// Root binding slots take this store too; no record is requickened to a fast root store.
     #[inline(never)]
-    fn lane_store_outer_capture<>(cx, r, ip, i, view) {
+    fn store_outer_capture_miss<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
         if !lane_frame::staged_store_capture::<H>(cx, r, view, i.a, (depth, slot)) {
             return exit(ip);
-        }
-        // A root environment's binding slot is stored in place from now on.
-        if lane_root_binding_slot(cx, depth, slot) {
-            requicken::<H>(ip, lane_store_root_binding::<H>);
         }
         next!(cx, r, following(ip), view)
     }
@@ -14457,7 +14326,7 @@ use denoted::{denoted_handler, lane_unary};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
-use root_bindings::{frame_capture_at_root, lane_root_binding_slot, lane_root_environment};
+use root_bindings::frame_capture_at_root;
 mod native_calls; mod getters; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;
 mod lane_trace;
@@ -16659,9 +16528,9 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
         Some(env) => {
             let vm = unsafe { vm(cx) };
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
-            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.plain_capture(unsafe { &*slots }, root, slot).0)
+            vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.plain_capture(unsafe { &*slots }, root, slot))
         }
-        None => lane_read_capture_value::<H, true>(cx, depth, slot).0,
+        None => lane_read_capture_value::<H, true>(cx, depth, slot),
     };
     value
         .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
@@ -22102,20 +21971,19 @@ const JUMP_IF_TRUE: u16 = opc::JumpTrue;
 const CAPTURE_READ: u16 = opc::LoadCapture;
 const CAPTURE_WRITE: u16 = opc::StoreCapture;
 
-/// Gives each capture record its handler by the capture's depth, which the bytecode fixes: a
-/// `StoreCapture` past the function's own scope the lane's walking store (`lane_store_outer_capture`).
-/// A `LoadCapture` past it keeps its row, which reads through the lane's remembered walks
-/// (`Reads::of_captures`). A depth-0 record is its row read as the zero depth it is
-/// (`row_near`); a depth-0 store followed by a read of the same capture runs both
-/// (`lane_store_capture_load`).
+/// Gives each capture record its handler by the capture's depth, which the bytecode fixes. A
+/// record past the function's own scope keeps its row: an outer `LoadCapture` reads through the
+/// lane's remembered walks (`Reads::of_captures`), an outer `StoreCapture` misses to
+/// `Miss::StoreThroughScopes` (`store_outer_capture_miss`). A depth-0 record is its row read as
+/// the zero depth it is (`row_near`).
 fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
-    let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
     for pc in 0..records.len() {
         let record = &records[pc];
         let own = ImmediateLayout::capture_depth(record.imm()) == 0;
-        let handler: Handler = if store(record.handler) && !own {
-            lane_store_outer_capture::<H>
-        } else if own && let Some(near) = row_near::<H, CAPTURE_READ>(record.handler).or_else(|| row_near::<H, CAPTURE_WRITE>(record.handler)) {
+        let handler: Handler = if !own {
+            continue;
+        } else if let Some(near) = row_near::<H, CAPTURE_READ>(record.handler).or_else(|| row_near::<H, CAPTURE_WRITE>(record.handler)) {
+            // Its own scope's capture: the row reads its depth as the zero it is.
             near
         } else {
             continue;

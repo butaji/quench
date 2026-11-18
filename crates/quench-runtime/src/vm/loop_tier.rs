@@ -350,7 +350,7 @@ pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> 
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
-    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0
+    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot)
         .is_some_and(|value| unsafe { vm(cx) }.lane_typed_array_elements(value, false).is_some()));
     slots
 }
@@ -366,7 +366,7 @@ pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
-    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0.is_some_and(|value| value.as_int().is_some()));
+    slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).is_some_and(|value| value.as_int().is_some()));
     slots
 }
 

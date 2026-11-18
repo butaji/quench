@@ -955,12 +955,12 @@ pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handl
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
 /// a capture access the lane's own slow arm, which walks the scopes and requickens the record to
-/// the root binding it finds (`lane_load_capture_walk`, `lane_store_outer_capture`), or for a
+/// the root binding it finds (`lane_load_capture_walk`, `store_outer_capture_miss`), or for a
 /// `ToPropertyKey` the lane's integer and symbol answers (`lane_to_property_key`).
 const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
-        crate::staged::Miss::StoreThroughScopes => super::lane_store_outer_capture::<H>,
+        crate::staged::Miss::StoreThroughScopes => super::store_outer_capture_miss::<H>,
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::EnvironmentLoad => super::lane_load_local::<H>,
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,

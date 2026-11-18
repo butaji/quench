@@ -2181,9 +2181,7 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 index::LoadCapture => {
-                    if let (Some(value), _) =
-                        self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot())
-                    {
+                    if let Some(value) = self.cached_plain_capture(frame, ins.capture_depth(), ins.capture_slot()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
