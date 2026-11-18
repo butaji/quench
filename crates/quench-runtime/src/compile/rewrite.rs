@@ -13,14 +13,14 @@ struct Rule {
 }
 
 macro_rules! fusion_recipes {
-    ($($recipe:ident: [$($first:ident, $second:ident);+ $(;)?] => $handler:expr;)+) => {
+    ($($recipe:ident: [$($first:ident, $second:ident);* $(;)?] => $handler:expr;)+) => {
         #[derive(Clone, Copy)]
         enum Recipe { $($recipe),+ }
 
         const RULES: &[Rule] = &[
             $($(Rule {
                 pattern: [Op::$first, Op::$second], recipe: Recipe::$recipe,
-            }),+),+
+            },)*)+
         ];
 
         fn apply_recipe(
@@ -102,11 +102,9 @@ fusion_recipes! {
                 second.jump_target(),
             ))
         };
-    ReturnResult: [
-        Binary, Return; Unary, Return; GetField, Return; Call, Return; CallKnown, Return;
-        CallMethod, Return; CallThisMethod, Return; Construct, Return;
-        MakeObject2, Return; MakeObjectLiteral, Return; SuperConstArrayObject2, Return
-    ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+    // Its pairs are derived, not listed: every op whose row declares a returnable result
+    // (`ResultLayout::allows_return`) followed by the `Return` of that result (`rules_for`).
+    ReturnResult: [] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
         Some(first)
@@ -706,10 +704,20 @@ const RULE_FIRSTS: [bool; Op::COUNT] = {
     firsts
 };
 
-/// The rules whose pattern is `[first, second]`, in rule order.
+/// The rules whose pattern is `[first, second]`, in rule order, then the derived ones.
 fn rules_for(first: Op, second: Op) -> impl Iterator<Item = &'static Rule> {
     let candidates: &'static [Rule] = if RULE_FIRSTS[first as usize] { RULES } else { &[] };
-    candidates.iter().filter(move |rule| rule.pattern == [first, second])
+    candidates.iter().filter(move |rule| rule.pattern == [first, second]).chain(derived_rule(first, second))
+}
+
+/// `ReturnResult`'s rule, for any pair `derived_rule` admits.
+const RETURN_RESULT: Rule = Rule { pattern: [Op::Nop, Op::Return], recipe: Recipe::ReturnResult };
+
+/// The rule a pair's rows imply: an op whose row declares a returnable result
+/// (`ResultLayout::allows_return`) completes its function itself when a `Return` of that
+/// result follows it, so no hand-written list of producers can fall behind the rows.
+fn derived_rule(first: Op, second: Op) -> Option<&'static Rule> {
+    (second == Op::Return && first.result_layout().allows_return()).then_some(&RETURN_RESULT)
 }
 
 /// Whether a rule of the selected recipe fuses `[first, second]`.
@@ -1543,7 +1551,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 35);
+        assert_eq!(RULES.len(), 24);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

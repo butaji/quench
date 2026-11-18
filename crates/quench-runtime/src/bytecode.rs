@@ -539,7 +539,7 @@ impl ResultLayout {
         }
     }
 
-    const fn allows_return(self) -> bool {
+    pub(crate) const fn allows_return(self) -> bool {
         matches!(
             self,
             Self::Returnable | Self::ReturnableAndThis | Self::NumericReturnable
