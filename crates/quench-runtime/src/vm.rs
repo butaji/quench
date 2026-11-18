@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod realm_table;
 mod register_file;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
@@ -168,7 +169,6 @@ mod handler_entry;
 mod equality; mod error; mod eval;
 mod fdlibm_math;
 mod field_cache;
-mod realm_table;
 mod in_presence;
 mod instanceof_walk;
 mod site_table;
