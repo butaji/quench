@@ -20440,7 +20440,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
         Class::WasmSimdShuffle => Some(lane_wasm_simd_shuffle::<H>),
-        Class::WasmMemoryStore => Some(lane_wasm_memory_store::<H>),
         Class::CallKnown => Some(known_call_handler::<H>()),
         Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
         Class::CallArray => Some(lane_call_array::<H>),

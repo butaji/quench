@@ -26,6 +26,9 @@ pub(crate) enum WasmAccessOperation {
     /// `destination = load[address]` of the memory in `memory`, the scalar access `operator` names
     /// (`WasmMemoryLoad`); `address` holds the effective address `EffectiveAddress` made.
     GenericLoad { operator: MemoryLoad, destination: Register, memory: Register, address: Register },
+    /// `store[address] = source` of the memory in `memory`, the scalar access `operator` names
+    /// (`WasmMemoryStore`).
+    GenericStore { operator: MemoryStore, source: Register, memory: Register, address: Register },
     /// `destination = index + offset`, the effective address of a generic access (`WasmMemoryAddress`):
     /// the index in `index`, read as the memory's index type (named by the memory in `memory`).
     EffectiveAddress { destination: Register, index: Register, memory: Register, offset: u64 },
@@ -65,6 +68,12 @@ impl WasmAccessOperation {
             Class::WasmMemoryLoad => Some(Self::GenericLoad {
                 operator: MemoryLoad::from_tag(wide.imm())?,
                 destination: wide.a(),
+                memory: wide.b(),
+                address: wide.c(),
+            }),
+            Class::WasmMemoryStore => Some(Self::GenericStore {
+                operator: MemoryStore::from_tag(wide.imm())?,
+                source: wide.a(),
                 memory: wide.b(),
                 address: wide.c(),
             }),
@@ -115,13 +124,16 @@ pub(crate) fn step<F: Frame<Concrete>>(
             let Some(index) = frame.wasm_read(stage, address, WasmRep::Int32) else {
                 return Step::Unresolved;
             };
+            let Some(tagged) = frame.wasm_read(stage, source, WasmRep::Tagged) else {
+                return Step::Unresolved;
+            };
             let Some(word) = frame.wasm_read(stage, source, rep) else { return Step::Unresolved };
             let stored = {
                 let Some(memory) = frame.direct_memory() else { return Step::Unresolved };
                 wasm_memory::store(&mut ConcreteMemory { memory }, access, index, offset, word, false)
             };
             match stored {
-                Ok(()) => Step::Value(word),
+                Ok(()) => Step::Value(tagged),
                 Err(_) => Step::Unresolved,
             }
         }
@@ -142,6 +154,25 @@ pub(crate) fn step<F: Frame<Concrete>>(
             match frame.wasm_write(stage, destination, word, rep) {
                 Some(tagged) => Step::Value(tagged),
                 None => Step::Unresolved,
+            }
+        }
+        WasmAccessOperation::GenericStore { operator, source, memory, address } => {
+            let access = Access::of_store(operator);
+            let Some(rep) = representation(access.ty) else { return Step::Unresolved };
+            let Some(index) = frame.wasm_read(stage, address, WasmRep::Bits64) else {
+                return Step::Unresolved;
+            };
+            let Some(tagged) = frame.wasm_read(stage, source, WasmRep::Tagged) else {
+                return Step::Unresolved;
+            };
+            let Some(word) = frame.wasm_read(stage, source, rep) else { return Step::Unresolved };
+            let stored = {
+                let Some((bytes, _)) = frame.wasm_memory(stage, memory) else { return Step::Unresolved };
+                wasm_memory::store(&mut ConcreteMemory { memory: bytes }, access, index, 0, word, false)
+            };
+            match stored {
+                Ok(()) => Step::Value(tagged),
+                Err(_) => Step::Unresolved,
             }
         }
         WasmAccessOperation::EffectiveAddress { destination, index, memory, offset } => {

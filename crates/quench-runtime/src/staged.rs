@@ -175,6 +175,8 @@ pub(crate) enum Miss {
     /// address directly, an out-of-bounds access): the lane's hand handler of the load, which
     /// completes it or raises its trap.
     WasmMemoryLoad,
+    /// A generic Wasm memory store the row leaves: the lane's hand handler of the store.
+    WasmMemoryStore,
     /// A generic Wasm effective address the row leaves: the lane's hand handler of the address.
     WasmMemoryAddress,
 }
@@ -214,6 +216,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::StoreLocal => Miss::LocalStore,
         Op::InitializeTdz => Miss::LocalInitialize,
         Op::WasmMemoryLoad => Miss::WasmMemoryLoad,
+        Op::WasmMemoryStore => Miss::WasmMemoryStore,
         Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
