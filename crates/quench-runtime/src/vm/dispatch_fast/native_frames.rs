@@ -88,6 +88,7 @@ pub(super) fn link_on_observe<H: Host>(cx: *mut LaneContext<H>, depth: usize) {
                 argc,
                 completion,
                 forwards: false,
+            kept: 0,
                 environment: false,
                 record: std::ptr::null_mut(),
             }),
