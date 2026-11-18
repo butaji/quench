@@ -77,7 +77,7 @@ impl<H: Host> Vm<H> {
     /// refused otherwise), and the inlining body proves that realm active at its entry (`RealmProof`).
     fn inlinable_callee(&self, program: &ResidualProgram, callee: Value, function: u32) -> Option<InlineBody> {
         self.same_realm_user_target(callee)?;
-        InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function), self.programs.constants(self.active_program))
+        InlineBody::of(program.function_get(function as usize)?, program.shared_register_root_masks(function))
     }
 
     /// The callees `candidates` (the callees each call site of `code`, the function's, reached, by

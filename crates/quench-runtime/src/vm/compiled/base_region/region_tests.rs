@@ -28,18 +28,20 @@ fn run_regions(source: &str) -> Regions {
     Regions { interpreted, compiled, runs: kinds.count(Event::OsrRun), kinds }
 }
 
-/// A hot loop that calls a small function by its global name: the call site inlines the callee (its
-/// dead implicit `return undefined` dropped, its constants folded), the name load is a capture row,
-/// and the region runs with no leave but where the loop ends.
+/// A hot loop that calls a small function by its global name: the region would load the callee
+/// through the general helper step on every iteration (hundreds of instructions, where the
+/// interpreter's quickened name load spends tens), so it is not built and the interpreter runs the
+/// loop (`function::interprets`, the tier ladder). Once a region reads a global binding by a row,
+/// the call site inlines and the region runs with no leave but where the loop ends.
 #[test]
-fn a_hot_loop_calling_a_small_function_by_name_runs_as_a_region_with_the_callee_inlined() {
+fn a_hot_loop_calling_a_small_function_by_name_is_not_a_region_while_the_name_load_interprets() {
     let ran = run_regions(
         "function sq(x) { return x * x; }
          function run(n) { var s = 0; for (var i = 0; i < n; i++) s = (s + sq(i & 7)) | 0; return s; }
          print(run(40000)); print(run(10));",
     );
     assert_eq!(ran.interpreted, ran.compiled);
-    assert!(ran.runs > 0, "the loop runs as a region: {:?}", ran.kinds);
+    assert_eq!(ran.runs, 0, "no region interprets in its loop: {:?}", ran.kinds);
 }
 
 /// A guard that fails inside the inlined callee of a region (an int32 overflow after some iterations
