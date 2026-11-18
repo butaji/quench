@@ -342,6 +342,33 @@ impl<H: Host> Vm<H> {
                 let value = self.encode_wasm_value(value);
                 self.write(f, i.result_register(), value);
             }
+            Op::WasmI64BinaryRaw | Op::WasmI64BinaryImmediateRaw => {
+                // Raw registers hold i64 words (`compile::liveness::raw_webs`).
+                let left = self.read(f, i.register_b()).to_bits() as i64;
+                let right = if i.op() == Op::WasmI64BinaryImmediateRaw {
+                    i64::from(i.c() as i16)
+                } else {
+                    self.read(f, i.register_c()).to_bits() as i64
+                };
+                let operator = crate::wasm::integer::I64BinaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm binary operator");
+                let value = operator
+                    .evaluate(left, right)
+                    .map_err(JsError::wasm_trap_error)?;
+                let value = self.encode_raw_wasm_value(value);
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmI64UnaryRaw => {
+                let value = self.read(f, i.register_b()).to_bits() as i64;
+                let operator = crate::wasm::integer::I64UnaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm unary operator");
+                let value = self.encode_raw_wasm_value(operator.evaluate(value));
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmReturn64 => {
+                let word = self.read(f, i.register_a()).to_bits();
+                return Ok(StepResult::Return(self.encode_bits64(word)));
+            }
             Op::WasmI64Unary => {
                 let value = self.wasm_i64_operand(self.read(f, i.register_b()))?;
                 let operator = crate::wasm::integer::I64UnaryOperator::from_tag(i.imm())

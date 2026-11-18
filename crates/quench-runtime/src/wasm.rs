@@ -1649,6 +1649,13 @@ impl ModuleBindings<'_> {
         // The lowering grew the code by doubling; the module keeps it for its life.
         let mut function = function;
         function.shrink_to_fit();
+        // i64 values no boxed use reaches live in their registers as machine words: their ops
+        // then run as the C op plus dispatch and decode (`compile::liveness::raw_webs`).
+        let constant_neutral = |index: usize| {
+            matches!(lowering_constants.get(settled, index), Some(Constant::WasmBits64(bits)) if crate::Value::from_bits64(*bits).is_some())
+        };
+        let returns_wide = matches!(signature.results.as_slice(), [WasmType::I64]);
+        crate::compile::liveness::raw_webs::use_raw_forms(&mut function, &constant_neutral, returns_wide);
         *constants = lowering_constants;
         Ok(function)
     }

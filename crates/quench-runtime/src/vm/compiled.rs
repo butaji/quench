@@ -6380,6 +6380,8 @@ struct Emitter<'a, 'b, H: Host> {
     simd_words: Option<ir::StackSlot>,
     /// The table an indirect target is being emitted for (`WasmTable`).
     indirect: Option<wasm_table_stage::IndirectSite>,
+    /// The row an indirect target just checked, which the call that follows reads again.
+    checked_row: Option<wasm_table_stage::CheckedRow>,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -7089,6 +7091,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             vectors: Vec::new(),
             simd_words: None,
             indirect: None,
+            checked_row: None,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
