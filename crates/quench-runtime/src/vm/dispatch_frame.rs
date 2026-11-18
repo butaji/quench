@@ -1629,15 +1629,17 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let returned = match self.lane_returned.take() {
             Some(value) => Some(value),
-            None if instruction.op().is_return() => Some(self.read(frame, instruction.register_a())),
-            None => None,
+            None => match crate::staged::Operation::<u64, ()>::of(instruction) {
+                Some(crate::staged::Operation::Return { source }) => Some(self.read(frame, source)),
+                _ => None,
+            },
         };
         if let Some(value) = returned {
             self.frames[frame].pc = pc;
             self.frames[frame].pc_is_resume = true;
             return Some(FrameOutcome::Complete(value));
         }
-        if !instruction.op().is_yield() {
+        if !crate::staged::Operation::<u64, ()>::is_yield(instruction) {
             return asynchronous.then(|| self.lane_stop_awaits(p, frame, Some(instruction), pc)).flatten();
         }
         let value = self.read(frame, instruction.register_b());
@@ -1666,7 +1668,7 @@ impl<H: Host> Vm<H> {
         instruction: Option<WideInstruction>,
         pc: usize,
     ) -> Option<FrameOutcome> {
-        let instruction = instruction.filter(|instruction| instruction.op().is_await())?;
+        let instruction = instruction.filter(|instruction| crate::staged::Operation::<u64, ()>::is_await(*instruction))?;
         self.lane_await_value(p, frame, instruction.register_b(), instruction.result_register(), pc)
             .map(|value| FrameOutcome::Await { value, destination: instruction.result_register(), frame: None })
     }
@@ -1918,16 +1920,19 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op() as u16, index::CloneEnv | index::Return | index::GetField | index::GetIndex | index::SetIndex | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse) || instruction.op().is_field_store() {
+                    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CloneEnv { .. } | crate::staged::Operation::Return { .. }
+                            | crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::CompareJump { .. }))
+                        || crate::staged::Operation::<u64, ()>::decode_load_name(instruction, ()).is_some() || crate::staged::Operation::<u64, ()>::is_field_read(instruction)
+                        || crate::staged::Operation::<u64, ()>::is_binary(instruction) || crate::staged::Operation::<u64, ()>::is_private_in(instruction) || crate::staged::Operation::<u64, ()>::is_field_store(instruction) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         // A store names its cache site and field, which tell a shared overflow site
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
-                        let store = instruction.op().is_field_store()
+                        let store = crate::staged::Operation::<u64, ()>::is_field_store(instruction)
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
                             .or_else(|| {
-                                instruction.op().is_throwing_name_load()
+                                crate::staged::Operation::<u64, ()>::decode_load_name(instruction, ()).is_some()
                                     .then(|| format!(" name={}", &p.atoms[instruction.imm() as usize]))
                             })
                             .unwrap_or_default();
@@ -1935,7 +1940,7 @@ impl<H: Host> Vm<H> {
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
-                    if instruction.op().is_return() && pending_calls.is_empty() {
+                    if crate::staged::Operation::<u64, ()>::is_return(instruction) && pending_calls.is_empty() {
                         let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
                         let described = match starter.and_then(|callable| self.heap.function(callable)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
@@ -1950,7 +1955,7 @@ impl<H: Host> Vm<H> {
                         };
                         super::lane_exits::record_detail(format!("Return nested run started by {described}"));
                     }
-                    if instruction.op().is_get_field()
+                    if crate::staged::Operation::<u64, ()>::is_field_read(instruction)
                         && let Some(lookup) = instruction.field_lookup()
                     {
                         let (base, atoms) = match lookup {
@@ -1965,10 +1970,11 @@ impl<H: Host> Vm<H> {
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
-                    if matches!(instruction.op() as u16, index::GetIndex | index::SetIndex | index::DefineArrayElement) {
-                        let (base, key) = match instruction.op() as u16 {
-                            index::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
-                            index::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementWrite { .. }))
+                        || matches!(crate::staged::Operation::<u64, ()>::decode_literal(instruction, ()), Some(crate::staged::Operation::DefineElement { .. })) {
+                        let (base, key) = match crate::staged::Operation::<u64, ()>::of(instruction) {
+                            Some(crate::staged::Operation::ElementRead { .. }) => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
+                            Some(crate::staged::Operation::ElementWrite { .. }) => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
                             _ => {
                                 let registers = &self.frames[frame].registers;
                                 (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
@@ -1999,7 +2005,7 @@ impl<H: Host> Vm<H> {
                         let dense = base.and_then(|base| self.heap.array(base)).map(|array| (array.elements().len(), array.has_indexed_descriptors(), array.is_frozen()));
                         super::lane_exits::record_detail(format!("{:?} kinds base={} key={} array={dense:?}", instruction.op(), describe(base), describe(key)));
                     }
-                    if matches!(instruction.op() as u16, index::JumpBinaryFalse | index::Binary) {
+                    if matches!(crate::staged::Operation::<u64, ()>::of(instruction), Some(crate::staged::Operation::CompareJump { .. })) || crate::staged::Operation::<u64, ()>::is_binary(instruction) {
                         let constants = self.programs.constants(cursor.program);
                         let registers = &self.frames[frame].registers;
                         let kind = |operand: crate::bytecode::Operand| {
@@ -2022,7 +2028,7 @@ impl<H: Host> Vm<H> {
                                 },
                             }
                         };
-                        let operator = if instruction.op().is_binary() { instruction.binary_operator() } else { u32::from(instruction.a()) };
+                        let operator = if crate::staged::Operation::<u64, ()>::is_binary(instruction) { instruction.binary_operator() } else { u32::from(instruction.a()) };
                         super::lane_exits::record_detail(format!(
                             "{:?} op{operator} {} {}",
                             instruction.op(),
@@ -2369,7 +2375,7 @@ impl<H: Host> Vm<H> {
             match ins.op()  as u16 {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
-                index::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                _ if let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(ins) => Ok(StepResult::Return(self.read(frame, source))),
                 index::Call if allow_inline_calls => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,

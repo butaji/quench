@@ -1196,6 +1196,34 @@ impl Operation<u64, ()> {
         matches!(Self::of(instruction), Some(Self::Throw { .. }))
     }
 
+    /// Whether `instruction` returns from its frame: its decoded operation is `Return`.
+    pub(crate) fn is_return(instruction: WideInstruction) -> bool {
+        matches!(Self::of(instruction), Some(Self::Return { .. }))
+    }
+
+    /// Whether `instruction` is a Number, equality or general `Binary` operation: the operation a
+    /// `Binary` record decodes to, whose operator the tier reads from its operand field.
+    pub(crate) fn is_binary(instruction: WideInstruction) -> bool {
+        matches!(Self::of(instruction), Some(Self::Number(_) | Self::Equality { .. } | Self::Binary { .. }))
+    }
+
+    /// Whether `instruction` yields a value from a generator (`Yield`). No staged row answers it:
+    /// a frame's yield is the general loop's step.
+    pub(crate) fn is_yield(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Yield
+    }
+
+    /// Whether `instruction` awaits a value (`Await`). No staged row answers it: an async frame's
+    /// await is the general loop's step.
+    pub(crate) fn is_await(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::Await
+    }
+
+    /// Whether `instruction` tests a private name's brand (`PrivateIn`), which no staged row answers.
+    pub(crate) fn is_private_in(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::PrivateIn
+    }
+
     /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
     pub(crate) fn is_field_read(instruction: WideInstruction) -> bool {
         instruction.op() == Op::GetField
