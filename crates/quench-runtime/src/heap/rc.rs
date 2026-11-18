@@ -11,7 +11,7 @@
 //! end, increments the children of the records it logged and of the young survivors, and
 //! decrements the copied ones. A full collection recounts from scratch.
 use super::*;
-use records::SatbSnapshot;
+use records::RecordChildren;
 
 /// The record family of a counted value and its id there: the index into
 /// `Heap::record_families`, and the id.
@@ -146,17 +146,17 @@ impl Heap {
         // SAFETY: the caller names live records.
         unsafe {
             if let Some(id) = value.direct_object_index() {
-                self.object_records.get_live(id).snapshot(properties, out);
+                self.object_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_array_index() {
-                self.array_records.get_live(id).snapshot(properties, out);
+                self.array_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_function_index() {
-                self.function_records.get_live(id).snapshot(properties, out);
+                self.function_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_promise_index() {
-                self.promise_records.get_live(id).snapshot(properties, out);
+                self.promise_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_await_index() {
-                self.await_records.get_live(id).snapshot(properties, out);
+                self.await_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_iterator_index() {
-                self.iterator_records.get_live(id).snapshot(properties, out);
+                self.iterator_records.get_live(id).children(properties, out);
             } else if let Some(id) = value.direct_string_index() {
                 match small_strings::small_string_local(id) {
                     Some(local) => self.small_strings.get_live(local).for_each_text(|part| out.push(Value::direct_string(part))),

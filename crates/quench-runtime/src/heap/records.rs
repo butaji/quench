@@ -21,11 +21,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(super) type RecordId = u32;
 
-/// What a record keeps alive, copied out for the snapshot barrier (`RecordSpace::satb_note`):
-/// the values its trace would push, read before the mutator's first write in a concurrent
-/// cycle changes them. Shape roots are left out: a cycle pushes them per shape when it starts.
-pub(super) trait SatbSnapshot {
-    fn snapshot(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
+/// What a record keeps alive, copied out for the reference-count barrier
+/// (`RecordSpace::rc_note`): the values its trace would push, read before a write changes them.
+/// Shape roots are left out.
+pub(super) trait RecordChildren {
+    fn children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
 }
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
@@ -62,12 +62,6 @@ pub(super) trait RecordFamily {
     fn take_promoted(&mut self) -> Vec<RecordId>;
     /// Every aged record becomes old: a full collection promotes every survivor.
     fn forget_ages(&mut self);
-    /// `RecordSpace::begin_satb`, `end_satb` and `take_satb_values`.
-    fn begin_satb(&mut self);
-    fn end_satb(&mut self);
-    fn take_satb_values(&mut self) -> Vec<Value>;
-    fn satb_values_empty(&self) -> bool;
-    fn satb_values_len(&self) -> usize;
     /// What minor sweeps found of the aged records since the last call, emptied.
     fn take_aged_fates(&mut self) -> AgedFates;
     fn live_count(&self) -> usize;
@@ -103,21 +97,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
     }
     fn forget_ages(&mut self) {
         RecordSpace::forget_ages(self);
-    }
-    fn begin_satb(&mut self) {
-        RecordSpace::begin_satb(self);
-    }
-    fn end_satb(&mut self) {
-        RecordSpace::end_satb(self);
-    }
-    fn take_satb_values(&mut self) -> Vec<Value> {
-        RecordSpace::take_satb_values(self)
-    }
-    fn satb_values_empty(&self) -> bool {
-        self.satb_values.is_empty()
-    }
-    fn satb_values_len(&self) -> usize {
-        self.satb_values.len()
     }
     fn take_aged_fates(&mut self) -> AgedFates {
         std::mem::take(&mut self.aged_fates)
@@ -210,18 +189,6 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY, 
     /// Touches what a dead record's drop will free, before the drop (`release`): the drops of
     /// one occupancy word then wait on their cache misses together, not one after another.
     warm: Option<fn(&T)>,
-    /// Whether a concurrent cycle is marking (`Heap::satb_active`): the write barrier then
-    /// snapshots a record's children before its first write instead of logging it for the
-    /// next minor collection, and the mark bits belong to the cycle (`satb_note`).
-    satb: bool,
-    /// The first id the cycle's allocation hands out fresh: records from here up are newer
-    /// than the snapshot, so the barrier skips them.
-    satb_frontier: RecordId,
-    /// The children the barrier snapshotted, for the cycle to mark.
-    satb_values: Vec<Value>,
-    /// The first id of each occupancy word whose free ids the cycle's allocation pre-marked
-    /// (`satb_blacken_free_word`), which `end_satb` unmarks where no claim took them.
-    satb_reused_words: Vec<RecordId>,
     /// Whether counts are kept (`QUENCH_DEV=rc-gc`, `super::rc`): the barrier then copies an
     /// old record's children before its first write in an epoch (`rc_note`) and logs every
     /// store into an old record.
@@ -259,10 +226,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             aged_fates: AgedFates::default(),
             withheld: 0,
             warm: None,
-            satb: false,
-            satb_frontier: 0,
-            satb_values: Vec::new(),
-            satb_reused_words: Vec::new(),
             rc: false,
             rc_blocks: Vec::new(),
             rc_overflow: std::sync::Mutex::new(rustc_hash::FxHashMap::default()),
@@ -415,73 +378,6 @@ impl<'space, T> ParallelRecordMarks<'space, T> {
     }
 }
 
-/// A record space as a concurrent marker reads it while the mutator runs
-/// (`RecordSpace::concurrent_marks`): the blocks and ids of the cycle's snapshot. Ids from the
-/// frontier up are newer than the snapshot, black, as are the reused ids allocation marks
-/// before claiming them, so the marker visits only records the snapshot holds; it reads
-/// occupancy and records racily and sets mark bits atomically, as the mutator does for the
-/// cycle's black allocation.
-pub(super) struct ConcurrentRecordMarks<T> {
-    blocks: *mut RecordBlock,
-    block_count: usize,
-    records: *const T,
-    frontier: RecordId,
-}
-
-impl<T> Clone for ConcurrentRecordMarks<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for ConcurrentRecordMarks<T> {}
-// SAFETY: blocks and records sit in fixed reservations the heap keeps until the cycle ends;
-// mark words are shared through atomics; records are only read, without touching their
-// payloads' reference counts.
-unsafe impl<T> Send for ConcurrentRecordMarks<T> {}
-// SAFETY: as above.
-unsafe impl<T> Sync for ConcurrentRecordMarks<T> {}
-
-impl<T> ConcurrentRecordMarks<T> {
-    /// The mark word and bit of `id`, when it is below the frontier.
-    #[inline(always)]
-    fn position(&self, id: RecordId) -> Option<(*mut RecordBlock, usize, u64)> {
-        let (block_index, record_index) = RecordSpace::<T>::split_id(id);
-        if id >= self.frontier || block_index >= self.block_count {
-            return None;
-        }
-        // SAFETY: the block index is below the snapshot's block count.
-        Some((unsafe { self.blocks.add(block_index) }, record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS)))
-    }
-
-    /// Whether `id` names an occupied record of the snapshot that no one has marked.
-    #[inline(always)]
-    pub(super) fn unmarked(&self, id: RecordId) -> bool {
-        let Some((block, word, mask)) = self.position(id) else { return false };
-        // SAFETY: the words are in the block, aligned for atomics.
-        unsafe {
-            let occupied = AtomicU64::from_ptr(std::ptr::addr_of_mut!((*block).occupied).cast::<u64>().add(word));
-            let marked = AtomicU64::from_ptr(std::ptr::addr_of_mut!((*block).marked).cast::<u64>().add(word));
-            occupied.load(std::sync::atomic::Ordering::Relaxed) & mask != 0
-                && marked.load(std::sync::atomic::Ordering::Relaxed) & mask == 0
-        }
-    }
-
-    /// Sets `id`'s mark bit; `true` for the one caller that set it. `id` passed `unmarked`.
-    #[inline(always)]
-    pub(super) fn mark_if_new(&self, id: RecordId) -> bool {
-        let Some((block, word, mask)) = self.position(id) else { return false };
-        // SAFETY: as in `unmarked`.
-        let marked = unsafe { AtomicU64::from_ptr(std::ptr::addr_of_mut!((*block).marked).cast::<u64>().add(word)) };
-        super::mark_word_if_new(marked, mask)
-    }
-
-    /// The record `id`'s address. `id` passed `unmarked`, so it is initialized.
-    #[inline(always)]
-    pub(super) fn record(&self, id: RecordId) -> *const T {
-        // SAFETY: below the frontier, inside the reservation.
-        unsafe { self.records.add(id as usize) }
-    }
-}
 
 pub(super) enum RecordSweep<'a, T> {
     Keep(RecordId, &'a T),
@@ -732,26 +628,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.free_word_base = id - bit as RecordId;
         self.free_cursor = self.free_word_base;
         self.young_words.push(self.free_word_base);
-        if self.satb {
-            self.satb_blacken_free_word();
-        }
     }
-
-    /// Allocation is black while a cycle marks: the free ids of the loaded word are marked
-    /// before any is claimed, as newer than the snapshot (their snapshotted bits too, so the
-    /// barrier skips them), and the claims then need no work of their own. Ids from the
-    /// frontier up are marked at the cycle's end instead (`end_satb`).
-    #[cold]
-    #[inline(never)]
-    fn satb_blacken_free_word(&mut self) {
-        let (block_index, word_index) = Self::word_position(self.free_word_base);
-        let block = &mut self.blocks[block_index];
-        // Atomic: a concurrent marker may set other bits of the word meanwhile.
-        AtomicU64::from_mut(&mut block.marked[word_index]).fetch_or(self.free_word, std::sync::atomic::Ordering::Relaxed);
-        block.aged[word_index] |= self.free_word;
-        self.satb_reused_words.push(self.free_word_base);
-    }
-
 
     /// Starts loading record `id`'s first cache line, for a read soon after.
     #[inline(always)]
@@ -787,12 +664,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     ///
     /// # Safety
     /// As for `get_live_mut_unbarriered`.
-    /// While a concurrent cycle marks, the barrier snapshots the record instead (`satb_note`),
-    /// reading arena-held children from `properties`.
     #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena) -> &mut T
     where
-        T: SatbSnapshot,
+        T: RecordChildren,
     {
         self.barrier(id, properties);
         // SAFETY: the caller's contract.
@@ -801,8 +676,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     /// Mutable access for a store of `stored` into the record. Only a heap reference can
     /// make an old record point at a young one, so other values skip the generational
-    /// barrier; while a concurrent cycle marks, every store passes the snapshot barrier, as
-    /// overwriting a reference with any value deletes an edge.
+    /// barrier.
     ///
     /// # Safety
     /// As for `get_live_mut_unbarriered`.
@@ -814,11 +688,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         properties: &crate::value_vec::ValueArena,
     ) -> &mut T
     where
-        T: SatbSnapshot,
+        T: RecordChildren,
     {
-        if self.satb {
-            self.satb_note(id, properties);
-        } else if self.rc {
+        if self.rc {
             self.rc_barrier(id, properties);
         } else if stored.heap_index().is_some() {
             self.remember(id);
@@ -827,16 +699,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         unsafe { self.get_live_mut_unbarriered(id) }
     }
 
-    /// The write barrier for a write into record `id`: the generational log (`remember`), or
-    /// the snapshot while a concurrent cycle marks (`satb_note`).
+    /// The write barrier for a write into record `id`: the generational log (`remember`).
     #[inline(always)]
     pub(super) fn barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
     where
-        T: SatbSnapshot,
+        T: RecordChildren,
     {
-        if self.satb {
-            self.satb_note(id, properties);
-        } else if self.rc {
+        if self.rc {
             self.rc_barrier(id, properties);
         } else {
             self.remember(id);
@@ -848,7 +717,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(always)]
     fn rc_barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
     where
-        T: SatbSnapshot,
+        T: RecordChildren,
     {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
@@ -862,88 +731,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(never)]
     fn rc_note(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
     where
-        T: SatbSnapshot,
+        T: RecordChildren,
     {
         self.remember(id);
         self.rc_logged.push(id);
         // SAFETY: a barrier runs only for a live record of this family.
         let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
-        record.snapshot(properties, &mut self.rc_decrements);
+        record.children(properties, &mut self.rc_decrements);
     }
 
-    /// The snapshot barrier: before the first write in this cycle to a record older than the
-    /// cycle, copies the values it keeps alive into `satb_values` and sets its snapshotted bit
-    /// (the `aged` word, which a full collection emptied and no minor collection reads while
-    /// a cycle runs). Later writes to it, and writes to newer records, add nothing: whatever
-    /// the cycle's snapshot reached through the record is kept.
-    #[cold]
-    #[inline(never)]
-    fn satb_note(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
-    where
-        T: SatbSnapshot,
-    {
-        if id >= self.satb_frontier {
-            return;
-        }
-        let (block_index, record_index) = Self::split_id(id);
-        let word = &mut self.blocks[block_index].aged[record_index / OCCUPANCY_WORD_BITS];
-        let mask = 1_u64 << (record_index % OCCUPANCY_WORD_BITS);
-        if *word & mask != 0 {
-            return;
-        }
-        *word |= mask;
-        // SAFETY: a barrier runs only for a live record of this family; the record lies in the
-        // reserved range, apart from the space's own fields.
-        let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
-        record.snapshot(properties, &mut self.satb_values);
-    }
-
-    /// Starts a concurrent cycle's snapshot barrier: the records existing now are its
-    /// snapshot. Follows a full collection's `forget_ages`, so no snapshotted bit is set.
-    pub(super) fn begin_satb(&mut self) {
-        debug_assert!(self.aged_words.is_empty() && self.remembered.is_empty());
-        self.satb = true;
-        self.satb_frontier = self.next_id;
-        // The word allocation already holds is black from now on, as the next one loaded.
-        if self.free_word != 0 {
-            self.satb_blacken_free_word();
-        }
-    }
-
-    /// Ends the snapshot barrier, as the cycle's remark does before its sweep: every record
-    /// claimed from a fresh id is marked, a pre-marked id no claim took is unmarked again (a
-    /// sweep keeps only occupied, marked ids), the snapshotted bits are forgotten, and the
-    /// generational barrier logs writes again.
-    pub(super) fn end_satb(&mut self) {
-        for base in std::mem::take(&mut self.satb_reused_words) {
-            let (block_index, word_index) = Self::word_position(base);
-            let block = &mut self.blocks[block_index];
-            block.marked[word_index] &= block.occupied[word_index];
-        }
-        let mut id = self.satb_frontier;
-        while id < self.next_id {
-            let (block_index, record_index) = Self::split_id(id);
-            let (word_index, bit) = (record_index / OCCUPANCY_WORD_BITS, record_index % OCCUPANCY_WORD_BITS);
-            let block = &mut self.blocks[block_index];
-            block.marked[word_index] |= block.occupied[word_index] & (u64::MAX << bit);
-            id += (OCCUPANCY_WORD_BITS - bit) as RecordId;
-        }
-        self.satb = false;
-        for block in &mut self.blocks {
-            block.aged = [0; BLOCK_WORDS];
-        }
-    }
-
-    /// Whether every mark bit names an occupied id, as a sweep requires (`sweep_word`).
-    #[cfg(test)]
-    pub(super) fn marks_within_occupancy(&self) -> bool {
-        self.blocks.iter().all(|block| (0..BLOCK_WORDS).all(|word| block.marked[word] & !block.occupied[word] == 0))
-    }
-
-    /// The children the snapshot barrier copied since the last call.
-    pub(super) fn take_satb_values(&mut self) -> Vec<Value> {
-        std::mem::take(&mut self.satb_values)
-    }
 
     /// Mutable access that writes no reference into the record (the collector's own
     /// compaction and remapping). It does not pass the write barrier.
@@ -964,12 +760,8 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// Whether storing `stored` into record `id` logs it (`remember`): a reference into a
     /// record the last collection left marked and no store has logged since. Any other
     /// store passes the barrier without effect.
-    /// While a concurrent cycle marks, every store logs: the caller takes the barriered path.
     #[inline(always)]
     pub(super) fn store_logs(&self, id: RecordId, stored: Value) -> bool {
-        if self.satb {
-            return true;
-        }
         // Under counts, overwriting a reference with any value deletes an edge.
         if stored.heap_index().is_none() && !self.rc {
             return false;
@@ -982,8 +774,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     #[inline(always)]
     pub(super) fn remember(&mut self, id: RecordId) {
-        // A cycle's marks are not old bits: clearing one would unmark what the cycle marked.
-        debug_assert!(!self.satb, "the generational barrier is off while a concurrent cycle marks");
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
         let block = unsafe { self.blocks.get_unchecked_mut(block_index) };
@@ -1053,18 +843,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// This space's records and mark words as the parallel full mark shares them
     /// (`ParallelRecordMarks`). The exclusive borrow is what lets workers set mark bits
     /// through it: nothing else reads or writes the space until the view's last use.
-    /// This space as a concurrent marker reads it (`ConcurrentRecordMarks`), from the barrier's
-    /// frontier. Valid until the space next frees or sweeps a record.
-    pub(super) fn concurrent_marks(&mut self) -> ConcurrentRecordMarks<T> {
-        debug_assert!(self.satb, "a concurrent marker reads a space under the snapshot barrier");
-        ConcurrentRecordMarks {
-            blocks: self.blocks.as_mut_ptr(),
-            block_count: self.blocks.len(),
-            records: self.base.as_ptr().cast::<T>().cast_const(),
-            frontier: self.satb_frontier,
-        }
-    }
-
     pub(super) fn parallel_marks(&mut self) -> ParallelRecordMarks<'_, T> {
         ParallelRecordMarks {
             blocks: self.blocks.as_mut_ptr(),

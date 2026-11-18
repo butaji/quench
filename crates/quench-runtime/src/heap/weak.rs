@@ -16,10 +16,6 @@ impl Heap {
 
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
         let live = self.is_live(handle.value);
-        if live {
-            // A cycle's snapshot may not reach what a weak read hands out.
-            self.shade(handle.value);
-        }
         live.then_some(handle.value)
     }
 }

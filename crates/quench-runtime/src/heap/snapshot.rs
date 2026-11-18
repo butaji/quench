@@ -8,7 +8,6 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        debug_assert!(!self.satb_active(), "a snapshot is written of a heap no cycle is marking (`finish_cycle_now`)");
         self.write_out_all_strings();
         if self.properties.float_slots() {
             return Err(SnapshotError::unsupported("a heap whose number slots hold raw doubles"));

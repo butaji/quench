@@ -333,23 +333,6 @@ impl ValueVec {
         (self.start & START_MASK) as usize
     }
 
-    /// The arena run a concurrent marker reads for this vector, as `(start, len)` from the
-    /// shape lengths and arena length it snapshotted (`Heap::begin_cycle`): `(0, 0)` for no
-    /// values or inline storage, `None` (the mutator traces it) for dictionary storage or a
-    /// shape or run past the snapshot. The vector may be a torn read: the bounds keep the run
-    /// inside the snapshot, whatever it holds.
-    pub(crate) fn concurrent_run(self, shape_lengths: &[u32], arena_len: usize) -> Option<(usize, usize)> {
-        // The marker reads runs as values; a narrow run's halves are not.
-        if self.is_dictionary() || self.is_narrow() {
-            return None;
-        }
-        if self.has_inline_property_storage() || self.start() == EMPTY_START as usize {
-            return Some((0, 0));
-        }
-        let len = *shape_lengths.get(self.auxiliary() as usize)? as usize;
-        let start = self.start();
-        (start.checked_add(len)? <= arena_len).then_some((start, len))
-    }
 
     pub(crate) fn start_offset(self) -> usize {
         debug_assert!(!self.is_dictionary());
@@ -450,17 +433,7 @@ impl ValueArena {
         (self.values.as_ptr(), self.values.len())
     }
 
-    /// What a concurrent marker reads of the arena: its values' base and length, and a copy
-    /// of the shape lengths, all as of now. Valid while the values stay in place
-    /// (`values_stay_in_place`) and nothing compacts them.
-    pub(crate) fn concurrent_snapshot(&self) -> (*const Value, usize, Box<[u32]>) {
-        (self.values.as_ptr(), self.values.len(), self.shape_lengths.clone().into_boxed_slice())
-    }
 
-    /// Whether the property values never move to another allocation (`PropertyBuffer::stays_in_place`).
-    pub(crate) fn values_stay_in_place(&self) -> bool {
-        self.values.stays_in_place()
-    }
 
     /// The arena as a snapshot keeps it (`crate::snapshot`): storage positions name places in
     /// `values`, so the vector and its free ranges are written as they are.

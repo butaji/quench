@@ -2216,66 +2216,9 @@ impl Object {
         }
     }
 
-    /// A copy of the object at `object` for a concurrent marker, its fields read with relaxed
-    /// atomic loads while the mutator may write them; possibly torn between fields. It owns
-    /// nothing: it is never dropped, and its extras are never read.
-    ///
-    /// # Safety
-    /// `object` points to an initialized object that stays allocated during the call.
-    #[inline(always)]
-    pub(super) unsafe fn load_racy(object: *const Object) -> std::mem::ManuallyDrop<Object> {
-        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
-        // The payload word may be only 4-aligned (records stride 12 bytes), so it is read as its
-        // two halves, the upper (which tells extras apart) again after the lower: a word whose
-        // upper half changed meanwhile is read once more.
-        // SAFETY: the caller's contract; each half and the layout are 4-aligned for an atomic.
-        unsafe {
-            let base = object.cast::<u8>();
-            let half = |offset: usize| AtomicU32::from_ptr(base.add(offset).cast::<u32>().cast_mut()).load(Relaxed);
-            let payload_at = std::mem::offset_of!(Object, payload);
-            let payload = loop {
-                let high = half(payload_at + 4);
-                let low = half(payload_at);
-                if half(payload_at + 4) == high {
-                    break u64::from(low) | u64::from(high) << u32::BITS;
-                }
-            };
-            std::mem::ManuallyDrop::new(Object { payload, layout: half(std::mem::offset_of!(Object, layout)) })
-        }
-    }
 
-    /// Where a concurrent marker reads this object's values (`load_racy`): its run, `(0, 0)`
-    /// for inline values or none, or `None` when the mutator must trace it (extras,
-    /// dictionary storage, a shape or run past the snapshot).
-    #[inline(always)]
-    pub(super) fn concurrent_run(&self, shape_lengths: &[u32], arena_len: usize) -> Option<(usize, usize)> {
-        if self.extras_pointer().is_some() {
-            return None;
-        }
-        self.properties().concurrent_run(shape_lengths, arena_len)
-    }
 
-    /// The prototype and inline values of an object `concurrent_run` accepted.
-    #[inline(always)]
-    pub(super) fn concurrent_inline_children(&self, mut visit: impl FnMut(Value)) {
-        let proto = self.proto();
-        if proto.is_heap() {
-            visit(proto);
-        }
-        if self.meta() & OBJECT_INLINE_STORAGE != 0 {
-            for value in Self::unpack_inline(self.payload) {
-                if value.is_heap() && !value.is_deleted() {
-                    visit(value);
-                }
-            }
-        }
-    }
 
-    /// The elements backing word of an array copy without extras (`ArrayElements::from_raw`).
-    #[inline(always)]
-    pub(super) fn concurrent_elements_word(&self) -> u64 {
-        self.payload
-    }
 
     /// The prototype reference as stored (`ProtoLink`), undecoded.
     #[inline(always)]
