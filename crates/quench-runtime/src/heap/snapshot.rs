@@ -72,6 +72,9 @@ impl Heap {
         for index in 0..slots {
             let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
             let live = cell.is_some();
+            if cell.as_ref().is_some_and(Cell::has_weak_entries) {
+                heap.weak_cells.push(index as u32);
+            }
             heap.slots.push(Slot { cell });
             let (word, bit) = slot_bit(index);
             if word == heap.marks.len() {

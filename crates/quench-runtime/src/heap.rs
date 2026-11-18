@@ -490,6 +490,12 @@ pub(crate) struct Heap {
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
     young_weak: Vec<u32>,
+    /// Every cell with weak entries allocated since its last full collection or kept by it:
+    /// a full collection prunes only these. Walking every slot to find them cost each live
+    /// environment ~55 Ir per full collection (a decode and a match per slot). An index whose
+    /// cell a minor collection freed may stay until then, naming whatever reused it, which
+    /// the prune's match passes over.
+    weak_cells: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     /// The slots of one free-list word claimed whole (`refill_bump`), which allocations take
@@ -861,6 +867,7 @@ impl Heap {
             reclaimable_program_bytes_since_full: 0,
             reclaimable_program_bytes_after_full: 0,
             young: YoungSlots::default(),
+            weak_cells: Vec::new(),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             bump_bits: 0,
@@ -1771,6 +1778,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index);
+            self.weak_cells.push(index);
         }
         if self.satb_active {
             self.blacken_slot(index as usize);
@@ -1854,6 +1862,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index as u32);
+            self.weak_cells.push(index as u32);
         }
         if self.satb_active {
             self.blacken_slot(index);
@@ -2206,6 +2215,7 @@ impl Heap {
         self.carried_owners.clear();
         self.young.clear();
         self.young_weak.clear();
+        self.weak_cells.clear();
         self.roots.clear(); self.folded = Default::default(); // the discarded heap's identities root nothing
         self.sparse_arrays = None;
         // The shared unit strings name cells of the discarded heap.
