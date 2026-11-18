@@ -312,6 +312,7 @@ impl Heap {
     /// start and remark will; the children it copies are taken with `take_satb_values`.
     pub(super) fn set_satb(&mut self, active: bool) {
         self.satb_active = active;
+        self.refresh_store_watch();
         for (family, _) in self.record_families_mut() {
             if active { family.begin_satb() } else { family.end_satb() }
         }

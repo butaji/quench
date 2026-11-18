@@ -381,7 +381,10 @@ lane_handler! {
 /// `None` where the general path must.
 ///
 /// # Safety
-/// `cx` is the running lane's context and `r` its register file.
+/// `cx` is the running lane's context and `r` its register file. Called through
+/// `LaneHost::allocate`, a constant function pointer in the inlined frame `staged_allocate`
+/// builds, so the call inlines and each handler keeps only its allocation's arm.
+#[inline(always)]
 unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {

@@ -620,6 +620,10 @@ pub(crate) struct Heap {
     cycle_gate: concurrent_mark::CycleGate,
     /// Whether old records keep reference counts (`rc`, `QUENCH_DEV=rc-gc`).
     rc_active: bool,
+    /// Whether any store gate input is on: a concurrent cycle's snapshot barrier, reference
+    /// counts, or the arena's slot observation (`Heap::refresh_store_watch`). Off, a store of a
+    /// value naming no heap record passes the gate on this byte and the value's tag alone.
+    store_watched: bool,
     /// Old records whose count is 0, to try freeing at the next minor collection, and the
     /// ones this minor collection made candidates (`Heap::rc_pre_mark`).
     rc_zero: Vec<Value>,
@@ -2022,6 +2026,7 @@ impl Heap {
     /// `layouts` (`register_shape_layouts`), from what live objects hold.
     pub(crate) fn track_slot_representations(&mut self, layouts: &[(usize, Option<(u32, usize)>)]) {
         self.properties.track();
+        self.refresh_store_watch();
         self.register_shape_layouts(layouts);
     }
 

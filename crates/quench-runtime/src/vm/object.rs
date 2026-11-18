@@ -1204,7 +1204,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn hole_array(&mut self, length: usize) -> Value {
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let elements = crate::heap::ArrayElements::from_fn(length, |_| Value::DELETED);
-        self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::fresh(prototype, elements) })
+        self.heap.alloc_fresh_array(prototype, elements)
     }
 
     /// An array literal of `length` elements, each the value `element` gives for its index:
