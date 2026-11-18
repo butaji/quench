@@ -114,6 +114,9 @@ impl<W, P> Operation<W, P> {
             Self::RequireObjectCoercible { .. } | Self::RequireIteratorResult { .. } => SmallVec::from_slice(&[("register", REGISTER)]),
             Self::IteratorCleanupPush { .. } => SmallVec::from_slice(&[("iterator", REGISTER), ("done", REGISTER)]),
             Self::IteratorCleanupPop => SmallVec::from_slice(&[]),
+            Self::StringCaseIndex { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER),
+                ("start", BYTECODE), ("count", BYTECODE)]),
+            Self::Await { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
             _ => self.heap_operand_times(),
         }
     }
