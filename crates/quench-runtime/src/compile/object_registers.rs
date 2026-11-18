@@ -63,9 +63,6 @@ fn replacement(
     let transfers = liveness::transfers(function, methods, fields, supers)?;
     let instructions: Vec<_> = function.instructions().collect();
     let successors = crate::bytecode::Successors::of(function, &instructions);
-    let repeated_allocation = (allocation..instructions.len())
-        .any(|pc| successors.at(pc).any(|(target, _)| target <= allocation));
-    if repeated_allocation { return None; }
     let mut incoming = vec![None; instructions.len()];
     incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
     loop {
@@ -100,7 +97,13 @@ fn replacement(
         function.local_registers.iter().filter(|local| local.local < function.params)
             .fold(RegisterSet::default(), |mask, local| mask | register_bit(local.register))
     };
-    incoming[allocation]?;
+    // An allocation a loop repeats makes a fresh object each time; the promoted registers
+    // stand for the latest one. That is exact while no other register still names an
+    // earlier one where the allocation runs again: the only live alias it may find is the
+    // result register, which the allocation redefines (dead copies are redefined before use).
+    let reached = incoming[allocation]?;
+    let live = liveness::analyze(function, methods, fields, supers)?;
+    if reached.may & !register_bit(make.result_register()) & live[allocation] != 0 { return None; }
     let mut replacements = vec![None; instructions.len()];
     let scalar = |atom| atoms.iter().position(|candidate| *candidate == atom)
         .map(|index| function.registers + index as u16);
@@ -193,6 +196,37 @@ mod tests {
                 if (subject(n,seed) !== reference(n,seed)) throw Error('field state');
             }
         "#, true);
+    }
+
+    #[test]
+    fn promotes_an_allocation_each_loop_iteration_repeats() {
+        check(r#"
+            function subject(n) {
+                let s = 0;
+                for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; p.y = (p.y + i) | 0; s = (s + p.x + p.y) | 0; }
+                return s;
+            }
+            for (const n of [0, 1, 2, 100]) {
+                let r = 0; for (let i = 0; i < n; i++) r = (r + i + 1 + i) | 0;
+                if (subject(n) !== r) throw Error('loop allocation ' + n);
+            }
+        "#, true);
+    }
+
+    #[test]
+    fn keeps_an_allocation_whose_earlier_instance_stays_live() {
+        check(r#"
+            function subject(n) {
+                let s = 0, previous = { x: -1, y: -1 };
+                for (let i = 0; i < n; i++) {
+                    const p = { x: i, y: i };
+                    s = (s + previous.x) | 0;
+                    previous = p;
+                }
+                return s;
+            }
+            if (subject(4) !== (-1 + 0 + 1 + 2)) throw Error('earlier instance');
+        "#, false);
     }
 
     #[test]
