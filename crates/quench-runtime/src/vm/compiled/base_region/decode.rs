@@ -217,21 +217,10 @@ pub(super) fn jump_binary(numbers: Numbers, instruction: WideInstruction) -> Res
     ))
 }
 
-pub(super) fn load_const(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
-    let number = numbers(instruction.constant_index()).ok_or_else(|| "LoadConst: not a Number".to_string())?;
+pub(super) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
+    let number = numbers(index).ok_or_else(|| "LoadConst: not a Number".to_string())?;
     let word = Source::Constant(Value::number(number).to_bits());
-    Ok(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(word), None, None))
-}
-
-pub(super) fn inc_dec(instruction: WideInstruction) -> Result<Decoded, String> {
-    let decrement = instruction.boolean_flag().ok_or("IncDec")?;
-    Ok(Decoded::number(
-        if decrement { Kind::Sub } else { Kind::Add },
-        Some(instruction.result_register()),
-        Some(Source::Register(instruction.register_b())),
-        Some(Source::Constant(Value::integer(1).to_bits())),
-        None,
-    ))
+    Ok(Decoded::number(Kind::Move, Some(destination), Some(word), None, None))
 }
 
 /// Whether `instruction` stores to a depth-0 capture and nothing else (`general_capture::lower_capture`'s
@@ -338,11 +327,9 @@ fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instructi
 /// string, a BigInt): the tagged word the compiling VM holds for it, written as it is
 /// (`Source::Value`), where the VM has the program's constants (`Known::constants`).
 fn value_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
-    if instruction.op().class() != Class::LoadConst || instruction.result_flags() != 0 {
-        return None;
-    }
-    let value = known.constants.get(instruction.constant_index())?;
-    Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(value.to_bits())), None, None))
+    let (destination, index) = crate::staged::Operation::<(), ()>::decode_constant_load(instruction).filter(|_| instruction.result_flags() == 0)?;
+    let value = known.constants.get(index)?;
+    Some(Decoded::number(Kind::Move, Some(destination), Some(Source::Value(value.to_bits())), None, None))
 }
 
 /// The row of `instruction` at `pc`: a numeric or heap row where one takes it, else the step the
@@ -380,12 +367,17 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
         Some(Operation::Jump) => return Some(Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target())))),
         Some(Operation::JumpIf { register, taken }) => return Some(Some(truthiness_jump(instruction, register, taken))),
+        // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
+        Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
+            if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
+            Some(Source::Constant(Value::integer(1).to_bits())), None))),
         _ => {}
     }
+    if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
+        return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
+    }
     Some(match instruction.op().class() {
-        Class::LoadConst => load_const(numbers, instruction).ok().filter(|_| plain),
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
-        Class::IncDec => inc_dec(instruction).ok().filter(|_| plain),
         Class::JumpBinaryFalse => jump_binary(numbers, instruction).ok(),
         Class::Unary => unary_row(instruction).filter(|_| plain),
         _ => return None,

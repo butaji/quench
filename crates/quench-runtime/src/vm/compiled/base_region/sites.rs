@@ -68,7 +68,7 @@ fn membership_keys(code: &[WideInstruction], constants: &[Value]) -> Vec<Option<
         let key = match instruction.operand_b().kind()? {
             OperandKind::Constant => usize::from(instruction.operand_b().payload()),
             OperandKind::Register => match origin(code, &joins, pc, instruction.operand_b().register_index()?) {
-                Origin::Written(load) if load.op().class() == Class::LoadConst => load.constant_index(),
+                Origin::Written(load) => crate::staged::Operation::<(), ()>::decode_constant_load(load).map(|(_, index)| index)?,
                 _ => return None,
             },
             _ => return None,
