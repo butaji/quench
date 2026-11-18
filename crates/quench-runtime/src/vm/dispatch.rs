@@ -900,8 +900,9 @@ impl<H: Host> Vm<H> {
                 self.store_resolved_name(p, object, atom, self.read(f, i.register_a()), strict)?;
             }
             Op::ToNumeric => {
-                let value = self.to_numeric(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), value);
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.to_numeric_miss(p, f, i);
+                }
             }
             Op::CopyDataProperties => self.copy_data_properties(
                 p,
@@ -1147,71 +1148,23 @@ impl<H: Host> Vm<H> {
                 self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                let operator = i.binary_operator();
-                let left_operand = i.operand_b();
-                let right_operand = i.operand_c();
-                self.profile
-                    .binary(operator as usize, left_operand.0, right_operand.0);
-                let left = self.resolve_operand(p, f, left_operand)?;
-                let right = self.resolve_operand(p, f, right_operand)?;
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    let integer = self.numeric_integer_binary(operator, left, right).is_some();
-                    self.profile.regional_binary(
-                        self.frames[f].program.raw(),
-                        self.frames[f].function,
-                        (*pc - 1) as u32,
-                        integer,
-                    );
-                    if i.op() != Op::Binary {
-                        self.profile.numeric_binary_path(
-                            operator as usize,
-                            integer,
-                            left.as_int().is_some() && right.as_int().is_some(),
-                        );
-                    }
-                }
-                let v = match self.number_binary(operator, left, right) {
-                    Some(value) => value,
-                    None => self.binary(p, operator, left, right)?,
-                };
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                if let Some(local) = i.numeric_local_target() {
-                    self.frames[f].locals[local as usize] = v;
-                    self.profile
-                        .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
-                } else {
-                    self.write(f, i.result_register(), v);
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.binary_miss(p, f, i, pc);
                 }
             }
             Op::IncDec => {
-                let input = self.read(f, i.register_b());
-                let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-                // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
-                let value = match number_increment(input, is_decrement) {
-                    Some(value) => value,
-                    None => {
-                        let numeric = self.to_numeric(p, input)?;
-                        match number_increment(numeric, is_decrement) {
-                            Some(value) => value,
-                            None => self.numeric_update(p, numeric, is_decrement)?,
-                        }
-                    }
-                };
-                self.write(f, i.result_register(), value);
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.inc_dec_miss(p, f, i);
+                }
             }
             Op::StringConcat => {
                 let v = self.frame_string_concat(p, f, i.register_window())?;
                 self.write(f, i.result_register(), v);
             }
             Op::Unary => {
-                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.unary_miss(p, f, i);
                 }
-                self.write(f, i.result_register(), v);
             }
             Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
                 Some(key) => self.write(f, i.result_register(), key),
@@ -1625,6 +1578,85 @@ impl<H: Host> Vm<H> {
             JsError::validation("constant index is outside program".into())
         })?;
         self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn binary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        let operator = i.binary_operator();
+        let left_operand = i.operand_b();
+        let right_operand = i.operand_c();
+        self.profile
+            .binary(operator as usize, left_operand.0, right_operand.0);
+        let left = self.resolve_operand(p, f, left_operand)?;
+        let right = self.resolve_operand(p, f, right_operand)?;
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let integer = self.numeric_integer_binary(operator, left, right).is_some();
+            self.profile.regional_binary(
+                self.frames[f].program.raw(),
+                self.frames[f].function,
+                (*pc - 1) as u32,
+                integer,
+            );
+            if i.op() != Op::Binary {
+                self.profile.numeric_binary_path(
+                    operator as usize,
+                    integer,
+                    left.as_int().is_some() && right.as_int().is_some(),
+                );
+            }
+        }
+        let v = match self.number_binary(operator, left, right) {
+            Some(value) => value,
+            None => self.binary(p, operator, left, right)?,
+        };
+        if i.returns_from_frame() {
+            return Ok(StepResult::Return(v));
+        }
+        if let Some(local) = i.numeric_local_target() {
+            self.frames[f].locals[local as usize] = v;
+            self.profile
+                .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
+        } else {
+            self.write(f, i.result_register(), v);
+        }
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn inc_dec_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let input = self.read(f, i.register_b());
+        let is_decrement = i.boolean_flag().expect("validated boolean immediate");
+        // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
+        let value = match number_increment(input, is_decrement) {
+            Some(value) => value,
+            None => {
+                let numeric = self.to_numeric(p, input)?;
+                match number_increment(numeric, is_decrement) {
+                    Some(value) => value,
+                    None => self.numeric_update(p, numeric, is_decrement)?,
+                }
+            }
+        };
+        self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn to_numeric_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let value = self.to_numeric(p, self.read(f, i.register_b()))?;
+        self.write(f, i.result_register(), value);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn unary_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+        if i.returns_from_frame() {
+            return Ok(StepResult::Return(v));
+        }
+        self.write(f, i.result_register(), v);
         Ok(StepResult::Continue)
     }
 
