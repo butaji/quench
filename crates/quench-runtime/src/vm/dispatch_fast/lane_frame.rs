@@ -472,7 +472,18 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     }
 }
 
-impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {}
+impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
+    /// The array records of the heap an element row reads (`row_frame` binds it).
+    #[inline(always)]
+    fn array_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        // SAFETY: the heap is the lane's, live for the row.
+        self.heap.and_then(|heap| unsafe { (*heap).array_record_base() }).map(|base| base as u64)
+    }
+
+    /// The lane keeps no views: a read takes the element of any backing in place.
+    #[inline(always)]
+    fn reads_any_backing(&self) -> bool { true }
+}
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// A register's word, or the constant or local the record names.
@@ -604,6 +615,11 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
+        // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
+        let heap: *const crate::heap::Heap = &unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap;
+        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
@@ -713,6 +729,15 @@ lane_handler! {
                 }
             }
         }
+        if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
+            // A keyed read's row is installed for a register base and key without result flags
+            // (`element_read_row`): stated so the decode's operand tests fold.
+            unsafe {
+                std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
+                std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
+                std::hint::assert_unchecked(i.c <= crate::bytecode::REGISTER_MASK);
+            }
+        }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);
         let decoded = match const { LaneFields::<OP, FLAG>::OPCODE.staged() } {
@@ -721,6 +746,7 @@ lane_handler! {
             Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Property) => Operation::decode_property(crate::staged::Fields::wide(fields)),
+            Some(crate::bytecode::Decoder::Element) => Operation::decode_element(crate::staged::Fields::wide(fields)),
             _ => None,
         };
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
@@ -826,10 +852,15 @@ lane_handler! {
             Step::Value(value) => {
                 // A names row answers its value without defining its register (its call-out defines it):
                 // the register is written here, as every producer writes it beside the carried value.
-                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names | crate::bytecode::Decoder::Element)) } {
                     r.set(i.a, Value::from_bits(value));
                 }
                 next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
+            }
+            // An element read past its in-place arm: the record's keyed paths (a slot, a getter).
+            Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
+                let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
             }
             Step::Control(_) | Step::Unresolved => sibling!(lane_general_step::<H>, r, ip, view),
         }

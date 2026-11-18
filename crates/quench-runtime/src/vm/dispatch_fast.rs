@@ -4235,7 +4235,7 @@ fn lane_bigint_increment<H: Host, const DECREMENT: bool>(cx: *mut LaneContext<H>
 
 script_handler! {
     /// `IncDec` of a Number whose result the next record, a register `GetIndex`
-    /// (`lane_get_index_registers`), reads as its index, the `a[++i]` of compiled loops
+    /// (`element_read_row`), reads as its index, the `a[++i]` of compiled loops
     /// (`specialize_updated_index_reads`): the update, then that read of a record array's
     /// dense element, as one record. A read the pair's fast path leaves runs the `GetIndex`
     /// record itself; another value takes the general path at the update.
@@ -4424,7 +4424,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_index_registers` of a base its loop does not redefine
+    /// `element_read_row` of a base its loop does not redefine
     /// (`specialize_proved_arrays`): the element through the run's proof of the array's
     /// storage (`ArrayStorageProofs`), with no decoding of the array; any other read takes
     /// `lane_proof_miss`.
@@ -5707,21 +5707,7 @@ lane_handler! {
 }
 
 script_handler! {
-    /// `lane_get_index` with register base and key, decoded when the view was derived
-    /// (`specialize_register_operands`).
-    /// An array whose object is a record runs here, saving no registers; any other base takes
-    /// `lane_get_index_slot`.
-    fn lane_get_index_registers<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_slot::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_index_registers` past a record array.
+    /// `element_read_row` past a record array.
     #[inline(never)]
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -5831,9 +5817,9 @@ fn typed_kind_handler<H: Host>(kind: Option<TypedArrayKind>, read: bool) -> Hand
 }
 
 script_handler! {
-    /// `lane_get_index_registers` at a site that read a typed array: a non-BigInt typed
+    /// `element_read_row` at a site that read a typed array: a non-BigInt typed
     /// array's element at an integer index, or `undefined` past its end, is the whole read;
-    /// any other read takes the generic order (`lane_get_index_registers`).
+    /// any other read takes the generic order (`element_read_row`).
     fn lane_get_index_typed<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_get_index_typed_fill::<H, { super::typed_array_access::ANY_TYPED_KIND }>, r, ip, view)
@@ -6020,7 +6006,7 @@ script_handler! {
     #[inline(never)]
     fn lane_get_index_typed_full<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_registers::<H>, r, ip, view)
+            sibling!(element_read_row::<H>(), r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -7467,6 +7453,23 @@ const FIELD_LEAF_READ: u16 = {
         }
     }
 };
+
+/// The opcode of the catalog's keyed read: the element row whose record defines a result
+/// register (`Decoder::Element`), whose generated row (`lane_row`) a register-keyed read runs.
+const ELEMENT_READ: u16 = {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) if matches!(op.staged(), Some(crate::bytecode::Decoder::Element))
+                && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister) => break index as u16,
+            Some(_) => index += 1,
+            None => panic!("the catalog names a keyed read"),
+        }
+    }
+};
+
+/// The generated keyed read (`lane_row` of `ELEMENT_READ`) of a register base and key.
+const fn element_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
 
 /// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
 /// whose generated row (`lane_row`) a store record runs: its hint as a layout store.
@@ -23686,7 +23689,7 @@ fn specialize_register_operands<H: Host>(
             continue;
         }
         let handler: Handler = if record.handler == get_index {
-            lane_get_index_registers::<H>
+            element_read_row::<H>()
         } else if let Some((true, negated)) = equality {
             equality_test_handler!(lane_jump_strict_equal_false::<H>, backward, negated)
         } else {
@@ -23765,7 +23768,7 @@ fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
 /// index the fused update and read (`lane_update_get_index`). The `GetIndex` record stays as
 /// it is, for a jump that enters it and for a read the fused record leaves to it.
 fn specialize_updated_index_reads<H: Host>(records: &mut [LaneInstruction]) {
-    let read = lane_get_index_registers::<H> as Handler as *const ();
+    let read = element_read_row::<H>() as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         let (update, next) = (&records[pc], &records[pc + 1]);
         let Some(decrement) = update_direction::<H>(update) else { continue };
@@ -23970,7 +23973,7 @@ fn specialize_raw_operators<H: Host>(decoded: &[WideInstruction], handlers: &[cr
 }
 
 /// Gives each address computation `t = x + K; [u = t >> S;] r = base[u or t]` whose read is
-/// a register-operand element read (`lane_get_index_registers`) the fused record
+/// a register-operand element read (`element_read_row`) the fused record
 /// `lane_typed_address_get`, on the addition. The records after it keep their handlers, for
 /// jumps into them and for the cases the fused record leaves to them. The read's base must
 /// not be an intermediate, which the fused record writes only after reading the element.
@@ -23978,7 +23981,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
     use super::operations::{ADDITION, SHIFT_RIGHT};
     let add = lane_operator_integer_constant::<H, ADDITION> as Handler as *const ();
     let shift = lane_operator_integer_constant::<H, SHIFT_RIGHT> as Handler as *const ();
-    let read = lane_get_index_registers::<H> as Handler as *const ();
+    let read = element_read_row::<H>() as *const ();
     let write = lane_set_index::<H> as Handler as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != add {
@@ -24063,7 +24066,7 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
         };
     }
     [
-        (lane_get_index_registers::<H> as Handler, lane_get_index_proved::<H> as Handler, 0),
+        (element_read_row::<H>(), lane_get_index_proved::<H> as Handler, 0),
         (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
         (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
         (lane_set_index::<H> as Handler, lane_set_index_proved::<H> as Handler, 0),
