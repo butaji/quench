@@ -1441,9 +1441,19 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
+            // Return and Throw complete the frame as their decoded operations; no interpreter row
+            // answers a return (`Frame::ret`) or a raise (`Operation::Throw`), so these are the VM's.
+            Op::Return => {
+                let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(i) else {
+                    unreachable!("a Return record decodes to Return");
+                };
+                return Ok(StepResult::Return(self.read(f, source)));
+            }
             Op::Throw => {
-                let value = self.read(f, i.register_a());
+                let Some(crate::staged::Operation::Throw { source }) = crate::staged::Operation::<u64, ()>::of(i) else {
+                    unreachable!("a Throw record decodes to Throw");
+                };
+                let value = self.read(f, source);
                 return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
