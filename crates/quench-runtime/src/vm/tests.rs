@@ -20244,7 +20244,7 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
     // By-name loads of the global `undefined`, of globals a call reads (whose receiver is
     // `undefined`: a strict function's `this`, globalThis for a sloppy one), of intrinsic
     // names (`{ __proto__: v }`, `super`) and of intrinsic natives, run from their first
-    // resolution to their bound reads (`lane_load_name_resolve`, `name_row`). The
+    // resolution to their bound reads (`load_name_resolve_miss`, `name_row`). The
     // expected values are Node's.
     let source = r#"
       function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }

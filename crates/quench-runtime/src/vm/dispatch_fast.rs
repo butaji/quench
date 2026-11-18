@@ -10253,7 +10253,7 @@ enum NameResolution {
 /// name stands for is recorded for its reads (`Vm::intrinsic_natives`). An internal name is no
 /// binding source text can declare, except the internal globals the realm installs on its global
 /// object, which a static lookup reads as any other.
-fn lane_name_resolution<H: Host>(cx: *mut LaneContext<H>, atom: u32) -> NameResolution {
+fn name_resolution<H: Host>(cx: *mut LaneContext<H>, atom: u32) -> NameResolution {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let vm = unsafe { vm(cx) };
@@ -10283,17 +10283,17 @@ fn lane_name_resolution<H: Host>(cx: *mut LaneContext<H>, atom: u32) -> NameReso
 
 script_handler! {
     /// A by-name load's first run, the miss its generated row takes (`name_load_miss`): the VM's
-    /// resolution of its name (`lane_name_resolution`) fills the record, whose handler from then on
+    /// resolution of its name (`name_resolution`) fills the record, whose handler from then on
     /// is the row instance (`name_row`) holding the binding, or leaves every run to the general
     /// path. `KIND` is the load's (`LOAD_NAME`).
     #[inline(never)]
-    fn lane_load_name_resolve<KIND: u8>(cx, r, ip, i, view) {
+    fn load_name_resolve_miss<KIND: u8>(cx, r, ip, i, view) {
         let load = match KIND {
             LOAD_NAME_CALL => crate::staged::NameLoad::Call,
             LOAD_NAME_TYPEOF => crate::staged::NameLoad::Typeof,
             _ => crate::staged::NameLoad::Read,
         };
-        let bound: Handler = match lane_name_resolution(cx, i.imm()) {
+        let bound: Handler = match name_resolution(cx, i.imm()) {
             NameResolution::Native => name_row::<H, FLAG_NAME_NATIVE>(load),
             NameResolution::Undefined => name_row::<H, FLAG_NAME_UNDEFINED>(load),
             NameResolution::Global => name_row::<H, FLAG_NAME_GLOBAL>(load),
@@ -10330,13 +10330,13 @@ fn lane_running_function<H: Host>(cx: *mut LaneContext<H>) -> u32 {
     vm.lane_stack.activations.last().map_or_else(|| vm.frames[unsafe { (*cx).frame() }].function, |activation| activation.function)
 }
 
-/// The global value property `lane_name_resolution` answers without a lookup.
+/// The global value property `name_resolution` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
 
 script_handler! {
     /// A `StoreName` row's miss (`Miss::StoreNameFirst`), the name's first-run resolution: an
     /// assignment to a name the global object answers whenever no global lexical binding
-    /// shadows it (as `lane_name_resolution` decides for a read) takes
+    /// shadows it (as `name_resolution` decides for a read) takes
     /// `store_global_name_miss`, a `var`'s initializer too, which stores as one: the
     /// declaration made the property, and a lexical binding is never hinted. The record stays
     /// on its row, which stores through the hint this arm sets. Any other store always takes
@@ -10394,11 +10394,11 @@ script_handler! {
     /// initialized global lexical binding of
     /// the name, which the general path's search finds first there; else the global object's
     /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
-    /// (`Vm::cached_field_hit`). Any other read takes `lane_load_global_name_miss`, or the general
+    /// (`Vm::cached_field_hit`). Any other read takes `global_name_read_miss`, or the general
     /// path for an uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as
     /// `undefined`.
     #[inline(never)]
-    fn lane_load_global_name_refresh<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
+    fn global_name_refresh_miss<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
@@ -10415,7 +10415,7 @@ script_handler! {
                 value
             }
             super::field_cache::GlobalNameRead::Uninitialized => return exit(ip),
-            super::field_cache::GlobalNameRead::Miss => sibling!(lane_load_global_name_miss::<H, KIND>, r, ip, Carried::script_in(cx, view)),
+            super::field_cache::GlobalNameRead::Miss => sibling!(global_name_read_miss::<H, KIND>, r, ip, Carried::script_in(cx, view)),
         };
         r.set(i.a, value);
         if KIND == LOAD_NAME_CALL {
@@ -10426,13 +10426,13 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_load_global_name_refresh` past its lexical binding and global property: a
+    /// `global_name_refresh_miss` past its lexical binding and global property: a
     /// global accessor's getter, activated in the lane, or a plain global property, recorded
     /// in the site's entry; any other read takes the general path. Out of line: the getter's
     /// activation and the lookups take stack temporaries, which the common read then does not
     /// hold.
     #[inline(never)]
-    fn lane_load_global_name_miss<KIND: u8>(cx, r, ip, i, view) {
+    fn global_name_read_miss<KIND: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let atom = i.imm();
         let globals = vm.realm.globals;

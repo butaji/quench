@@ -4,7 +4,7 @@ use super::super::global_facts::{GlobalRead, GlobalReads, GlobalTable};
 
 impl<H: Host> Vm<H> {
     /// The PCs of `unit` whose by-name loads read the global scope as the lane's own does
-    /// (`dispatch_fast::lane_name_resolution`): in a function whose unresolved names are
+    /// (`dispatch_fast::name_resolution`): in a function whose unresolved names are
     /// global and resolve statically, a name no internal binding owns; each with its constant
     /// where the name is an immutable global (`builtins::immutable_globals`), else with the
     /// cell it reads now as a Stable fact (`Vm::stable_global_read`).
@@ -97,7 +97,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether a by-name load of `atom` in `function` reads the global scope as the lane's own load does
-    /// (`dispatch_fast::lane_name_resolution`): the function's unresolved names are global and resolve
+    /// (`dispatch_fast::name_resolution`): the function's unresolved names are global and resolve
     /// statically, and no internal binding owns the name.
     fn reads_global_scope(&self, program: &ResidualProgram, function: u32, atom: crate::bytecode::Atom) -> bool {
         program.function_get(function as usize).is_some_and(|body| body.names_resolve_statically(program))

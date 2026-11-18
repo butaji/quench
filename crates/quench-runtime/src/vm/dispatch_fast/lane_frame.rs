@@ -27,7 +27,7 @@ type NameReader = unsafe fn(*mut (), NameRead, u32) -> Option<Value>;
 /// which runs no guest code; `None` leaves the call to the row's miss.
 type NamesStep = unsafe fn(*mut (), CallOut, [Option<Value>; 2]) -> Option<Value>;
 
-/// How a by-name load's record reads its name once resolved (`lane_name_resolution`).
+/// How a by-name load's record reads its name once resolved (`name_resolution`).
 #[derive(Clone, Copy)]
 pub(super) enum NameRead {
     /// The active realm's function for the native the name stands for (`Vm::intrinsic_natives`).
@@ -1134,7 +1134,7 @@ pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL: u8 = 5;
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_INTRINSIC: u8 = 6;
 /// `FLAG` of a by-name load a probe settled onto the global object's own data field its record's
 /// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
-/// but a refresh checks the scopes' declarations first (`lane_load_global_name_refresh`, `SCOPED`).
+/// but a refresh checks the scopes' declarations first (`global_name_refresh_miss`, `SCOPED`).
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
 /// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
 /// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
@@ -1440,8 +1440,8 @@ pub(in crate::vm::dispatch_fast) const fn name_row<H: Host, const FLAG: u8>(load
 }
 
 /// Where a by-name load's row leaves when its binding does not answer it: the first run (and a
-/// native's, which is resolved again) resolves the name (`lane_load_name_resolve`); a global's
-/// read takes its refresh (`lane_load_global_name_refresh`); an undefined or intrinsic read takes
+/// native's, which is resolved again) resolves the name (`load_name_resolve_miss`); a global's
+/// read takes its refresh (`global_name_refresh_miss`); an undefined or intrinsic read takes
 /// the general path, which the lane exits to.
 const fn name_load_miss<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) -> Handler {
     match load {
@@ -1454,11 +1454,11 @@ const fn name_load_miss<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) 
 /// `name_load_miss` for the by-name load of kind `KIND`.
 const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
-        FLAG_NAME_GLOBAL => super::lane_load_global_name_refresh::<H, KIND, false> as Handler,
-        FLAG_NAME_GLOBAL_SCOPED => super::lane_load_global_name_refresh::<H, KIND, true> as Handler,
+        FLAG_NAME_GLOBAL => super::global_name_refresh_miss::<H, KIND, false> as Handler,
+        FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<H, KIND, true> as Handler,
         FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::lane_exit::<H> as Handler,
         FLAG_PROBE => super::probe_handler::<H, KIND>(),
-        _ => super::lane_load_name_resolve::<H, KIND> as Handler,
+        _ => super::load_name_resolve_miss::<H, KIND> as Handler,
     }
 }
 

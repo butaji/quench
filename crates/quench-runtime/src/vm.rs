@@ -2037,7 +2037,7 @@ pub(crate) struct Vm<H> {
     // One lazily derived class byte per atom; length tracks `atom_sequence`.
     atom_classes: Vec<std::cell::Cell<u8>>,
     /// The native each intrinsic name read so far stands for (`bytecode::intrinsic_name_native`),
-    /// indexed by atom and recorded by its first read (`lane_load_name_resolve`); it lives as long
+    /// indexed by atom and recorded by its first read (`load_name_resolve_miss`); it lives as long
     /// as the atoms.
     intrinsic_natives: Vec<Option<Native>>,
     /// Each native's family, by discriminant, derived on its first call (`Vm::native_family_of`).

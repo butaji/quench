@@ -3875,7 +3875,7 @@ unsafe extern "C" fn lane_function_capture_read<H: Host>(vm: u64, callee: u64, s
 
 impl<H: Host> Vm<H> {
     /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::lane_load_global_name_refresh`): its global lexical binding's, else
+    /// does (`dispatch_fast::global_name_refresh_miss`): its global lexical binding's, else
     /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
     pub(super) fn lane_global_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
         match self.global_name_read(code, atom, site) {
