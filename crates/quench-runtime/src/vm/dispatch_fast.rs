@@ -2615,9 +2615,10 @@ impl LaneStack {
     unsafe fn push_activation(&mut self, mut activation: Activation, window: *mut Value) {
         // A plain activation writes its header below its window instead of a record, while
         // the plain activations above the innermost record share its program.
-        if Self::is_plain(&activation, window)
-            && (self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program())
-        {
+        // The innermost plain activation runs in the caller's program, which a plain
+        // completion never leaves, so every plain activation shares it.
+        if Self::is_plain(&activation, window) {
+            debug_assert!(self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program());
             let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
             Registers(window).write_plain_header(
                 activation.call(), activation.caller_registers(), activation.caller_base(),
