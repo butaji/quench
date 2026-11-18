@@ -17,6 +17,7 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "_stream_passthrough",
     "_stream_readable",
     "_stream_transform",
+    "_stream_wrap",
     "_stream_writable",
     "_tls_common",
     "_tls_wrap",
@@ -75,9 +76,7 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "worker_threads",
     "zlib",
     "node:sea",
-    "node:sqlite",
     "node:test",
-    "node:test/reporters",
 ];
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {

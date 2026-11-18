@@ -29,6 +29,7 @@ impl NodeHost {
             bootstrapped: _,
             // Caches of this process's filesystem, which the restoring one fills itself.
             resolved_imports: _,
+            esm_required: _,
         } = self;
         require_quiescent(
             net_pending_writes.is_empty() && net_pending_ends.is_empty() && net_pending_destroys.is_empty(),

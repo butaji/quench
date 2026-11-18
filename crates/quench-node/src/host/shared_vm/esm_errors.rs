@@ -187,13 +187,16 @@ pub(super) fn unresolved<Fs: FileSystem>(
 }
 
 /// The failure for loading a resolved file whose extension the loader has no format for.
-pub(super) fn unloadable(path: &Path) -> Option<ModuleLoadError> {
+/// `require` loads such a file as `.js` (`from_require`). An `import` finds one only when
+/// `require(esm)` already loaded it as a module in this process (`loaded_by_require`):
+/// Node's module map then serves the import, and otherwise refuses the extension.
+pub(super) fn unloadable(path: &Path, from_require: bool, loaded_by_require: bool) -> Option<ModuleLoadError> {
     let extension = path.extension().and_then(|extension| extension.to_str())?;
     if TypeScriptFile::of_extension(extension).is_some() {
         let url = url::Url::from_file_path(path).map(String::from).unwrap_or_else(|_| path.display().to_string());
         return node_modules_typescript(path).then(|| type_stripping_unsupported(&url));
     }
-    if LOADABLE_EXTENSIONS.contains(&extension) {
+    if from_require || loaded_by_require || LOADABLE_EXTENSIONS.contains(&extension) {
         return None;
     }
     Some(ModuleLoadError::new(

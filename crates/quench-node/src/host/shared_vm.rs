@@ -2219,6 +2219,7 @@ node_bindings! {
         method "urlToHttpOptions" (1) => crate::modules::url_shared_vm::url_to_http_options,
         method "urlIsURL" (1) => crate::modules::url_shared_vm::is_url_operation,
         method "punycodeDecode" (1) => crate::modules::punycode_shared_vm::decode,
+        method "streamWrapSocket" (2) => crate::modules::stream_wrap_shared_vm::member,
         method "punycodeEncode" (1) => crate::modules::punycode_shared_vm::encode,
         method "punycodeToASCII" (1) => crate::modules::punycode_shared_vm::to_ascii,
         method "punycodeToUnicode" (1) => crate::modules::punycode_shared_vm::to_unicode,
@@ -2566,12 +2567,7 @@ impl quench_runtime::Host for NodeHost {
     fn resolve_dynamic_import(
         &mut self, referrer: &str, specifier: &str,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
-        #[cfg(feature = "native-execution")]
-        if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
-        let module = self.resolve_filesystem_import(referrer, specifier)?;
-        #[cfg(feature = "aot")]
-        if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
-        Ok(module)
+        self.resolve_module_request(referrer, specifier, false)
     }
 
     fn validate_module_type(
@@ -2876,10 +2872,29 @@ pub(crate) fn builtin_export_names(name: &str) -> &'static [String] {
 }
 
 impl NodeHost {
+    /// The module `require(esm)` loads for `url`, a file the require resolved: an unknown
+    /// extension loads as `.js` here, where an import would refuse it.
+    pub(crate) fn resolve_required_module(
+        &mut self, referrer: &str, specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        self.resolve_module_request(referrer, specifier, true)
+    }
+
+    fn resolve_module_request(
+        &mut self, referrer: &str, specifier: &str, from_require: bool,
+    ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
+        #[cfg(feature = "native-execution")]
+        if let Some(module) = self.embedded_import(referrer, specifier)? { return Ok(Some(module)); }
+        let module = self.resolve_filesystem_import(referrer, specifier, from_require)?;
+        #[cfg(feature = "aot")]
+        if let Some(module) = &module { self.record_import(referrer, specifier, module)?; }
+        Ok(module)
+    }
+
     /// Node's source/interop policy for a resolved import; frozen images use its
     /// compiler-captured result through the same host contract.
     fn resolve_filesystem_import(
-        &mut self, referrer: &str, specifier: &str,
+        &mut self, referrer: &str, specifier: &str, from_require: bool,
     ) -> Result<Option<quench_runtime::ModuleSource>, quench_runtime::ModuleLoadError> {
         if quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY {
             return Err("native guest code required: module source resolution is unavailable".into());
@@ -2933,7 +2948,7 @@ impl NodeHost {
         {
             Some(location) => std::rc::Rc::clone(location),
             None => {
-                let Some(location) = self.import_location(referrer, specifier)? else {
+                let Some(location) = self.import_location(referrer, specifier, from_require)? else {
                     return Ok(None);
                 };
                 let location = std::rc::Rc::new(location);
@@ -2952,6 +2967,9 @@ impl NodeHost {
             },
             _ => format!("module {}: {error}", path.display()).into(),
         })?;
+        if from_require {
+            self.esm_required.insert(path.clone());
+        }
         if let Some(state) = self.shared_state.borrow_mut().hmr.as_mut() {
             match referrer_location(referrer) {
                 Ok((_, importer)) => state.record_dependency(&importer, &path, Some(specifier)),
@@ -3064,6 +3082,7 @@ impl NodeHost {
         &mut self,
         referrer: &str,
         specifier: &str,
+        from_require: bool,
     ) -> Result<Option<ImportLocation>, quench_runtime::ModuleLoadError> {
         use std::path::Path;
 
@@ -3153,7 +3172,7 @@ impl NodeHost {
                 message,
             ));
         }
-        if let Some(error) = esm_errors::unloadable(&path) {
+        if let Some(error) = esm_errors::unloadable(&path, from_require, self.esm_required.contains(&path)) {
             return Err(error);
         }
         let name = if let Some(original) = file_url.as_ref().filter(|url| {

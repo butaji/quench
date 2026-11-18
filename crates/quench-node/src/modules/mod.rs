@@ -135,6 +135,7 @@ pub(crate) mod promise_hooks_shared_vm;
 pub(crate) mod shared_event_loop;
 pub(crate) mod private_slots;
 pub(crate) mod punycode_shared_vm;
+pub(crate) mod stream_wrap_shared_vm;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod string_decoder_codec;
 pub(crate) mod readline_shared_vm;
