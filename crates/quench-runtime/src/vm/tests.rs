@@ -14552,8 +14552,8 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         assert_eq!(call_pcs, site.call_boundary_pcs, "call boundary attribution: {site:?}");
         assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {site:?}");
         assert!(
-            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0,
-            "the call-free prefix must execute natively then leave for the callback: {site:?}"
+            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0,
+            "the loop runs natively and its callback is a step in place, not a leave: {site:?}"
         );
     }
     compiled.programs.record_js_jit_lane_entry(
@@ -14845,10 +14845,12 @@ fn shared_osr_call_result_is_not_an_incoming_number() {
             .and_then(super::program_store::derived_lane_view)
             .unwrap()
             .osr_diagnostics();
+        // The call is a step the region makes in place, so its result enters the region's
+        // registers without a leave.
         assert!(
             diagnostics.compile_successes > 0
                 && diagnostics.native_region_runs > 0
-                && diagnostics.exits > 0,
+                && diagnostics.exits == 0,
             "bypass={bypass}: {diagnostics:?}"
         );
         assert_eq!(
@@ -14989,7 +14991,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
     let site = &osr.sites[0];
     assert!(site.admitted && site.deferred_call, "the call is a resumable exact-PC boundary: {site:?}");
-    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits > 0, "tagged Move should run natively before its call: {site:?}");
+    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0, "tagged Move and its call run natively, the call as a step in place: {site:?}");
     assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
@@ -14997,7 +14999,7 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
 #[cfg(not(quench_profiled))]
 fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     // A dense indexed read may produce any JS value. Native code can carry that boxed word
-    // through a Move, but a hole must leave at GetIndex so prototype lookup stays in the VM.
+    // through a Move; a hole's prototype lookup is the interpreter's GetIndex step, made in place.
     let source = r#"
       let calls = 0;
       let sawHole = false;
@@ -15054,7 +15056,7 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     let site = &osr.sites[0];
     assert!(site.admitted && site.deferred_call, "the callback remains an exact-PC boundary: {site:?}");
     assert!(site.compile_attempts > 0 && site.native_region_runs > 0, "tagged indexed reads should execute natively: {site:?}");
-    assert!(site.exits > 0, "the dynamic call and hole fallbacks must leave the native region: {site:?}");
+    assert_eq!(site.exits, 0, "the dynamic call and a hole's prototype lookup are steps in place, not leaves: {site:?}");
     assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
