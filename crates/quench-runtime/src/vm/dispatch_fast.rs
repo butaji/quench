@@ -646,7 +646,7 @@ use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
 mod list_calls;
 mod loop_runs;
 mod unary_values;
-mod lane_capture_store; use lane_capture_store::{lane_capture_store, lane_environment_store};
+mod lane_capture_store; use lane_capture_store::{store_to_capture, store_to_environment};
 use unary_values::unary_value;
 use list_calls::{lane_apply_activation, lane_list_activation, lane_spread_native_call};
 
@@ -4595,7 +4595,7 @@ fn store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Value) 
 
 script_handler! {
     /// The `StoreCapture` row's miss (`Miss::StoreThroughScopes`) for a capture past the running
-    /// function's dense slots: the lane's store (`lane_capture_store`), else the general path.
+    /// function's dense slots: the lane's store (`store_to_capture`), else the general path.
     /// Root binding slots take this store too; no record is requickened to a fast root store.
     #[inline(never)]
     fn store_outer_capture_miss<>(cx, r, ip, i, view) {
@@ -4610,7 +4610,7 @@ script_handler! {
 
 /// The running lane activation's dense capture slots, the view a lane body's reads take
 /// (`EnvironmentSlots::native_storage_view`), and whether they admit every direct store
-/// (`capture_stores`): a frame run finds them as its first store does (`lane_capture_store`).
+/// (`capture_stores`): a frame run finds them as its first store does (`store_to_capture`).
 ///
 /// # Safety
 /// `context` is the running lane's context.
@@ -13279,7 +13279,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
 
 /// A lane body's store of `value` to the capture `packed` names (depth in its high half,
 /// slot in its low), by the lane's own stores (`store_own_capture`, else
-/// `lane_capture_store`): 1 where it stored, else 0, which leaves the body at the store,
+/// `store_to_capture`): 1 where it stored, else 0, which leaves the body at the store,
 /// before it.
 ///
 /// # Safety
@@ -13292,9 +13292,9 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
         Some(env) => {
             // SAFETY: the context's program outlives the lane run.
             let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
-            lane_environment_store(unsafe { vm(cx) }, code, program, env, depth, slot, value)
+            store_to_environment(unsafe { vm(cx) }, code, program, env, depth, slot, value)
         }
-        None => (depth == 0 && store_own_capture(cx, slot, value)) || lane_capture_store(cx, depth, slot, value),
+        None => (depth == 0 && store_own_capture(cx, slot, value)) || store_to_capture(cx, depth, slot, value),
     };
     u64::from(stored)
 }

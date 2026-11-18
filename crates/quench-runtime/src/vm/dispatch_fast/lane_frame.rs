@@ -96,7 +96,7 @@ struct ScopeReads {
 }
 
 /// The lane context's capture stores, erased of its host so the frame names no `H`
-/// (`lane_capture_store`).
+/// (`store_to_capture`).
 #[derive(Clone, Copy)]
 struct CaptureStores {
     context: *mut (),
@@ -106,7 +106,7 @@ struct CaptureStores {
 impl CaptureStores {
     /// The stores of the running lane's `cx`.
     fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
-        Self { context: cx.cast(), store: |context, depth, slot, value| lane_capture_store(context.cast::<LaneContext<H>>(), depth, slot, value) }
+        Self { context: cx.cast(), store: |context, depth, slot, value| store_to_capture(context.cast::<LaneContext<H>>(), depth, slot, value) }
     }
 
     /// The running function's own initialized slot written directly through its dense slots

@@ -47,7 +47,7 @@ impl Reads {
     /// The reads of a capture access of the running lane's `cx`.
     pub(super) fn of_captures<H: Host>(cx: *mut LaneContext<H>) -> Self {
         Self { captures: Some(CaptureReads { context: cx.cast(), read: |context, depth, slot, root|
-            lane_capture_read(context.cast::<LaneContext<H>>(), depth, slot, root) }), ..Self::NONE }
+            capture_slot_read(context.cast::<LaneContext<H>>(), depth, slot, root) }), ..Self::NONE }
     }
 
     /// The value of a constant or local operand. Inlined, as `capture`: a call here would take the
@@ -80,7 +80,7 @@ impl Reads {
 /// or a new walk it then remembers; with `root`, the root environment's projected binding
 /// (`projected_capture`). A read at the function's own scope is the walk handler's, which
 /// also finds the function's dense slots (`LaneContext::capture`).
-fn lane_capture_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, root: bool) -> Option<Value> {
+fn capture_slot_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, root: bool) -> Option<Value> {
     if root {
         return projected_capture(cx, depth, slot);
     }

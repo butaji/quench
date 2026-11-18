@@ -3,7 +3,7 @@
 use super::*;
 
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
-/// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
+/// dense slots, by the staged operation and the lane's own store (`store_to_capture`); false,
 /// storing nothing, where the binding does not take the direct store.
 #[inline(always)]
 pub(in crate::vm::dispatch_fast) fn staged_store_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
