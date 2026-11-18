@@ -677,6 +677,40 @@ fn whole_read_per_iteration_copies_keep_their_owners_slots() {
 }
 
 #[test]
+fn closures_that_die_with_their_iteration_share_the_loop_environment() {
+    // A call-only closure declared in a loop's body that makes no closure needs no copy of the
+    // environment per iteration (`IterationClosureFinder`); every other closure keeps its own.
+    let source = r#"
+      "use strict";
+      const out = [];
+      function t(name, v) { out.push(name + "=" + JSON.stringify(v)); }
+      { const fs = []; for (let i = 0; i < 3; i++) { fs.push(() => i); } t("esc", fs.map(f => f())); }
+      { let g; for (let i = 0; i < 3; i++) { g = () => i; } t("outer", g()); }
+      { const fs = []; for (let i = 0; i < 3; i++) { const mk = () => () => i; fs.push(mk()); } t("nested", fs.map(f => f())); }
+      { let s = 0; for (let i = 0; i < 5; i++) { const f = () => i * 2; s += f(); } t("local", s); }
+      { let s = ""; for (const x of ["a", "b"]) { const f = () => x + x; s += f(); } t("forof", s); }
+      { const fs = []; for (const x of [1, 2, 3]) { fs.push(() => x); } t("forofesc", fs.map(f => f())); }
+      { const fs = []; for (let i = 0, h = () => i; i < 3; i++) { fs.push(h()); } t("head", fs); }
+      const o = { v: 7, m() { let s = 0; for (let i = 0; i < 3; i++) { const f = () => this.v + i; s += f(); } return s; } };
+      t("this", o.m());
+      { const r = []; for (let i = 0; i < 6; i++) { const f = () => i; i++; r.push(f()); } t("mut", r); }
+      function* gen() { for (let i = 0; i < 3; i++) { const f = () => i; yield f(); } }
+      t("gen", [...gen()]);
+      { const fs = []; for (let i = 0; i < 3; i++) { const f = () => i; fs.push(() => f()); } t("via", fs.map(g => g())); }
+      { let s = 0; for (let i = 1; i < 4; i++) { const f = (n) => n <= 0 ? 0 : i + f(n - 1); s += f(2); } t("rec", s); }
+      const got = out.join(" ");
+      const want = 'esc=[0,1,2] outer=2 nested=[0,1,2] local=20 forof="aabb" forofesc=[1,2,3] head=[0,0,0] this=24 mut=[1,3,5] gen=[0,1,2] via=[0,1,2] rec=12';
+      if (got !== want) throw new Error(got);
+    "#;
+    let program = Engine::specialize(source, "iteration-closures.js").unwrap();
+    for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+        let mut vm = Vm::new(TestHost::default());
+        vm.set_execution_mode(mode);
+        vm.execute(&program).unwrap_or_else(|error| panic!("{mode:?}: {error:?}"));
+    }
+}
+
+#[test]
 fn array_definitions_reuse_accessor_slots_and_allow_frozen_same_values() {
     let source = r#"
       for(const index of [0,100000]) {
