@@ -691,6 +691,25 @@ fn per_iteration_copies_of_a_wide_environment_keep_loop_and_shared_bindings_apar
 }
 
 #[test]
+fn loop_body_bindings_live_in_the_iteration_copy() {
+    // A loop body block's bindings join the loop's per-iteration copy (no copy of their own):
+    // closures still see one binding per iteration, even when the head binding is not captured,
+    // through inner loops, `continue outer`, and before initialization (Node's output).
+    let source = "function f(){ const fs=[];\n\
+         for (let i=0;i<2;i++){ let w; fs.push(()=>w); w=i+100; }\n\
+         for (let i=0;i<2;i++){ let w=i; let j=0; while(j<2){ let u=j*10+i; fs.push(()=>u+':'+w); j++; } }\n\
+         outer: for (let i=0;i<2;i++){ let a=i; for (let j=0;j<3;j++){ let b=j; fs.push(()=>a+'.'+b); if(j==1) continue outer; } }\n\
+         for (let i=0;i<3;i++){ fs.push(()=>{ try { return w } catch(e) { return 'tdz' } }); let w=i; if(i==1) break; }\n\
+         for (const k of ['a','b']){ let w; fs.push(()=>k+w); w=k+k; }\n\
+         return fs.map(f=>f()).join(' '); }\n\
+         var result = f();";
+    assert_eq!(
+        global_text(source, "result"),
+        "100 101 0:0 10:0 1:1 11:1 0.0 0.1 1.0 1.1 0 1 aaa bbb"
+    );
+}
+
+#[test]
 fn closures_that_die_with_their_iteration_share_the_loop_environment() {
     // A call-only closure declared in a loop's body that makes no closure needs no copy of the
     // environment per iteration (`IterationClosureFinder`); every other closure keeps its own.
