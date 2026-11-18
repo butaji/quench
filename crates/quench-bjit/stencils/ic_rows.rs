@@ -33,16 +33,16 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_INT_ROW, SITE_OBJECT_AT};
+use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, SITE_OBJECT_AT};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_METHOD_CACHE_ATOMS, JS_STEP_METHOD_CACHE_ATOM_WORDS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
+use crate::layout::{JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp, Reached};
-use crate::staged::object::{Form, direct_object_record};
+use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::region::Region;
 use crate::staged::object::Rep;
-use crate::staged::slot_store::own_flat_store;
+use crate::staged::slot_store::{own_flat_known, own_flat_store, proved_flat_store};
 use crate::staged::Stage;
 use crate::typed_ir::Type;
 use crate::words::{hole, hole64};
@@ -54,9 +54,6 @@ const GET_RECEIVER: u8 = HOLE_A;
 const SET_RECEIVER: u8 = 0;
 /// The first hole of an entry's own operands: the two before it are the row's frame operands.
 const ENTRY_HOLES: u8 = 2;
-/// Bits in a method-cache bitset word, as a shift.
-const WORD_SHIFT: u32 = u64::BITS.trailing_zeros();
-const WORD_BITS: u64 = u64::BITS as u64;
 
 /// The receiver's record id, address and the record table, proved: the frame word at hole `H`
 /// (for a get, above the destination's offset in hole 0, as a site row's) is a direct object and
@@ -82,8 +79,7 @@ fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         ic::run(&mut stage, &ops, at, Some(records), ())
     } else {
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Rep::Tagged }];
-        ic::run(&mut stage, &ops, at, None, ())
+        ic::own_field(&mut stage, record, 0, 0, ())
     }
 }
 
@@ -110,29 +106,17 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
     }
 }
 
-/// Whether a store of the atom at the next hole is admitted: the program runs specialized and no
-/// method cache names the atom, an atom past the bitset being unnamed (`emit_atom_unnamed`, the
-/// Cranelift reading of the same two payload words).
+/// Whether a store of the atom at the next hole is admitted: the program runs specialized. That no
+/// method cache names the atom is a Stable fact the code holds (`Decoded::atom`, `held_atoms`): naming it
+/// retires the code, and a run already inside learns that from the invalidation word its rows test after
+/// a call (`Heap::Live`), so the row reads no bitset. The atom's hole stays numbered.
 #[inline(always)]
 fn store_admitted(stage: &mut StencilStage, payload: u64) -> Option<()> {
     let specialized = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32);
     let on = stage.ne_imm(specialized, 0u32);
     stage.guard(on, ())?;
-    let atom = stage.site(0);
-    let index = stage.shr_imm(atom, WORD_SHIFT);
-    let length = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_METHOD_CACHE_ATOM_WORDS as i32);
-    let covered = stage.ult(index, length);
-    let named = stage.choose(covered, |stage| {
-        let words = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_METHOD_CACHE_ATOMS as i32);
-        let offset = stage.mul_imm(index, size_of::<u64>() as u64);
-        let address = stage.add(words, offset);
-        let word = stage.load_u64(Region::HeapMeta.mutable(), address, 0);
-        let position = stage.and_imm(atom, WORD_BITS - 1);
-        let shifted = stage.shr_imm(word, position);
-        stage.and_imm(shifted, 1u64)
-    }, |stage| stage.constant(0));
-    let unnamed = stage.eq_imm(named, 0u32);
-    stage.guard(unnamed, ())
+    let _atom = stage.site(0);
+    Some(())
 }
 
 /// The store of the Number in the value place into the receiver's flat slot (a packed receiver
@@ -160,6 +144,59 @@ fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usi
     }
 }
 
+/// The record of the receiver at hole `H` (as `receiver`'s), which every path proved a direct object
+/// (`base_region::proofs`): its id masked and scaled into the record table, no family test.
+#[inline(always)]
+fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> u64 {
+    let offset = if H == GET_RECEIVER { (hole64::<0>() >> SITE_OBJECT_AT) as usize } else { hole::<H>() };
+    let bits = word_at(s.frame, offset);
+    let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
+    let id = stage.and_imm(bits, u64::from(u32::MAX));
+    object_record_at(stage, records, id)
+}
+
+/// The own slot of the receiver known to be a direct object (`ic::own_field`: hole 2 the shape, hole 3 the
+/// slot's flat byte offset), with no family test.
+#[inline(always)]
+fn known_get<const D: u8>(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
+    let word = ic::own_field(&mut stage, record, 0, 0, ());
+    match word {
+        Some(word) => hit::<true>(deliver::<D>(s, word)),
+        None => miss::<true>(s),
+    }
+}
+
+/// The Number in the value place stored to the flat slot (hole 4: its byte offset) of the receiver known
+/// to be a direct object where the atom (hole 2) is admitted (`store_admitted`) and the receiver is of the
+/// exact shape at hole 3; an int32 slot (`INT`) takes int32 words only.
+#[inline(always)]
+fn known_set<const INT: bool, const A: u8>(s: S, payload: usize) -> Out {
+    let Some(word) = number_word::<A, HOLE_A>(&s).filter(|word| !INT || is_int(*word)) else { return miss::<true>(s) };
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    if store_admitted(&mut stage, payload as u64).is_none() {
+        return miss::<true>(s);
+    }
+    let record = known_record::<SET_RECEIVER>(&s, &mut stage, payload);
+    if own_flat_known(&mut stage, record, 0, ()).is_none() {
+        return miss::<true>(s);
+    }
+    proved_flat_store(&mut stage, record, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }));
+    hit::<true>(Out::Next(s))
+}
+
+/// Continues where the object register at hole 0 is a direct object and the VM has an object table
+/// (`receiver`), else leaves through exit 0.
+#[inline(always)]
+fn proof(s: S, payload: usize) -> Out {
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    match receiver::<SET_RECEIVER>(&s, &mut stage, payload).map(|_| ()) {
+        Some(()) => Out::Next(s),
+        None => Out::Exit(s),
+    }
+}
+
 /// The cache row `KIND` (a code of `codes.rs`); `CHAINED` as above; `D` is a get's destination
 /// place and `A` a store's value place.
 #[inline(always)]
@@ -169,6 +206,10 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_ROW => get_row::<false, CHAINED, D>(s, payload),
         IC_GET_HOLDER_ROW => get_row::<true, CHAINED, D>(s, payload),
         IC_SET_INT_ROW => set_row::<true, CHAINED, A>(s, payload),
+        IC_PROOF_ROW => proof(s, payload),
+        IC_KNOWN_GET_ROW => known_get::<D>(s, payload),
+        IC_KNOWN_SET_ROW => known_set::<false, A>(s, payload),
+        IC_KNOWN_SET_INT_ROW => known_set::<true, A>(s, payload),
         _ => set_row::<false, CHAINED, A>(s, payload),
     }
 }

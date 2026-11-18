@@ -101,6 +101,27 @@ pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id
     Some(())
 }
 
+/// Proves the record at `record` of the exact shape `shape` with plain wide flat values in one compare:
+/// its auxiliary word is the shape with no storage-form bit set (`recorded_shape`); `None`, leaving at
+/// `miss`, otherwise. What the access of a receiver known to be a direct object runs (`base_region::proofs`).
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
+pub(crate) fn own_flat_known<S: Stage>(stage: &mut S, record: S::Word, shape: u32, miss: S::Miss) -> Option<()> {
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let shape = stage.site(u64::from(shape));
+    let same = stage.eq_imm(word, shape);
+    stage.guard(same, miss)
+}
+
+/// `value` written at flat `slot` of the record at `record`, which `own_flat_known` proved of the slot's
+/// shape with plain flat values; the value is one the slot's observed type holds, so the store gate does not apply.
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
+pub(crate) fn proved_flat_store<S: Stage>(stage: &mut S, record: S::Word, slot: u16, (value, rep): (S::Word, Rep)) {
+    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+    store_flat(stage, payload, slot, (value, rep));
+}
+
 /// `value`, a word in `rep`'s encoding, written at `slot`, a word (the shapes' storage length or a cache
 /// entry's slot), of the plain object at `record` whose `payload` word the caller read and proved plain,
 /// with its values in `form`:

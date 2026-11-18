@@ -55,14 +55,21 @@ pub(super) enum Heap {
     SiteStore,
     /// `SiteStore` into the activation's receiver: hole 0 is unused.
     ThisStore,
-    /// The inline-cache read (`ic_rows`) of the own flat slot of the object register (hole 1), whose
+    /// The inline-cache read (`ic_rows`) of the own slot of the object register (hole 1), whose
     /// exact shape (hole 2) and slot byte offset (hole 3) the code holds from the site's one entry,
-    /// into the destination (hole 0): a shape compare and a load, no cache table read.
+    /// into the destination (hole 0): a shape compare and a load, no cache table read (`staged::ic::own_field`).
     IcGet,
     /// The inline-cache store of a Number (hole 1) into that slot of the object register (hole 0),
     /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds
     /// Number (`int`: only int32, which takes only int32 words), so no observation widens.
     IcSet { int: bool },
+    /// `IcGet` and `IcSet` of a receiver every path proved a direct object (`base_region::proofs`): one compare
+    /// of its auxiliary word with the entry's shape proves the shape and flat plain values (holes as theirs).
+    IcKnownGet,
+    IcKnownSet { int: bool },
+    /// Leaves through exit 0 unless the object register at hole 0 is a direct object: what an access's miss
+    /// runs after its site row, so the receiver is proved one on every edge out of the access.
+    IcProof,
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
     CaptureSet(u16),
@@ -230,6 +237,10 @@ impl Heap {
             Heap::IcGet => library::IC_GET_ROW,
             Heap::IcSet { int: false } => library::IC_SET_ROW,
             Heap::IcSet { int: true } => library::IC_SET_INT_ROW,
+            Heap::IcKnownGet => library::IC_KNOWN_GET_ROW,
+            Heap::IcKnownSet { int: false } => library::IC_KNOWN_SET_ROW,
+            Heap::IcKnownSet { int: true } => library::IC_KNOWN_SET_INT_ROW,
+            Heap::IcProof => library::IC_PROOF_ROW,
             Heap::This => library::THIS_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             _ => return None,
