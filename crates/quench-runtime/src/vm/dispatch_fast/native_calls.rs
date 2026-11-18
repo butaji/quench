@@ -43,7 +43,7 @@ macro_rules! builtin_rows {
 builtin_rows!(
     0 => MapGet, 1 => MapHas, 2 => MapSet, 3 => SetHas, 4 => WeakMapGet, 5 => WeakMapHas,
     6 => WeakSetHas, 7 => StringCharAt, 8 => ArrayIsArray, 9 => StringCharCodeAt, 10 => ArrayPush, 11 => ArrayPop,
-    12 => JsonStringify, 13 => DateNow,
+    12 => JsonStringify, 13 => DateNow, 14 => RegExpTest, 15 => RegExpExec,
 );
 
 /// The Math functions whose call a site makes under its own handler, one instantiation of
@@ -220,11 +220,28 @@ script_handler! {
     fn lane_call_builtin<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
-        let value = if callee_is_native(vm, r.get(i.b), native) {
+        let value = if !callee_is_native(vm, r.get(i.b), native) {
+            None
+        } else if const { matches!(row_native(ROW), Native::RegExpTest | Native::RegExpExec) } {
+            // A RegExp method's steady call (`Vm::steady_regexp_call`), entered from the site
+            // without the general native protocol; an error it raises completes as
+            // `lane_native_call`'s does.
+            // SAFETY: the call's window is registers of the running function; the context's
+            // program outlives the lane run.
+            let (args, code) = unsafe { (lane_call_window(r, i), &*(*cx).code) };
+            let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+            match args.first().and_then(|&subject| vm.steady_regexp_call(code, native, r.get(i.c), subject, result_used)) {
+                Some(Ok(value)) => Some(value),
+                Some(Err(error)) => {
+                    note_allocation(vm);
+                    vm.lane_completion.raise(error);
+                    resume!(cx, lane_native_complete(cx, ip, i, None))
+                }
+                None => None,
+            }
+        } else {
             // SAFETY: the call's window is registers of the running function.
             vm.steady_native_value(native, r.get(i.c), unsafe { lane_call_window(r, i) })
-        } else {
-            None
         };
         let Some(value) = value else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))

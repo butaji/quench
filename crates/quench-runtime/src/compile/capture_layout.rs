@@ -9,10 +9,12 @@ use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 pub(crate) struct LayoutInputs {
     pub(crate) captured: Vec<u16>,
     pub(crate) dynamic_descendant: bool,
-    /// Whether the function is a module's body. Its module-scope bindings live in the module
-    /// environment, which importers and the linker address by slot, and are in `captured`;
-    /// its block bindings are as private to its activation as a function's.
-    pub(crate) module_root: bool,
+    /// Whether the function is a program root that splits like a function: a module's body,
+    /// whose module-scope bindings importers and the linker address by slot, or a Script's or
+    /// eval's root without dynamic name resolution, whose global declarations the realm and
+    /// later code find by slot. Those bindings are in `captured`; its block bindings, such as
+    /// a `for (let ...)` loop's, are as private to its activation as a function's.
+    pub(crate) split_root: bool,
 }
 
 /// What the program-wide layout analyses read of one function, fixed once it is compiled:
@@ -183,7 +185,7 @@ pub(super) fn inputs(
         .map(|((id, captured), dynamic_descendant)| LayoutInputs {
             captured: complete_captured(captured, arguments(id)),
             dynamic_descendant,
-            module_root: false,
+            split_root: false,
         })
         .collect()
 }
@@ -221,7 +223,7 @@ pub(super) fn apply_function(
     let mut captured = inputs.captured.clone();
     // A module body's `captured` includes the bindings its module environment holds
     // (`Function::module_environment_slots`), closures or not, so it always splits.
-    if !inputs.module_root && !has_closure(function) {
+    if !inputs.split_root && !has_closure(function) {
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
@@ -342,7 +344,7 @@ fn clones_are_unobservable(function: &Function, id: usize, inputs: &LayoutInputs
 /// names its slots.
 fn activation_is_private(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
     let nested = id != 0 && function.parent.is_some();
-    let module_body = inputs.module_root && function.parent.is_none();
+    let module_body = inputs.split_root && function.parent.is_none();
     (nested || module_body)
         && !inputs.dynamic_descendant
         && function.construction_is_private()
@@ -379,11 +381,13 @@ fn rewrite_local_ownership(function: &mut Function, captured: &[u16]) {
 }
 
 /// A per-iteration environment copy is observable only through a closure holding one of its
-/// fresh bindings, and only when its site runs again in the same activation: a closure made
-/// after one run must then keep the bindings the next run replaces. When no fresh binding of
-/// a clone site is captured, or the site runs at most once (`may_repeat`), every closure sees
-/// the same binding objects with or without the copy, so the site does nothing. A copy that
-/// stays would also be the environment every later closure of the activation captures.
+/// fresh bindings. At a site that runs again in the same activation (`may_repeat`), a closure
+/// made in one run must keep the bindings the next run replaces. At a site that runs at most
+/// once, a closure made before it (a `for (let ...)` initializer's) keeps the bindings the copy
+/// leaves behind, which later writes to the copy must not reach. When no fresh binding of a
+/// clone site is captured, or the site runs once with no closure made before it, every closure
+/// sees the same binding objects with or without the copy, so the site does nothing. A copy
+/// that stays would also be the environment every later closure of the activation captures.
 fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
     let observable = |plan: &crate::bytecode::EnvironmentClone| {
         plan.fresh
@@ -391,10 +395,18 @@ fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
             .any(|slot| captured.binary_search(slot).is_ok())
     };
     let backward = backward_transfers(function);
+    // A site that runs once runs after every instruction before it in code order: only
+    // forward transfers reach it.
+    let first_closure = function
+        .code
+        .iter()
+        .position(|instruction| instruction.op() == Op::MakeClosure)
+        .unwrap_or(usize::MAX)
+        .min(if function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure) { 0 } else { usize::MAX });
     for (pc, instruction) in function.code.iter_mut().enumerate() {
         if instruction.op() == Op::CloneEnv
             && (!observable(&function.environment_clones[instruction.environment_clone_index()])
-                || !may_repeat(&backward, pc))
+                || (!may_repeat(&backward, pc) && first_closure > pc))
         {
             *instruction = crate::bytecode::Instr::new(Op::Nop, 0, 0, 0, 0);
         }

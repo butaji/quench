@@ -615,6 +615,34 @@ fn collection_construction_survives_gc_in_iterator_and_entry_callbacks() {
     }
 }
 
+/// A closure made in a `for (let ...)` initializer keeps the initializer's binding: the first
+/// iteration's copy, which runs once, separates it from the bindings the test and body write
+/// (test262 language/statements/for/scope-body-lex-open.js), in a Script's root and in a function.
+#[test]
+fn a_for_let_initializer_closure_keeps_the_initializer_binding() {
+    let body = r#"
+      var probeBefore, probeTest, probeIncr, probeBody; var run = true;
+      for (let x = 'outside', _ = probeBefore = function() { return x; };
+           run && (x = 'inside', probeTest = function() { return x; });
+           probeIncr = function() { return x; })
+        probeBody = function() { return x; }, run = false;
+      const got = [probeBefore(), probeTest(), probeBody(), probeIncr()].join();
+      if (got !== 'outside,inside,inside,inside') throw new Error(got);
+    "#;
+    for source in [body.to_owned(), format!("(function () {{ {body} }})();")] {
+        for specialized in [false, true] {
+            let mut vm = Vm::new(TestHost::default());
+            let program = if specialized {
+                Engine::specialize(&source, "for-let-initializer.js")
+            } else {
+                Engine::compile(crate::ExecutionRequest { source: &source, name: "for-let-initializer.js", kind: crate::SourceKind::Script })
+            }
+            .unwrap();
+            vm.execute(&program).unwrap();
+        }
+    }
+}
+
 #[test]
 fn whole_read_per_iteration_copies_keep_their_owners_slots() {
     // Bindings enough that each iteration's copy of the script's root environment is sparse
@@ -23918,4 +23946,65 @@ fn straight_line_body_past_the_stream_size_runs_as_written() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["TypeError".to_string(), format!("{count} {expected_sum} 6000")]);
+}
+
+#[test]
+fn hot_loops_keep_planned_receivers_as_their_fields_and_allocate_them_where_needed() {
+    // A loop's `new Pair(...)` whose result only has its fields read is its field values
+    // (`lane_region::virtual_objects`); a branch with the receiver live, a read of a field the
+    // plan does not name, a leave and a prototype setter added mid-run each see the object
+    // the construction would have made.
+    let source = r#"
+      class Pair { constructor(x, y) { this.x = x; this.y = y; } }
+      class K { constructor(a) { this.a = a; this.k = 7; } }
+      function kept(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 3); s = (s + p.x + p.y) | 0; } return s; }
+      function escapes(n) { var out = [], s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, i + 1); if (i % 97 === 0) out.push(p); s = (s + p.y) | 0; }
+        return [s, out.length, out[3].x, out[3].y, out[3] instanceof Pair, Object.keys(out[3]).join()].join(); }
+      function other(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i, 2); s = (s + p.x + (p.z === undefined ? 1 : 0)) | 0; } return s; }
+      function constant(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new K(i); s = (s + p.a + p.k) | 0; } return s; }
+      function missing(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i); s = (s + p.x + (p.y === undefined ? 5 : 0)) | 0; } return s; }
+      function overflow(n) { var s = 0; for (var i = 0; i < n; i++) { const p = new Pair(i * 100000, 3); s = s + p.x + p.y; } return s; }
+      function setter(n) { var s = 0; for (var i = 0; i < n; i++) {
+          if (i === n - 50) Object.defineProperty(Pair.prototype, 'y', { set(v) { this._y = v * 2; }, get() { return this._y; }, configurable: true });
+          const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; }
+        delete Pair.prototype.y; return s; }
+      var out = [];
+      for (var k = 0; k < 3; k++) { out.push(kept(20000), escapes(20000), other(20000), constant(20000), missing(20000), overflow(20000), setter(20000)); }
+      print(out.join(";"));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let program = Engine::specialize(source, "kept-receivers.js").unwrap();
+    vm.execute(&program).unwrap();
+    let round = "200050000;200010000,207,291,292,true,x,y;200010000;200130000;200090000;19999000060000;200010050";
+    assert_eq!(output.borrow().as_slice(), [[round, round, round].join(";")]);
+}
+
+#[test]
+fn an_own_constant_hint_answers_for_its_object_until_the_object_is_written() {
+    // `Vm::own_constant_hint_hit`: an enum-like object's member read as the value it held,
+    // for that object only (another object of its layout misses) and until a write to any of
+    // its values or a layout change retires the hint's watch.
+    let source = r#"
+      globalThis.Color = { Red: 0, Green: 1, Blue: 2 };
+      globalThis.Twin = { Red: 0, Green: 1, Blue: 2 };
+    "#;
+    let mut vm = Vm::new(TestHost::default());
+    let program = Engine::specialize(source, "own-constant.js").unwrap();
+    vm.execute(&program).unwrap();
+    let global = |vm: &mut Vm<TestHost>, name: &str| {
+        let atom = vm.intern_atom(name);
+        vm.own_property(vm.realm.globals, atom).expect("a global")
+    };
+    let (color, twin) = (global(&mut vm, "Color"), global(&mut vm, "Twin"));
+    let green: crate::bytecode::Atom = 7;
+    let index = vm.hold_own_constant_hint(None, green, color, Value::integer(1), 8).expect("a hint");
+    assert!(vm.own_constant_hint_live(index));
+    assert_eq!(vm.own_constant_hint_hit(index, green, color), Some(Value::integer(1)));
+    assert_eq!(vm.own_constant_hint_hit(index, green, twin), None, "another object of the layout");
+    assert_eq!(vm.own_constant_hint_hit(index, green + 1, color), None, "another name");
+    let write = Engine::specialize("Color.Blue = 5;", "write.js").unwrap();
+    vm.execute(&write).unwrap();
+    assert!(!vm.own_constant_hint_live(index), "a write to the object retires the hint");
+    assert_eq!(vm.own_constant_hint_hit(index, green, color), None);
 }

@@ -25,9 +25,22 @@ pub(crate) unsafe fn concrete_holder_read(record: &crate::heap::Object, guard: u
         .map(crate::Value::from_bits)
 }
 
+/// The interpreter's reading of `own_constant_read` for the object part `record`.
+///
+/// # Safety
+/// `watch` is the address of a live watch (`Rc::as_ptr` of a hint's), which outlives the call.
+#[inline(always)]
+pub(crate) unsafe fn concrete_own_constant_read(record: &crate::heap::Object, expected: u64,
+    watch: *const crate::code_dependencies::PublishedCode<()>, value: crate::Value) -> Option<crate::Value> {
+    let mut stage = super::Concrete::new(std::ptr::null());
+    super::ic::own_constant_read(&mut stage, record as *const crate::heap::Object as u64, expected, watch as u64, value.to_bits(), ())
+        .map(crate::Value::from_bits)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::staged::stage::Stage;
     use crate::heap::{Cell, Heap, Object, ProtoLink};
     use crate::code_dependencies::PublishedCode;
     use crate::Value;
@@ -54,6 +67,26 @@ mod tests {
         assert_eq!(read(guard ^ 1, &watch), None, "another prototype");
         watch.retire();
         assert_eq!(read(guard, &watch), None, "a retired watch");
+    }
+
+    #[test]
+    fn an_own_constant_read_needs_the_record_itself_and_the_watch() {
+        let mut heap = Heap::new();
+        heap.register_property_shape(1, 1, None);
+        let first = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let second = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        heap.property_add(first, Value::integer(1), 1);
+        heap.property_add(second, Value::integer(1), 1);
+        let (one, other) = (heap.object(first).unwrap(), heap.object(second).unwrap());
+        assert_eq!(one.guard_word(), other.guard_word(), "one layout");
+        let expected = one as *const Object as u64;
+        let watch = Rc::new(PublishedCode::new(()));
+        let value = Value::integer(42);
+        let read = |record: &Object, watch: &Rc<PublishedCode<()>>| unsafe { concrete_own_constant_read(record, expected, Rc::as_ptr(watch), value) };
+        assert_eq!(read(one, &watch), Some(value));
+        assert_eq!(read(other, &watch), None, "another object of the layout");
+        watch.retire();
+        assert_eq!(read(one, &watch), None, "a retired watch");
     }
 
     /// The row's operands are holes in a fixed order: guard, watch, value.

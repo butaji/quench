@@ -2983,8 +2983,12 @@ impl NodeHost {
         let source = if extension == "json" {
             commonjs::source_text(&bytes).into_owned()
         } else if kind == quench_runtime::SourceKind::Module {
-            String::from_utf8(bytes)
-                .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
+            let source = String::from_utf8(bytes)
+                .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?;
+            if matches!(extension, "ts" | "mts") {
+                crate::host::ts_checker::prepare(path, &source, 0..source.len(), 0);
+            }
+            source
         } else {
             #[cfg(feature = "aot")]
             self.record_module_resolution(path, &path.to_string_lossy(), path)?;

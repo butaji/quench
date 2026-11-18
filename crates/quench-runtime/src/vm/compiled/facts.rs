@@ -159,13 +159,18 @@ impl Facts {
                 let start = offset.get() - 1;
                 let widening = self.headers.contains(pc) && self.rounds.get(pc).is_some_and(|rounds| *rounds >= WIDENING_ROUNDS);
                 let mut changed = false;
+                // Most edges bring a row equal to the one held, register by register: the
+                // join of equal types is the type, so only differing registers join.
                 for (known, incoming) in self.types[start..start + self.registers].iter_mut().zip(incoming) {
+                    if *known == *incoming { continue; }
                     let joined = if widening { known.widen(*incoming) } else { known.join(*incoming) };
                     changed |= joined != *known;
                     *known = joined;
                 }
                 for (rows, theirs) in [(&mut self.length_of, &relations.length_of), (&mut self.below, &relations.below), (&mut self.under, &relations.under)] {
-                    for (known, theirs) in rows.get_mut(start..start + theirs.len()).into_iter().flatten().zip(theirs) {
+                    let Some(known) = rows.get_mut(start..start + theirs.len()) else { continue };
+                    if known == theirs.as_slice() { continue; }
+                    for (known, theirs) in known.iter_mut().zip(theirs) {
                         changed |= lengths::meet(known, *theirs);
                     }
                 }

@@ -327,9 +327,13 @@ impl<H: Host> Vm<H> {
                     .expect("validated Wasm unary operator");
                 self.write(f, i.result_register(), Value::integer(operator.evaluate(value)));
             }
-            Op::WasmI64Binary => {
+            Op::WasmI64Binary | Op::WasmI64BinaryImmediate => {
                 let left = self.wasm_i64_operand(self.read(f, i.register_b()))?;
-                let right = self.wasm_i64_operand(self.read(f, i.register_c()))?;
+                let right = if i.op() == Op::WasmI64BinaryImmediate {
+                    i64::from(i.c() as i16)
+                } else {
+                    self.wasm_i64_operand(self.read(f, i.register_c()))?
+                };
                 let operator = crate::wasm::integer::I64BinaryOperator::from_tag(i.imm())
                     .expect("validated Wasm binary operator");
                 let value = operator

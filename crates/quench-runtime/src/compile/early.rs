@@ -495,6 +495,8 @@ pub(super) struct FixedRegisterLocalFacts<'a> {
     /// What the functions and classes the body makes may do to its bindings
     /// (`ClosureReach`); `None` when it makes none.
     closures: Option<ClosureReach<'a>>,
+    /// Whether the walk gathered what `closures` reach, rather than only that there are some.
+    reached: bool,
     /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
     /// counting the functions it makes.
     pub(super) suspends: bool,
@@ -507,6 +509,9 @@ pub(super) struct FixedRegisterLocalFacts<'a> {
 #[derive(Default)]
 struct ClosureReach<'a> {
     assigned: FxHashSet<&'a str>,
+    /// Every name any of them references, its own bindings' included (an over-approximation of
+    /// what it reads of the body's).
+    referenced: FxHashSet<&'a str>,
     observes_arguments: bool,
     /// How many ordinary (non-arrow) functions enclose the visit: inside one, `arguments`
     /// is that function's own.
@@ -516,6 +521,7 @@ struct ClosureReach<'a> {
 impl<'a> Visit<'a> for ClosureReach<'a> {
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
         self.observes_arguments |= self.ordinary_depth == 0 && identifier.name == ARGUMENTS;
+        self.referenced.insert(identifier.name.as_str());
     }
 
     fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
@@ -565,6 +571,8 @@ pub(super) fn fixed_register_local_facts<'a>(
         reaches: bool,
         /// The body itself awaits: an `await`, a `for await` or an `await using`.
         suspends: bool,
+        /// The body itself has a loop.
+        loops_seen: bool,
     }
 
     impl<'a> Facts<'a> {
@@ -581,6 +589,7 @@ pub(super) fn fixed_register_local_facts<'a>(
                 closures: None,
                 reaches,
                 suspends: false,
+                loops_seen: false,
             }
         }
 
@@ -763,6 +772,7 @@ pub(super) fn fixed_register_local_facts<'a>(
                 self.visit_for_statement_init(init);
             }
             self.loops += 1;
+            self.loops_seen = true;
             if let Some(test) = &statement.test {
                 self.visit_expression(test);
             }
@@ -781,18 +791,21 @@ pub(super) fn fixed_register_local_facts<'a>(
 
         fn visit_while_statement(&mut self, statement: &oxc_ast::ast::WhileStatement<'a>) {
             self.loops += 1;
+            self.loops_seen = true;
             walk::walk_while_statement(self, statement);
             self.loops -= 1;
         }
 
         fn visit_do_while_statement(&mut self, statement: &oxc_ast::ast::DoWhileStatement<'a>) {
             self.loops += 1;
+            self.loops_seen = true;
             walk::walk_do_while_statement(self, statement);
             self.loops -= 1;
         }
 
         fn visit_for_in_statement(&mut self, statement: &oxc_ast::ast::ForInStatement<'a>) {
             self.loops += 1;
+            self.loops_seen = true;
             walk::walk_for_in_statement(self, statement);
             self.loops -= 1;
         }
@@ -800,6 +813,7 @@ pub(super) fn fixed_register_local_facts<'a>(
         fn visit_for_of_statement(&mut self, statement: &oxc_ast::ast::ForOfStatement<'a>) {
             self.suspends |= statement.r#await;
             self.loops += 1;
+            self.loops_seen = true;
             walk::walk_for_of_statement(self, statement);
             self.loops -= 1;
         }
@@ -872,7 +886,9 @@ pub(super) fn fixed_register_local_facts<'a>(
     // again for each body that encloses it was most of this pass. Such a body is walked again,
     // gathering the reach.
     let mut facts = Facts::new(false).walk(body, expression);
-    if facts.safe && facts.closures.is_some() && matches!(facts.arguments, ArgumentsUse::Reads) {
+    // A body with a loop is walked again too: its parameters may stay in registers where no
+    // function it makes names them (`closures_spare`), which keeps its loops compilable.
+    if facts.safe && facts.closures.is_some() && (matches!(facts.arguments, ArgumentsUse::Reads) || facts.loops_seen) {
         facts = Facts::new(true).walk(body, expression);
     }
     FixedRegisterLocalFacts {
@@ -884,12 +900,30 @@ pub(super) fn fixed_register_local_facts<'a>(
         last_references: facts.last_references,
         bound_names: facts.bound_names,
         nested_written_names: facts.nested_written_names,
+        reached: facts.reaches,
         closures: facts.closures,
         suspends: facts.suspends,
     }
 }
 
 impl FixedRegisterLocalFacts<'_> {
+    /// Whether the body makes functions or classes and promotion is sound but for them: no
+    /// direct eval or `with` in it, and its `arguments` use as `safe` allows.
+    pub(super) fn makes_closures_only(&self) -> bool {
+        !self.safe && self.body_safe && self.closures.is_some()
+    }
+
+    /// Whether no function or class the body makes names any of `parameters`, nor observes the
+    /// body's `arguments` or binds dynamically: each parameter is then the body's alone, and
+    /// stays in a register as in a body that makes none. Known only for a walk that gathered
+    /// what they reach.
+    pub(super) fn closures_spare(&self, mut parameters: impl Iterator<Item = impl AsRef<str>>) -> bool {
+        self.closures.as_ref().is_some_and(|reach| {
+            self.reached && !reach.observes_arguments
+                && parameters.all(|parameter| !reach.referenced.contains(parameter.as_ref()) && !reach.assigned.contains(parameter.as_ref()))
+        })
+    }
+
     /// Whether a sloppy body that rebinds no parameter cannot observe its `arguments`
     /// mapping: it only reads the object while no function it makes assigns a parameter,
     /// or, making none, it passes the object on after its last reference to any parameter,

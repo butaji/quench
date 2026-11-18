@@ -52,7 +52,12 @@ fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Op
     let row = Decoded::heap(heap, Some(dst), object.map(Source::Register), None);
     match folded {
         Some((folded, value)) => Decoded { hole: value, folded: Some(folded), ..row },
-        None => Decoded { hole, ..row },
+        None => Decoded {
+            hole,
+            slot: second.is_none().then(|| own_slot_type(known, first)).flatten(),
+            ic: (heap == Heap::Site).then(|| own_flat_load(known, first).map(ic_hole)).flatten(),
+            ..row
+        },
     }
 }
 
@@ -95,7 +100,29 @@ pub(super) fn field_store_row(known: Known, instruction: WideInstruction) -> Opt
     };
     let value = Some(Source::Register(instruction.register_a()));
     let site = instruction.cache_site_index();
-    Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: own_slot_type(known, site), ..Decoded::heap(heap, None, value, None) })
+    // A store of a Number into a slot that holds Numbers tries its inline-cache row first (`Decoded::ic`).
+    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| load.ty.is_subtype(crate::typed_ir::Type::NUMBER)).map(ic_hole)).flatten();
+    Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: own_slot_type(known, site), ic, ..Decoded::heap(heap, None, value, None) })
+}
+
+/// The one own load cache `site` proves, where the receiver keeps its values in a flat run (as the
+/// site recorded, or as its shape's length requires): what an
+/// inline-cache row (`Heap::IcGet`, `Heap::IcSet`) patches into its code.
+fn own_flat_load(known: Known, site: u16) -> Option<crate::vm::compiled::object_slots::NativeFieldLoad> {
+    let loads = known.reads?(site);
+    let [load] = loads[..] else { return None };
+    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape
+        && match load.storage {
+            Some(storage) => storage == crate::heap::PlainPropertyStorage::Arena,
+            // More values than an object keeps inline are a flat run's.
+            None => load.storage_len > crate::heap::NATIVE_OBJECT_LAYOUT.inline_property_count,
+        }).then_some(load)
+}
+
+/// An inline-cache row's entry operands in one word: the exact shape below 32 bits, the slot's byte
+/// offset in the flat run above (`base_region::plan::site_holes` splits them).
+fn ic_hole(load: crate::vm::compiled::object_slots::NativeFieldLoad) -> u64 {
+    u64::from(load.shape) | (u64::from(load.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64) << u32::BITS
 }
 
 /// The observed type of the own slot cache `site` stores to, where it proves exactly one own load.

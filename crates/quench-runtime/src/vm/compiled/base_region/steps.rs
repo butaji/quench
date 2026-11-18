@@ -314,8 +314,14 @@ pub(super) fn plan_step(decoded: &Decoded, layout: &Layout, pc: u32, helpers: La
         Step::Fast(fast) => plan_guarded(decoded, fast, layout, pc, Some(plan_helper(layout, pc, decoded, (LaneHelper::Step, helpers))?), helpers),
         Step::Guard(fast) => plan_guarded(decoded, fast, layout, pc, None, helpers),
         Step::Return => {
-            let slot = operand(&layout.homes, decoded.a).1;
-            Ok(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) })
+            let register = match decoded.a {
+                Some(Source::Register(register)) => register,
+                _ => return Err("return: no register".into()),
+            };
+            let mut parts = completion(layout, pc, register)?;
+            let mut first = parts.remove(0);
+            first.post = parts;
+            Ok(first)
         }
         Step::Call(shape) => plan_call(layout, shape, pc, helpers),
     }
@@ -369,12 +375,18 @@ fn plan_helper(layout: &Layout, pc: u32, decoded: &Decoded, helper: (LaneHelper,
 /// instruction's PC as the completion, as a body's `Return` does.
 pub(super) fn completing(mut run: Planned, layout: &Layout, pc: u32, result: Option<Register>) -> Result<Planned, String> {
     let web = result.ok_or("completion: the instruction writes no result")?;
-    let (place, slot) = operand(&layout.homes, Some(Source::Register(web)));
-    if matches!(place, Place::Pin(_) | Place::PinF(_)) {
-        run.post.push(Planned::of_part(call_plan::spill_part(place, layout.homes.orig[usize::from(web)])?));
-    }
-    run.post.push(Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) });
+    run.post.extend(completion(layout, pc, web)?);
     Ok(run)
+}
+
+/// The completion of the activation at `pc` with the value `web` holds: a pinned register is
+/// spilled to its frame slot first, as the stop returns the slot. Every completion (a returning
+/// instruction's, and a returning call's after its site) takes this one path.
+fn completion(layout: &Layout, pc: u32, web: Register) -> Result<Vec<Planned>, String> {
+    let (place, slot) = operand(&layout.homes, Some(Source::Register(web)));
+    let spill = matches!(place, Place::Pin(_) | Place::PinF(_)).then(|| call_plan::spill_part(place, layout.homes.orig[usize::from(web)]).map(Planned::of_part)).transpose()?;
+    let stop = Planned { stop: Some(Stop { pc, returns: Some(slot) }), ..Planned::single(control(Kind::Jump)?, [0; HOLES], None, None) };
+    Ok(spill.into_iter().chain(std::iter::once(stop)).collect())
 }
 
 /// The chain of a `throw` at `pc`: the spills and the helper row, which raises, so nothing is live

@@ -115,6 +115,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The heap whose records a row reads in place (`Frame::heap_records`), where the row is one
     /// that does (`Decoder::Names`).
     heap: Option<*const crate::heap::Heap>,
+    /// The running frame's `this` where the lane's context word does not hold it (`lane_this`),
+    /// read only by a row that asks for `this`.
+    frame_this: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
     /// The plan of the named read the frame runs, as its record holds it (`RecordPlan`).
@@ -226,7 +229,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, reads: Reads::NONE, plan: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -250,7 +253,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, reads: Reads::NONE, plan: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None }
     }
 }
 
@@ -307,6 +310,10 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn this(&mut self, _stage: &mut Concrete) -> u64 {
+        if self.this.is_deleted() && let Some((context, read)) = self.frame_this {
+            // SAFETY: the running lane's context, live for the row's step.
+            return unsafe { read(context) }.unwrap_or(Value::DELETED).to_bits();
+        }
         self.this.to_bits()
     }
 
@@ -642,6 +649,14 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: 
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
+    }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
+        // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
+        let read: unsafe fn(*mut ()) -> Option<Value> = |context| {
+            let cx = context.cast::<LaneContext<H>>();
+            unsafe { super::lane_this(cx, (*cx).registers) }
+        };
+        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);

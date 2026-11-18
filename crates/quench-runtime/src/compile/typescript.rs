@@ -1,60 +1,46 @@
-//! Admit typed syntax and keep its declarations as facts. A declaration is no runtime proof
-//! (TypeScript is unsound: `any`, assertions), so a declared type is a seed the tiers check
-//! once where a value enters typed code, then trust (`Function::declared_parameters`).
-//! Runtime-changing TS constructs must have a lowering before admission.
+//! TypeScript is a source language of the engine: the compiler admits the typed tree
+//! (`admit`) and keeps its declarations. A declared type is no run-time proof (TypeScript
+//! is unsound), so tiers check it once where a value enters typed code, then trust it
+//! (`Function::declared_parameters`).
 
 use oxc_ast::ast::*;
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
-use oxc_syntax::scope::ScopeFlags;
 
-/// Remove only erased module declarations/specifiers. Empty value imports and
-/// reexports retain their evaluation edge, even when all named types disappear.
-pub(super) fn erase_module_types(program: &mut Program<'_>) {
-    program.body.retain_mut(|statement| match statement {
-        Statement::TSTypeAliasDeclaration(_) | Statement::TSInterfaceDeclaration(_) => false,
-        Statement::ImportDeclaration(import) => {
-            if import.import_kind.is_type() { return false; }
-            if let Some(specifiers) = &mut import.specifiers {
-                specifiers.retain(|specifier| !matches!(specifier,
-                    ImportDeclarationSpecifier::ImportSpecifier(specifier) if specifier.import_kind.is_type()));
-            }
-            true
-        },
-        Statement::ExportNamedDeclaration(export) => {
-            if export.export_kind.is_type() { return false; }
-            export.specifiers.retain(|specifier| !specifier.export_kind.is_type());
-            true
-        },
-        Statement::ExportFromDeclaration(export) => {
-            if export.export_kind.is_type() { return false; }
-            export.specifiers.retain(|specifier| !specifier.export_kind.is_type());
-            true
-        },
-        Statement::ExportAllDeclaration(export) => !export.export_kind.is_type(),
-        Statement::ExportDeclaration(export) => !matches!(export.declaration,
-            Declaration::TSTypeAliasDeclaration(_) | Declaration::TSInterfaceDeclaration(_)),
-        Statement::ExportDefaultDeclaration(export) => !matches!(export.declaration,
-            ExportDefaultDeclarationKind::TSInterfaceDeclaration(_)),
-        _ => true,
-    });
-}
+mod admit;
+mod checked;
+mod enums;
+mod imports;
+pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
+pub(super) use admit::admit;
+pub(super) use checked::{lookup as checked_parameters, parameter_sites};
+pub use checked::{CheckedParameters, ParameterSite};
+pub(super) use checked::register as register_checked_parameters;
 
 /// The language types (`crate::typed_ir::Type::language` bits) each formal parameter of
 /// `formals` declares, by argument index; empty where none declares one. An undeclared or
 /// structural type (an interface, a type literal, a generic) is `DECLARED_ANY`, as a
 /// structural type admits primitives too. An optional parameter or one with a default may
-/// enter as `undefined`.
-pub(super) fn declared_parameters(formals: &FormalParameters<'_>) -> Vec<u16> {
-    if formals.items.iter().all(|item| item.type_annotation.is_none()) {
+/// enter as `undefined`. A checker's answer for the same parameters (`checked`) narrows each
+/// set further: both are seeds of the same fact, so a value must fit both.
+pub(super) fn declared_parameters(formals: &FormalParameters<'_>, checked: Option<&CheckedParameters>) -> Vec<u16> {
+    let checked = checked.and_then(|checked| checked.get(formals.span.start))
+        .filter(|languages| languages.len() == formals.items.len());
+    if checked.is_none() && formals.items.iter().all(|item| item.type_annotation.is_none()) {
         return Vec::new();
     }
-    formals.items.iter().map(|item| match &item.type_annotation {
-        Some(annotation) if item.optional || item.initializer.is_some() =>
-            declared_language(&annotation.type_annotation) | language(crate::ValueType::Undefined),
-        Some(annotation) => declared_language(&annotation.type_annotation),
-        None => DECLARED_ANY,
-    }).collect()
+    let parameters: Vec<u16> = formals.items.iter().enumerate().map(|(index, item)| {
+        let declared = item.type_annotation.as_ref()
+            .map_or(DECLARED_ANY, |annotation| declared_language(&annotation.type_annotation));
+        let checked = checked.map_or(DECLARED_ANY, |languages| languages[index]);
+        let set = if declared & checked == 0 { DECLARED_ANY } else { declared & checked };
+        if set != DECLARED_ANY && (item.optional || item.initializer.is_some()) {
+            set | language(crate::ValueType::Undefined)
+        } else {
+            set
+        }
+    }).collect();
+    if parameters.iter().all(|&set| set == DECLARED_ANY) { Vec::new() } else { parameters }
 }
 
 /// No declared fact: every language type.
@@ -92,6 +78,7 @@ fn declared_language(ty: &TSType<'_>) -> u16 {
     }
 }
 
+/// What admission leaves without a run-time meaning yet: decorators.
 pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span, &'static str)> {
     #[derive(Default)]
     struct Check {
@@ -99,69 +86,36 @@ pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span,
     }
 
     impl Check {
-        fn reject(&mut self, span: Span, message: &'static str) {
-            self.error.get_or_insert((span, message));
+        fn decorated(&mut self, decorators: &[Decorator<'_>], span: Span) {
+            if !decorators.is_empty() {
+                self.error.get_or_insert((span, "TypeScript decorators need a runtime meaning"));
+            }
         }
     }
 
     impl<'a> Visit<'a> for Check {
         fn visit_formal_parameter(&mut self, parameter: &FormalParameter<'a>) {
-            if parameter.accessibility.is_some() || parameter.readonly || parameter.r#override {
-                self.reject(
-                    parameter.span,
-                    "TypeScript parameter properties need a runtime lowering",
-                );
-            }
-            if !parameter.decorators.is_empty() {
-                self.reject(
-                    parameter.span,
-                    "TypeScript parameter decorators need a runtime lowering",
-                );
-            }
+            self.decorated(&parameter.decorators, parameter.span);
             walk::walk_formal_parameter(self, parameter);
         }
 
-        fn visit_variable_declaration(&mut self, declaration: &VariableDeclaration<'a>) {
-            if declaration.declare {
-                self.reject(
-                    declaration.span,
-                    "ambient declarations need type-only binding lowering",
-                );
-            }
-            walk::walk_variable_declaration(self, declaration);
-        }
-
-        fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
-            if function.declare || function.body.is_none() {
-                self.reject(
-                    function.span,
-                    "ambient functions and overloads need type-only binding lowering",
-                );
-            }
-            walk::walk_function(self, function, flags);
-        }
-
         fn visit_class(&mut self, class: &Class<'a>) {
-            if class.declare || !class.decorators.is_empty() {
-                self.reject(class.span, "ambient classes and decorators need a lowering");
-            }
+            self.decorated(&class.decorators, class.span);
             walk::walk_class(self, class);
         }
 
         fn visit_property_definition(&mut self, property: &PropertyDefinition<'a>) {
-            if property.declare || !property.decorators.is_empty() {
-                self.reject(
-                    property.span,
-                    "declared class fields and decorators need a lowering",
-                );
-            }
+            self.decorated(&property.decorators, property.span);
             walk::walk_property_definition(self, property);
         }
 
+        fn visit_accessor_property(&mut self, accessor: &AccessorProperty<'a>) {
+            self.decorated(&accessor.decorators, accessor.span);
+            walk::walk_accessor_property(self, accessor);
+        }
+
         fn visit_method_definition(&mut self, method: &MethodDefinition<'a>) {
-            if !method.decorators.is_empty() {
-                self.reject(method.span, "decorated methods need a runtime lowering");
-            }
+            self.decorated(&method.decorators, method.span);
             walk::walk_method_definition(self, method);
         }
     }
@@ -218,24 +172,178 @@ mod tests {
     }
 
     #[test]
+    fn checked_parameter_types_narrow_the_declared_facts() {
+        let source = "type Meters = number;\nfunction move(by: Meters, label: string, extra) { return by; }\nconst twice = [1, 2].map(x => x * 2);\nfunction plain(p) { return p; }";
+        let sites = Engine::typescript_parameter_sites(source).unwrap();
+        let start = |needle: &str| source.find(needle).unwrap() as u32;
+        assert_eq!(sites, vec![
+            super::ParameterSite { formals_start: start("(by"), parameters: vec![start("by"), start("label"), start("extra")] },
+            super::ParameterSite { formals_start: start("x =>"), parameters: vec![start("x =>")] },
+            super::ParameterSite { formals_start: start("(p)"), parameters: vec![start("p)")] },
+        ]);
+        use crate::ValueType as V;
+        let bit = |kind: V| 1_u16 << kind as u16;
+        // What a checker answers: the alias is a number, the callback parameter is a number,
+        // and its `string` answer for `label` agrees with the annotation.
+        let mut checked = super::CheckedParameters::default();
+        checked.insert(start("(by"), vec![bit(V::Number), bit(V::String), super::DECLARED_ANY].into());
+        checked.insert(start("x =>"), vec![bit(V::Number)].into());
+        checked.insert(start("(p)"), vec![bit(V::Object) | bit(V::Function)].into());
+        Engine::register_checked_typescript_parameters(source, checked);
+        let program = Engine::specialize_typescript(source, "checked.cts").unwrap();
+        let declared = |name: Option<&str>| (0..program.functions.len()).filter_map(|index| program.function_get(index))
+            .find(|function| function.name.map(|atom| program.atoms.get(atom as usize).map(|text| &*text)) == name.map(Some)
+                && (name.is_some() || function.is_arrow))
+            .map(|function| function.declared_parameters.to_vec());
+        assert_eq!(declared(Some("move")).unwrap(), vec![bit(V::Number), bit(V::String), super::DECLARED_ANY]);
+        assert_eq!(declared(Some("plain")).unwrap(), vec![bit(V::Object) | bit(V::Function)]);
+        assert_eq!(declared(None).unwrap(), vec![bit(V::Number)]);
+        // Another text compiles without them.
+        let other = Engine::specialize_typescript(&format!("{source}\n"), "checked.cts").unwrap();
+        assert!(other.functions.iter().enumerate().filter_map(|(index, _)| other.function_get(index))
+            .filter(|function| function.is_arrow).all(|function| function.declared_parameters.is_empty()));
+    }
+
+    #[test]
     fn javascript_parse_goal_still_rejects_type_annotations() {
         assert!(Engine::specialize("const value: number = 1;", "named.cts").is_err());
     }
 
+    fn run_typescript(source: &str) -> Vec<String> {
+        let mut outputs = Vec::new();
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let program = Engine::specialize_typescript(source, "admitted.cts").unwrap();
+            let host = TestHost::default();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+            outputs.push(view.lines().join("|"));
+        }
+        assert_eq!(outputs[0], outputs[1]);
+        outputs.swap_remove(0).split('|').map(str::to_owned).collect()
+    }
+
     #[test]
-    fn unsupported_typescript_cannot_silently_drop_runtime_effects() {
-        for source in [
-            "class Box { constructor(public value: number) {} }",
-            "function deferred() { class Box { constructor(readonly value: number) {} } }",
-            "declare const absent: number;",
-            "declare function absent(): number;",
-            "class Box { declare value: number; }",
-            "enum Color { Red, Green }",
-        ] {
-            assert!(
-                Engine::specialize_typescript(source, "unsupported.cts").is_err(),
-                "{source}"
-            );
+    fn declarations_without_runtime_meaning_are_admitted() {
+        let lines = run_typescript(r#"
+            interface Point { x: number }
+            type Alias = Point | string;
+            declare const ambient: number;
+            declare function external(): void;
+            declare namespace Types { const t: number; }
+            function pick(value: string): string;
+            function pick(value: number): number;
+            function pick(value: any) { return value; }
+            abstract class Base {
+                abstract area(): number;
+                abstract readonly name: string;
+                declare tag: string;
+                [key: string]: unknown;
+                describe() { return this.area(); }
+            }
+            class Square extends Base { name = "sq"; constructor(private side: number) { super(); } area(): number; area() { return this.side ** 2; } }
+            function local() { interface Inner { y: number } type T = number; const v: T = 2; return v; }
+            const box: { v?: number } = { v: 1 };
+            let count: number | undefined = 1;
+            (box as any).v = 2; box.v!++; count! += 4; (<number>count) *= 2;
+            console.log([pick(1), pick("s"), new Square(3).describe(), local(), "tag" in new Square(1), box.v, count].join(" "));
+        "#);
+        assert_eq!(lines, ["1 s 9 2 false 3 10"]);
+    }
+
+    #[test]
+    fn enums_namespaces_and_parameter_properties_have_their_runtime_meaning() {
+        let lines = run_typescript(r#"
+            enum E { A, B, C = A + 10, D = "d" }
+            const enum Flags { X = 1 << 3, Y = X | 1 }
+            function shadow(Flags: { Y: number }) { return Flags.Y; }
+            enum Computed { Len = "abc".length, Next }
+            enum E { Late = 20 }
+            namespace N { export const k = 1; export function g() { return k + 1; } export namespace M { export enum Q { R } } }
+            namespace N { export const k2 = 2; }
+            namespace A.B.C { export const deep = "deep"; }
+            class P { constructor(public x: number, protected readonly y = 2, z?: number) {} sum() { return this.x + this.y; } }
+            class Q extends P { extra = 5; constructor(x: number, private w: string) { super(x); } }
+            const q = new Q(1, "w");
+            import alias = N.M;
+            console.log([E.A, E[1], E.C, E[10], E.D, E.Late, E[20], Flags.Y, Computed.Len, Computed.Next, Computed[4]].join(" "));
+            console.log([N.k, N.g(), N.M.Q.R, N.M.Q[0], N.k2, A.B.C.deep, alias.Q.R, shadow({ Y: 7 })].join(" "));
+            console.log([new P(3).sum(), q.sum(), Object.keys(q).join()].join(" "));
+        "#);
+        assert_eq!(lines, [
+            "0 B 10 C d 20 Late 9 3 4 Next",
+            "1 2 0 R 2 deep 0 7",
+            "5 3 x,y,extra,w",
+        ]);
+    }
+
+    #[test]
+    fn the_declared_environment_is_kept_with_the_program() {
+        use crate::bytecode::{DeclaredKind, EnumConstant};
+        let source = "interface Point { x: number }\ntype Id = string;\nfunction f(a: string): void;\nfunction f(a: any) {}\nenum E { A = 2, B, C = \"c\" }\nabstract class K { abstract m(): void; }";
+        let program = Engine::specialize_typescript(source, "declared.cts").unwrap();
+        let bytes: crate::KeptBytes = std::rc::Rc::new(program.encode_trusted());
+        let program = crate::ResidualProgram::decode_trusted(bytes).unwrap();
+        let declared = program.declared_types.as_deref().expect("a typed program keeps its declarations");
+        let kinds: Vec<(DeclaredKind, Option<&str>)> = declared.declared.iter().map(|entry| (entry.kind, entry.name.as_deref())).collect();
+        assert_eq!(kinds, [
+            (DeclaredKind::Interface, Some("Point")),
+            (DeclaredKind::TypeAlias, Some("Id")),
+            (DeclaredKind::FunctionSignature, Some("f")),
+            (DeclaredKind::Enum, Some("E")),
+            (DeclaredKind::ClassMember, Some("m")),
+        ]);
+        let point = &declared.declared[0];
+        assert_eq!(&source[point.start as usize..point.end as usize], "interface Point { x: number }");
+        assert_eq!(declared.enum_constant("E", "B"), Some(&EnumConstant::Number(3.0)));
+        assert_eq!(declared.enum_constant("E", "C"), Some(&EnumConstant::String("c".into())));
+        assert!(Engine::specialize("const plain = 1;", "plain.cjs").unwrap().declared_types.is_none());
+    }
+
+    #[test]
+    fn const_enum_reads_are_their_constants() {
+        let lines = run_typescript("const enum Dir { Up = 1, Down = Up * 2, Name = \"dir\" }\nconst read = () => Dir.Down + Dir[\"Up\"];\nconsole.log(read() + Dir.Name + read.toString().includes(\"Dir\"));");
+        assert_eq!(lines, ["3dirtrue"]);
+    }
+
+    #[test]
+    fn decorators_have_typescripts_meaning_and_metadata() {
+        let source = r#"
+const log: string[] = [];
+const meta: string[] = [];
+const named = (v: any): string => Array.isArray(v) ? v.map(named).join("/") : v === undefined ? "u" : v.name;
+(Reflect as any).metadata = (k: string, v: any) => (target: any, key?: any) => { meta.push(k + ":" + (key ?? "class") + ":" + named(v)); };
+function tag(name: string) { log.push("eval " + name); return (target: any, key?: any, desc?: any) => { log.push("apply " + name + " " + String(key)); }; }
+function sealed<T extends Function>(c: T): any { log.push("class " + c.name); return class extends (c as any) { extra = 1 }; }
+function inject(token: string) { return (target: any, key: any, index: number) => { log.push("param " + token + " " + index + " " + String(key)); }; }
+function upper(target: any, key: string, desc: PropertyDescriptor) { const f = desc.value; return { ...desc, value: function (this: any, ...a: any[]) { return String(f.apply(this, a)).toUpperCase(); } }; }
+class Dep {}
+interface Shape {}
+@sealed
+class Service {
+    @tag("field") name: string = "svc";
+    constructor(@inject("dep") private dep: Dep, count: number) {}
+    @tag("a") @tag("b") method(x: number, s: Shape): string { return "hi " + x; }
+    @upper greet(n: string) { return "hello " + n; }
+    @tag("static") static make(): Service { return new Service(new Dep(), 1); }
+}
+const s = new Service(new Dep(), 2);
+console.log([log.join(","), s.greet("x"), (s as any).extra, s.name, (s as any).dep instanceof Dep, meta.join(",")].join(" ; "));
+"#;
+        assert_eq!(run_typescript(source), vec![[
+            "eval field,apply field name,eval a,eval b,apply b method,apply a method,eval static,apply static make,param dep 0 undefined,class Service",
+            "HELLO X", "1", "svc", "true",
+            "design:type:name:String,design:returntype:method:String,design:paramtypes:method:Number/Object,design:type:method:Function,\
+design:returntype:greet:u,design:paramtypes:greet:String,design:type:greet:Function,\
+design:returntype:make:Service,design:paramtypes:make:,design:type:make:Function,design:paramtypes:class:Dep/Number",
+        ].join(" ; ")]);
+    }
+
+    #[test]
+    fn decorators_without_a_static_key_still_need_a_runtime_meaning() {
+        for source in ["const Box = @sealed class {}", "class Box { @log [key]() {} }", "class Box { @log #hidden() {} }"] {
+            assert!(Engine::specialize_typescript(source, "decorated.cts").is_err(), "{source}");
         }
     }
 }
@@ -258,19 +366,17 @@ mod module_tests {
     }
 
     #[test]
-    fn erased_module_projection_preserves_unicode_offsets_and_runtime_edges() {
-        let source = "export interface Café { value: '🙂' }\u{2028}export type Alias = string;\r\nconst value: number = 1;";
-        let (projected, has_module_declarations) = Engine::project_typescript_module_syntax(source).unwrap();
-        assert!(!has_module_declarations);
-        assert_eq!(projected.len(), source.len());
-        let suffix = "const value: number = 1;";
-        assert_eq!(projected.find(suffix), source.find(suffix));
-        assert_eq!(projected.chars().filter(|character| oxc_syntax::line_terminator::is_line_terminator(*character)).collect::<String>(), "\u{2028}\r\n");
-        for source in ["import { type Shape } from './side.mts';", "export { type Shape } from './side.mts';"] {
-            let (_, has_module_declarations) = Engine::project_typescript_module_syntax(source).unwrap();
-            assert!(has_module_declarations);
+    fn type_only_module_syntax_does_not_make_a_module() {
+        for (source, module) in [
+            ("export interface Café { value: '🙂' }\u{2028}export type Alias = string;\r\nconst value: number = 1;", false),
+            ("import type { Shape } from './side.mts'; import fs = require('fs'); export = fs;", false),
+            ("import { type Shape } from './side.mts';", true),
+            ("export { type Shape } from './side.mts';", true),
+            ("export const value: number = 1;", true),
+        ] {
+            assert_eq!(Engine::typescript_has_module_syntax(source), Some(module), "{source}");
         }
-        assert!(Engine::project_typescript_module_syntax("export interface {").is_none());
+        assert!(Engine::typescript_has_module_syntax("export interface {").is_none());
     }
 
     #[cfg(feature = "aot")]

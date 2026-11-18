@@ -110,14 +110,22 @@ pub(super) struct Decoded {
     /// The observed type of the own slot a field store writes, where its site proves one own load
     /// (`NativeFieldLoad::ty`).
     pub(super) slot: Option<crate::typed_ir::Type>,
+    /// A site read's or store's one own flat entry (`decode::fields::ic_hole`: the exact shape, and the
+    /// slot's byte offset above 32 bits), whose inline-cache row runs first and falls to the site row
+    /// on a miss (`plan::ic_plan`).
+    pub(super) ic: Option<u64>,
     /// The step a store row's instruction runs as where the row declines its operand (`declines`):
     /// the instruction's own (`steps::lowering`).
     pub(super) declined: Option<Step>,
+    /// The exact shape of the holder whose own native function the row stands on (`math_call`'s
+    /// identity guard): a Stable fact the code takes (`held_holders`), so the function's identity is
+    /// not recycled while the code runs.
+    pub(super) holder: Option<u32>,
 }
 
 impl Decoded {
     pub(super) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, declined: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, step: None, checked: false, completes: false, instanceof: None, global: None, lexical: None, add: None, name: None, slot: None, ic: None, declined: None, holder: None }
     }
 
     pub(super) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {
@@ -152,6 +160,16 @@ impl Decoded {
         let arm = StoreArm::of((0, 0), self.stored_slot_type()?, value_fact(place))?;
         let tested = place == Place::Mem && matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore));
         (arm.holds.is_none() || tested && arm.holds == Some(crate::typed_ir::Type::INT32)).then_some(arm)
+    }
+
+    /// What a tested store (`store_arm` of a frame word) admits besides an int32: a double, where
+    /// the slot's observed type holds Number, so the store widens no observation and logs nothing.
+    pub(super) fn admitted_tags(&self) -> u64 {
+        if self.stored_slot_type().is_some_and(|ty| crate::typed_ir::Type::NUMBER.is_subtype(ty)) {
+            numeric::library::STORE_ADMITS_DOUBLES
+        } else {
+            numeric::library::STORE_ADMITS_INT32
+        }
     }
 
     /// The step a store row runs as where it cannot write its operand in `place` (`store_arm`): the

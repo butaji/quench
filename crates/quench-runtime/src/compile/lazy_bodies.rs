@@ -236,8 +236,9 @@ pub(super) fn parse<'a>(
     nested: bool,
     recognize: super::annex_b_targets::Recognize,
     skip: Option<oxc_parser::LazyBodySkip>,
+    declared: Option<&mut crate::bytecode::DeclaredTypes>,
 ) -> oxc_parser::ParserReturn<'a> {
-    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, skim, inherited_strict, nested, recognize, skip);
+    let mut parsed = super::annex_b_targets::parse_program_with(allocator, source, source_type, lazy_from, check, skim, inherited_strict, nested, recognize, skip, declared);
     if !parsed.lazy_function_bodies.is_empty() {
         let starts: FxHashSet<u32> = parsed.lazy_function_bodies.iter().copied().collect();
         stand_in(allocator, &mut parsed.program, &starts);

@@ -86,14 +86,14 @@ pub(crate) fn store_flat<S: Stage>(stage: &mut S, payload: S::Word, slot: u16, (
 }
 
 /// `own_store` for a record whose values are a flat run (`Form::Arena`): the guards of
-/// `admitted_payload`, then the run's slot; `None` (leaving at `miss`) where the record keeps
+/// `admitted_payload` (the gate passes a `fact` proved immediate), then the run's slot; `None` (leaving at `miss`) where the record keeps
 /// its values inline, changing nothing.
 #[inline(always)]
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`), which includes this file
 pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
-    (value, rep): (S::Word, Rep), miss: S::Miss) -> Option<()> {
+    (value, rep, fact): (S::Word, Rep, Type), miss: S::Miss) -> Option<()> {
     let word = admitted_word(stage, record, shape, false, miss)?;
-    let payload = gated_payload(stage, record, record_id, (value, Type::ANY), miss)?;
+    let payload = gated_payload(stage, record, record_id, (value, fact), miss)?;
     let inline = storage_form(stage, word, OBJECT.inline_form);
     let flat = stage.not(inline);
     stage.guard(flat, miss)?;

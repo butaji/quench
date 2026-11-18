@@ -124,3 +124,6 @@ required-features = ["aot", "jit"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "ts_corpus"

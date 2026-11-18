@@ -1330,7 +1330,7 @@ impl<H: Host> Vm<H> {
         depth: u16,
     ) -> Option<Value> {
         let mut env = if captured {
-            match self.heap.environment(env)? {
+            match self.heap.reachable_environment(env)? {
                 crate::heap::EnvironmentRecord { parent, .. } => *parent,
             }
         } else {
@@ -1338,7 +1338,7 @@ impl<H: Host> Vm<H> {
         };
         env = self.skip_with_environment_layers(env)?;
         for _ in 0..depth {
-            env = match self.heap.environment(env)? {
+            env = match self.heap.reachable_environment(env)? {
                 crate::heap::EnvironmentRecord { parent, .. } => *parent,
             };
             env = self.skip_with_environment_layers(env)?;
@@ -1351,7 +1351,7 @@ impl<H: Host> Vm<H> {
         // With-object and lexical-this wrappers are allocated function-less, and environment
         // clones keep their source's function, so a function's own layer ends the walk before
         // its boxed scope is read.
-        match self.heap.environment(env) {
+        match self.heap.reachable_environment(env) {
             Some(crate::heap::EnvironmentRecord { function, .. }) if *function == u32::MAX => {
                 self.skip_function_less_layers(env)
             }

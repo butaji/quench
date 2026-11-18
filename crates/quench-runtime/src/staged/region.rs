@@ -10,7 +10,9 @@ pub(crate) enum Region {
     Frame,
     /// Property values of objects: a run in the arena, or the values an extras block holds.
     ObjectSlots,
-    /// An object record's exact shape word: written only by a shape change.
+    /// An object record's layout id, the one word of its header it keeps (`heap::layouts`):
+    /// shape, storage form, prototype link and flags. Every read and write of it is in this
+    /// region, so one load of it serves every header fact a body asks of the record.
     ShapeWord,
     /// Dense and typed array elements, and the backing header that counts them.
     Elements,
@@ -19,8 +21,8 @@ pub(crate) enum Region {
     HeapMeta,
     /// Per-site feedback counters.
     MissCounters,
-    /// An object record's header words other than its shape and payload (`meta`, an array's
-    /// backing pointer).
+    /// An object record's words other than its layout id and payload (an array's backing
+    /// pointer).
     Records,
     /// An object record's payload word: the arena or extras pointer, or the narrow values packed
     /// in it.

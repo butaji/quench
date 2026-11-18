@@ -117,9 +117,8 @@ mod wasm_call_stage;
 mod wasm_table_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
-// The driver places stitched functions once they take memory and calls; until then the tests do.
+// `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(test), allow(dead_code))]
 mod wasm_stitch;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
@@ -1038,6 +1037,8 @@ lane_helper_inventory! { H;
     /// A planned construction (`lane_construct`).
     Construct => constructions::lane_construct::<H>,
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
+    /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
+    ConstructPlanHolds => constructions::lane_construct_plan_holds::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
@@ -1302,6 +1303,26 @@ pub(super) struct OnlineFacts<'a> {
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
 }
 
+/// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
+/// callee, its receiver's exact shape and, per field in slot order, the field's name and where
+/// its value comes from. A body that reads such a receiver's fields and lets it escape nowhere
+/// keeps the values and allocates the receiver only at a leave.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ScalarConstructPlan {
+    pub(super) callee: Value,
+    pub(super) shape: u32,
+    pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
+}
+
+/// Where a field of a `ScalarConstructPlan` takes its value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum ScalarField {
+    /// The argument of this parameter (`undefined` past the passed ones).
+    Parameter(u16),
+    /// This constant, whatever is passed.
+    Constant(Value),
+}
+
 impl OnlineFacts<'_> {
     /// Whether a method cache names `atom` now.
     pub(super) fn names(&self, atom: Atom) -> bool {
@@ -1351,6 +1372,11 @@ pub(super) struct VmFacts<'a> {
     /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
     /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
     pub(super) held_atoms: Option<HeldAtoms<'a>>,
+    /// The construct plan a construction record of a function holds now, by function and PC
+    /// (`ScalarConstructPlan`): what code may keep as its field values while the object
+    /// escapes nowhere (`lane_region::virtual_objects`). The code tests that the plan still
+    /// holds where it would construct, so it takes no dependency on it.
+    pub(super) construct_plans: Option<&'a dyn Fn(u32, u32) -> Option<ScalarConstructPlan>>,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1366,14 +1392,14 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None }
     }
 }
 
@@ -2666,6 +2692,33 @@ enum CompiledArgs<'a> {
     },
 }
 
+/// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
+/// for every instruction: the `WasmEntry` ABI the compiled entry has.
+#[cfg(target_arch = "x86_64")]
+fn stitched_entry<H: Host>(
+    vm: &Vm<H>,
+    program: ProgramId,
+    code: &crate::bytecode::ResidualProgram,
+    index: usize,
+    plan: &Plan,
+    memory_slot: Option<u32>,
+) -> Option<Vec<u8>> {
+    if !crate::jit_mode::base_only() {
+        return None;
+    }
+    let function = code.function_get(index)?;
+    let constant = |at: usize| {
+        let value = vm.programs.constant(program, at)?;
+        Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
+    };
+    wasm_stitch::stitch(function, usize::from(function.params), plan.result.is_some(), &constant, memory_slot)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: &Plan, _: Option<u32>) -> Option<Vec<u8>> {
+    None
+}
+
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
 const NOT_COMPILED: u32 = u32::MAX;
 
@@ -3516,6 +3569,9 @@ pub(super) struct LaneMethod {
     /// one adopts them from the file (`Vm::lane_adopt_window`).
     framed: bool,
     caller_registers: u16,
+    /// The frame slots past `caller_registers` the code writes in the activation's own storage (a b-jit
+    /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
+    frame_reach: usize,
     /// Whether a call's entry of it pays for itself (`LaneMethod::amortizes_entry`).
     amortizes: bool,
     /// The callees it calls by their compiled entries, which its code names.
@@ -3529,9 +3585,14 @@ pub(super) struct LaneMethod {
     /// The constructors its `instanceof` rows guard their operands against by identity: a collection that frees one
     /// retires it (`ProgramStore::retire_dead_native_calls`), so a word they name is never a reused one.
     pub(super) constructors: Box<[Value]>,
+    /// Whether it runs only in the realm it was compiled in: its entry proves that realm active
+    /// (`Heap::Realm`) and every callee it names is that realm's, so a switch to another realm
+    /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
+    pub(in crate::vm) realm_bound: bool,
 }
 
 impl LaneMethod {
+    pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -4081,12 +4142,12 @@ impl<H: Host> Vm<H> {
     /// Copies the registers that follow the first `from` of the activation at `registers`, where a
     /// stitched body kept its inlined callees' (`LaneMethod::framed`), into the scratch window a
     /// leave inside one reads (`lane_scratch`), before the activations it makes overwrite them.
-    pub(super) fn lane_adopt_window(registers: *const Value, from: usize) {
+    pub(super) fn lane_adopt_window(registers: *const Value, from: usize, width: usize) {
         let frame = lane_frame();
         // SAFETY: as `lane_stack_words`; the body's admission proved the room past the
         // activation's registers (`LaneRecoverySpace`), and no lane body runs while the lane reads it.
         unsafe {
-            for (at, slot) in (*frame).scratch.iter_mut().enumerate() {
+            for (at, slot) in (*frame).scratch.iter_mut().take(width).enumerate() {
                 *slot = registers.add(from + at).read();
             }
         }
@@ -8382,6 +8443,13 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
+            // `--b-jit` enters a function through its stitched rows where every instruction has
+            // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
+            // compiled body stays for the calls of the other functions until the rows take calls.
+            let entry = match stitched_entry(self, program, &code, index, plans[index].as_ref()?, memory_slot) {
+                Some(stitched) => stitched,
+                None => entry,
+            };
             entries[index] = Some(place(&mut bytes, entry));
         }
         for (offset, call) in calls {
