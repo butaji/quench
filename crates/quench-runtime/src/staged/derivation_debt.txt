@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2129
+# total 2128
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -601,7 +601,7 @@ vm/dispatch_fast.rs Class:WasmSelect 1
 vm/dispatch_fast.rs Class:WasmSimd 2
 vm/dispatch_fast.rs Class:WasmSimdShuffle 2
 vm/dispatch_fast.rs JsDenotation:NumericBinary 1
-vm/dispatch_fast.rs fn:lane_* 602
+vm/dispatch_fast.rs fn:lane_* 601
 vm/dispatch_fast.rs is:is_await 2
 vm/dispatch_fast.rs is:is_binary 1
 vm/dispatch_fast.rs is:is_call 4

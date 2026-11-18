@@ -2410,6 +2410,15 @@ impl<H: Host> Vm<H> {
         self.holder_hint_hit_in(index, atom, self.hinted_receiver(object)?)
     }
 
+    /// The operands of prototype hint `index` for a read of `atom` (`IcOp::Held`): its guard
+    /// word, its watch's address and its value's bits; `None` where no hint of that atom is held.
+    /// The watch lives as long as the hint, which outlives the read it is given to.
+    #[inline(always)]
+    pub(super) fn holder_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64, u64)> {
+        let hint = self.holder_hints.holder.get(usize::from(index))?;
+        (hint.atom == atom).then(|| (hint.guard, std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
+    }
+
     /// `holder_hint_hit` of the object part `receiver` (`hinted_receiver`).
     #[inline(always)]
     pub(super) fn holder_hint_hit_in(&self, index: u16, atom: Atom, receiver: &crate::heap::Object) -> Option<Value> {

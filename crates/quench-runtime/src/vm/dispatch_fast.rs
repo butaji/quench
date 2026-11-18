@@ -7479,7 +7479,15 @@ const OWN_FORMS: [u32; 9] = {
 /// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
 const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }
 
-/// Whether own-field site `site` reads `this`.
+/// The site facts of a generated read through a prototype hint (`IcOp::Held`), of `this` and of
+/// a register: past every own-field site.
+pub(super) const HELD_SITE_THIS: u8 = own_site(true, OWN_FORMS.len());
+pub(super) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
+
+/// Whether site `site` is a read through a prototype hint.
+pub(super) const fn held_site(site: u8) -> bool { site == HELD_SITE_THIS || site == HELD_SITE_REGISTER }
+
+/// Whether own-field or held site `site` reads `this`.
 pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
 
 /// The storage form own-field site `site` fixes (`OWN_FORMS`); `HINTED_FORM` for none.
@@ -7491,6 +7499,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(super) const fn own_site_decodes(site: u8) -> bool {
+    if held_site(site) { return false; }
     let form = own_site_form(site);
     form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
         && form != crate::value_vec::NARROW_FORM)
@@ -7672,28 +7681,6 @@ script_handler! {
             .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `GetField` of a register or `this` at a site whose primary entry names a prototype
-    /// holder (`Vm::field_site_holder`), a method read: the record's hint of that read
-    /// (`Vm::holder_hint_hit`), whose receiver shape, prototype link and epoch tests stand for
-    /// the entry's receiver and holder proofs and the holder's storage, which the epoch
-    /// carries from the read that made the hint. Any other read takes
-    /// `lane_get_field_holder_refresh` out of line.
-    fn lane_get_field_holder<THIS: bool>(cx, r, ip, i, view) {
-        // A receiver of another family takes its own record: a call out of line from here
-        // made every read save a register around it.
-        let Some(record) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(Value::direct_object_index) else {
-            sibling!(lane_get_field_holder_other::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        };
-        let vm = unsafe { vm(cx) };
-        let Some(value) = vm.holder_hint_hit_in(i.call_link.get(), i.imm(), vm.heap.object_record_by_id(record)) else {
-            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -8133,8 +8120,8 @@ script_handler! {
             }
             FieldSiteTier::Holder => Some(single_base_handler(
                 i.b,
-                lane_get_field_holder::<H, true>,
-                lane_get_field_holder::<H, false>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER>,
                 lane_get_field::<H>,
             )),
             FieldSiteTier::Inherited => Some(single_base_handler(
@@ -20030,8 +20017,8 @@ impl FieldHit {
             || math_field_call_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
-        } else if handler == lane_get_field_holder::<H, true> as *const ()
-            || handler == lane_get_field_holder::<H, false> as *const ()
+        } else if handler == lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS> as *const ()
+            || handler == lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER> as *const ()
         {
             Some(Self::Holder(record.c))
         } else {

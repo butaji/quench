@@ -122,6 +122,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
 #[derive(Clone, Copy)]
 pub(in crate::vm::dispatch_fast) struct RecordPlan {
     ops: [crate::staged::ic::IcOp<'static>; 2],
+    /// How many of `ops` the plan runs.
+    len: usize,
     records: u64,
 }
 
@@ -135,18 +137,27 @@ impl RecordPlan {
         let word = match form { Some(form) => (word & !FORM_BITS) | form, None => word };
         let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
             rep: crate::staged::object::Rep::Tagged };
-        Self { ops: [IcOp::GuardFormed(word), load], records }
+        Self { ops: [IcOp::GuardFormed(word), load], len: 2, records }
+    }
+
+    /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
+    /// (`IcOp::Held`).
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn held(guard: u64, watch: u64, value: u64, records: u64) -> Self {
+        use crate::staged::ic::IcOp;
+        let held = IcOp::Held { guard, watch, value };
+        Self { ops: [held, held], len: 1, records }
     }
 }
 
 /// The plans a lane frame holds: the record's own, or none.
 #[derive(Clone, Copy)]
-pub(in crate::vm::dispatch_fast) struct LanePlans(Option<[crate::staged::ic::IcOp<'static>; 2]>);
+pub(in crate::vm::dispatch_fast) struct LanePlans(Option<([crate::staged::ic::IcOp<'static>; 2], usize)>);
 
 impl crate::staged::property::PlanSource for LanePlans {
     #[inline(always)]
     fn field_plan(&self, _lookup: crate::bytecode::FieldLookup) -> Option<crate::staged::property::FieldPlan<'_>> {
-        self.0.as_ref().map(|ops| crate::staged::property::FieldPlan::Ops(ops))
+        self.0.as_ref().map(|(ops, len)| crate::staged::property::FieldPlan::Ops(&ops[..*len]))
     }
     #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> { None }
@@ -347,7 +358,7 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = LanePlans;
 
     #[inline(always)]
-    fn plans(&self) -> LanePlans { LanePlans(self.plan.map(|plan| plan.ops)) }
+    fn plans(&self) -> LanePlans { LanePlans(self.plan.map(|plan| (plan.ops, plan.len))) }
 
     /// The activation's `this` as the lane holds it: an unbound one (`Value::DELETED`) is no
     /// direct object, so the receiver's record test refuses it with no test of its own.
@@ -546,6 +557,12 @@ lane_handler! {
         // through the site's cache and rebinds the hint.
         macro_rules! property_miss { () => {{
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            if const { super::held_site(FLAG) } {
+                if const { super::own_site_this(FLAG) } {
+                    sibling!(lane_get_field_holder_other::<H, true>, r, ip, Carried::script_in(script, view))
+                }
+                sibling!(lane_get_field_holder_other::<H, false>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::own_site_this(FLAG) } {
                 sibling!(lane_get_field_own_refresh::<H, true, true>, r, ip, Carried::script_in(script, view))
             }
@@ -591,6 +608,16 @@ lane_handler! {
             // installed only once the lane bound the object records (`lane_get_field_own_refresh`).
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
+            if const { super::held_site(FLAG) } {
+                // A read through the record's prototype hint (`IcOp::Held`): the hint's operands,
+                // where the lane bound its records and the hint is the read's; else the hint's own
+                // read of any receiver, which refreshes it.
+                let machine = unsafe { vm(script) };
+                let Some((guard, watch, value)) = machine.holder_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
+                if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+                // The receiver is proved a direct object before the table is addressed.
+                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64));
+            } else {
             let records = unsafe { (*script).binding.object_base } as u64;
             if const { super::own_site_form(FLAG) == HINTED_FORM } {
                 // The form of no particular hint is the row a site starts on, before the lane bound
@@ -610,6 +637,7 @@ lane_handler! {
             // A fixed form is the hint's own (`own_formed_handler` chose the row by it).
             if let Some(form) = fixed { unsafe { std::hint::assert_unchecked(hint.receiver & crate::staged::ic::FORM_BITS == form) } }
             frame.plan = Some(RecordPlan::own(hint.receiver, hint.slot, fixed, records));
+            }
         }
         match crate::staged::step(&mut stage, &mut frame, operation) {
             Step::Value(value) if property => {
