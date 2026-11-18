@@ -169,11 +169,17 @@ pub(crate) trait PlanSource {
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>>;
     /// The store plan of cache site `site`.
     fn store_plan(&self, site: u16) -> Option<StorePlan<'_>>;
+    /// The two own hops `(exact shape, slot)` of a nested read `a.b.c` the source holds as data (a
+    /// lane record's hint and its site's second entry); `None` where it holds none.
+    #[inline(always)]
+    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { None }
 }
 
 impl<P: PlanSource> PlanSource for &P {
     fn field_plan(&self, lookup: FieldLookup) -> Option<FieldPlan<'_>> { (**self).field_plan(lookup) }
     fn store_plan(&self, site: u16) -> Option<StorePlan<'_>> { (**self).store_plan(site) }
+    #[inline(always)]
+    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { (**self).nested_hops() }
 }
 
 /// The plans of a frame that proved none.
@@ -225,6 +231,11 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
         miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> where Self: Sized {
         receiver(stage, self, object, miss)
     }
+
+    /// The base object of a nested lookup `a.b.c`, which the frame's record names: the first
+    /// link reads from it. A frame that names none leaves.
+    #[inline(always)]
+    fn nested_base(&mut self, _stage: &mut S, _miss: S::Miss) -> Option<S::Word> { None }
 
     /// The exact shape `owner`'s object is proved to have, which makes a guard of it redundant.
     #[inline(always)]
@@ -462,6 +473,19 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     miss: S::Miss) -> Option<S::Word> {
     if let Some(word) = frame.hoisted(stage, lookup) { return Some(word); }
     if let Some(word) = frame.entry_field(stage, lookup) { return Some(word); }
+    if base.0 == FieldBase::NESTED {
+        // A nested lookup's base is the site's, which the frame names; its links keep no proof.
+        // Two own hops inline, each one exact-shape compare and one slot load, as the hand read.
+        let hops = frame.plans().nested_hops()?;
+        let mut object = frame.nested_base(stage, miss)?;
+        for (shape, slot) in hops {
+            let at = frame.receiver_record(stage, Owner::Temporary, object, false, miss)?;
+            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either,
+                storage_len: usize::from(slot) + 1, rep: crate::typed_ir::Representation::Tagged }];
+            object = ic::run(stage, &ops, at, None, miss)?;
+        }
+        return Some(object);
+    }
     let owner = Owner::of(base)?;
     let plans = frame.plans();
     let plan = plans.field_plan(lookup)?;

@@ -7543,6 +7543,19 @@ pub(super) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
 pub(super) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
 pub(super) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
 
+/// The site fact of a nested read `a.b.c` of two own entries (`lane_get_field_nested`'s steps):
+/// the record's hint is the first step's entry, the site's second entry the second; the row runs
+/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read that
+/// refreshes the hint.
+pub(super) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
+
+/// Whether the nested site `i` reads two ordinary own entries, which `NESTED_SITE`'s row runs; a
+/// `length` step (an array's or a string's own `length`) or a single step stays with
+/// `lane_get_field_nested`.
+fn nested_row_site<H: Host>(vm: &Vm<H>, code: &ResidualProgram, i: &LaneInstruction) -> bool {
+    code.field_sites.get(i.imm() as usize).is_some_and(|site| site.second.is_some_and(|(atom, _)| atom != vm.length_atom))
+}
+
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
@@ -8090,6 +8103,7 @@ script_handler! {
                     lane_get_field::<H>,
                 ))
             }
+            FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(lane_row::<H, FIELD_LEAF_READ, ACC_NONE, NESTED_SITE>),
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
             // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a

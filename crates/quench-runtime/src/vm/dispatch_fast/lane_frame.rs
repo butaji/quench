@@ -171,6 +171,10 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
     /// found inline, before any other family.
     functions: bool,
+    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout and slot,
+    /// the first from the record's hint and the second from its site's entry, and the base the
+    /// first reads (`PropertyFrame::nested_base`). `None` for every other plan.
+    nested: Option<([(u32, u16); 2], crate::bytecode::FieldBase)>,
 }
 
 impl RecordPlan {
@@ -181,7 +185,7 @@ impl RecordPlan {
         use crate::staged::ic::IcOp;
         let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
             rep: crate::typed_ir::Representation::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false }
+        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false, nested: None }
     }
 
     /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
@@ -197,14 +201,14 @@ impl RecordPlan {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn own_constant(object: u64, watch: u64, value: u64) -> Self {
         let read = crate::staged::ic::IcOp::OwnConstant { record: object, watch, value };
-        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+        Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None }
     }
 
     /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
     /// `IcOp::StringLength`), no record addressed before it.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn length(length: crate::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None }
     }
 
     /// `own_other` of a layout whose storage form `form` the row's site fixed.
@@ -223,7 +227,7 @@ impl RecordPlan {
         other: Option<*const crate::heap::Heap>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false }
+        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false, nested: None }
     }
 }
 
@@ -234,7 +238,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn own_store(layout: u32, slot: u16, records: u64) -> Self {
         use crate::staged::ic::IcOp;
         let none = IcOp::GuardLayout(layout);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some((layout, slot)), functions: false }
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some((layout, slot)), functions: false, nested: None }
     }
 
     /// The read of a string receiver through a `String.prototype` hint whose operands are
@@ -243,7 +247,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn held_string(watch: u64, value: u64) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None }
     }
 
     /// The read of a number receiver through a `Number.prototype` hint whose operands are `watch`
@@ -252,7 +256,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn held_number(watch: u64, value: u64) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::HeldNumber { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false, nested: None }
     }
 
     /// The own field a getter's hint returns (`IcOp::GetterOwn`), over the object records the lane
@@ -261,24 +265,44 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn getter(guard: u64, watch: u64, slot: u16, records: u64) -> Self {
         use crate::staged::ic::IcOp;
         let read = IcOp::GetterOwn { guard, watch, slot };
-        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, functions: false }
+        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, functions: false, nested: None }
     }
 }
 
-/// The plans a lane frame holds: the record's own, or none.
+impl RecordPlan {
+    /// The nested read `a.b.c` of two own hops: `first` the record's hint (the layout and slot
+    /// of the first object), `second` the site's entry for the intermediate object, and `base`
+    /// the base the first hop reads. One layout compare and one slot load per hop.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn nested(first: (u32, u16), second: (u32, u16), base: crate::bytecode::FieldBase,
+        records: u64) -> Self {
+        let none = crate::staged::ic::IcOp::GuardLayout(first.0);
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: None, functions: false,
+            nested: Some(([first, second], base)) }
+    }
+}
+
+/// The plans a lane frame holds: the record's own read, its store, and its nested chain, or none.
 #[derive(Clone, Copy)]
-pub(in crate::vm::dispatch_fast) struct LanePlans(Option<([crate::staged::ic::IcOp<'static>; 2], usize)>, Option<(u32, u16)>);
+pub(in crate::vm::dispatch_fast) struct LanePlans {
+    read: Option<([crate::staged::ic::IcOp<'static>; 2], usize)>,
+    store: Option<(u32, u16)>,
+    nested: Option<[(u32, u16); 2]>,
+}
 
 impl crate::staged::property::PlanSource for LanePlans {
     #[inline(always)]
     fn field_plan(&self, _lookup: crate::bytecode::FieldLookup) -> Option<crate::staged::property::FieldPlan<'_>> {
-        self.0.as_ref().map(|(ops, len)| crate::staged::property::FieldPlan::Ops(&ops[..*len]))
+        self.read.as_ref().map(|(ops, len)| crate::staged::property::FieldPlan::Ops(&ops[..*len]))
     }
+    /// A nested read's two own hops, as the record holds them.
+    #[inline(always)]
+    fn nested_hops(&self) -> Option<[(u32, u16); 2]> { self.nested }
     #[inline(always)]
     fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> {
         // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`),
         // which the lane frame answers as a miss: the record's store handlers take it.
-        self.1.map(|(id, slot)| crate::staged::property::StorePlan::Layout { id, slot, join: crate::staged::property::StoreJoin::Host })
+        self.store.map(|(id, slot)| crate::staged::property::StorePlan::Layout { id, slot, join: crate::staged::property::StoreJoin::Host })
     }
 }
 
@@ -499,7 +523,23 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = LanePlans;
 
     #[inline(always)]
-    fn plans(&self) -> LanePlans { LanePlans(self.plan.map(|plan| (plan.ops, plan.len)), self.plan.and_then(|plan| plan.store)) }
+    fn plans(&self) -> LanePlans {
+        LanePlans {
+            read: self.plan.map(|plan| (plan.ops, plan.len)),
+            store: self.plan.and_then(|plan| plan.store),
+            nested: self.plan.and_then(|plan| plan.nested.map(|(hops, _)| hops)),
+        }
+    }
+
+    /// The nested chain's base: the register the record's site names, or the activation's `this`.
+    #[inline(always)]
+    fn nested_base(&mut self, stage: &mut Concrete, miss: ()) -> Option<u64> {
+        let (_, base) = self.plan?.nested?;
+        match base.register_index() {
+            Some(register) => Some(self.tagged(stage, register)),
+            None => self.field_this(stage, miss),
+        }
+    }
 
     /// The activation's `this` as the lane holds it: an unbound one (`Value::DELETED`) is no
     /// direct object, so the receiver's record test refuses it with no test of its own.
@@ -808,6 +848,11 @@ lane_handler! {
             if const { FLAG == super::NUMBER_SITE } {
                 sibling!(super::lane_get_field_number_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { FLAG == super::NESTED_SITE } {
+                // A nested read whose hops the record does not hold (or whose steps miss): the hand
+                // read that refreshes the hint from the steps' entries.
+                sibling!(lane_get_field_nested::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::own_constant_site(FLAG) } {
                 // Another object, or the object was written: the site reads as its tier decides
                 // and never holds an own constant again.
@@ -875,7 +920,8 @@ lane_handler! {
                 std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == crate::bytecode::FieldBase::THIS.0);
-                } else {
+                } else if const { FLAG != super::NESTED_SITE } {
+                    // A nested read's base is its site's, not the record's operand.
                     std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
                 }
             }
@@ -947,6 +993,23 @@ lane_handler! {
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let other = if others { Some(&raw const machine.heap) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
+            } else if const { FLAG == super::NESTED_SITE } {
+                // A nested read's two own hops: the record's hint is the first step's layout and
+                // slot, the site's second entry the second, both primary own entries; the base is
+                // the site's (`PropertyFrame::nested_base`). A hop the record does not hold misses.
+                let machine = unsafe { vm(script) };
+                let code = unsafe { &*(*script).code };
+                let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
+                let Some((_, cache)) = site.second else { property_miss!() };
+                let entry = machine.field_cache_entry(cache);
+                let hint = i.field_hint();
+                if entry.holder != crate::vm::NO_FIELD_HOLDER || entry.receiver == crate::vm::NO_FIELD_RECEIVER
+                    || hint.receiver == crate::vm::NO_FIELD_RECEIVER {
+                    property_miss!()
+                }
+                if site.base == crate::bytecode::FieldBase::THIS { frame.this = r.this(); }
+                frame.plan = Some(RecordPlan::nested((hint.receiver, hint.slot), (entry.receiver, entry.slot), site.base,
+                    machine.heap.live_object_records() as u64));
             } else if const { super::cell_own_site(FLAG) } {
                 // A receiver outside the object records (a function) by its layout id; a direct
                 // object, should the site meet one, through the bound records.
