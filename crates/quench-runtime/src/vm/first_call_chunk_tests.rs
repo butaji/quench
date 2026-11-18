@@ -119,17 +119,17 @@ fn a_chunk_without_room_compiles_as_its_own_program() {
     assert_eq!(result_and_programs(&source), ("400".to_string(), 3));
 }
 
-/// A large classic script its host compiles on every run stubs its functions as an indirect
-/// eval does, and their chunks append to the program it runs from: calls into them stay in
-/// one program. A recursive function from a chunk lowers on its first read, as the program's
-/// decoded records do.
+/// A large classic script stubs its functions as an indirect eval does, and their chunks
+/// append to the program it runs from (its kept form records their room): calls into them
+/// stay in one program. A recursive function from a chunk lowers on its first read, as the
+/// program's decoded records do.
 #[test]
 fn a_large_host_scripts_chunks_append_to_the_program_it_runs() {
-    let padding = "/* padding */\n".repeat(20 << 10);
+    let padding = "/* padding */\n".repeat(160 << 10);
     let source = format!("{padding}function a(x) {{ return b(x) + 1; }} function b(y) {{ return y * 2 + k; }} var k = 4; \
                           function walk(n) {{ return n === 0 ? 0 : 1 + walk(n - 1); }} \
                           globalThis.result = a(3) + ',' + a(5) + ',' + walk(50);");
-    assert!(source.len() >= 256 << 10);
+    assert!(source.len() >= 2 << 20);
     let entry = Engine::specialize("", "entry.js").unwrap();
     let mut vm = Vm::new(TestHost::default());
     vm.execute(&entry).unwrap();

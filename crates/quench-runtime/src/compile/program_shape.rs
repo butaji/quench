@@ -15,9 +15,9 @@ pub(crate) struct EvalContext {
 #[derive(Clone, Copy)]
 pub(super) enum ParsedProgramShape<'a> {
     Any,
-    /// A classic host script compiled on every run (its host keeps no compiled programs), so
-    /// the compilation's replay stays with the program it runs: as `Any`, and a large one's
-    /// functions compile on first call, their chunks appended to it (`stubbing`).
+    /// A classic host script run from its kept form, which records the room its first-call
+    /// chunks append in (`ResidualProgram::kept_chunk_room`): as `Any`, and a large one's
+    /// functions compile on first call (`stubbing`).
     FirstCallScript,
     /// A script whose functions keep their records: a host script whose program keeps only
     /// part of its compiled text (a static body), from which they cannot compile again, or an
@@ -52,8 +52,7 @@ impl ParsedProgramShape<'_> {
     ///
     /// A host script (`FirstCallScript`) of `FIRST_CALL_SCRIPT_BYTES` or more stubs its
     /// functions as an eval's do: its chunks append to the program it runs
-    /// (`ResidualProgram::adopt_chunk_room`), so calls into them stay within one program. A
-    /// script run from a compile cache keeps no replay, so its chunks could not append; a
+    /// (`ResidualProgram::restore_chunk_room`), so calls into them stay within one program. A
     /// module's never stub.
     pub(super) fn stubbing(self, replayable: bool, source_bytes: usize, module: bool) -> Stubbing {
         if matches!(self, Self::FirstCallChunk(_)) {
@@ -88,10 +87,12 @@ impl ParsedProgramShape<'_> {
 const DIRECT_EVAL_STUB_BYTES: usize = 4 << 20;
 
 /// Source bytes from which a classic script's functions compile on first call (`stubbing`).
-/// Measured in callgrind Ir per JetStream 3 iteration against compiling at load (no-jit, Nov
-/// 18): babel-wtb (5.6 MB) first -17%, steady -10%; chai-wtb (530 KB) first +3%, steady
-/// -0.4%; acorn-wtb (252 KB, a parser whose functions mostly run) first 0%, steady -1%.
-const FIRST_CALL_SCRIPT_BYTES: usize = 256 << 10;
+/// Callgrind Ir per JetStream 3 iteration against compiling at load (no-jit, Nov 18), with the
+/// compile cache unused / warm: babel-wtb (5.6 MB) first -16.7% / +4.3% (a warm load
+/// compiled nothing), steady -10.1% / -9.8%. Scripts under a megabyte mostly run their code:
+/// stubbed, chai-wtb (530 KB) went +0.3% / +8.4% first, +0.7% / +3.6% steady; postcss-wtb
+/// (1.2 MB) +0.8% / +1.4% steady; espree and source-map within 2%.
+const FIRST_CALL_SCRIPT_BYTES: usize = 2 << 20;
 
 /// Which functions of a source compile on first call.
 #[derive(Clone, Copy)]

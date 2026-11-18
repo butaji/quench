@@ -397,6 +397,24 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         }
     }
     write_closure_tables(&mut out, program);
+    match program.kept_chunk_room() {
+        Some(room) => {
+            out.bool(true);
+            for value in room.spares.into_iter().chain(room.lengths) {
+                out.u32(value);
+            }
+            out.u16(room.site_capacity);
+            out.bool(room.direct_stubs);
+            out.u16(room.next_site);
+            out.u32(room.name_shared.len() as u32);
+            for (store, atom, site) in room.name_shared {
+                out.bool(store);
+                out.atom(atom);
+                out.u16(site);
+            }
+        }
+        None => out.bool(false),
+    }
     let order = match out.atoms {
         AtomEncoding::Program => {
             header.strings(&program.atoms);
@@ -734,8 +752,19 @@ fn decode_program(
         Ok(Superinstruction::new(code))
     })?;
     let (closure_reads, first_call_scopes) = read_closure_tables(&mut input, functions.len())?;
+    let chunk_room = if input.bool()? {
+        let (mut spares, mut lengths) = ([0; 9], [0; 9]);
+        for value in spares.iter_mut().chain(lengths.iter_mut()) {
+            *value = input.u32()?;
+        }
+        let (site_capacity, direct_stubs, next_site) = (input.u16()?, input.bool()?, input.u16()?);
+        let name_shared = input.list(|input| Ok((input.bool()?, input.atom()?, input.u16()?)))?;
+        Some(super::chunk_append::KeptChunkRoom { spares, lengths, site_capacity, direct_stubs, next_site, name_shared })
+    } else {
+        None
+    };
     input.finish()?;
-    let program = super::ResidualProgram {
+    let mut program = super::ResidualProgram {
         specialized,
         kind,
         module_requests,
@@ -763,6 +792,9 @@ fn decode_program(
         closure_reads,
         wasm_lazy: None,
     };
+    if let Some(room) = &chunk_room {
+        program.restore_chunk_room(room);
+    }
     Ok(program)
 }
 

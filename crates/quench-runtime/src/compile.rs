@@ -768,18 +768,18 @@ impl Engine {
         )
     }
 
-    /// A host script's program. Where `every_run` (its host keeps no compiled programs) the
-    /// program it runs keeps the compilation's replay, so a classic script's functions may
-    /// compile on first call (`ParsedProgramShape::FirstCallScript`).
+    /// A host script's program. Where `first_call`, the host runs it from its kept form,
+    /// which records the room its first-call chunks append in, so a classic script's
+    /// functions may compile on first call (`ParsedProgramShape::FirstCallScript`).
     pub(crate) fn specialize_host_script(
         source: &str, name: &str, prefix: &dyn AtomPrefix,
-        options: HostScriptOptions, released: ReleasedRecords, every_run: bool,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         if options.typescript {
             Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
         } else if options.keep_records {
             Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
-        } else if every_run {
+        } else if first_call {
             Self::specialize_script_shaped(source, name, prefix, ParsedProgramShape::FirstCallScript, released, SourceType::script())
         } else {
             Self::specialize_script_with_atom_prefix(source, name, prefix, released)
