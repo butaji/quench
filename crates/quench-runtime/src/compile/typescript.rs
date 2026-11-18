@@ -15,6 +15,7 @@ mod enum_folding;
 mod enums;
 mod fields;
 mod imports;
+mod signatures;
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;
 pub(super) use checked::{lookup as checked_parameters, parameter_sites};
