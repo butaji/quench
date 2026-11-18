@@ -850,6 +850,7 @@ impl Engine {
             &[],
             shape,
             released,
+            None,
         )
     }
     pub fn specialize_unspecialized(
@@ -875,6 +876,7 @@ impl Engine {
         context: EvalContext,
         private_names: &[(String, String)],
         annex_b_forbidden_names: &[String],
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let source = normalized.as_ref();
@@ -929,6 +931,7 @@ impl Engine {
             annex_b_forbidden_names,
             ParsedProgramShape::Eval(context, body_span),
             ReleasedRecords::Dropped,
+            provided_text,
         )
     }
 
@@ -960,6 +963,7 @@ impl Engine {
             &[],
             ParsedProgramShape::Any,
             released,
+            None,
         )
     }
     pub fn specialize_module(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -1049,6 +1053,7 @@ impl Engine {
             &[],
             expected_shape,
             ReleasedRecords::Dropped,
+            None,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -1065,6 +1070,7 @@ impl Engine {
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let compile = |lazy| {
             Self::specialize_parsing(
@@ -1082,6 +1088,7 @@ impl Engine {
                 lazy,
                 released,
                 DataLiterals::Admitted,
+                provided_text.clone(),
             )
         };
         // Lazy function bodies apply to source a replay can parse again; a program that does
@@ -1117,6 +1124,7 @@ impl Engine {
         lazy: bool,
         released: ReleasedRecords,
         data_literals: DataLiterals,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         // A data script's literal is parsed as an empty one (`data_literal`). Replay
@@ -1158,6 +1166,7 @@ impl Engine {
                     lazy,
                     released,
                     DataLiterals::Parsed,
+                    provided_text,
                 );
             }
             None => None,
@@ -1362,6 +1371,7 @@ impl Engine {
             _ => Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids),
         };
         compiler.data_literal = data_literal;
+        compiler.provided_text = provided_text;
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1867,6 +1877,9 @@ struct Compiler<'a> {
     module_goal: bool,
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
+    /// The text the caller already holds in shared storage, which the program keeps in place
+    /// of a copy of `text` when it is exactly `text` (`source_text::kept_or_provided`).
+    provided_text: Option<crate::bytecode::SourceText>,
     eval_annex_b_collisions: early::AnnexBCollisions,
     atoms: CompilerAtoms<'a>,
     /// The capture markers made so far by binding kind (`None` for a catch parameter's) and
@@ -2460,6 +2473,7 @@ impl<'a> Compiler<'a> {
             module_goal: false,
             capture_script_completion: false,
             eval_context: None,
+            provided_text: None,
             eval_annex_b_collisions: early::AnnexBCollisions::default(),
             atoms,
             capture_markers: FxHashMap::default(),
@@ -3550,7 +3564,7 @@ impl<'a> Compiler<'a> {
             module_link_plan,
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
-                text: source_text::kept(self.text, self.eval_context.is_some()),
+                text: source_text::kept_or_provided(self.text, self.eval_context.is_some(), self.provided_text.take()),
                 typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,

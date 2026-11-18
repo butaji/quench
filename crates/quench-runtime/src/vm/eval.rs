@@ -342,6 +342,9 @@ impl<H: Host> Vm<H> {
         }
         let kept = host_script.then(|| self.kept_host_script(source_name, mode, source)).flatten();
         let compiled = kept.is_none();
+        // The eval string's own ASCII storage, which the program keeps when it compiled exactly
+        // that text, so no copy of the text is made for it.
+        let provided_text = shared_text.as_ref().and_then(eval_source::SharedText::whole_ascii).map(crate::bytecode::SourceText::Local);
         let mut residual = match kept {
             Some(residual) => Ok(residual),
             None => crate::Engine::specialize_eval_with_context(
@@ -352,6 +355,7 @@ impl<H: Host> Vm<H> {
             facts.context,
             &facts.private_names,
             &facts.annex_b_forbidden_names,
+            provided_text,
         ),
         }
         .map_err(|diagnostics| {

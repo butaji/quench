@@ -186,6 +186,7 @@ impl<H: Host> Vm<H> {
             crate::compile::EvalContext::default(),
             &[],
             &[],
+            None,
         )
         .is_err();
         let prior_global = self.switch_realm_global(realm_global);
