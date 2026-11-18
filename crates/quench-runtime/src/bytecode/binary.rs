@@ -1816,6 +1816,19 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
         out.u16(field.languages);
         out.u8(u8::from(field.is_static));
     }
+    out.u32(declared.signatures.len() as u32);
+    for signature in &declared.signatures {
+        out.u32(signature.start);
+        out.u16(signature.returns);
+        out.u16(signature.rest);
+        out.u16(signature.this);
+    }
+    out.u32(declared.locals.len() as u32);
+    for local in &declared.locals {
+        out.u32(local.function);
+        out.string(&local.name);
+        out.u16(local.languages);
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -1847,7 +1860,18 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         };
         Ok(super::declared_types::DeclaredField { class_start, name, languages, is_static })
     })?;
-    Ok(Some(Box::new(super::DeclaredTypes { declared, enum_constants, fields })))
+    let signatures = input.list(|input| {
+        Ok(super::DeclaredSignature {
+            start: input.u32()?,
+            returns: input.u16()?,
+            rest: input.u16()?,
+            this: input.u16()?,
+        })
+    })?;
+    let locals = input.list(|input| {
+        Ok(super::DeclaredLocal { function: input.u32()?, name: input.string()?.into_boxed_str(), languages: input.u16()? })
+    })?;
+    Ok(Some(Box::new(super::DeclaredTypes { declared, enum_constants, fields, signatures, locals })))
 }
 
 fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {

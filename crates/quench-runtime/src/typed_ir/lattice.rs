@@ -18,6 +18,16 @@ pub(crate) enum TypeKind {
     FunctionBody(u32),
 }
 
+/// The language bit of `kind` in a language set: the one owner of the bit map that
+/// `Type::language`, `Type::languages` and declared TypeScript types share.
+pub(crate) const fn language_bit(kind: ValueType) -> u16 {
+    1 << kind as u16
+}
+
+/// Every language type: the set `Type::ANY` holds, and the declared set of a type with no
+/// closed set of language types.
+pub(crate) const ANY_LANGUAGES: u16 = u16::MAX;
+
 /// A set of language types, with an optional semantic refinement.
 /// Reserved bits in ANY also cover internal markers: a TDZ/hole is not Number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,7 +35,7 @@ pub(crate) struct Type(pub(super) TypeKind);
 
 impl Type {
     pub(crate) const NEVER: Self = Self(TypeKind::Language(0));
-    pub(crate) const ANY: Self = Self(TypeKind::Language(u16::MAX));
+    pub(crate) const ANY: Self = Self(TypeKind::Language(ANY_LANGUAGES));
     pub(crate) const NULLISH: Self = Self(TypeKind::Language(
         (1 << ValueType::Null as u16) | (1 << ValueType::Undefined as u16)));
     /// The types whose values name no heap record (a Number, a Boolean, `null`, `undefined`):
@@ -43,7 +53,7 @@ impl Type {
     pub(crate) const TYPEOF_INDEX: Self = Self(TypeKind::Language(1 << (u16::BITS - 1)));
 
     pub(crate) const fn language(kind: ValueType) -> Self {
-        Self(TypeKind::Language(1 << kind as u16))
+        Self(TypeKind::Language(language_bit(kind)))
     }
 
     /// The set of language types `bits` names (`language` bits, joined): a declared type

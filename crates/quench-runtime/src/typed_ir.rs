@@ -13,7 +13,7 @@ mod int_range;
 mod int_type;
 mod lattice;
 mod representation;
-pub(crate) use lattice::{Type, TypeKind};
+pub(crate) use lattice::{ANY_LANGUAGES, Type, TypeKind, language_bit};
 pub(crate) use representation::Representation;
 mod slot_type;
 pub(crate) use slot_type::SlotType;
