@@ -159,7 +159,10 @@ pub(super) fn left_for_tier_up<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite
     }
     vm.programs.get(vm.active_program).as_deref().is_some_and(|program| {
         let body = program.function(site.function() as usize);
-        body.code.get(pc as usize).is_some_and(|packed| matches!(decoded_instruction(body, *packed).op().class(), Class::Jump))
+        body.code.get(pc as usize).is_some_and(|packed| {
+            matches!(crate::staged::Operation::<u64, ()>::decode(decoded_instruction(body, *packed), crate::staged::DecodeContext::EMPTY),
+                Some(crate::staged::Operation::Jump))
+        })
     })
 }
 
