@@ -4001,7 +4001,19 @@ lane_handler! {
         note_allocation(vm);
         // SAFETY: the step continues at a record of the running frame's view.
         let target = unsafe { (*cx).base.add(next) };
-        if next > pc { next!(cx, r, target, Carried::script_in(cx, view)) } else { exit(target) }
+        if next <= pc { return exit(target); }
+        // A record the view registered as an accumulator producer (a generated row whose `a` is
+        // its result register, `handler_for`) may fall back here; the record after it then reads
+        // the carried accumulator, so the step defines it from the register as the row would.
+        let carried = Carried::script_in(cx, view);
+        let op = instruction.op();
+        if lane_runs_row(op)
+            && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+            && !matches!(op.staged(), Some(crate::bytecode::Decoder::Local))
+        {
+            next!(cx, r, target, Carried { acc: Slot::of(r.get(instruction.a())), ..carried })
+        }
+        next!(cx, r, target, carried)
     }
 }
 
