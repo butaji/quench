@@ -91,6 +91,9 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
+        // A target with no rows builds no stencils: its tiers fall back as a `--b-jit` without
+        // a base tier does (`BASE_STENCILS`), which tests and modes read as the capability.
+        println!("cargo::rustc-cfg=base_stencils_absent");
         fs::write(&table, VARIANTS.map(|(name, _)| library_source(name, Counts::default(), &[])).concat()).unwrap();
         return;
     };

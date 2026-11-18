@@ -98,6 +98,12 @@ pub(super) fn run(source: &str, scripts: &[(&str, &str)], mode: ExecutionMode, j
 /// agree and that the tier engaged as `expect` says; the tier's run.
 pub(super) fn assert_tier_agrees_after(scripts: &[(&str, &str)], source: &str, tier: Tier, expect: Expect) -> Run {
     let compiled = assert_outcomes_agree_after(scripts, source, tier);
+    // A target with no stencil rows (AArch64) runs the base tier as a `--b-jit` without a base
+    // tier does: the interpreter, whose outcome the run already agreed with. There is nothing
+    // to engage.
+    if matches!(tier, Tier::BJit) && !quench_bjit::BASE_STENCILS {
+        return compiled;
+    }
     let events = &compiled.events;
     assert!(events.count(Event::Entered) > 0 || compiled.regions() > 0, "{tier:?} did not engage: no body or region ran: {events:?}");
     assert!(events.count(Event::Completed) >= expect.completed, "{tier:?}: {expect:?} not met: {events:?}");

@@ -24,6 +24,10 @@ pub use stub::{EXIT_STUB_LEN, exit_stub};
 pub const PINNED: usize = 4;
 pub const PINNED_F: usize = 8;
 
+/// Whether this build's target has the base tier's stencil rows: AArch64 targets build none
+/// (`build.rs`), so a base tier falls back exactly as a `--b-jit` without a base tier does.
+pub const BASE_STENCILS: bool = !cfg!(base_stencils_absent);
+
 /// `jmp rel32`: the opcode byte, then the displacement a relocation patches.
 const JMP_REL32_LEN: usize = 5;
 /// The pc-relative addend of a rel32 field that ends its instruction.

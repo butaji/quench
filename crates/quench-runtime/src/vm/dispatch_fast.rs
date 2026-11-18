@@ -19071,11 +19071,6 @@ return_handler! {
     /// entry frame belongs to the general loop.
     /// `LEAF` where the record is a leaf's (`LaneView::specialize_leaf_returns`).
     fn lane_return<LEAF: u8>(cx, r, ip, i, view) {
-        if LEAF != NOT_LEAF {
-            static QR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let n = QR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if n < 6 { eprintln!("QLEAFRET leaf={LEAF} a={} value={:?} leafcall={}", i.a, r.get(i.a), unsafe { !(*cx).leaf.call.is_null() }); }
-        }
         if let Some(resumed) = lane_complete_plain_activation::<H, LEAF>(cx, r.get(i.a)) {
             resume!(cx, resumed)
         }
