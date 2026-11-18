@@ -43,17 +43,6 @@ pub(super) fn raw_number(value: f64) -> Value {
     Value::from_bits(value.to_bits())
 }
 
-/// Whether the arithmetic at `operation` may leave its result raw (`raw_result_dies`), in a
-/// function with no handler (a catch may read any register).
-pub(super) fn raw_result_allowed(
-    decoded: &[WideInstruction],
-    handlers: &[crate::bytecode::Handler],
-    live: Option<&RegisterMasks>,
-    operation: usize,
-) -> bool {
-    handlers.is_empty() && live.is_some_and(|live| raw_result_dies(decoded, live, operation))
-}
-
 /// The raw forms (`raw_results`) of the proved fused updates, reads and operations, each with
 /// its generic record, as `proved_records` lists their canonical forms.
 pub(super) fn raw_proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> {
