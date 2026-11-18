@@ -147,6 +147,36 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
 const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
+/// Records each typed space (object, array, function, promise, iterator, collection) holds.
+///
+/// Why it is still 2^24, and what raising it requires:
+///
+/// 1. Value encoding (`value.rs`). A direct record handle is `TAG_HEAP | family bits | index`,
+///    where `heap_reference` and every `direct_*_index` read the index as `self.0 as u32`. Bits
+///    32..43 are zero in a handle and bits 44..47 are the family code (`DIRECT_V128_HANDLE_BIT`,
+///    `DIRECT_PROMISE_HANDLE_BIT`, `DIRECT_ARRAY_HANDLE_BIT`, `DIRECT_OBJECT_HANDLE_BIT`). So a
+///    handle names up to 2^32 records per family, and `RecordId` is `u32`. Symbols and
+///    environments use `MAX_HEAP_CELLS` (2^27) because that was the legacy-slot bound they
+///    shared, not the handle width. Narrow values (an object's inline slot) keep only
+///    `NARROW_INDEX_BITS` = 25 index bits, so a record at id 2^25 or above is never narrow and
+///    its field widens. That is a cost, not a limit.
+/// 2. Prototype links (`cell.rs`, `PROTO_*_RECORD_BASE`). `Object::meta` holds a link in
+///    `PROTO_INDEX_BITS` = 28 bits, as a flat space: legacy slots below 2^27, then one window of
+///    `RECORD_SPACE_CAPACITY` per family, then two sentinels. Six 2^24 windows fit only because
+///    the window is 2^24. A 2^32 window needs a 35-bit link (3 family bits plus a 32-bit id).
+///    `meta` is the high half of the interned header word (`layouts.rs`) and holds the
+///    `OBJECT_ARRAY` and `OBJECT_INLINE_STORAGE` flags at bits 28 and 29, so the link cannot grow
+///    inside it. Widening means a wider header entry, which changes the layout table, the layout
+///    id equality that inline caches rely on, and the JIT readers (`NATIVE_OBJECT_PROTO_*`,
+///    `quench-bjit` stencils).
+/// 3. Reservation (`records/reservation.rs`). A space reserves `CAPACITY * size_of::<T>()` bytes
+///    through the global allocator and `CAPACITY / RECORDS_PER_BLOCK` block slots. At 2^32 that
+///    is hundreds of gigabytes of address space, which the allocator's overcommit heuristic may
+///    refuse. Reserving with `mmap(MAP_NORESERVE)`, as `layouts.rs` does, avoids the check. The
+///    block vector's pages are touched only when a block is made.
+/// 4. Counters. `next_id` is `u32`, so a space at 2^32 must not increment past its last id.
+///
+/// Until 1 and 2 land, the prototype windows (`2^24` each) and this capacity must stay equal.
 pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
