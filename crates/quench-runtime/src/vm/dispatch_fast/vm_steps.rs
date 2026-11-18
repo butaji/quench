@@ -96,7 +96,7 @@ pub(super) fn lane_decision<H: Host>(vm: &mut Vm<H>, operator: u32, left: Value,
     match crate::vm::operations::equality_operator(operator) {
         Some((strict, negated)) => strict.then(|| vm.strict_equal(left, right) != negated),
         None if operator == INSTANCEOF_OPERATOR => vm.steady_instanceof(left, right),
-        None => vm.plain_in(operator, left, right),
+        None => vm.plain_in(operator, left, right).or_else(|| vm.string_relation(operator, left, right)),
     }
 }
 

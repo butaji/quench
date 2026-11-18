@@ -47,6 +47,15 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, opera
         return Some(decide_words(frame, stage, operands, operator, miss));
     }
     let site = match (frame.call_out, operation) {
+        // A decision the words may settle (a string relation, an ordinary `instanceof`) asks the
+        // pure helper first, and makes the step in place only where it answers `DELETED`.
+        (Some(site), CallOut::Decide { left, right, operator }) => {
+            let answer = decide_answer(frame, stage, [left, right], operator);
+            let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
+            let value = stage.choose_leaving(decided, |_| Some(answer),
+                |stage| site_step(frame, stage, site, true, result).map(|(word, _)| word))?;
+            return Some((value, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged)));
+        }
         (Some(site), _) => site,
         (None, CallOut::Decide { left, right, operator }) => return Some(decide_words(frame, stage, [left, right], operator, miss)),
         (None, _) => return Some(leave(stage, miss)),
@@ -82,14 +91,20 @@ pub(super) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
 /// no guest code and allocates nothing, so no register is spilled and the arena stays.
 fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
     miss: ir::Block) -> (ir::Value, RegisterFact) {
+    let answer = decide_answer(frame, stage, operands, operator);
+    let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
+    emit_js_guard(stage.builder, decided, miss);
+    (answer, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
+}
+
+/// The `Decide` helper's answer for two registers: the canonical boolean, or `DELETED` where only
+/// the full step decides.
+fn decide_answer(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32) -> ir::Value {
     let mut scratch = frame.state.clone();
     let [left, right] = operands.map(|register| super::register_tagged(stage.builder, frame.registers, &mut scratch, register));
     let helper = frame.helpers.address(&mut stage.builder, LaneHelper::Decide);
     let operator = stage.constant(u64::from(operator));
-    let answer = emit_lane_helper_call(stage.builder, frame.payload, helper, &[left, right, operator]);
-    let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
-    emit_js_guard(stage.builder, decided, miss);
-    (answer, RegisterFact::definition(Type::language(crate::ValueType::Boolean), Representation::Tagged))
+    emit_lane_helper_call(stage.builder, frame.payload, helper, &[left, right, operator])
 }
 
 /// The helper's call: the registers the body wrote go to the lane's file first, each in its

@@ -10618,7 +10618,9 @@ fn lane_region_field<H: Host>(
         // detach, a resize, a redefinition) changes, and a call leaves the region.
         _ => vm.polymorphic_field_hit(code, receiver, field.cache_site)
             .or_else(|| vm.typed_array_geometry_read(receiver, field.atom))
-            .or_else(|| (field.atom == vm.length_atom).then(|| vm.own_array_length(receiver).map(Value::length)).flatten()),
+            .or_else(|| (field.atom == vm.length_atom).then(|| vm.own_array_length(receiver).map(Value::length)
+                // A string's length is its own, immutable: the region reads it at the instruction too.
+                .or_else(|| vm.string_length_value(receiver))).flatten()),
     }
 }
 
