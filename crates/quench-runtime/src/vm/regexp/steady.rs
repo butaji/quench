@@ -422,22 +422,49 @@ impl<H: Host> Vm<H> {
         let crate::vm::wtf16::Units::Ascii(bytes) = input.existing_flat()?.view() else {
             return None;
         };
+        if !captures {
+            // Nothing reads the captures: the search finds only the range.
+            let range = regex.find_range_ascii(bytes, start, sticky)?;
+            return Some(match range {
+                None => self.steady_ascii_failed(receiver, (exec, stateful, slot)),
+                Some(range) => self.steady_ascii_range(receiver, subject, range, (exec, stateful, slot)),
+            });
+        }
         let found = regex.find_ascii(bytes, start, sticky, captures)?;
         let Some(found) = found else {
-            if stateful {
-                self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
-            }
-            return Some(Ok(if exec { Value::NULL } else { Value::FALSE }));
+            return Some(self.steady_ascii_failed(receiver, (exec, stateful, slot)));
         };
-        // The statics already hold this very match: nothing to record again.
-        if !captures && self.regexp_legacy_pending_holds(receiver, input, regex, found.range.start) {
-            if stateful {
-                self.heap.primitive_cell_property_set(receiver, slot, Value::number(found.range.end as f64));
-            }
-            return Some(Ok(if exec { Value::UNDEFINED } else { Value::TRUE }));
-        }
         let (regex, input) = (Rc::clone(regex), input.clone());
         Some(self.steady_ascii_match(receiver, subject, input, regex, found, (exec, stateful, slot), captures))
+    }
+
+    /// A steady search that failed: `null` (`false` for `test`), a stateful regexp's
+    /// `lastIndex` reset through its slot.
+    #[inline(always)]
+    fn steady_ascii_failed(&mut self, receiver: Value, (exec, stateful, slot): (bool, bool, usize)) -> Result<Value, JsError> {
+        if stateful {
+            self.heap.primitive_cell_property_set(receiver, slot, Value::number(0.0));
+        }
+        Ok(if exec { Value::NULL } else { Value::FALSE })
+    }
+
+    /// A steady match at `range` whose captures nothing reads: where the legacy statics already
+    /// hold this very match, nothing is recorded again.
+    #[inline(always)]
+    fn steady_ascii_range(&mut self, receiver: Value, subject: Value, range: std::ops::Range<usize>, (exec, stateful, slot): (bool, bool, usize)) -> Result<Value, JsError> {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
+            unreachable!("a steady call's receiver is a RegExp");
+        };
+        let regex = meta.matcher.0.get().expect("a steady search has its matcher");
+        let input = self.heap.string(subject).expect("a steady search's subject is a string");
+        if self.regexp_legacy_pending_holds(receiver, input, regex, range.start) {
+            if stateful {
+                self.heap.primitive_cell_property_set(receiver, slot, Value::number(range.end as f64));
+            }
+            return Ok(if exec { Value::UNDEFINED } else { Value::TRUE });
+        }
+        let (regex, input) = (Rc::clone(regex), input.clone());
+        self.steady_ascii_match(receiver, subject, input, regex, quench_regexp::Match::native(range), (exec, stateful, slot), false)
     }
 
     /// What a steady call (`steady_regexp_call`) of the RegExp `receiver` over the string

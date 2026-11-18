@@ -168,6 +168,7 @@ mod handler_entry;
 mod equality; mod error; mod eval;
 mod fdlibm_math;
 mod field_cache;
+mod realm_table;
 mod in_presence;
 mod instanceof_walk;
 mod site_table;
@@ -665,7 +666,7 @@ struct RealmIntrinsics {
     function_constructors: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
     error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
-    regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
+    regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,

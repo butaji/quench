@@ -20,6 +20,7 @@ impl Regex {
     /// Whether a non-sticky search from any position in any subject matches at that position:
     /// some path through the pattern matches empty unconditionally, so a caller that reads
     /// only where a match starts needs no search.
+    #[inline]
     pub fn matches_at_every_start(&self) -> bool {
         self.complete().empty_everywhere
     }
