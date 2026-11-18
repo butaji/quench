@@ -22,15 +22,20 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bytecode::{DeclaredKind, DeclaredTypes, EnumConstant};
 
+mod decorators;
+
 /// Admit a typed tree: the declared environment out, run-time meaning in.
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
     let mut admit = Admit {
         allocator, declarations, type_names: FxHashSet::default(), lexical: false,
         bindings: if program.source_text.contains("const enum") { binding_counts(program) } else { FxHashMap::default() },
         const_enums: FxHashMap::default(),
+        imports: if program.source_text.contains('@') { decorators::import_bindings(program) } else { FxHashMap::default() },
+        metadata_namespaces: Vec::new(),
     };
     admit.visit_program(program);
     admit.drop_type_exports(&mut program.body);
+    admit.import_metadata_namespaces(&mut program.body);
 }
 
 struct Admit<'a, 'd> {
@@ -46,6 +51,12 @@ struct Admit<'a, 'd> {
     /// The folded members of each `const enum` whose name binds nothing else: tsc's
     /// semantics inline their reads, so `E.X` is the constant (no load at run time).
     const_enums: FxHashMap<String, FxHashMap<String, String>>,
+    /// Value import bindings by local name: source, and imported name (`None`: a namespace).
+    /// Decorator metadata reads an imported class through a namespace import of its module,
+    /// so a name that turns out to be a type there links (as `Object`) instead of failing.
+    imports: FxHashMap<String, (String, Option<String>)>,
+    /// The namespace imports metadata reads through: source, local name.
+    metadata_namespaces: Vec<(String, String)>,
 }
 
 /// How a declaration is exported: not, from the module, or from namespace `N`.
@@ -171,6 +182,16 @@ impl<'a> Admit<'a, '_> {
             Declaration::TSNamespaceDeclaration(namespace) => self.namespace(namespace, span, how, seen),
             Declaration::TSImportEqualsDeclaration(alias) => self.import_equals(alias, span, how),
             declaration => {
+                let declaration = match declaration {
+                    Declaration::ClassDeclaration(class) => match self.decorated_class(class, span, how) {
+                        Ok((name, produced)) => {
+                            seen.insert(name);
+                            return produced;
+                        }
+                        Err(class) => Declaration::ClassDeclaration(class),
+                    },
+                    declaration => declaration,
+                };
                 let bindings = bound_names(&declaration);
                 seen.extend(bindings.iter().cloned());
                 match (how, export) {
@@ -246,6 +267,17 @@ impl<'a> Admit<'a, '_> {
         if let Some((kind, span)) = signature {
             self.declare(kind, Some("default"), span);
             return Vec::new();
+        }
+        let mut export = export;
+        if let ExportDefaultDeclarationKind::ClassDeclaration(_) = &export.declaration {
+            let ExportDefaultDeclarationKind::ClassDeclaration(class) = export.declaration.take_in(&self.allocator) else { unreachable!() };
+            match self.decorated_class(class, export.span, Export::None) {
+                Ok((name, mut produced)) => {
+                    produced.extend(self.javascript(&format!("export default {name};"), export.span).into_iter().map(|statement| (statement, true)));
+                    return produced;
+                }
+                Err(class) => export.declaration = ExportDefaultDeclarationKind::ClassDeclaration(class),
+            }
         }
         vec![(Statement::ExportDefaultDeclaration(export), false)]
     }

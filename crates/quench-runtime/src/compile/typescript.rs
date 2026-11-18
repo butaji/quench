@@ -308,8 +308,41 @@ mod tests {
     }
 
     #[test]
-    fn decorators_still_need_a_runtime_meaning() {
-        for source in ["@sealed class Box {}", "class Box { @log method() {} }", "class Box { constructor(@inject() value: number) {} }"] {
+    fn decorators_have_typescripts_meaning_and_metadata() {
+        let source = r#"
+const log: string[] = [];
+const meta: string[] = [];
+const named = (v: any): string => Array.isArray(v) ? v.map(named).join("/") : v === undefined ? "u" : v.name;
+(Reflect as any).metadata = (k: string, v: any) => (target: any, key?: any) => { meta.push(k + ":" + (key ?? "class") + ":" + named(v)); };
+function tag(name: string) { log.push("eval " + name); return (target: any, key?: any, desc?: any) => { log.push("apply " + name + " " + String(key)); }; }
+function sealed<T extends Function>(c: T): any { log.push("class " + c.name); return class extends (c as any) { extra = 1 }; }
+function inject(token: string) { return (target: any, key: any, index: number) => { log.push("param " + token + " " + index + " " + String(key)); }; }
+function upper(target: any, key: string, desc: PropertyDescriptor) { const f = desc.value; return { ...desc, value: function (this: any, ...a: any[]) { return String(f.apply(this, a)).toUpperCase(); } }; }
+class Dep {}
+interface Shape {}
+@sealed
+class Service {
+    @tag("field") name: string = "svc";
+    constructor(@inject("dep") private dep: Dep, count: number) {}
+    @tag("a") @tag("b") method(x: number, s: Shape): string { return "hi " + x; }
+    @upper greet(n: string) { return "hello " + n; }
+    @tag("static") static make(): Service { return new Service(new Dep(), 1); }
+}
+const s = new Service(new Dep(), 2);
+console.log([log.join(","), s.greet("x"), (s as any).extra, s.name, (s as any).dep instanceof Dep, meta.join(",")].join(" ; "));
+"#;
+        assert_eq!(run_typescript(source), vec![[
+            "eval field,apply field name,eval a,eval b,apply b method,apply a method,eval static,apply static make,param dep 0 undefined,class Service",
+            "HELLO X", "1", "svc", "true",
+            "design:type:name:String,design:returntype:method:String,design:paramtypes:method:Number/Object,design:type:method:Function,\
+design:returntype:greet:u,design:paramtypes:greet:String,design:type:greet:Function,\
+design:returntype:make:Service,design:paramtypes:make:,design:type:make:Function,design:paramtypes:class:Dep/Number",
+        ].join(" ; ")]);
+    }
+
+    #[test]
+    fn decorators_without_a_static_key_still_need_a_runtime_meaning() {
+        for source in ["const Box = @sealed class {}", "class Box { @log [key]() {} }", "class Box { @log #hidden() {} }"] {
             assert!(Engine::specialize_typescript(source, "decorated.cts").is_err(), "{source}");
         }
     }
