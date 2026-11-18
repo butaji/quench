@@ -29,17 +29,11 @@ pub(in crate::vm) fn lane_body_signature(
 pub(super) unsafe fn enter_body(context: &mut CallContext, this: u64, captures: u64, registers: *const u64, entry: BodyEntry) -> BodyReturn {
     /// The trampoline typed for a body: its fifth argument is unused.
     type BodyTrampoline = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64, BodyEntry) -> BodyReturn;
-    match guard_trampoline() {
-        Some(trampoline) => {
-            let outer = ACTIVE_CONTEXT.with(|active| active.replace(context));
-            // SAFETY: one machine-code trampoline; both ABIs return in the same registers.
-            let trampoline = unsafe { std::mem::transmute::<Trampoline, BodyTrampoline>(trampoline) };
-            // SAFETY: as the caller promises.
-            let returned = unsafe { trampoline(context, this, captures, registers, std::ptr::null_mut(), entry) };
-            ACTIVE_CONTEXT.with(|active| active.set(outer));
-            returned
-        }
-        // SAFETY: as the caller promises.
-        None => unsafe { entry(context, this, captures, registers) },
-    }
+    let pointer: *mut CallContext = context;
+    // SAFETY: as the caller promises; one machine-code trampoline, and both ABIs return in the
+    // same registers.
+    unsafe { enter_compiled(pointer, |trampoline| match trampoline {
+        Some(trampoline) => std::mem::transmute::<Trampoline, BodyTrampoline>(trampoline)(pointer, this, captures, registers, std::ptr::null_mut(), entry),
+        None => entry(pointer, this, captures, registers),
+    }) }
 }
