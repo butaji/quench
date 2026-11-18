@@ -4397,56 +4397,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// Numeric operands on the integer fast path; the regional site profile
-    /// records the execution exactly as the general path does.
-    fn lane_binary<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_binary_value(cx, r, i) }) else {
-            sibling!(lane_binary_general::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
-            lane_store_numeric_local(cx, r, i.a & crate::bytecode::REGISTER_MASK, value);
-        } else {
-            r.set(i.a, value);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `Binary` of a Number constant and a register (`1 / i`), as the view decoded it
-    /// (`constant_left_operator_handler`): two Numbers by their values
-    /// (`number_value_operator`); any other right operand takes `lane_binary_general`.
-    fn lane_operator_constant_left<OP: u32>(cx, r, ip, i, view) {
-        // SAFETY: the run's program keeps its constants (`LaneContext::constants`), and the view
-        // was derived with `b` a constant operand indexing a Number.
-        let left = unsafe { *(&*(*cx).constants).get_unchecked(usize::from(crate::bytecode::Operand(i.b).payload())) };
-        let right = r.get(crate::bytecode::Operand(i.c).payload());
-        let Some(value) = super::operations::number_value_operator::<OP>(left, right) else {
-            sibling!(lane_binary_general::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-/// Stores `value` to the plain local a numeric target names (`lane_binary`): the running
-/// environment window's, which follows the function's registers (`lane_plain_local_operand`),
-/// else the running frame's.
-#[inline(always)]
-fn lane_store_numeric_local<H: Host>(cx: *mut LaneContext<H>, r: Registers, local: u16, value: Value) {
-    let vm = unsafe { vm(cx) };
-    let window = vm.lane_stack.activations.last().filter(|activation| activation.script().is_some_and(|script| script.environment));
-    // SAFETY: the context's program outlives the lane run.
-    let registers = window.map(|activation| unsafe { &*(*cx).code }.function(activation.function as usize).registers);
-    match registers {
-        Some(registers) => r.set(registers + WINDOW_LOCALS + local, value),
-        // SAFETY: the view admits a numeric local target only below `Function.locals`.
-        None => unsafe { vm.write_validated_local((*cx).frame(), usize::from(local), value) },
-    }
-}
-
-script_handler! {
-    /// `lane_binary` of operands its value declines: the general operation made in place
+    /// The `Binary` row's miss (`Miss::Binary`) for operands its value declines: the general operation made in place
     /// (`lane_in_place`), which may reach guest code (a proxy's `has`, a
     /// `Symbol.hasInstance`, a `valueOf` or `toString`) or throw. A numeric local target takes
     /// the general path.
@@ -9241,34 +9192,6 @@ script_handler! {
             return exit(ip);
         };
         jump_on_edge!(cx, r, ip, BACKWARD, holds_edge(holds), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `Binary` `instanceof` of two registers, decoded when the view was derived
-    /// (`specialize_register_operands`): the ordinary prototype-chain walk
-    /// (`Vm::ordinary_instanceof`), which runs no guest code. Any other case, which the full
-    /// algorithm decides, takes the general path.
-    fn lane_instanceof_value<>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        // `instanceof` is a JavaScript record, which carries the script state.
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_instanceof_value` that its steady case leaves (`Vm::steady_instanceof`): the
-    /// whole ordinary walk, out of line so the steady case calls nothing.
-    #[inline(never)]
-    fn lane_instanceof_value_walk<>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).ordinary_instanceof(r.get(i.b), r.get(i.c)) else {
-            return exit(ip);
-        };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 
@@ -22119,7 +22042,6 @@ fn specialize_register_operands<H: Host>(
     constants: &[Value],
     records: &mut [LaneInstruction],
 ) {
-    let binary = lane_binary::<H> as Handler as *const ();
     // A Wasm view's `GetIndex` (a multi-value result's read) keeps the general handler: the
     // register form reaches its context through a JavaScript view (`script_handler!`).
     let get_index = if kind == crate::bytecode::ProgramKind::Wasm {
@@ -22149,86 +22071,18 @@ fn specialize_register_operands<H: Host>(
             }
             continue;
         }
-        // A plain `Binary` row decodes register operands and a result without flags (`decode_binary`);
-        // any other record keeps the hand handler, which reads constants and operand kinds.
-        if is_row::<H, { crate::staged::BINARY_ROW }>(record.handler)
-            && (instruction.operand_b().register_index().is_none()
-                || instruction.operand_c().register_index().is_none()
-                || instruction.result_flags() != 0)
-        {
-            record.handler = binary;
+        // A `Binary` record runs its generated row, which decodes its operand kinds and operator.
+        if is_row::<H, { crate::staged::BINARY_ROW }>(record.handler) {
+            continue;
         }
-        let plain_binary = record.handler == binary || is_row::<H, { crate::staged::BINARY_ROW }>(record.handler);
-        if !plain_binary && ![get_index, forward_test, backward_test].contains(&record.handler) {
+        if ![get_index, forward_test, backward_test].contains(&record.handler) {
             continue;
         }
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
         use crate::bytecode::OperandKind::{Constant, Register};
-        if plain_binary && let Some(handler) = constant_left_operator_handler::<H>(instruction, constants) {
-            record.handler = handler as *const ();
-            continue;
-        }
         let (Some(Register), Some(right_kind)) = (left.kind(), right.kind()) else {
             continue;
         };
-        if plain_binary {
-            if instruction.numeric_local_target().is_some() {
-                continue;
-            }
-            let operator = instruction.binary_operator();
-            if operator == INSTANCEOF_OPERATOR && right_kind == Register {
-                record.handler = lane_instanceof_value::<H> as Handler as *const ();
-                record.b = left.payload();
-                record.c = right.payload();
-                continue;
-            }
-            let compares = operator <= super::operations::LAST_COMPARISON_OPERATOR;
-            match right_kind {
-                Register => {
-                    let handler = if compares {
-                        lane_relation_value::<H, false> as Handler
-                    } else {
-                        let Some(handler) = operator_handler::<H, false>(operator) else {
-                            continue;
-                        };
-                        handler
-                    };
-                    record.handler = handler as *const ();
-                    record.c = right.payload();
-                }
-                Constant => {
-                    let Some(constant) = constants.get(usize::from(right.payload())) else {
-                        continue;
-                    };
-                    let strict = super::operations::equality_operator(operator)
-                        .is_some_and(|(strict, _)| strict);
-                    let handler = if let Some(operator) = u16::try_from(operator).ok().filter(|_| compares) {
-                        // The constant takes the immediate's place, so the operator moves to `c`.
-                        record.c = operator;
-                        if strict && constant.as_number().is_none() {
-                            lane_strict_constant_value::<H> as Handler
-                        } else {
-                            lane_relation_value::<H, true> as Handler
-                        }
-                    } else {
-                        let Some((handler, operand)) = constant_operator_handler::<H>(operator, *constant) else {
-                            continue;
-                        };
-                        record.handler = handler as *const ();
-                        record.operand = operand;
-                        record.b = left.payload();
-                        continue;
-                    };
-                    record.handler = handler as *const ();
-                    record.operand = LaneOperand {
-                        constant: *constant,
-                    };
-                }
-                _ => continue,
-            }
-            record.b = left.payload();
-            continue;
-        }
         let backward = record.handler == backward_test;
         if record.handler != get_index
             && u32::from(instruction.a()) == INSTANCEOF_OPERATOR
@@ -23304,24 +23158,6 @@ fn specialize_returning_operator<H: Host>(instruction: WideInstruction, constant
         Some(constant) => record.operand = LaneOperand { constant },
         None => record.c = right.payload(),
     }
-}
-
-/// The handler of an arithmetic `Binary` of a Number constant and a register (`1 / i`,
-/// `k - x`), which keeps the record's encoded operands and immediate for the general case
-/// (`lane_operator_constant_left`); `None` for any other instruction.
-fn constant_left_operator_handler<H: Host>(instruction: WideInstruction, constants: &[Value]) -> Option<Handler> {
-    use crate::bytecode::OperandKind::{Constant, Register};
-    let (left, right) = (instruction.operand_b(), instruction.operand_c());
-    if left.kind() != Some(Constant) || right.kind() != Some(Register) || instruction.numeric_local_target().is_some() {
-        return None;
-    }
-    constants.get(usize::from(left.payload()))?.as_number()?;
-    macro_rules! pick {
-        ($op:expr) => {
-            lane_operator_constant_left::<H, { $op }> as Handler
-        };
-    }
-    arithmetic_operators!(instruction.binary_operator(), pick)
 }
 
 fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {

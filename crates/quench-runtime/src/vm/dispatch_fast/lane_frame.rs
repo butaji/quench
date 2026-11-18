@@ -953,6 +953,7 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
         crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
+        crate::staged::Miss::Binary => super::lane_binary_general::<H>,
         crate::staged::Miss::WasmMemoryLoad => super::lane_wasm_memory_load::<H>,
         crate::staged::Miss::WasmMemoryStore => super::lane_wasm_memory_store::<H>,
         crate::staged::Miss::WasmMemoryAddress => super::lane_wasm_memory_address::<H>,

@@ -155,6 +155,9 @@ pub(crate) enum Miss {
     /// A comparison jump the frame leaves (a pair that is no Number relation or word test): the
     /// lane's comparison chain decides the relations it can without guest code.
     CompareChain,
+    /// A `Binary` whose pure value declines (a heap operand, BigInt, a numeric local target): the
+    /// general operation made in place (`lane_binary_general`).
+    Binary,
     /// `ToPropertyKey` of a value the frame leaves (an integer's decimal key, a symbol): the
     /// lane's own answer for it, else the general step.
     PropertyKeyValue,
@@ -217,6 +220,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::StoreEnvLocal => Miss::EnvironmentStore,
         Op::StoreName => Miss::StoreNameFirst,
         Op::JumpBinaryFalse => Miss::CompareChain,
+        Op::Binary => Miss::Binary,
         Op::ToPropertyKey => Miss::PropertyKeyValue,
         Op::LoadLocal => Miss::LocalLoad,
         Op::StoreLocal => Miss::LocalStore,
