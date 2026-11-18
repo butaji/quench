@@ -2886,18 +2886,6 @@ fn script_fuel_out<H: Host>(cx: *mut LaneContext<H>) -> bool {
     }
 }
 
-/// `script_fuel_out` for a handler without the context.
-#[inline(always)]
-fn fuel_out() -> bool {
-    // SAFETY: set for the whole of a lane run to its context's fuel; only read while a lane runs.
-    unsafe {
-        let fuel = tls_lane_fuel();
-        let (left, out) = (*fuel).overflowing_sub(1);
-        *fuel = left;
-        out
-    }
-}
-
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[inline(always)]
 fn tls_lane_floor() -> *const std::sync::atomic::AtomicUsize {
@@ -3167,7 +3155,7 @@ macro_rules! jump_on_edge {
     };
     ($cx:expr, $r:expr, $ip:expr, $backward:expr, $edge:expr, $carried:expr) => {{
         match $edge {
-            crate::staged::Edge::Target => resume!($cx, lane_jump::<H>($r, $ip, $backward, $carried, None)),
+            crate::staged::Edge::Target => resume!($cx, lane_jump::<H>($cx, $r, $ip, $backward, $carried, None)),
             crate::staged::Edge::Following => next!($cx, $r, following($ip), $carried),
             crate::staged::Edge::Entry(_) => unreachable!("a comparison jump takes no table entry"),
         }
@@ -6224,7 +6212,7 @@ script_handler! {
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
         let jump_ip = following(ip);
         if !holds {
-            resume!(cx, lane_jump::<H>(r, jump_ip, false, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, jump_ip, false, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(jump_ip), Carried::script_in(cx, view))
     }
@@ -8927,7 +8915,7 @@ script_handler! {
         };
         // `instanceof` is a JavaScript record, which carries the script state.
         if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -8942,7 +8930,7 @@ script_handler! {
             return exit(ip);
         };
         if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -8960,7 +8948,7 @@ script_handler! {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script_in(cx, view))
         };
         if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9024,7 +9012,7 @@ script_handler! {
             // SAFETY: the record is a comparison record of the running view.
             unsafe { note_kind(cx, ip, OperandKinds::STRING) };
             if !holds {
-                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+                resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
             }
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -9036,7 +9024,7 @@ script_handler! {
             return exit(ip);
         };
         if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9057,7 +9045,7 @@ script_handler! {
             sibling!(lane_jump_binary_false_registers_other::<H, BACKWARD, OP>, r, ip, Carried::script_in(cx, view))
         };
         if !super::operations::double_relation(relation_operator::<OP>(i), left, right) {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9126,7 +9114,7 @@ script_handler! {
             sibling!(lane_jump_binary_false_small_other::<H, BACKWARD, TABLE>, r, ip, view)
         };
         if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, view, None));
         }
         next!(cx, r, following(ip), view)
     }
@@ -9150,7 +9138,7 @@ script_handler! {
             return exit(ip);
         };
         if !holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9297,7 +9285,7 @@ script_handler! {
             }
         };
         if equal == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9309,7 +9297,7 @@ script_handler! {
     #[inline(never)]
     fn lane_jump_strict_equal_cells<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
         if unsafe { vm(cx) }.distinct_heap_values_equal(r.get(i.b), r.get(i.c)) == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9321,7 +9309,7 @@ script_handler! {
     #[inline(never)]
     fn lane_jump_nullish_cell<BACKWARD: bool, NEGATED: bool>(cx, r, ip, i, view) {
         if unsafe { vm(cx) }.is_html_dda(r.get(i.b)) == NEGATED {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9386,6 +9374,7 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
 /// applies only when the lane takes the jump itself.
 #[inline(always)]
 fn lane_jump<H: Host>(
+    cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
     backward: bool,
@@ -9395,7 +9384,10 @@ fn lane_jump<H: Host>(
     let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
-    if backward && fuel_out() {
+    // The backward edge spends fuel through the run's context the handler already holds
+    // (`script_fuel_out`): a decrement of `LaneContext::fuel` and a branch, with no
+    // thread-local load of the counter's address (`fuel_out`).
+    if backward && script_fuel_out(cx) {
         return Resumed::Exit(match commit {
             None => lane_safepoint::<H>(ip, target, view.acc),
             Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, view.acc, register, value),
@@ -10326,7 +10318,7 @@ script_handler! {
     #[inline(never)]
     fn lane_jump_test_cell<BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
         if unsafe { vm(cx) }.heap_cell_truthy(r.get(i.a)) == WHEN {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -10885,7 +10877,7 @@ lane_handler! {
         let case = (selector as u32).min(unsafe { (*table).imm() });
         // SAFETY: validation places `imm + 1` entries after the table.
         let entry = unsafe { table.add(1 + case as usize) };
-        resume!(cx, lane_jump::<H>(r, entry, false, view, None))
+        resume!(cx, lane_jump::<H>(cx, r, entry, false, view, None))
     }
 }
 
@@ -10929,7 +10921,7 @@ lane_handler! {
         };
         // A safepoint exit resumes at the jump, which runs the target
         // again, so the result is written only when the jump is taken.
-        resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried { acc: Slot::of(value), ..view }, Some((i.a, value))))
+        resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried { acc: Slot::of(value), ..view }, Some((i.a, value))))
     }
 }
 
@@ -10948,7 +10940,7 @@ lane_handler! {
         if JUMP {
             r.set(second.a, value);
             let view = Carried { acc: Slot::of(value), ..view };
-            resume!(cx, lane_jump::<H>(r, following(next), BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, following(next), BACKWARD, view, None));
         }
         produce!(cx, r, next, second.a, value, view)
     }
@@ -10967,7 +10959,7 @@ lane_handler! {
         // SAFETY: the view fuses a move only with a following zero-test jump.
         let jump = unsafe { &*next };
         if (r.i32(jump.a) == 0) == WHEN_ZERO {
-            resume!(cx, lane_jump::<H>(r, next, BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, next, BACKWARD, view, None));
         }
         next!(cx, r, following(next), view)
     }
@@ -11002,7 +10994,7 @@ lane_handler! {
             r.get(i.b)
         };
         r.set(i.a, value);
-        resume!(cx, lane_jump::<H>(r, following(ip), BACKWARD, Carried { acc: Slot::of(value), ..view }, None))
+        resume!(cx, lane_jump::<H>(cx, r, following(ip), BACKWARD, Carried { acc: Slot::of(value), ..view }, None))
     }
 }
 
@@ -11295,7 +11287,7 @@ lane_handler! {
         let view = Carried { acc: Slot::of(encoded), ..view };
         let next = following(ip);
         if (value == 0) == WHEN_ZERO {
-            resume!(cx, lane_jump::<H>(r, next, BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, next, BACKWARD, view, None));
         }
         next!(cx, r, following(next), view)
     }
@@ -11449,7 +11441,7 @@ lane_handler! {
             return exit(jump_ip);
         };
         if taken != 0 {
-            resume!(cx, lane_jump::<H>(r, jump_ip, BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, jump_ip, BACKWARD, view, None));
         }
         next!(cx, r, following(jump_ip), view)
     }
@@ -11506,7 +11498,7 @@ lane_handler! {
             return exit(ip);
         };
         if taken != 0 {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, view, None));
         }
         let load_ip = following(ip);
         // SAFETY: the view fuses a comparison jump only with a following plain load.
@@ -11577,7 +11569,7 @@ lane_handler! {
                 let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
                 let encoded = view.integers.encode(sum);
                 if sum != 0 {
-                    resume!(cx, lane_jump::<H>(r, second_ip, BACKWARD, view, Some((second.a, encoded))));
+                    resume!(cx, lane_jump::<H>(cx, r, second_ip, BACKWARD, view, Some((second.a, encoded))));
                 }
                 produce!(cx, r, second_ip, second.a, encoded, view)
             }
@@ -11654,7 +11646,7 @@ lane_handler! {
             return exit(jump_ip);
         };
         if taken != 0 {
-            resume!(cx, lane_jump::<H>(r, jump_ip, BACKWARD, view, None));
+            resume!(cx, lane_jump::<H>(cx, r, jump_ip, BACKWARD, view, None));
         }
         next!(cx, r, following(jump_ip), view)
     }

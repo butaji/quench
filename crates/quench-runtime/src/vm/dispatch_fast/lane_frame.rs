@@ -1136,10 +1136,10 @@ lane_handler! {
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
+            Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
-            Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+            Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
             Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
         }
@@ -1244,8 +1244,8 @@ lane_handler! {
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
-                Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
-                Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+                Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+                Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                 Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                 Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<B>::OPCODE) }, r, ip, view),
             }
@@ -1350,8 +1350,8 @@ lane_handler! {
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
                 let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
-                    Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+                    Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+                    Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                     Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                     Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<$L>::OPCODE) }, r, ip, view),
                 }
