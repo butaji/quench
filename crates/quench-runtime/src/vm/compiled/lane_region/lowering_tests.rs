@@ -100,9 +100,13 @@ fn barrier_tests(source: &str, slot: Type) -> usize {
         &fields, &Default::default(), VmFacts::STATIC, &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&[], &[]), &[], &[],
         Coverage::Full, Completion::Body, ElementViews::Dense, true).unwrap();
     let native = region.function;
+    // The dispatch table is a loaded pointer; a mark word at the same offset inside a block
+    // (an address the barrier computed) is the same barrier, not a second one.
+    let loaded = |value| matches!(native.dfg.value_def(value), ir::ValueDef::Result(def, _)
+        if matches!(native.dfg.insts[def], ir::InstructionData::Load { .. }));
     native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-        .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, .. }
-            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32)).count()
+        .filter(|instruction| matches!(native.dfg.insts[*instruction], ir::InstructionData::Load { offset, arg, .. }
+            if i32::from(offset) == std::mem::offset_of!(JsStepDispatch, object_mark_blocks) as i32 && loaded(arg))).count()
 }
 
 #[test]
