@@ -3,6 +3,7 @@
 
 use super::wasm_call::Call;
 use super::wasm_flow::Flow;
+use super::wasm_gc::GcOp;
 use super::wasm_instance::Instance;
 use super::wasm_memory::Memory;
 use super::wasm_operation::WasmOperation;
@@ -26,6 +27,8 @@ pub(crate) enum Step {
     Table(TableOp),
     /// Vector operators, shuffles and vector memory accesses.
     Simd(Simd),
+    /// Struct and array accesses, reference tests and casts, and the GC allocations.
+    Gc(GcOp),
 }
 
 impl Step {
@@ -39,6 +42,7 @@ impl Step {
             .or_else(|| Call::of(op).map(Self::Call))
             .or_else(|| TableOp::of(op).map(Self::Table))
             .or_else(|| Simd::of(op, tag).map(Self::Simd))
+            .or_else(|| GcOp::of(op).map(Self::Gc))
     }
 
     /// The register whose slot the plan records for the step: its first operand, or a vector

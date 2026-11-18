@@ -25,20 +25,20 @@ impl WasmGc for Probe {
         self.gc_record("is_object")
     }
 
-    fn field_exists(&mut self, _: usize, _: usize) -> usize {
-        self.gc_record("field_exists")
+    fn field_slot(&mut self, _: usize, _: usize) -> usize {
+        self.gc_record("field_slot")
     }
 
     fn field_count(&mut self, _: usize) -> usize {
         self.gc_record("field_count")
     }
 
-    fn read_field(&mut self, _: usize, _: usize, _: GcField) -> usize {
-        self.gc_record("read_field")
+    fn read_slot(&mut self, _: usize, _: GcField) -> usize {
+        self.gc_record("read_slot")
     }
 
-    fn write_field(&mut self, _: usize, _: usize, _: GcField, _: usize) {
-        self.gc_record("write_field");
+    fn write_slot(&mut self, _: usize, _: GcField, _: usize) {
+        self.gc_record("write_slot");
     }
 
     fn array_mutable(&mut self, _: usize) -> usize {
@@ -91,10 +91,10 @@ fn a_struct_read_checks_null_then_the_field_then_reads() {
         log(&[
             "is_null",
             "trap NullStructReference",
-            "field_exists",
-            "EqualZero I32",
+            "field_slot",
+            "EqualZero I64",
             "reject invalid Wasm aggregate reference",
-            "read_field",
+            "read_slot",
         ])
     );
 }
@@ -109,10 +109,10 @@ fn an_array_read_traps_past_the_end_after_the_null_check() {
         log(&[
             "is_null",
             "trap NullArrayReference",
-            "field_exists",
-            "EqualZero I32",
+            "field_slot",
+            "EqualZero I64",
             "trap OutOfBoundsArray",
-            "read_field",
+            "read_slot",
         ])
     );
 }
@@ -127,10 +127,10 @@ fn a_signed_packed_read_sign_extends_after_the_checks() {
         log(&[
             "is_null",
             "trap NullStructReference",
-            "field_exists",
-            "EqualZero I32",
+            "field_slot",
+            "EqualZero I64",
             "reject invalid Wasm aggregate reference",
-            "read_field",
+            "read_slot",
             "constant I64 56",
             "ShiftLeft I64",
             "ShiftRightSigned I64",

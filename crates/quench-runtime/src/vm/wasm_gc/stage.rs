@@ -37,9 +37,13 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         u64::from(matches!(self.vm.heap.get(Value::from_bits(reference)), Some(Cell::WasmGc { .. })))
     }
 
-    fn field_exists(&mut self, reference: u64, index: u64) -> u64 {
-        match self.vm.heap.get(Value::from_bits(reference)) {
-            Some(Cell::WasmGc { fields, .. }) => u64::from(index < fields.len() as u64),
+    /// One heap lookup: the address of the field's `Value` in the object's fields, 0 for a miss.
+    /// The rules read or write it at once, before anything allocates.
+    fn field_slot(&mut self, reference: u64, index: u64) -> u64 {
+        match self.vm.heap.get_mut(Value::from_bits(reference)) {
+            Some(Cell::WasmGc { fields, .. }) => fields
+                .get_mut(usize::try_from(index).unwrap_or(usize::MAX))
+                .map_or(0, |slot| std::ptr::from_mut(slot) as usize as u64),
             _ => 0,
         }
     }
@@ -51,11 +55,10 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         }
     }
 
-    fn read_field(&mut self, reference: u64, index: u64, field: GcField) -> u64 {
-        let Some(Cell::WasmGc { fields, .. }) = self.vm.heap.get(Value::from_bits(reference)) else {
-            unreachable!("the rules read a field of an object they checked")
-        };
-        let stored = *fields.get(index as usize).expect("the rules checked the field");
+    fn read_slot(&mut self, slot: u64, field: GcField) -> u64 {
+        // SAFETY: `slot` is a nonzero `field_slot` answer, taken just before with nothing
+        // allocated since, so it addresses a live field of the object.
+        let stored = unsafe { *(slot as usize as *const Value) };
         if field.packed_bits().is_some() {
             stored.as_int().expect("packed Wasm field") as u32 as u64
         } else {
@@ -63,11 +66,9 @@ impl<H: Host> WasmGc for HeapStage<'_, H> {
         }
     }
 
-    fn write_field(&mut self, reference: u64, index: u64, field: GcField, value: u64) {
-        let Some(Cell::WasmGc { fields, .. }) = self.vm.heap.get_mut(Value::from_bits(reference)) else {
-            unreachable!("the rules write a field of an object they checked")
-        };
-        *fields.get_mut(index as usize).expect("the rules checked the field") = field.store(Value::from_bits(value));
+    fn write_slot(&mut self, slot: u64, field: GcField, value: u64) {
+        // SAFETY: as `read_slot`: a fresh nonzero `field_slot` answer.
+        unsafe { *(slot as usize as *mut Value) = field.store(Value::from_bits(value)) };
     }
 
     fn array_mutable(&mut self, reference: u64) -> u64 {
