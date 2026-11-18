@@ -55,13 +55,15 @@ pub(crate) struct Reached<W, C> {
     pub(crate) word: Option<W>,
     /// The storage-form bits a `GuardLayout` proved: a static input of the slot's layout.
     pub(crate) formed: Option<u32>,
+    /// The record's auxiliary word (exact shape and storage-form bits), where the caller loaded it.
+    pub(crate) auxiliary: Option<W>,
 }
 
 impl<W, C> Reached<W, C> {
     /// A record the read reached with no facts of it held.
     #[inline(always)]
     pub(crate) fn bare(record: W) -> Self {
-        Self { record, shape: None, inline: None, word: None, formed: None }
+        Self { record, shape: None, inline: None, word: None, formed: None, auxiliary: None }
     }
 }
 

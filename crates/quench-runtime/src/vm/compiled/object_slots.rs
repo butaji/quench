@@ -49,6 +49,9 @@ pub(super) struct ObjectHeader {
     pub(super) address: ir::Value,
     /// The record's layout id, where it was loaded (`IcOp::GuardLayout`).
     pub(super) word: Option<ir::Value>,
+    /// The record's auxiliary word (exact shape and storage-form bits) the header read, which a
+    /// formed read compares (`staged::property_slots::formed_slot`) instead of reading it again.
+    pub(super) auxiliary: Option<ir::Value>,
 }
 
 /// A verified direct-object locator. Indexed records keep the admitted base and
@@ -101,12 +104,12 @@ impl ObjectRecord {
 
     pub(super) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
-        let (loaded, word, inline) = shape_and_inline(builder, address);
+        let (loaded, word, inline, auxiliary) = shape_and_inline(builder, address);
         let (shape, word) = match known.and_then(|fact| fact.ty.object_shape()) {
             Some(shape) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None),
             None => (loaded, Some(word)),
         };
-        ObjectHeader { record: self, shape, inline, address, word }
+        ObjectHeader { record: self, shape, inline, address, word, auxiliary: Some(auxiliary) }
     }
 }
 
@@ -145,8 +148,8 @@ impl ObjectHeader {
         let function_object = emit(builder).raw_binary_imm(Binary::Add, function_record, function.object_offset as i64);
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
-        let (shape, word, inline) = shape_and_inline(builder, record);
-        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word) }
+        let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
+        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word), auxiliary: Some(auxiliary) }
     }
 }
 
@@ -183,16 +186,17 @@ fn auxiliary_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, ad
     (layout_id, builder.ins().load(types::I32, table, entry, layout.auxiliary_offset as i32))
 }
 
-/// The record's exact shape, its layout id and its inline-storage flag, from one layout read:
+/// The record's exact shape, its layout id, its inline-storage flag and the auxiliary word they
+/// came from, from one layout read:
 /// the auxiliary word's storage-form bits carry the header's inline flag
 /// (`Object::storage_form`), so the flag needs no second header word.
-pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value) {
+pub(super) fn shape_and_inline(builder: &mut FunctionBuilder<'_>, address: ir::Value) -> (ir::Value, ir::Value, ir::Value, ir::Value) {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
     let (layout_id, word) = auxiliary_word(builder, regions::shape_word(), address);
     let shape = builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form)));
     let form = builder.ins().band_imm_u(word, i64::from(layout.inline_form));
     let inline = emit(builder).raw_compare_imm(Relation::NotEqual, form, 0);
-    (shape, layout_id, inline)
+    (shape, layout_id, inline, word)
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
