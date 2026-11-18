@@ -6862,8 +6862,9 @@ script_handler! {
             use super::environment::RootRead;
             let vm = unsafe { vm(cx) };
             // A slot written once keeps the value it holds now (`lane_load_root_constant`).
-            if root && source.is_none() && lane_root_binding_slot(cx, depth, slot)
-                && !value.is_some_and(|value| root_constants::hold_root_constant(cx, ip, depth, slot, value))
+            if root && source.is_none()
+                && let Some(owner) = lane_root_binding_owner(cx, depth, slot)
+                && !value.is_some_and(|value| root_constants::hold_root_constant(cx, ip, owner, slot, value))
             {
                 requicken::<H>(ip, lane_load_root_binding::<H>);
             }
@@ -16653,7 +16654,7 @@ use denoted::{denoted_handler, lane_unary, unary_handler};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
-use root_bindings::{frame_capture_at_root, lane_root_binding_slot, lane_root_environment};
+use root_bindings::{frame_capture_at_root, lane_root_binding_owner, lane_root_binding_slot, lane_root_environment};
 mod root_constants;
 mod native_calls; mod getters; mod generator_yields; use generator_yields::suspend_handler;
 mod lane_roots;

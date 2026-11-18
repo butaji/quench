@@ -4,9 +4,10 @@
 //!
 //! The record's operand holds the value (`LaneOperand::constant`) and its `b` and `c` the
 //! capture's immediate, which no `LoadCapture` record reads otherwise. The value stays the
-//! slot's: nothing else writes it, and the slot keeps it alive. Every collection returns each
-//! such record to the capture's read (`Vm::retire_root_constants`), which keeps the value
-//! again at its next run: no fact a collection could change outlives one.
+//! slot's while the program's root has run once (one root environment): nothing else writes
+//! the slot, and the slot keeps it alive. A second run of the root returns every record of
+//! the program to the capture's read for good (`Vm::note_root_run`); so does each collection,
+//! after which a record keeps the value again at its next run.
 use super::*;
 
 script_handler! {
@@ -18,27 +19,35 @@ script_handler! {
     }
 }
 
-/// Makes the record at `ip`, a plain `LoadCapture` whose capture walk just read `value` from
-/// root `slot` of the root environment `depth` layers out, keep `value`
-/// (`lane_load_root_constant`) where that environment is the running program's module
-/// environment, the slot is written once and `value` is initialized; whether it did.
-pub(super) fn hold_root_constant<H: Host>(cx: *mut LaneContext<H>, ip: Ip, depth: u16, slot: u16, value: Value) -> bool {
-    if value.is_internal_marker() || !handler_is::<H>(ip, lane_load_capture_walk::<H>) {
-        return false;
+/// Whether the record at `ip` may keep a value in its operand: a capture read whose operand is
+/// its immediate alone, and no pair's second record, whose immediate the pair's first reads
+/// (`lane_load_outer_capture_pair`). A record a loop header or kernel holds runs neither.
+fn holds_plain_capture_read<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> bool {
+    if handler_is::<H>(ip, lane_load_outer_capture::<H>) {
+        // SAFETY: a record past the view's first has one before it in the same view.
+        return ip <= unsafe { (*cx).base } || !handler_is::<H>(unsafe { ip.sub(1) }, lane_load_outer_capture_pair::<H>);
     }
+    handler_is::<H>(ip, lane_load_capture::<H>)
+        || handler_is::<H>(ip, lane_load_capture_walk::<H>)
+        || handler_is::<H>(ip, lane_load_root_binding::<H>)
+}
+
+/// Makes the record at `ip`, a capture read whose walk just read `value` from root `slot` of
+/// `owner`'s root environment (`lane_root_binding_owner`), keep `value`
+/// (`lane_load_root_constant`) where `owner` is the running program, the slot is written once
+/// and `value` is initialized; whether it did.
+pub(super) fn hold_root_constant<H: Host>(cx: *mut LaneContext<H>, ip: Ip, owner: ProgramId, slot: u16, value: Value) -> bool {
     let vm = unsafe { vm(cx) };
     let program = unsafe { (*cx).program };
-    let Some(root) = lane_root_environment(cx, depth) else { return false };
-    if vm.programs.module_environment(program) != Some(root) || !vm.programs.root_slot_written_once(program, slot) {
+    if value.is_internal_marker() || owner != program || !holds_plain_capture_read(cx, ip) || !vm.programs.root_slot_written_once(program, slot) {
         return false;
     }
     // SAFETY: `ip` is a record of the running function's view, whose first record is `base`.
-    let pc = unsafe { ip.offset_from((*cx).base) };
-    let Ok(pc) = u32::try_from(pc) else { return false };
+    let Ok(pc) = u32::try_from(unsafe { ip.offset_from((*cx).base) }) else { return false };
     vm.programs.note_root_constant_site(program, lane_running_function(cx), pc);
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, on the
-    // view's thread, and no reference to its fields is live; it runs `lane_load_capture_walk`,
-    // whose operand is `imm` and which reads neither `b` nor `c`.
+    // view's thread, and no reference to its fields is live; its operand is `imm`
+    // (`holds_plain_capture_read`), and no capture read reads its `b` or `c`.
     unsafe {
         let record = ip.cast_mut();
         let imm = (*record).operand.imm;
@@ -52,16 +61,18 @@ pub(super) fn hold_root_constant<H: Host>(cx: *mut LaneContext<H>, ip: Ip, depth
 
 impl LaneView {
     /// Returns the record at `pc`, where it keeps a root slot's value
-    /// (`lane_load_root_constant`), to the capture's read: its immediate back in its operand.
-    /// A record that no longer keeps one (its view was derived again) stays as it is.
+    /// (`lane_load_root_constant`), to the capture's read (`lane_load_capture_walk`), its
+    /// immediate back in its operand. A record that no longer keeps one (its view was derived
+    /// again) stays as it is.
     fn release_root_constant<H: Host>(&self, pc: u32) {
         let Some(cell) = self.records.get(pc as usize) else { return };
         let record = std::cell::UnsafeCell::raw_get(cell);
         if !handler_is::<H>(record.cast_const(), lane_load_root_constant::<H>) {
             return;
         }
-        // SAFETY: no lane handler runs during a collection, and the record's `b` and `c` hold
-        // the immediate `hold_root_constant` moved there.
+        // SAFETY: no lane handler reads the record meanwhile (a collection, or a root's start,
+        // runs outside its handler), and its `b` and `c` hold the immediate
+        // `hold_root_constant` moved there.
         unsafe {
             (*record).operand = LaneOperand { imm: u32::from((*record).b) | (u32::from((*record).c) << u16::BITS) };
             (*record).b = 0;
@@ -75,6 +86,16 @@ impl<H: Host> Vm<H> {
     /// Returns every record that keeps a root slot's value to the capture's read
     /// (`LaneView::release_root_constant`): a collection ran.
     pub(in crate::vm) fn retire_root_constants(&self) {
-        self.programs.retire_root_constant_sites(|view, pc| view.release_root_constant::<H>(pc));
+        self.programs.retire_root_constant_sites(None, |view, pc| view.release_root_constant::<H>(pc));
+    }
+
+    /// Notes that the active program's root starts another run (its root closure is made):
+    /// from its second, its root environment is not the only one, so its records that keep
+    /// a root slot's value read the slot again, and none keeps one again.
+    pub(in crate::vm) fn note_root_run(&self) {
+        let program = self.active_program;
+        if self.programs.note_root_run(program) {
+            self.programs.retire_root_constant_sites(Some(program), |view, pc| view.release_root_constant::<H>(pc));
+        }
     }
 }
