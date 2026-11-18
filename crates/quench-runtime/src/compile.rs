@@ -3980,7 +3980,8 @@ impl<'a> Compiler<'a> {
         // (`capture_layout`, `frame_registers`), but a parameter none of them names is the
         // body's alone: it arrives in a register as in a body that makes none, where the
         // later passes, which leave parameters in their slots, would keep it in the frame.
-        // An async body keeps its whole frame for its closures (`capture_layout` splits none).
+        // An async or generator body keeps its whole frame for its closures (`capture_layout`
+        // splits none).
         let parameters_only = !async_body && register_local_facts.makes_closures_only()
             && own_arguments.is_some_and(|(_, parameters)| register_local_facts.closures_spare(
                 parameters.iter().map(|atom| &self.atoms[*atom as usize])));
@@ -4165,7 +4166,7 @@ impl<'a> Compiler<'a> {
             && !dynamic_eval;
         let PromotedLocalPlan { promoted_local_slots, clobbered_local_slots, unaliased_arguments } = self.promoted_local_plan(
             promote_plain_locals,
-            options.async_function,
+            options.async_function || options.generator,
             hidden_parameters.then_some(params.len()),
             Some((root_strict, &params)),
             body,

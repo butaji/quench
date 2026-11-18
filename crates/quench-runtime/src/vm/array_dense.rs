@@ -48,6 +48,10 @@ impl<H: Host> Vm<H> {
     /// rather than copied into a vector first; `false` (with `out` partly grown) where an index
     /// in `range` is not a present own data element.
     pub(super) fn extend_present_dense<const N: usize>(&self, this: Value, range: std::ops::Range<usize>, out: &mut smallvec::SmallVec<[Value; N]>) -> bool {
+        // An empty range (`slice(4, 3)`) appends nothing: every index in it is present.
+        if range.start >= range.end {
+            return true;
+        }
         let Some(elements) = self.array_search_elements(this).filter(|elements| range.end <= elements.len()) else {
             return false;
         };
