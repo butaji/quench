@@ -625,6 +625,7 @@ use closure_targets::target_entry;
 mod window_records;
 use window_records::{plain_window_handlers, window_local_handler, window_record, WindowRecord};
 mod lane_stack_growth;
+mod lane_generations;
 mod native_frames;
 use super::lane_values::{self, LaneValues, HEAP_WINDOW};
 use super::lane_activations::LaneActivations;
@@ -2461,8 +2462,6 @@ impl LaneStack {
         drop_owned_entries(&mut self.trap_checks, depth);
     }
 
-    /// The generation of a lane run under `key`: the current one while the key holds, else
-    /// a new one, which retires every target resolved before.
     /// Derive `activation_limit` from the activations' capacity, the guest calls the
     /// thread admits beyond the frames and activations already counted, and a due
     /// collection.
@@ -2497,29 +2496,15 @@ impl LaneStack {
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
-    fn enter_generation(&mut self, key: (u64, Value)) {
-        if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
-            self.generation = self.generation.wrapping_add(1);
-            if self.generation == NO_SCRIPT_GENERATION {
-                // A wrapped number could name entries of a generation long past.
-                self.clear_script_targets();
-                self.generation = NO_SCRIPT_GENERATION + 1;
-            }
-            self.generation_key = key;
-            self.admission = Admission(Admission::new(self.generation, self.admission.program()).0 | self.refused);
-        }
-    }
-
     /// Notes the program the lane now runs (`Vm::activate_program`).
     #[inline(always)]
     pub(super) fn enter_program(&mut self, program: ProgramId) {
         self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
     }
 
-    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a `with`
-    /// scope was entered (`Vm::with_scope_entered`) or a construction's callee is pending
-    /// (`Vm::construct_target`), under which a lane call leaves the lane, so the cached paths
-    /// need not test either (`Vm::refresh_call_refusal`).
+    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a
+    /// construction's callee is pending (`Vm::construct_target`), under which a lane call leaves
+    /// the lane, so the cached paths need not test it (`Vm::refresh_call_refusal`).
     pub(super) fn set_refused(&mut self, refused: bool) {
         self.refused = if refused { Admission::REFUSED } else { 0 };
         self.admission = Admission(self.admission.0 & !Admission::REFUSED | self.refused);
@@ -13637,7 +13622,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(in crate::vm) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
-        let (program, function, env) = self.same_realm_user_target(callee)?;
+        let (program, function, env) = self.lane_user_target(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
         if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
             let target = self.closure_target(code, program, callee, env, known)?;
@@ -14698,8 +14683,8 @@ script_handler! {
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
-                // Under a `with` scope or a pending construction no cached target admits a
-                // call (`LaneStack::set_refused`): the call leaves the lane, as it would.
+                // Under a pending construction no cached target admits a call
+                // (`LaneStack::set_refused`): the call leaves the lane, as it would.
                 if vm.lane_stack.refuses() {
                     return exit(ip);
                 }
@@ -16255,8 +16240,8 @@ script_handler! {
     fn lane_script_construct<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        // Under a `with` scope or a pending construction no cached target admits the
-        // construction (`LaneStack::set_refused`), so the resolve-and-retry below would
+        // Under a pending construction no cached target admits the construction
+        // (`LaneStack::set_refused`), so the resolve-and-retry below would
         // never find one: it leaves the lane, as a refused call does.
         if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.lane_stack.refuses() {
             return exit(ip);

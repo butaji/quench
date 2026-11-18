@@ -3,6 +3,17 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// `same_realm_user_target` of a callee the lane may resolve a target for: not a function of
+    /// eval code once a `with` statement was entered, whose frame takes the chain its environment
+    /// captured (`Vm::captured_with_objects_for_function`), which a lane activation does not
+    /// push; its calls take the general path's frame (`lane_frame_call`).
+    pub(super) fn lane_user_target(&self, callee: Value) -> Option<(ProgramId, u32, Value)> {
+        let target = self.same_realm_user_target(callee)?;
+        let takes_with_chain = self.with_scope_entered
+            && self.programs.residual(target.0).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Eval);
+        (!takes_with_chain).then_some(target)
+    }
+
     /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
     pub(super) fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
         known: ScriptCallTarget) -> Option<ScriptCallTarget> {
