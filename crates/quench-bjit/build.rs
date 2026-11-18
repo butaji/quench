@@ -72,10 +72,6 @@ const RUSTC_FLAGS: &[&str] = &[
 /// The architecture and object reader of a build target, if its stencils are supported.
 fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     let var = |name| env::var(name).unwrap_or_default();
-    // The AArch64 rows cover the call and resume shapes only; the rest of the base tier's rows
-    // are x86-64's. A target whose rows are not all there builds no stencils, and its tiers
-    // fall back as a `--b-jit` without a base tier does.
-    if var("CARGO_CFG_TARGET_ARCH") == "aarch64" { return None }
     match (var("CARGO_CFG_TARGET_ARCH").as_str(), var("CARGO_CFG_TARGET_OS").as_str()) {
         ("x86_64", "linux") => Some((Arch::X86_64, elf::rows)),
         ("aarch64", "linux") => Some((Arch::Aarch64, elf::rows)),

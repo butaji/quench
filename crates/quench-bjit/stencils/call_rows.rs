@@ -43,7 +43,7 @@ use crate::codes::{LAST_INT_PIN, PIN, PINF};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{ACTIVATION_KIND_OFFSET, CELL_BODY_AT, CELL_COUNTERS_AT, CELL_ENTRY_AT, CELL_RECOVERY_AT, JS_STEP_LANE_ACTIVATIONS_TOP, JS_STEP_LANE_CONTEXT, JS_STEP_LANE_FRAMES_END, JS_STEP_LANE_VALUES_END, JS_STEP_LANE_VALUES_TOP, JS_STEP_RESIDUAL, JS_STEP_RETURNED_PC, JS_STEP_VM, FRAME_CONTEXT_WORDS, RAISED_RUN, RECOVERY_ACTIVATIONS_AT, RECOVERY_VALUES_AT};
 use crate::stage::StencilStage;
-use crate::staged::{call::admit_native, frame, value};
+use crate::staged::{call::{admit_native, window_fill}, frame, value};
 use crate::words::{S, hole64, is_int, slot};
 use crate::{Row, Value};
 use core::mem::{offset_of, transmute};
@@ -68,10 +68,20 @@ const WORD_SHIFT: u32 = REGISTER_BYTES.trailing_zeros();
 /// `leave_status`: the leave a (status, word) in r14, r15 ends in, as every leave routine ends
 /// (`entry.rs`): the word in rax and the status in rdx, which `entry_body` swaps into the lane
 /// body ABI's (eax, rdx) and `entry_thunk` reads the word of.
+#[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn leave_status() {
     core::arch::naked_asm!("mov rax, r15", "mov edx, r14d", "ret")
+}
+
+/// AArch64 `leave_status`: the first two pinned ints (x22 status, x23 word, `entry_a64.rs`) into the
+/// leave routines' (x0 word, x1 status).
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn leave_status() {
+    core::arch::naked_asm!("mov x0, x23", "mov w1, w22", "ret")
 }
 
 /// A lane body's return: its status and result word in (eax, rdx), as `BodyReturn`.
@@ -205,7 +215,7 @@ fn bound_this<const MODE: u8>(record: usize, this: u64) -> Option<u64> {
 }
 
 /// The callee's window at `top`: `ARGC` arguments from the caller's register `args`, then
-/// `undefined`, `room` registers in all. Volatile stores keep LLVM from turning the loop into a
+/// `undefined`, `room` registers in all (the cell's fill, at least the arguments). Volatile stores keep LLVM from turning the loop into a
 /// `memcpy` or `memset` call, which a stencil may not make.
 #[inline(always)]
 unsafe fn fill_window<const ARGC: usize>(args: usize, top: usize, room: usize) {
@@ -226,6 +236,9 @@ struct Admitted {
     cell: usize,
     top: usize,
     room: usize,
+    /// The registers past the arguments the push starts `undefined` (`window_fill`): the rest are
+    /// written before any read, as the interpreter's own call leaves them.
+    fill: usize,
     shadow: usize,
 }
 
@@ -260,7 +273,8 @@ unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
         let shadow = stack_top(payload, JS_STEP_LANE_ACTIVATIONS_TOP);
         let frames = word_at(recovery, RECOVERY_ACTIVATIONS_AT) as usize + 1;
         let fits = shadow + frames * word_at(record, offset_of!(CallRecord, frame_bytes)) as usize <= word_at(payload, JS_STEP_LANE_FRAMES_END) as usize;
-        fits.then_some(Admitted { cell, top, room, shadow })
+        let fill = window_fill(&mut StencilStage::from_hole(0), cell as u64, room as u64) as usize;
+        fits.then_some(Admitted { cell, top, room, fill, shadow })
     }
 }
 
@@ -269,7 +283,8 @@ unsafe fn admit(record: usize, payload: usize) -> Option<Admitted> {
 unsafe fn push<const ARGC: usize>(s: &S, record: usize, payload: usize, a: &Admitted, this: u64) {
     // SAFETY: as `admit`, which proved the room.
     unsafe {
-        fill_window::<ARGC>(register_slot(s, record, offset_of!(CallRecord, args_register)), a.top, a.room);
+        let written = if a.fill < ARGC { ARGC } else { a.fill };
+        fill_window::<ARGC>(register_slot(s, record, offset_of!(CallRecord, args_register)), a.top, written);
         put(a.shadow, frame::CALLEE, word_at(record, offset_of!(CallRecord, descriptor)));
         put(a.shadow, frame::THIS, this);
         put(a.shadow, frame::BODY, word_at(a.cell, CELL_BODY_AT));

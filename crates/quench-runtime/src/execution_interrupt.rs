@@ -39,20 +39,20 @@ impl PollPage {
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     const HINT: usize = 1 << 29;
 
-    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     fn new() -> Option<Self> {
         // The protection granule is a host property (16 KiB on Apple Silicon).
         let bytes = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).ok()?;
         if bytes == 0 { return None; }
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         let hint = Self::HINT as *mut libc::c_void;
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
         let hint = std::ptr::null_mut();
         // Code addresses the page by a 32-bit displacement: every VM's must lie low, also once
         // the hint is taken (`MAP_32BIT`).
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         let low = libc::MAP_32BIT;
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
         let low = 0;
         // SAFETY: an anonymous private read-only page; the result is checked.
         let pointer = unsafe {
@@ -72,19 +72,19 @@ impl PollPage {
             address: pointer as usize,
             bytes,
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
         if page.address + page.bytes > i32::MAX as usize { return None; }
         Some(page)
     }
 
-    #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
+    #[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
     fn new() -> Option<Self> {
         None
     }
 
     /// Makes every later read fault; idempotent.
     fn close(&self) {
-        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
         // SAFETY: the page this value maps.
         unsafe {
             let changed = libc::mprotect(
@@ -102,7 +102,7 @@ impl PollPage {
 
 impl Drop for PollPage {
     fn drop(&mut self) {
-        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+        #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
         // SAFETY: the page this value maps; no compiled code of its VM runs any more.
         unsafe {
             libc::munmap(self.address as *mut libc::c_void, self.bytes);

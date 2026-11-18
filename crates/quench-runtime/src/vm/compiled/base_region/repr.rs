@@ -108,7 +108,8 @@ fn kind_repr(kind: Kind, operands: Repr, widened: bool) -> Repr {
     match kind {
         Kind::Not => Repr::Tagged,
         _ if operands == Repr::Tagged => Repr::Tagged,
-        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round => Repr::Double,
+        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Repr::Double,
+        Kind::Imul => Repr::Int,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Repr::Double,
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Repr::Double { Repr::Double } else { Repr::Int },

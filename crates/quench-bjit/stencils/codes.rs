@@ -59,9 +59,14 @@ pub const CEIL: u8 = 32;
 pub const TRUNC: u8 = 33;
 pub const ABS: u8 = 34;
 pub const ROUND: u8 = 35;
-/// The first and last of the Math rows.
+/// The first and last of the Math rows of one Number.
 pub const MATH_FIRST: u8 = SQRT;
 pub const MATH_LAST: u8 = ROUND;
+/// `Math.min`, `Math.max` of two Numbers (a double: `staged::math::float_extreme`) and `Math.imul` of
+/// two int32s (`staged::math::int_multiply`).
+pub const MIN: u8 = 36;
+pub const MAX: u8 = 37;
+pub const IMUL: u8 = 38;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;

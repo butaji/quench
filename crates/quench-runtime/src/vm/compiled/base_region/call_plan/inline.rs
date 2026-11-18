@@ -373,7 +373,7 @@ mod tests {
     const CALLEE: u32 = 101;
 
     fn facts() -> DirectFacts {
-        let cell = CellFacts { registers: 4, room: 4, params: 2, entry: ENTRY_ACTIVATES as u8 };
+        let cell = CellFacts { registers: 4, room: 4, params: 2, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
         DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, frame_bytes: 32 }
     }
 

@@ -167,6 +167,12 @@ pub(crate) enum NumberOperation {
     /// The b-jit's stencils run it; the runtime's natives call `float_unary` itself.
     #[cfg_attr(not(stencil_build), allow(dead_code))]
     Math { destination: Register, source: Operand, operation: super::math::FloatUnary },
+    /// `Math.max` (`maximum`) or `Math.min` of two Numbers, a double: `staged::math::float_extreme`.
+    #[cfg_attr(not(stencil_build), allow(dead_code))]
+    Extreme { destination: Register, left: Operand, right: Operand, maximum: bool },
+    /// `Math.imul` of two int32s: `staged::math::int_multiply`. Any other value leaves.
+    #[cfg_attr(not(stencil_build), allow(dead_code))]
+    Imul { destination: Register, left: Operand, right: Operand },
 }
 
 /// Run the Number `operation` on `frame`; its word, or `Unresolved` where it left.
@@ -187,6 +193,8 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         NumberOperation::Unary { destination, source, operation, domain } =>
             unary(stage, frame, destination, source, operation, domain),
         NumberOperation::Math { destination, source, operation } => math(stage, frame, destination, source, operation),
+        NumberOperation::Extreme { destination, left, right, maximum } => extreme(stage, frame, destination, (left, right), maximum),
+        NumberOperation::Imul { destination, left, right } => imul(stage, frame, destination, left, right),
     }
 }
 
@@ -199,6 +207,30 @@ fn math<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     let Some(value) = frame.number_operand(stage, source, miss) else { return Step::Unresolved };
     let result = super::math::unary(stage, operation, value);
     let fact = frame.number_fact();
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
+}
+
+/// `Math.max` or `Math.min` of two Numbers, a double; any other operand leaves.
+#[inline(always)]
+fn extreme<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, (left, right): (Operand, Operand), maximum: bool,
+) -> Step<S::Word, F::Control> {
+    let Some((left, right)) = operands(stage, frame, left, right, Domain::Float64) else { return Step::Unresolved };
+    let result = super::math::extreme(stage, maximum, left, right);
+    let fact = frame.number_fact();
+    frame.write(stage, destination, result, fact);
+    Step::Value(result)
+}
+
+/// `Math.imul` of two int32s: their wrapping product; any other operand leaves.
+#[inline(always)]
+fn imul<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, left: Operand, right: Operand,
+) -> Step<S::Word, F::Control> {
+    let Some((left, right)) = operands(stage, frame, left, right, Domain::Int32) else { return Step::Unresolved };
+    let result = super::math::multiply(stage, left, right);
+    let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
     Step::Value(result)
 }
