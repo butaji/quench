@@ -163,7 +163,9 @@ pub(in crate::vm) struct LaneBody {
     pub(in crate::vm) max_lifetimes: u8,
     /// The times a function specializes again because a callee published its body
     /// (`LaneView::respecialize_callers`): each makes more of its calls direct, and the bound
-    /// ends the exchange between functions that call each other.
+    /// ends the exchange between functions that call each other. One: a second and third
+    /// respecialization cost more compile than their direct calls regained (deltablue at 120
+    /// runs: total Ir -2%, richards unchanged; Nov 18).
     pub(in crate::vm) max_callee_recompiles: u8,
     pub(in crate::vm) late_call_calls: u32,
     /// The length below which a lane body without loops or inlined calls declines
@@ -369,7 +371,7 @@ const MEASURED: Tiers = Tiers {
         max_compiles: 3,
         max_osr_compiles: 3,
         max_lifetimes: 8,
-        max_callee_recompiles: 3,
+        max_callee_recompiles: 1,
         late_call_calls: 4096,
         min_instructions: 40,
         max_inlined_instructions: 96,
