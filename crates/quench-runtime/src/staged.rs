@@ -223,7 +223,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 16] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 12] = [
     (Op::StoreLocalPlain as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
@@ -235,14 +235,10 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 16] = [
     // `!(x instanceof C)` tests also take the `Binary` then `JumpTrue` pair above.
     // `c = c + 1` of a capture: the store, then the read of the same capture.
     (Op::StoreCapture as u16, Op::LoadCapture as u16, FUSED_PLAIN),
-    (Op::StoreLocalPlain as u16, Op::Jump as u16),
-    (Op::Move as u16, Op::Jump as u16),
-    (Op::LoadLocalPlain as u16, Op::JumpFalse as u16),
-    (Op::LoadLocalPlain as u16, Op::JumpTrue as u16),
     // A bit-field extraction then an i32 operator (another extraction, a multiply, or an xor).
-    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32ShiftRightUnsignedAndImmediate as u16),
-    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32Multiply as u16),
-    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32XorImmediate as u16),
+    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32ShiftRightUnsignedAndImmediate as u16, FUSED_PLAIN),
+    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32Multiply as u16, FUSED_PLAIN),
+    (Op::WasmI32ShiftRightUnsignedAndImmediate as u16, Op::WasmI32XorImmediate as u16, FUSED_PLAIN),
 ];
 
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
