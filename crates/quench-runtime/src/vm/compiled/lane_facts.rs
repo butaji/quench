@@ -72,6 +72,15 @@ pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u
     loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
 }
 
+/// Whether one entry of `unit` saves more interpreter time than the body's entry costs
+/// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does.
+pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit) -> bool {
+    let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
+        instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
+    let priors = &tiers.priors;
+    loops || unit.instructions.len() as u64 * priors.interpreter_ns * (tier_policy::PER_MILLE - priors.body_share) / tier_policy::PER_MILLE > priors.body_entry_ns
+}
+
 /// What a compile of a plan comes to, as one number: its unit, the leaves and entry it was
 /// planned from, its field proofs and its direct callees. Equal keys make equal code.
 pub(super) fn plan_key(unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug,
