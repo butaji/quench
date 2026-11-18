@@ -186,7 +186,7 @@ pub(in crate::vm) enum Event {
     BodyCompile,
     /// Of those, the ones its recurrence started (`LaneView::recurrent`), not a warm-up count.
     BodyRecurrent,
-    /// A body plan built its IR (`Vm::plan_lane_method_sized`), whatever the attempt came to.
+    /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
     BodyPlanned,
     /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
     /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),

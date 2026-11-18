@@ -361,6 +361,7 @@ struct Entry {
 }
 
 /// A lane body lowered for the code generator, which may run it on another thread.
+#[derive(Default)]
 pub(super) struct LoweredLane {
     pub(super) region: LoweredRegion,
     pub(super) clif: Option<String>,
@@ -420,6 +421,7 @@ struct LoopStore {
     raw: bool,
 }
 
+#[derive(Default)]
 pub(super) struct LoweredRegion {
     pub(super) number_result: Option<NativeNumberResult>,
     pub(super) function: ir::Function,

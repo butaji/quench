@@ -25,6 +25,35 @@ impl<T> Pending<T> {
     }
 }
 
+/// Signals that work handed to the code generator's thread is done, so what it borrowed may go
+/// (`Done::wait`): the program keeps the data a job reads by pointer until then.
+pub(in crate::vm) struct Done(Receiver<()>);
+
+impl Done {
+    /// Waits for the work to finish; at once where it has (or never will: its thread is gone).
+    pub(in crate::vm) fn wait(&self) {
+        let _ = self.0.recv();
+    }
+}
+
+impl Drop for Done {
+    fn drop(&mut self) {
+        self.wait();
+    }
+}
+
+/// Runs `work` on the code generator's thread as `run_in_background` does, with a `Done` whose
+/// drop waits for it: for work that reads data the program owns by pointer.
+pub(in crate::vm) fn run_in_background_guarded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> (Pending<T>, Done) {
+    let (finished, done) = std::sync::mpsc::sync_channel(1);
+    let pending = run_in_background(move || {
+        let result = work();
+        let _ = finished.send(());
+        result
+    });
+    (pending, Done(done))
+}
+
 /// Runs `work` on the code generator's thread, started on the first call.
 pub(in crate::vm) fn run_in_background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Pending<T> {
     static QUEUE: std::sync::OnceLock<Option<Sender<Work>>> = std::sync::OnceLock::new();

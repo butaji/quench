@@ -13,7 +13,7 @@ pub(super) struct LaneImage {
 const FUNCTION_ALIGN: usize = 16;
 
 /// The code a compiled lane body may take before it is refused. The budget itself is enforced
-/// before compiling, on the plan's IR (`Vm::plan_lane_method_sized`), as Cranelift gives no
+/// before compiling, on the plan's IR (`Lowered::of`), as Cranelift gives no
 /// code size short of a whole compile; this ceiling only bounds a body whose bytes per IR
 /// instruction land far above the planned rate, so a body near its budget is kept rather than
 /// compiled, refused, planned again and compiled a second time.
