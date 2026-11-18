@@ -119,7 +119,7 @@ impl Heap {
 
     /// A new Map or Set record, admitted and charged as an object record is, with its entries'
     /// storage charged as `alloc` charges a collection's. The collection space holds
-    /// `RECORD_SPACE_CAPACITY` records, so a full space is a panic.
+    /// `COLLECTION_RECORD_CAPACITY` (2^24) records, so a full space is a panic.
     fn alloc_collection(&mut self, record: CollectionRecord) -> Value {
         let payload = record.entries.payload_bytes();
         #[cfg(feature = "profile-aggregate")]
@@ -133,7 +133,7 @@ impl Heap {
         self.mark_prototype(record.object.proto());
         self.allocated += 1;
         let Ok(record_id) = self.collection_records.try_insert(record) else {
-            panic!("collection records exhausted");
+            panic!("collection records exhausted: the collection space holds 2^24 records");
         };
         let value = Value::direct_collection(record_id);
         #[cfg(feature = "profile-aggregate")]
@@ -155,7 +155,7 @@ impl Heap {
         let description = symbol.description.as_ref().map_or(0, |description| description.len());
         self.charge_allocation(0, description);
         let Ok(record_id) = self.symbol_records.try_insert(symbol) else {
-            panic!("symbol records exhausted");
+            panic!("symbol records exhausted: the symbol space holds 2^27 records");
         };
         let value = Value::direct_symbol(record_id);
         #[cfg(feature = "profile-memory")]

@@ -1,6 +1,6 @@
 //! The native readers' views of the fixed record layouts: where an array, function, object or environment
 //! record keeps the words generated code reads, each derived from the storage types themselves.
-use super::{RECORD_SPACE_CAPACITY, array_elements, cell, records, thin_slice};
+use super::{array_elements, cell, records, thin_slice};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 
@@ -57,7 +57,7 @@ pub(crate) const NATIVE_FUNCTION_LAYOUT: NativeFunctionLayout = NativeFunctionLa
 
 /// Layout facts for code generators which emit read-only ordinary-array accesses.
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: records::ARRAY_RECORD_CAPACITY,
     record_size: cell::NATIVE_ARRAY_RECORD_SIZE,
     record_align: cell::NATIVE_ARRAY_RECORD_ALIGN,
     elements_offset: cell::NATIVE_ARRAY_ELEMENTS_OFFSET,
@@ -131,7 +131,7 @@ pub(crate) struct NativeObjectLayout {
 
 /// Layout facts for code generators which emit read-only ordinary-object field accesses.
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: RECORD_SPACE_CAPACITY,
+    record_capacity: records::OBJECT_RECORD_CAPACITY,
     record_size: cell::NATIVE_OBJECT_RECORD_SIZE,
     record_align: cell::NATIVE_OBJECT_RECORD_ALIGN,
     layout_offset: cell::NATIVE_OBJECT_LAYOUT_OFFSET,
