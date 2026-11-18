@@ -136,6 +136,28 @@ impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     }
 
     #[inline(always)]
+    fn last_passing(&mut self, test: UnitTest, floor: usize, end: usize) -> Option<usize> {
+        let mut at = end - 1;
+        while !self.program.test(test, self.text.unit(at)) {
+            if at == floor {
+                return None;
+            }
+            at -= 1;
+        }
+        Some(at)
+    }
+
+    #[inline(always)]
+    fn keep_greedy(&mut self, pc: u32, floor: usize, position: usize) {
+        self.keep(Frame::Greedy { pc, floor, position });
+    }
+
+    #[inline(always)]
+    fn keep_lazy(&mut self, pc: u32, test: UnitTest, ceiling: usize, position: usize) {
+        self.keep(Frame::Lazy { pc, test, ceiling, position });
+    }
+
+    #[inline(always)]
     fn require(&mut self, flag: bool) -> bool {
         flag
     }

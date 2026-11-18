@@ -84,6 +84,13 @@ pub trait Machine: MatchStage {
     fn push_greedy(&mut self, pc: u32, floor: Self::Pos, position: Self::Pos);
     /// A lazy repeat ending at `position`, before `pc`, may take units of `test` up to `ceiling`.
     fn push_lazy(&mut self, pc: u32, test: Self::Test, ceiling: Self::Pos, position: Self::Pos);
+    /// The last unit in `floor..end` that passes `test`; `None` where none does, the step then
+    /// failing (an emitting machine branches to its backtracking).
+    fn last_passing(&mut self, test: Self::Test, floor: Self::Pos, end: Self::Pos) -> Option<Self::Pos>;
+    /// Backtracking a greedy repeat that can give back more keeps its entry, ending at `position`.
+    fn keep_greedy(&mut self, pc: u32, floor: Self::Pos, position: Self::Pos);
+    /// Backtracking a lazy repeat that can take more keeps its entry, ending at `position`.
+    fn keep_lazy(&mut self, pc: u32, test: Self::Test, ceiling: Self::Pos, position: Self::Pos);
     /// Whether the run goes on: `false` where `flag` does not hold, the step then failing. An
     /// emitting machine branches to its backtracking and goes on where it holds.
     fn require(&mut self, flag: Self::Flag) -> bool;
@@ -278,4 +285,39 @@ pub fn loop_tail<M: Machine>(machine: &mut M, (counter, start, min, head): (u32,
     let next = machine.offset(count, 1);
     set(machine, counter, next);
     Step::Continue(at.jump(head))
+}
+
+/// Backtracking a greedy repeat before `pc` that ended at `position`: it gives back a unit and
+/// stays while it can give back more. Where the next instruction takes one unit by `follower`,
+/// the units it refuses fail at once, so the repeat gives back down to the last unit it takes,
+/// which it takes, failing where none down to `floor` does.
+#[inline(always)]
+pub fn give_back<M: Machine>(machine: &mut M, pc: u32, follower: Option<M::Test>, (floor, position): (M::Pos, M::Pos)) -> Next<M> {
+    let Some(test) = follower else {
+        let at = machine.offset(position, -1);
+        let more = machine.before(floor, at);
+        machine.when(more, |machine| machine.keep_greedy(pc, floor, at));
+        return Step::Continue(Cursor::at(pc, at));
+    };
+    let Some(at) = machine.last_passing(test, floor, position) else { return Step::Fail };
+    let more = machine.before(floor, at);
+    machine.when(more, |machine| machine.keep_greedy(pc, floor, at));
+    // The follower takes the unit at `at`: on past it.
+    let after = machine.offset(at, 1);
+    Step::Continue(Cursor::at(pc + 1, after))
+}
+
+/// Backtracking a lazy repeat before `pc` that ended at `position`: it takes one more unit
+/// where `test` passes, and stays below `ceiling`.
+#[inline(always)]
+pub fn take_more<M: Machine>(machine: &mut M, pc: u32, test: M::Test, (ceiling, position): (M::Pos, M::Pos)) -> Next<M> {
+    let unit = machine.unit_at(position);
+    let passes = machine.passes(unit, test);
+    if !machine.require(passes) {
+        return Step::Fail;
+    }
+    let at = machine.offset(position, 1);
+    let more = machine.before(at, ceiling);
+    machine.when(more, |machine| machine.keep_lazy(pc, test, ceiling, at));
+    Step::Continue(Cursor::at(pc, at))
 }

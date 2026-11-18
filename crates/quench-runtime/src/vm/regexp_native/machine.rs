@@ -48,7 +48,7 @@ impl Emit<'_, '_> {
     }
 
     /// Ends the current block where `step` goes.
-    fn finish_step(&mut self, step: Step<ir::Value>) {
+    pub(super) fn finish_step(&mut self, step: Step<ir::Value>) {
         match step {
             Step::Continue(next) => {
                 self.set_position(next.position);
@@ -116,6 +116,18 @@ impl Machine for Emit<'_, '_> {
 
     fn push_lazy(&mut self, pc: u32, _: NativeTest, ceiling: ir::Value, position: ir::Value) {
         self.push_resume(Resume::Lazy(pc - 1), ceiling, position);
+    }
+
+    fn last_passing(&mut self, test: NativeTest, floor: ir::Value, end: ir::Value) -> Option<ir::Value> {
+        Some(self.scan_back(test, floor, end))
+    }
+
+    fn keep_greedy(&mut self, pc: u32, floor: ir::Value, position: ir::Value) {
+        self.push_greedy(pc, floor, position);
+    }
+
+    fn keep_lazy(&mut self, pc: u32, test: NativeTest, ceiling: ir::Value, position: ir::Value) {
+        self.push_lazy(pc, test, ceiling, position);
     }
 
     fn require(&mut self, flag: ir::Value) -> bool {
