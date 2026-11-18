@@ -117,6 +117,8 @@ impl<W, P> Operation<W, P> {
             Self::StringCaseIndex { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER),
                 ("start", BYTECODE), ("count", BYTECODE)]),
             Self::Await { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
+            Self::Yield { .. } => SmallVec::from_slice(&[("value", REGISTER)]),
+            Self::YieldStar { .. } => SmallVec::from_slice(&[("iterable", REGISTER)]),
             _ => self.heap_operand_times(),
         }
     }

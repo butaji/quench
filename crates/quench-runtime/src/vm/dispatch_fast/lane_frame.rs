@@ -151,6 +151,15 @@ struct Suspension {
     suspend: unsafe fn(*mut (), *const LaneInstruction, Registers, Register, Register) -> Option<()>,
 }
 
+/// The lane context's transfer of a `Yield` or `YieldStar` row, erased of its host: the record the row runs
+/// and the window's resume, which answers `None` where no generator runs the lane.
+#[derive(Clone, Copy)]
+struct YieldSuspension {
+    context: *mut (),
+    record: *const LaneInstruction,
+    resume: unsafe fn(*mut (), *const LaneInstruction, Registers, Register) -> Option<Resumed>,
+}
+
 /// The running lane's steady decisions, for a staged comparison jump.
     decisions: Option<Decisions>,
     /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
@@ -183,6 +192,11 @@ struct Suspension {
     string_cases: Option<StringCases>,
     /// The suspension an `Await` row makes (`await_in_lane`).
     suspension: Option<Suspension>,
+    /// The window transfer a `Yield` or `YieldStar` row makes (`generator_yields::yield_in_lane`,
+    /// `yield_star_in_lane`), where the row is one.
+    yields: Option<YieldSuspension>,
+    /// The resumption a transfer hands the lane (`Edge::Transfer`), taken by `lane_row`.
+    transfer: Option<Resumed>,
     /// The running function, which a `LoadCallee` row reads (`running_callee`), where the row is one.
     callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The lane context and the VM's Wasm global load and store, for a staged instance-state row
@@ -262,11 +276,26 @@ struct GlobalStore {
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
+    /// The transfer of a `Yield` or `YieldStar` row whose operand is `operand`: the window's resumption,
+    /// held for `lane_row` to take (`Edge::Transfer`); `None` where the window declines.
+    fn transfer_yield(&mut self, operand: Register) -> Option<Edge> {
+        let yields = self.yields?;
+        // SAFETY: the running lane's context, record and register file.
+        let resumed = unsafe { (yields.resume)(yields.context, yields.record, self.registers, operand) }?;
+        self.transfer = Some(resumed);
+        Some(Edge::Transfer)
+    }
+
+    /// The resumption the last transfer made (`Edge::Transfer`).
+    fn take_transfer(&mut self) -> Resumed {
+        self.transfer.take().unwrap_or_else(|| unreachable!("a transfer edge carries its resumption"))
+    }
+
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -290,7 +319,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
     }
 }
 
@@ -428,6 +457,16 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: the running lane's context, record and register file.
         unsafe { (suspension.suspend)(suspension.context, suspension.record, self.registers, destination, source) }?;
         Some(Edge::Leave)
+    }
+
+    #[inline(always)]
+    fn suspend_yield(&mut self, _stage: &mut Concrete, value: Register) -> Option<Edge> {
+        self.transfer_yield(value)
+    }
+
+    #[inline(always)]
+    fn suspend_yield_star(&mut self, _stage: &mut Concrete, iterable: Register) -> Option<Edge> {
+        self.transfer_yield(iterable)
     }
 
     #[inline(always)]
@@ -1019,7 +1058,16 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
-        return LaneFrame::<ACC> { heap, string_cases, suspension, ..LaneFrame::<ACC>::new(r, view) };
+        // A `yield` or `yield*` transfers to the running generator's window (`generator_yields::yield_in_lane`,
+        // `yield_star_in_lane`), which declines where no generator runs the lane.
+        let yields = if const { OP == crate::staged::YIELD_ROW } {
+            Some(YieldSuspension { context: cx.cast(), record: i, resume: super::generator_yields::yield_in_lane::<H> })
+        } else if const { OP == crate::staged::YIELD_STAR_ROW } {
+            Some(YieldSuspension { context: cx.cast(), record: i, resume: super::generator_yields::yield_star_in_lane::<H> })
+        } else {
+            None
+        };
+        return LaneFrame::<ACC> { heap, string_cases, suspension, yields, ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
@@ -1132,6 +1180,8 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
         crate::staged::Miss::Unary => super::denoted::lane_unary::<H>,
         crate::staged::Miss::Concat => super::denoted::string_concat_miss::<H>,
+        crate::staged::Miss::Yield => super::generator_yields::yield_miss::<H>,
+        crate::staged::Miss::YieldStar => super::generator_yields::yield_star_miss::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }
             | crate::staged::Miss::CompareChain => lane_general_step::<H>,
@@ -1313,6 +1363,7 @@ lane_handler! {
             // `entries` of them after it), and the lane jumps from that record.
             Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
             Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
+            Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
             Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
         }
@@ -1373,6 +1424,8 @@ lane_handler! {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
                 sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
             }
+            // A transfer (`Frame::suspend_yield`) resumes the register file the window switched to.
+            Step::Control(Edge::Transfer) => resume!(cx, frame.take_transfer()),
             Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
         }
     }
@@ -1437,6 +1490,7 @@ lane_handler! {
                 Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
                 Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                 Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
+                Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
                 Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                 Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<B>::OPCODE) }, r, ip, view),
             }
@@ -1544,6 +1598,7 @@ lane_handler! {
                     Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
                     Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                     Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
+                    Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
                     Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                     Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<$L>::OPCODE) }, r, ip, view),
                 }

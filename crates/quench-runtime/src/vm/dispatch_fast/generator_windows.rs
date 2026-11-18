@@ -289,11 +289,11 @@ fn lane_resume_generated(activation: &Activation, memory: MemoryView, result: Va
 
 /// `yield` of the running generator activation (`running_generator`): the frame suspends in
 /// place, resuming after this record, and its caller continues with the step's result.
-pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
+pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, value: Register) -> Resumed {
     // SAFETY: the record lies in the running view.
     let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // The generator receives the next value in this record's A register.
-    lane_suspend_generator(cx, pc + 1, i.a & crate::bytecode::REGISTER_MASK, r.get(i.b), None)
+    lane_suspend_generator(cx, pc + 1, i.a & crate::bytecode::REGISTER_MASK, r.get(value), None)
 }
 
 /// `yield*` of the running generator activation (`running_generator`): a step of a delegate
@@ -301,13 +301,13 @@ pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Register
 /// this record, made again; that result taken back, the delegate's completion goes to the
 /// destination, and any other step passes on as this generator's own yield of the delegate's
 /// result object. Anything else takes the general step.
-pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
+pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, iterable: Register) -> Resumed {
     let vm = unsafe { vm(cx) };
     let (state, next_method) = ImmediateLayout::register_pair(i.imm());
     let destination = i.a & crate::bytecode::REGISTER_MASK;
     let waiting = r.get(state);
     if waiting.is_undefined() {
-        let (delegate, method) = (r.get(i.c), r.get(next_method));
+        let (delegate, method) = (r.get(iterable), r.get(next_method));
         if vm.steps_as_generator(delegate, method)
             && let Some((registers, start)) = lane_resume_generator(cx, r, ip, delegate, method, r.get(destination), Completion::Delegates)
         {

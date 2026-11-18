@@ -6,19 +6,46 @@ use super::*;
 use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
 use super::super::activation::SuspendKind;
 
+/// `yield` of the running generator activation, which a `Yield` row transfers to
+/// (`Frame::suspend_yield`): the frame suspends in place and the caller continues with the step's
+/// result (`lane_yield_in_window`). `None` where no generator runs the lane, which `yield_miss` takes.
+///
+/// # Safety
+/// `cx` is the running lane's context, `record` the running record of its view, and `r` its register file.
+#[inline(never)]
+pub(super) unsafe fn yield_in_lane<H: Host>(cx: *mut (), record: Ip, r: Registers, value: Register) -> Option<Resumed> {
+    let cx = cx.cast::<LaneContext<H>>();
+    if !running_generator(unsafe { vm(cx) }) {
+        return None;
+    }
+    // SAFETY: the record lies in the running view.
+    Some(lane_yield_in_window(cx, r, record, unsafe { &*record }, value))
+}
+
+/// `yield*` of a generator activation the lane runs over its record, which a `YieldStar` row
+/// transfers to (`Frame::suspend_yield_star`) (`lane_yield_star_in_window`). `None` where no
+/// generator runs the lane, which `yield_star_miss` takes.
+///
+/// # Safety
+/// `cx` is the running lane's context, `record` the running record of its view, and `r` its register file.
+#[inline(never)]
+pub(super) unsafe fn yield_star_in_lane<H: Host>(cx: *mut (), record: Ip, r: Registers, iterable: Register) -> Option<Resumed> {
+    let cx = cx.cast::<LaneContext<H>>();
+    if !running_generator(unsafe { vm(cx) }) {
+        return None;
+    }
+    // SAFETY: the record lies in the running view.
+    Some(lane_yield_star_in_window(cx, r, record, unsafe { &*record }, iterable))
+}
+
 script_handler! {
-    /// `yield` of the generator activation the lane runs over its record (`running_generator`):
-    /// the frame suspends in place and the caller continues with the step's result
-    /// (`lane_yield_in_window`). The root of a native `next`'s run (`LaneRoot::Job` of a sync
-    /// generator) suspends into its record and ends the run with the yielded value
-    /// (`Vm::suspend_job_window`); an async generator's root parks likewise, its record awaiting
-    /// the value before the request settles (`Vm::suspend_async_generator_yield`). Any other
-    /// `yield` takes the general path.
+    /// `yield` the frame does not suspend in place (`yield_in_lane` declined: no running generator).
+    /// The root of a native `next`'s run (`LaneRoot::Job` of a sync generator) suspends into its record
+    /// and ends the run with the yielded value (`Vm::suspend_job_window`); an async generator's root
+    /// parks likewise, its record awaiting the value before the request settles
+    /// (`Vm::suspend_async_generator_yield`). Any other `yield` takes the general path.
     #[inline(never)]
-    fn lane_yield<>(cx, r, ip, i, view) {
-        if running_generator(unsafe { vm(cx) }) {
-            resume!(cx, lane_yield_in_window(cx, r, ip, i))
-        }
+    pub(super) fn yield_miss<>(cx, r, ip, i, view) {
         if let LaneRoot::Job(job) = unsafe { (*cx).root }
             && matches!(job.kind, SuspendKind::Generator | SuspendKind::AsyncGenerator)
         {
@@ -47,13 +74,9 @@ script_handler! {
 }
 
 script_handler! {
-    /// `yield*` of a generator activation the lane runs over its record
-    /// (`lane_yield_star_in_window`). Any other `yield*` takes the general step.
+    /// `yield*` the frame does not suspend in place (`yield_star_in_lane` declined): the general path.
     #[inline(never)]
-    fn lane_yield_star<>(cx, r, ip, i, view) {
-        if running_generator(unsafe { vm(cx) }) {
-            resume!(cx, lane_yield_star_in_window(cx, r, ip, i))
-        }
+    pub(super) fn yield_star_miss<>(cx, r, ip, i, view) {
         exit(ip)
     }
 }
@@ -96,14 +119,4 @@ pub(super) unsafe fn await_in_lane<H: Host>(cx: *mut (), record: *const LaneInst
     vm.lane_stack.pop_activation();
     vm.lane_suspended = Some(value);
     Some(())
-}
-
-/// The handlers of a frame's suspensions (`lane_yield`, `lane_yield_star`). `Await` is its lane row
-/// (`await_in_lane`).
-pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
-    match opcode.class() {
-        Class::Yield => Some(lane_yield::<H>),
-        Class::YieldStar => Some(lane_yield_star::<H>),
-        _ => None,
-    }
 }

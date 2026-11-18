@@ -155,6 +155,11 @@ pub(crate) enum Miss {
     /// A comparison jump the frame leaves (a pair that is no Number relation or word test): the
     /// lane's comparison chain decides the relations it can without guest code.
     CompareChain,
+    /// A `yield` the frame does not suspend in place (no generator runs the lane): the job root's
+    /// suspension, or the general step (`yield_miss`).
+    Yield,
+    /// A `yield*` the frame does not suspend in place: the general step (`yield_star_miss`).
+    YieldStar,
     /// A `Binary` whose pure value declines (a heap operand, BigInt, a numeric local target): the
     /// general operation made in place (`lane_binary_general`).
     Binary,
@@ -231,6 +236,8 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
         Op::Unary => Miss::Unary,
         Op::StringConcat => Miss::Concat,
+        Op::Yield => Miss::Yield,
+        Op::YieldStar => Miss::YieldStar,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
             None => match truth_jump(op) {
@@ -457,6 +464,11 @@ pub(crate) const LOAD_CAPTURE_ROW: u16 = Op::LoadCapture as u16;
 /// The opcode whose row suspends a promise job on its awaited value (`Operation::Await`), which a lane
 /// frame answers and a plan leaves to its suspend exit.
 pub(crate) const AWAIT_ROW: u16 = Op::Await as u16;
+/// The opcode whose row yields from the running generator (`Operation::Yield`), which a lane frame
+/// answers in place and otherwise leaves to its miss.
+pub(crate) const YIELD_ROW: u16 = Op::Yield as u16;
+/// The opcode whose row delegates to an iterable from the running generator (`Operation::YieldStar`).
+pub(crate) const YIELD_STAR_ROW: u16 = Op::YieldStar as u16;
 /// The opcode whose row answers a string-case selector (`Operation::StringCaseIndex`), which a tier
 /// names to instantiate the row of a selector it filtered (`string_case_filter::specialize`).
 pub(crate) const STRING_CASE_INDEX_ROW: u16 = Op::StringCaseIndex as u16;
@@ -847,6 +859,12 @@ pub(crate) enum Operation<W, P> {
     /// Suspend the promise job the run is rooted in on the value of register `source`, resuming into
     /// `destination` (`Frame::suspend_await`); the record leaves the lane run (`Edge::Leave`).
     Await { destination: Register, source: Register },
+    /// The frame's `yield` of the value in register `value` (`Frame::suspend_yield`): the running
+    /// generator's suspension, which the frame transfers control for (`Edge::Transfer`).
+    Yield { value: Register },
+    /// The frame's `yield*` of the iterable in register `iterable` (`Frame::suspend_yield_star`), which
+    /// transfers control the same way.
+    YieldStar { iterable: Register },
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup },
@@ -1126,6 +1144,8 @@ impl Operation<u64, ()> {
             Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
                 source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
             Op::Await => Self::Await { destination: instruction.result_register(), source: instruction.register_b() },
+            Op::Yield => Self::Yield { value: instruction.register_b() },
+            Op::YieldStar => Self::YieldStar { iterable: instruction.register_c() },
             _ => return None,
         })
     }
@@ -1253,6 +1273,9 @@ pub(crate) enum Edge {
     Target,
     /// The record leaves the lane run: its activation suspended into its job (`Frame::suspend_await`).
     Leave,
+    /// The record switched the running register file: its frame made a suspension that transfers
+    /// control to another activation (`Frame::suspend_yield`), which the frame holds for the lane to resume.
+    Transfer,
     /// The instruction after this one.
     Following,
     /// The entry a branch table's index picks (`k`, clamped to the default entry): control goes to

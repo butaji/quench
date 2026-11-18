@@ -117,6 +117,16 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn suspend_await(&mut self, _stage: &mut S, _destination: Register, _source: Register) -> Option<Self::Control> { None }
 
+    /// `Yield`: suspends the running generator on the value in `value`, transferring control to its
+    /// caller or resumption (`Edge::Transfer`); `None` where the frame cannot, which the general step does.
+    #[inline(always)]
+    fn suspend_yield(&mut self, _stage: &mut S, _value: Register) -> Option<Self::Control> { None }
+
+    /// `YieldStar`: the `yield*` of the iterable in `iterable`, transferring control as `suspend_yield` does;
+    /// `None` where the frame cannot, which the general step does.
+    #[inline(always)]
+    fn suspend_yield_star(&mut self, _stage: &mut S, _iterable: Register) -> Option<Self::Control> { None }
+
     /// `StringCaseIndex`: the index of the value in `source` among the `count` program constants from
     /// `start`, as the frame's case table answers it; `None` where the frame has none (the general step).
     #[inline(always)]

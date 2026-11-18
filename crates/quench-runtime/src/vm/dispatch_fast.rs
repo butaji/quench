@@ -1759,7 +1759,7 @@ enum Completion {
     Generates,
     /// `Generates` for a `yield*` step of a delegate generator: the step's fresh result goes to
     /// the delegating record's state register, which that record, made again, reads
-    /// (`lane_yield_star`).
+    /// (`yield_star_in_lane`).
     Delegates,
     /// The async function or async generator a promise job resumed over its suspended frame's
     /// register file, the root of its lane run (`LaneRoot::Job`, `Vm::run_lane_job`): its
@@ -3159,6 +3159,7 @@ macro_rules! jump_on_edge {
             crate::staged::Edge::Following => next!($cx, $r, following($ip), $carried),
             crate::staged::Edge::Entry(_) => unreachable!("a comparison jump takes no table entry"),
             crate::staged::Edge::Leave => unreachable!("a comparison jump leaves no lane run"),
+            crate::staged::Edge::Transfer => unreachable!("a comparison jump transfers no control"),
         }
     }};
 }
@@ -11652,7 +11653,7 @@ use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
 use root_bindings::frame_capture_at_root;
-mod native_calls; mod getters; mod generator_yields; use generator_yields::suspend_handler;
+mod native_calls; mod getters; mod generator_yields;
 mod lane_roots;
 mod lane_trace;
 mod with_scopes;
@@ -17068,7 +17069,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),
-        _ if suspend_handler::<H>(opcode).is_some() => suspend_handler::<H>(opcode),
         _ => wasm_gc_handler::<H>(opcode),
     }
 }
