@@ -4042,8 +4042,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
-        match instruction.op().class() {
-            Class::GetField => match instruction.field_lookup() {
+        match decoded_completed(instruction) {
+            Some(crate::staged::Operation::GetField { .. }) => match instruction.field_lookup() {
                 Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
                 Some(FieldLookup::Site(index)) => program.field_sites.get(index).map_or_else(Vec::new, |site| {
                     let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
@@ -4051,7 +4051,7 @@ impl<H: Host> Vm<H> {
                 }),
                 None => Vec::new(),
             },
-            _ if instruction.op().is_field_store() => vec![(instruction.cache_site_index(), false)],
+            Some(crate::staged::Operation::SetField { .. }) => vec![(instruction.cache_site_index(), false)],
             _ => Vec::new(),
         }
     }
@@ -4675,7 +4675,7 @@ fn native_operation_fallback_kind<H: Host>(vm: &Vm<H>, frame: usize, instruction
             "branch-other-equality"
         };
     }
-    if instruction.op().class().eq(Class::LoadCapture) {
+    if matches!(decoded(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
         if instruction.capture_depth() != 0 {
             return "capture-outer-depth";
         }
@@ -4907,7 +4907,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }));
         }
 
-        if !SINGLE_OPERATION && instruction.op().class().eq(Class::GetField)
+        if !SINGLE_OPERATION && matches!(decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
             && (instruction.result_flags() == 0
                 || instruction.result_flags() == crate::bytecode::RETURN_REGISTER)
             && !instruction.writes_current_this()
@@ -4956,7 +4956,8 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
         }
 
-        if !SINGLE_OPERATION && instruction.op().js_denotation() == JsDenotation::FieldStore
+        // A named store through a register receiver (`SetField`, `SetFieldStrict`): the js field store.
+        if !SINGLE_OPERATION && matches!(decoded_completed(instruction), Some(crate::staged::Operation::SetField { base: Some(_), .. }))
             && instruction.result_flags() == 0
             && !instruction.returns_from_frame()
             && next_pc < body.code.len()
@@ -5026,7 +5027,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                     current_instruction.op(),
                 );
             let call_sample_started = sample_call.then(std::time::Instant::now);
-            let capture = if current_instruction.op().class().eq(Class::LoadCapture) {
+            let capture = if matches!(decoded(current_instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
                 vm.cached_direct_capture(
                     dispatch.frame,
                     current_instruction.capture_depth(),
@@ -10300,7 +10301,7 @@ mod tests {
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "write")).unwrap();
-            let store = program.function(writer).instructions().find(|i| i.op().is_set_field()).unwrap();
+            let store = program.function(writer).instructions().find(|i| matches!(decoded(i), Some(crate::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
                 &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
             assert!(!method.dependencies.slots.is_empty());
@@ -11635,7 +11636,8 @@ mod tests {
     fn static_semantic_entry_admits_wide_opcodes_without_decoding_source_operands() {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
-        let pc = body.instructions().position(|instruction| instruction.op().is_throw()).unwrap();
+        let pc = body.instructions().position(|instruction| matches!(decoded(instruction), Some(crate::staged::Operation::Protocol {
+            step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }))).unwrap();
         let instruction = body.widened(body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);

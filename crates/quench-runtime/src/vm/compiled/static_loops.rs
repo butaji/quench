@@ -55,8 +55,10 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
     let decoded = crate::vm::compiled::decoded(instruction);
     if !scalar_body(instruction) {
         // A plain local load decodes; `LoadLocal` and a plain slot past u16 do not.
-        if (matches!(decoded, Some(crate::staged::Operation::LoadLocalPlain { .. }))
-            || instruction.op().loads_frame_local()) && instruction.numeric_local_target().is_none() {
+        if (matches!(decoded, Some(crate::staged::Operation::LoadLocalPlain { .. }
+                | crate::staged::Operation::Protocol {
+                    step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::LoadLocal { .. }), .. }))
+            || (instruction.op().loads_frame_local() && decoded.is_none())) && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
@@ -184,7 +186,8 @@ pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -
         if header >= latch { continue; }
         let instructions = residual.as_deref().unwrap_or(&unit.instructions);
         let condition = instructions[header];
-        if !condition.op().is_jump_binary_false() || condition.result_flags() != 0 { continue; }
+        if !matches!(crate::vm::compiled::decoded(condition), Some(crate::staged::Operation::CompareJump { .. }))
+            || condition.result_flags() != 0 { continue; }
         let exit = condition.jump_target() as usize;
         if exit <= latch || !instructions[header + 1..latch].iter().copied().all(scalar_body)
             || unit.markers.iter().any(|pc| *pc > header && *pc < latch) { continue; }

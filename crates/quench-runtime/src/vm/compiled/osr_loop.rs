@@ -423,11 +423,16 @@ struct IdentityBranch {
     register: Register,
 }
 
+/// Whether `instruction` is a comparison branch (`JumpBinaryFalse`), by its staged decode.
+fn comparison_jump(instruction: WideInstruction) -> bool {
+    matches!(super::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
+}
+
 /// A nullish comparison branch that can be emitted from the tagged value word. Strict
 /// identity compares one constant. Loose equality against null or undefined matches either
 /// nullish value; Abstract Equality does not coerce an object when the other operand is null.
 fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<IdentityBranch> {
-    if !instruction.op().is_jump_binary_false() {
+    if !comparison_jump(instruction) {
         return None;
     }
     super::super::operations::equality_operator(instruction.binary_operator_field())?;
@@ -1402,7 +1407,7 @@ fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
 /// Fused numeric mask truthiness. Other arithmetic/heap truthiness stays on its
 /// existing path; both operands must satisfy the region's Number guards.
 fn bitwise_condition(instruction: WideInstruction) -> Option<NumberBitwise> {
-    (instruction.op().is_jump_binary_false()).then_some(())?;
+    comparison_jump(instruction).then_some(())?;
     NumberBitwise::from_operator(instruction.binary_operator_field())
         .filter(|operation| *operation == NumberBitwise::And)
 }
@@ -1706,7 +1711,7 @@ fn admit_register_roles(
         Err(failure_offset) => {
             if crate::trace::Channel::OsrReject.on() {
                 for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
-                    instruction.op().is_jump_binary_false()
+                    comparison_jump(*instruction)
                 }) {
                     let operand = |operand: Operand| {
                         let constant = (operand.kind() == Some(OperandKind::Constant))
@@ -2151,7 +2156,8 @@ fn admit(
             admit_stored(admission, value, tagged, defined_registers)?;
         }
         // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
-        opcode if opcode.is_load_name() => {
+        _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()),
+            Some(crate::staged::Operation::LoadName { receiver: None, .. })) => {
             (instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;
         }
@@ -2162,7 +2168,8 @@ fn admit(
             admission.tagged(instruction.result_register())?;
         }
         // Its literal's allocation writes it (`Allocation::ArrayOf`).
-        opcode if opcode.is_define_array_element() => {}
+        _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Protocol {
+            step: crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::DefineArrayElement { .. }), .. })) => {}
         opcode if opcode.is_load_env_local() => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
@@ -2178,7 +2185,7 @@ fn admit(
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) => {}
-        opcode if opcode.is_jump_binary_false() => {
+        _ if comparison_jump(instruction) => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
             } else if let Some((register, constant)) = match (
@@ -2355,7 +2362,7 @@ pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
 fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     let instruction = region.instructions[offset];
     let pc = region.header + offset as u32;
-    let strict_number_test = instruction.op().is_jump_binary_false()
+    let strict_number_test = comparison_jump(instruction)
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
@@ -2398,7 +2405,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(instruction) || if op.is_jump_binary_false() {
+    admitted_store(instruction) || if comparison_jump(instruction) {
         // A conditional jump only on a relation or a bitwise and, so one on `in` or
         // `instanceof` is an exit.
         super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())

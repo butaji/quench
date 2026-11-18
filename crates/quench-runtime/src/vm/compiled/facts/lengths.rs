@@ -4,7 +4,7 @@
 //! next write, and one to an array's length with any instruction that may change it.
 
 use super::run::{Model, Point};
-use crate::bytecode::{Class, FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
+use crate::bytecode::{FieldLookup, Operand, Register, ResidualProgram, WideInstruction};
 use crate::typed_ir::{IntRange, Type};
 use super::super::super::operations::NumberRelation;
 
@@ -118,9 +118,8 @@ impl Model<'_> {
         let op = instruction.op();
         let decoded = crate::vm::compiled::decoded(instruction);
         let completed = crate::vm::compiled::decoded_completed(instruction);
-        let quiet = matches!(op.class(), Class::JumpBinaryFalse)
-            || matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
-                | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
+        let quiet = matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
+                | Staged::CompareJump { .. } | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
                 | Staged::IncDecLocal { .. }))
             || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
             || op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary

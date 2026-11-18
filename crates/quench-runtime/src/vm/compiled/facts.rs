@@ -252,7 +252,8 @@ fn transfer(
 ) -> Flow {
     let op = instruction.op();
     let decoded = crate::vm::compiled::decoded(instruction);
-    match op.class() {
+    let compares = matches!(decoded, Some(crate::staged::Operation::CompareJump { .. }));
+    match () {
         _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() => {
             let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
@@ -270,11 +271,11 @@ fn transfer(
             Flow::Next
         }
         _ if op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary => binary::numeric_binary(types, instruction, constants, written),
-        Class::JumpBinaryFalse if super::nullish_comparison(constants, instruction,
+        _ if compares && super::nullish_comparison(constants, instruction,
             |register| types.get(usize::from(register)).copied().unwrap_or(Type::ANY)).is_some() => {
             Flow::To(instruction.jump_target() as usize)
         }
-        Class::JumpBinaryFalse => {
+        _ if compares => {
             // An equality, loose or strict, and `instanceof` decide operands of any type
             // (`lane_region::relation`: two objects compare by identity) and prove nothing of
             // them; every other relation compares Numbers.

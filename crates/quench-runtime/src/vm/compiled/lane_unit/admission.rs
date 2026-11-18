@@ -12,7 +12,8 @@ pub(super) fn inlinable(instruction: WideInstruction) -> bool {
     inlinable_pure(instruction, plain).unwrap_or_else(|| match instruction.op() {
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
         // global name's read, a construction and a throw, typically a callee's error path.
-        opcode if opcode.is_load_name() || opcode.is_construct() || opcode.is_throw() => instruction.result_flags() == 0,
+        _ if crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() || throws(instruction) => instruction.result_flags() == 0,
+        opcode if opcode.is_construct() => instruction.result_flags() == 0,
         opcode if opcode.is_call() => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         _ => plain && instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     })
@@ -53,7 +54,8 @@ pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function,
         _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => true,
         // An IncDec with a numeric local target decodes apart: its result stays a local.
         _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::IncDecLocal { .. })) => false,
-        opcode if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. }
+            | crate::staged::Operation::CompareJump { .. })) => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.
     })
 }

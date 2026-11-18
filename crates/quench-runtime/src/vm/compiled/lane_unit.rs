@@ -240,6 +240,13 @@ fn terminal_return(code: &[WideInstruction]) -> Option<usize> {
         matches!(crate::vm::compiled::decoded(code[*pc]), Some(crate::staged::Operation::Return { .. })) && code[*pc].result_flags() == 0)
 }
 
+/// Whether the staged decode makes `instruction` a throw of its first operand (`Throw`, the owned
+/// variable step `ThrowValue`).
+fn throws(instruction: WideInstruction) -> bool {
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
+        step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::ThrowValue), .. }))
+}
+
 /// Whether an inlined callee's `instruction` renames to the unit's registers
 /// (`osr_loop::renamed`): its operands are registers or constants. The plan decides it, so a
 /// unit it plans always emits.
@@ -593,7 +600,8 @@ impl Emitter {
             _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::LoadThis { .. })) => WideInstruction::new(Op::Move, register(instruction.result_register()), receiver, 0, 0),
             // Exit-only operations (`inlinable`): their registers, renamed for the analyses;
             // the lowering leaves at each, and recovery runs the callee's own instruction.
-            opcode if opcode.is_load_name() || opcode.is_throw() => WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
+            _ if crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() || throws(instruction) =>
+                WideInstruction::new(instruction.op(), register(instruction.a()), instruction.b(), instruction.c(), instruction.imm()),
             opcode if opcode.is_construct() => WideInstruction::new(Op::Construct, register(instruction.a()), register(instruction.b()),
                 register(instruction.c()), instruction.imm()),
             _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))

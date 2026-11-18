@@ -51,7 +51,8 @@ impl Add {
 
 /// Whether the add instruction defines an own field (`DefineField`) rather than stores one.
 fn is_define(instruction: WideInstruction) -> bool {
-    instruction.op().class().eq(Class::DefineField)
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Protocol {
+        step: crate::staged::Protocol::Class(crate::staged::protocol_classes::ClassStep::DefineField { .. }), .. }))
 }
 
 /// The receiver register of an add instruction: a define's object, a store's named register, or

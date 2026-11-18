@@ -2,7 +2,7 @@
 //! per-PC call targets (`static_call_targets`). A hint is never a proof: replacement and
 //! aliasing are handled by call-edge admission, which tries each target a site names behind
 //! its own body guard.
-use crate::bytecode::{Atom, Class, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, PropertyDefinitionMode, WideInstruction};
+use crate::bytecode::{Atom, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, PropertyDefinitionMode, WideInstruction};
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
@@ -103,20 +103,26 @@ impl Hints {
         let Some(Definition::Closure(target)) = definitions.get(usize::from(instruction.register_a())).copied().flatten() else { return };
         self.note_method(instruction, target, definitions);
         if let Some(slot) = function.stored_slot(instruction).and_then(|slot| self.captured[start..].get_mut(slot)) { observe(slot, target); }
-        if instruction.op().stores_name() { observe(&mut self.named[instruction.atom_index() as usize], target); }
+        let decoded = crate::vm::compiled::decoded(instruction);
+        if matches!(decoded, Some(crate::staged::Operation::GlobalWrite { .. }))
+            || (instruction.op().stores_name() && decoded.is_none()) {
+            observe(&mut self.named[instruction.atom_index() as usize], target);
+        }
     }
 
     /// Notes `target` stored as a data property, or as a method record's of a literal name:
     /// class definitions use an explicit key register, and a computed key or accessor
     /// result remains dynamic.
     fn note_method(&mut self, instruction: WideInstruction, target: u32, definitions: &[Option<Definition>]) {
-        let op = instruction.op();
-        let atom = if let Some(crate::staged::Operation::SetField { base, .. }) = crate::vm::compiled::decoded(instruction) {
+        let decoded = crate::vm::compiled::decoded(instruction);
+        let atom = if let Some(crate::staged::Operation::SetField { base, .. }) = decoded {
             // A store to a register receiver names its atom; a store to `this` names none.
             base.map(|_| instruction.atom_index())
-        } else if op.class().eq(Class::DefineField) {
+        } else if matches!(decoded, Some(crate::staged::Operation::Protocol {
+            step: crate::staged::Protocol::Class(crate::staged::protocol_classes::ClassStep::DefineField { .. }), .. })) {
             Some(instruction.atom_index())
-        } else if op.class().eq(Class::DefinePropertyRecord)
+        } else if matches!(decoded, Some(crate::staged::Operation::Protocol {
+                step: crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::DefinePropertyRecord { .. }), .. }))
             && matches!(instruction.property_definition_mode(), Some(PropertyDefinitionMode::Method | PropertyDefinitionMode::ReadonlyMethod))
             && let Some(Definition::Name(atom)) = definitions[usize::from(instruction.register_c())] {
             Some(atom)
@@ -127,12 +133,16 @@ impl Hints {
     /// What `instruction` of function `id` defines its result as.
     fn definition(&self, id: usize, instruction: WideInstruction, definitions: &[Option<Definition>]) -> Option<Definition> {
         let decoded = crate::vm::compiled::decoded(instruction);
-        match instruction.op().class() {
-            Class::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
+        match () {
+            _ if matches!(decoded, Some(crate::staged::Operation::Protocol {
+                    step: crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::Closure { .. }), .. })) =>
+                Some(Definition::Closure(instruction.closure_function_index())),
             _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
                 self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
             _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
-            _ if instruction.op().loads_name() => single(self.named.get(instruction.atom_index() as usize)),
+            _ if crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
+                || matches!(decoded, Some(crate::staged::Operation::GlobalTypeof { .. })) =>
+                single(self.named.get(instruction.atom_index() as usize)),
             // A store's definition defines no register, so only a load's reaches `definitions`.
             _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) =>
                 single(self.captured(id, instruction)),
@@ -160,8 +170,10 @@ impl Hints {
             let completed = crate::vm::compiled::decoded_completed(instruction);
             let target = (instruction.op().is_call()).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
                 .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
-            let method = match instruction.op().class() {
-                Class::MakeClosure => Some(vec![instruction.closure_function_index()]),
+            let method = match () {
+                _ if matches!(decoded, Some(crate::staged::Operation::Protocol {
+                        step: crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::Closure { .. }), .. })) =>
+                    Some(vec![instruction.closure_function_index()]),
                 _ if matches!(completed, Some(crate::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
                     Some(FieldLookup::Atom { atom, .. }) => self.methods.get(atom as usize).cloned(),
                     _ => None,
