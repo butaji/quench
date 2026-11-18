@@ -699,6 +699,31 @@ impl<W, P> Operation<W, P> {
     }
 }
 
+impl Operation<u64, ()> {
+    /// The operation `instruction` denotes, decoded with no tables (`DecodeContext::EMPTY`): what a
+    /// tier asks an instruction's meaning by, where the row's operands need no table.
+    pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
+        Self::decode(instruction, DecodeContext::EMPTY)
+    }
+}
+
+/// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering
+/// builds the record of a row here and never names an opcode itself.
+pub(crate) mod emit {
+    use crate::bytecode::{Op, Register, WideInstruction};
+
+    /// A marker that does nothing: an inlined call's admission point.
+    pub(crate) fn nop() -> WideInstruction { WideInstruction::new(Op::Nop, 0, 0, 0, 0) }
+
+    /// Continue at `target`.
+    pub(crate) fn jump(target: u32) -> WideInstruction { WideInstruction::new(Op::Jump, 0, 0, 0, target) }
+
+    /// Copy register `source` into `destination`.
+    pub(crate) fn move_register(destination: Register, source: Register) -> WideInstruction {
+        WideInstruction::new(Op::Move, destination, source, 0, 0)
+    }
+}
+
 /// Which of an instruction's two control edges it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Edge {
