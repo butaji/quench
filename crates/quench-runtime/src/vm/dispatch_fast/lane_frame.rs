@@ -911,6 +911,21 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         Some(value.to_bits())
     }
 
+    /// A raw register's word, read as it is: a raw i64 or f64 record's operand (`raw_representation`)
+    /// is its machine word, so no tag is checked and nothing is unboxed.
+    #[inline(always)]
+    fn raw_read(&mut self, _stage: &mut Concrete, register: Register) -> Option<u64> {
+        Some(self.registers.get(register).to_bits())
+    }
+
+    /// Define `register` with the raw machine word `word`, as the raw record's result: stored as the
+    /// register's bits, with no boxing (a word a tag claims is stored as it is).
+    #[inline(always)]
+    fn raw_write(&mut self, _stage: &mut Concrete, register: Register, word: u64) -> Option<u64> {
+        self.registers.set(register, Value::from_bits(word));
+        Some(word)
+    }
+
     /// The VM's load of the global bound in `binding`, where the frame holds the rules (`globals`).
     #[inline(always)]
     fn wasm_global_load(&mut self, _stage: &mut Concrete, binding: u64) -> Option<u64> {
