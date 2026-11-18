@@ -399,6 +399,8 @@ mod property_tests;
 #[cfg(test)]
 mod coverage_tests;
 #[cfg(test)]
+mod stage_coverage_tests;
+#[cfg(test)]
 mod capture_return_tests;
 #[cfg(test)]
 mod generic_tests;
