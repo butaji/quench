@@ -62,6 +62,7 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::TypeofTest { destination, source, index, negated } =>
             super::control::typeof_test(stage, frame, destination, source, index, negated),
         Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
+        Operation::Await { destination, source } => await_value(stage, frame, destination, source),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } => super::names::step(stage, frame, operation),
@@ -79,6 +80,17 @@ fn string_case_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
             frame.write(stage, destination, value, fact);
             Step::Value(value)
         }
+        None => Step::Unresolved,
+    }
+}
+
+/// `Await`: the frame's suspension of the running promise job, which leaves the lane run; a frame that
+/// cannot suspend leaves it to the general step.
+#[inline(always)]
+fn await_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+    source: Register) -> Step<S::Word, F::Control> {
+    match frame.suspend_await(stage, destination, source) {
+        Some(control) => Step::Control(control),
         None => Step::Unresolved,
     }
 }

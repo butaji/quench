@@ -1763,7 +1763,7 @@ enum Completion {
     Delegates,
     /// The async function or async generator a promise job resumed over its suspended frame's
     /// register file, the root of its lane run (`LaneRoot::Job`, `Vm::run_lane_job`): its
-    /// `await` suspends it back into its owner (`lane_await`) and its return ends the run with
+    /// `await` suspends it back into its owner (`await_in_lane`) and its return ends the run with
     /// the value, which the job delivers. No call record is its caller's. Made a frame, it is
     /// the entry frame of the general loop that finishes it, which no pending call names. The
     /// activation's callee is its owner.
@@ -3158,6 +3158,7 @@ macro_rules! jump_on_edge {
             crate::staged::Edge::Target => resume!($cx, lane_jump::<H>($cx, $r, $ip, $backward, $carried, None)),
             crate::staged::Edge::Following => next!($cx, $r, following($ip), $carried),
             crate::staged::Edge::Entry(_) => unreachable!("a comparison jump takes no table entry"),
+            crate::staged::Edge::Leave => unreachable!("a comparison jump leaves no lane run"),
         }
     }};
 }

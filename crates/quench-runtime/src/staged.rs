@@ -406,6 +406,9 @@ pub(crate) const CLONE_ENV_ROW: u16 = Op::CloneEnv as u16;
 /// The opcode whose row reads a capture (`Operation::LoadCapture`), which a tier names to find the
 /// captures a loop reads.
 pub(crate) const LOAD_CAPTURE_ROW: u16 = Op::LoadCapture as u16;
+/// The opcode whose row suspends a promise job on its awaited value (`Operation::Await`), which a lane
+/// frame answers and a plan leaves to its suspend exit.
+pub(crate) const AWAIT_ROW: u16 = Op::Await as u16;
 /// The opcode whose row answers a string-case selector (`Operation::StringCaseIndex`), which a tier
 /// names to instantiate the row of a selector it filtered (`string_case_filter::specialize`).
 pub(crate) const STRING_CASE_INDEX_ROW: u16 = Op::StringCaseIndex as u16;
@@ -695,6 +698,9 @@ pub(crate) enum Operation<W, P> {
     /// The index of the value in register `source` among the `count` program constants from `start`
     /// (`Frame::case_index`), defined into `destination`: the switch's string-case selector.
     StringCaseIndex { destination: Register, source: Register, start: u32, count: u16 },
+    /// Suspend the promise job the run is rooted in on the value of register `source`, resuming into
+    /// `destination` (`Frame::suspend_await`); the record leaves the lane run (`Edge::Leave`).
+    Await { destination: Register, source: Register },
     /// The value `base.name` reads through `lookup`'s plan (`property::read_with`); the tier
     /// defines the result register.
     GetField { base: FieldBase, lookup: FieldLookup },
@@ -781,6 +787,8 @@ impl<W, P> Operation<W, P> {
             Decoder::WasmJump => Self::decode_wasm_jump(instruction),
             Decoder::WasmState => Self::decode_wasm_state(instruction, context),
             Decoder::WasmMemory => Self::decode_wasm_access(instruction, context),
+            // A lane row is the lane's own (`decode_lane`): the plan keeps its generic or exit route for it.
+            Decoder::Lane => None,
         }
     }
 
@@ -890,8 +898,6 @@ impl<W, P> Operation<W, P> {
                 root: false },
             Op::StoreCapture => Self::StoreCapture {
                 source: instruction.register_a(), depth: instruction.capture_depth(), slot: instruction.capture_slot() },
-            Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
-                source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
             Op::Unary => return Self::decode_unary(instruction),
             _ => return None,
         })
@@ -965,6 +971,17 @@ impl Operation<u64, ()> {
     /// tier asks an instruction's meaning by, where the row's operands need no table.
     pub(crate) fn of(instruction: WideInstruction) -> Option<Self> {
         Self::decode(instruction, DecodeContext::EMPTY)
+    }
+
+    /// The lane's own rows (`Decoder::Lane`): a string-case index over the constants the record names, and an
+    /// `await` the lane's frame suspends.
+    pub(crate) fn decode_lane(instruction: WideInstruction) -> Option<Self> {
+        Some(match instruction.op() {
+            Op::StringCaseIndex => Self::StringCaseIndex { destination: instruction.result_register(),
+                source: instruction.register_c(), start: instruction.imm(), count: instruction.element_count() },
+            Op::Await => Self::Await { destination: instruction.result_register(), source: instruction.register_b() },
+            _ => return None,
+        })
     }
 
     /// Whether `instruction` does nothing: a marker that defines and writes nothing.
@@ -1088,6 +1105,8 @@ pub(crate) mod emit {
 pub(crate) enum Edge {
     /// The jump target.
     Target,
+    /// The record leaves the lane run: its activation suspended into its job (`Frame::suspend_await`).
+    Leave,
     /// The instruction after this one.
     Following,
     /// The entry a branch table's index picks (`k`, clamped to the default entry): control goes to

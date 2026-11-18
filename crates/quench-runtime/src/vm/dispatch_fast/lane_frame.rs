@@ -142,6 +142,15 @@ struct StringCases {
     index: unsafe fn(*mut (), *const super::string_case_filter::StringCaseFilter, Value, usize, usize) -> u32,
 }
 
+/// The lane context's suspension of an `Await` row (`generator_yields::await_in_lane`), erased of its
+/// host: the record the row runs (its position names the resume) and the suspend itself.
+#[derive(Clone, Copy)]
+struct Suspension {
+    context: *mut (),
+    record: *const LaneInstruction,
+    suspend: unsafe fn(*mut (), *const LaneInstruction, Registers, Register, Register) -> Option<()>,
+}
+
 /// The running lane's steady decisions, for a staged comparison jump.
     decisions: Option<Decisions>,
     /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
@@ -172,6 +181,8 @@ struct StringCases {
     cleanups: Option<IteratorCleanups>,
     /// The string-case index a `StringCaseIndex` row answers (`case_index_in_lane`).
     string_cases: Option<StringCases>,
+    /// The suspension an `Await` row makes (`await_in_lane`).
+    suspension: Option<Suspension>,
     /// The running function, which a `LoadCallee` row reads (`running_callee`), where the row is one.
     callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
     /// The lane context and the VM's Wasm global load and store, for a staged instance-state row
@@ -248,7 +259,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -272,7 +283,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 }
 
@@ -402,6 +413,14 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let host = self.host?;
         // SAFETY: the definer was made for the lane context this frame runs in.
         unsafe { (host.define)(host.cx, array, index, value) }.then_some(())
+    }
+
+    #[inline(always)]
+    fn suspend_await(&mut self, _stage: &mut Concrete, destination: Register, source: Register) -> Option<Edge> {
+        let suspension = self.suspension?;
+        // SAFETY: the running lane's context, record and register file.
+        unsafe { (suspension.suspend)(suspension.context, suspension.record, self.registers, destination, source) }?;
+        Some(Edge::Leave)
     }
 
     #[inline(always)]
@@ -940,6 +959,30 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store, names: Some((cx.cast(), names)),
             clones, cleanups: Some(cleanups), ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
+        // A string-case index reads its operand from the register file (`LaneFrame::read` stands for field B),
+        // and answers from the case table of the record's filter (`FLAG_CASE_FILTER`), else the VM's selector.
+        let string_case = const { OP == crate::staged::STRING_CASE_INDEX_ROW };
+        let string_cases = if string_case {
+            let filter = if FLAG == FLAG_CASE_FILTER { unsafe { i.operand.string_case_filter } } else { std::ptr::null() };
+            Some(StringCases { context: cx.cast(), filter, index: super::string_case_filter::case_index_in_lane::<H> })
+        } else {
+            None
+        };
+        let heap: Option<*const crate::heap::Heap> = if string_case {
+            let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
+            Some(heap)
+        } else {
+            None
+        };
+        // An `await` suspends the promise job the run is rooted in, from the record it runs (`await_in_lane`).
+        let suspension = if const { OP == crate::staged::AWAIT_ROW } {
+            Some(Suspension { context: cx.cast(), record: i, suspend: super::generator_yields::await_in_lane::<H> })
+        } else {
+            None
+        };
+        return LaneFrame::<ACC> { heap, string_cases, suspension, ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
         let read: unsafe fn(*mut ()) -> Option<Value> = |context| {
@@ -959,22 +1002,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
-        // A string-case index reads its operand from the register file (`LaneFrame::read` stands for field B),
-        // and answers from the case table of the record's filter (`FLAG_CASE_FILTER`), else the VM's selector.
-        let string_case = const { OP == crate::staged::STRING_CASE_INDEX_ROW };
-        let string_cases = if string_case {
-            let filter = if FLAG == FLAG_CASE_FILTER { unsafe { i.operand.string_case_filter } } else { std::ptr::null() };
-            Some(StringCases { context: cx.cast(), filter, index: super::string_case_filter::case_index_in_lane::<H> })
-        } else {
-            None
-        };
-        let heap: Option<*const crate::heap::Heap> = if string_case {
-            let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
-            Some(heap)
-        } else {
-            None
-        };
-        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads, heap, string_cases,
+        return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads,
             ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
@@ -1194,6 +1222,8 @@ macro_rules! row_decode {
             Operation::decode_wasm_access($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Literal)) } {
             Operation::decode_literal(crate::staged::Fields::wide($fields), ())
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Lane)) } {
+            Operation::decode_lane(crate::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
             // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
             // proof is the unit.
@@ -1234,6 +1264,7 @@ lane_handler! {
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
             Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+            Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
             Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
         }
@@ -1277,6 +1308,8 @@ lane_handler! {
                 // No record reads a non-producer's accumulator (`derive_lane_view`).
                 next!(cx, r, following(ip), view)
             }
+            // A row that suspended its activation (`Frame::suspend_await`) ends the run, as its hand handler did.
+            Step::Control(Edge::Leave) => return exit(ip),
             Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
         }
     }
@@ -1340,6 +1373,7 @@ lane_handler! {
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
                 Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
                 Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+                Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
                 Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                 Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<B>::OPCODE) }, r, ip, view),
             }
@@ -1446,6 +1480,7 @@ lane_handler! {
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
                     Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
                     Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+                    Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
                     Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
                     Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<$L>::OPCODE) }, r, ip, view),
                 }

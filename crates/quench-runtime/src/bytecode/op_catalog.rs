@@ -185,6 +185,9 @@ pub(crate) enum Decoder {
     WasmState,
     /// A Wasm direct load or store of the function's memory (`staged::wasm_access`).
     WasmMemory,
+    /// A row only the lane's frame answers, which the plan does not decode (`Operation::decode_lane`):
+    /// a string-case index and an `await` the lane suspends.
+    Lane,
 }
 
 /// An opcode's general step a lane or a body makes in place, by one helper of the

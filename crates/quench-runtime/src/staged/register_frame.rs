@@ -112,6 +112,11 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn allocate_value(&mut self, _stage: &mut S, _destination: Register, _allocation: Allocation, _proof: S::Proof) -> Option<S::Word> { None }
 
+    /// `Await`: suspends the running promise job on the value in `source`, resuming into `destination`, and
+    /// leaves the lane run (`Edge::Leave`); `None` where the frame cannot suspend, which the general step does.
+    #[inline(always)]
+    fn suspend_await(&mut self, _stage: &mut S, _destination: Register, _source: Register) -> Option<Self::Control> { None }
+
     /// `StringCaseIndex`: the index of the value in `source` among the `count` program constants from
     /// `start`, as the frame's case table answers it; `None` where the frame has none (the general step).
     #[inline(always)]

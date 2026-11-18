@@ -251,6 +251,7 @@ fn step_jumps_on_the_javascript_truthiness_of_every_value_kind() {
             Edge::Target => Edge::Following,
             Edge::Following => Edge::Target,
             Edge::Entry(_) => unreachable!("a conditional jump takes no table entry"),
+            Edge::Leave => unreachable!("a conditional jump leaves no run"),
         };
         assert_eq!(jump_if_edge(value, false, &heap), falsy_edge, "JumpFalse {value:?}");
     }

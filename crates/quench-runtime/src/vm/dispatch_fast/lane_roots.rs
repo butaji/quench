@@ -1,7 +1,7 @@
 //! What a lane run is rooted in: the VM frame a general loop entered it from, or, for a promise
 //! job or a native `next`, the suspended frame of an async function or a generator that its
 //! owner keeps (`Vm::run_lane_job`). A job's lane resumes the activation over its record's register file
-//! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
+//! with no VM frame beneath it; its `await` suspends it back into the record (`await_in_lane`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
 use super::generator_windows::{open_window_locals, window_environments};

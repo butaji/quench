@@ -71,40 +71,39 @@ impl<H: Host> Vm<H> {
     }
 }
 
-script_handler! {
-    /// `await` of the activation a promise job's lane run is rooted in (`LaneRoot::Job`): the
-    /// frame suspends into its owner, resuming after this record with the awaited value in its
-    /// register, the activation pops, and the run ends for the job to attach the await's
-    /// reactions (`Vm::suspend_job_window`). Any other `await`, a conversion that could run
-    /// guest code included, takes the general path.
-    #[inline(never)]
-    fn lane_await<>(cx, r, ip, i, view) {
-        let LaneRoot::Job(job) = (unsafe { (*cx).root }) else {
-            return exit(ip);
-        };
-        let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = vm.lane_await_source(code, r.get(i.b)) else {
-            return exit(ip);
-        };
-        // The source may be a fresh promise, which the safepoints after the run collect.
-        note_allocation(vm);
-        // SAFETY: the record lies in the running view.
-        let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
-        vm.lane_stack.pop_activation();
-        vm.lane_suspended = Some(value);
-        exit(ip)
-    }
+/// `Await` of the activation a promise job's lane run is rooted in (`LaneRoot::Job`): the frame
+/// suspends into its owner, resuming after the record with the awaited value (converted as
+/// `Vm::lane_await_source` converts it) in `destination`, the activation pops, and the run ends for
+/// the job to attach the await's reactions (`Vm::suspend_job_window`). Any other `await`, and a
+/// conversion that could run guest code, leave to the general step (`None`, nothing changed).
+///
+/// # Safety
+/// `cx` is the running lane's context, `record` the running record of its view, and `r` its register file.
+#[inline(never)]
+pub(super) unsafe fn await_in_lane<H: Host>(cx: *mut (), record: *const LaneInstruction, r: Registers,
+    destination: Register, source: Register) -> Option<()> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let LaneRoot::Job(job) = (unsafe { (*cx).root }) else { return None };
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let value = vm.lane_await_source(code, r.get(source))?;
+    // The source may be a fresh promise, which the safepoints after the run collect.
+    note_allocation(vm);
+    // SAFETY: the record lies in the running view.
+    let pc = unsafe { record.offset_from((*cx).base) } as usize;
+    vm.suspend_job_window(job, pc + 1, destination, value, 0);
+    vm.lane_stack.pop_activation();
+    vm.lane_suspended = Some(value);
+    Some(())
 }
 
-/// The handlers of a frame's suspensions (`lane_yield`, `lane_yield_star`, `lane_await`).
+/// The handlers of a frame's suspensions (`lane_yield`, `lane_yield_star`). `Await` is its lane row
+/// (`await_in_lane`).
 pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::Yield => Some(lane_yield::<H>),
         Class::YieldStar => Some(lane_yield_star::<H>),
-        Class::Await => Some(lane_await::<H>),
         _ => None,
     }
 }
