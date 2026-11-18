@@ -1166,7 +1166,7 @@ fn nested_reads_follow_their_first_steps_hint_across_shapes() {
 #[test]
 fn inherited_reads_follow_their_hint_and_the_prototype_values() {
     // An inherited read's record keeps the entry that last answered it as its hint, and the
-    // entry its answer while no prototype changes (`Vm::hinted_inherited_field_hit`):
+    // entry its answer while no prototype changes (`Vm::inherited_hint_operands`):
     // instances of sibling and nested subclasses reading one site, a method replaced on the
     // base prototype, shadowed on an intermediate one and deleted again, and a receiver moved
     // to another prototype each read the method the receiver in hand inherits. Expected value

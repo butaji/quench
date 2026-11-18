@@ -627,6 +627,19 @@ lane_handler! {
             if const { FLAG == super::STRING_SITE } {
                 sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { super::inherited_site(FLAG) && !super::inherited_other_site(FLAG) } {
+                // A direct object's miss; the read of any other receiver's object part.
+                if const { super::own_site_this(FLAG) } {
+                    sibling!(lane_row::<H, OP, ACC, { super::INHERITED_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
+                }
+                sibling!(lane_row::<H, OP, ACC, { super::INHERITED_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
+            }
+            if const { super::inherited_other_site(FLAG) } {
+                if const { super::own_site_this(FLAG) } {
+                    sibling!(lane_get_field_inherited_walk::<H, true>, r, ip, Carried::script_in(script, view))
+                }
+                sibling!(lane_get_field_inherited_walk::<H, false>, r, ip, Carried::script_in(script, view))
+            }
             if const { FLAG == super::HELD_CELL_REGISTER } {
                 sibling!(lane_get_field_holder_cell_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
@@ -681,7 +694,16 @@ lane_handler! {
             // installed only once the lane bound the object records (`lane_get_field_own_refresh`).
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
-            if const { FLAG == super::STRING_SITE } {
+            if const { super::inherited_site(FLAG) } {
+                // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
+                // last answered); at the other site, of any receiver's object part.
+                let machine = unsafe { vm(script) };
+                let others = const { super::inherited_other_site(FLAG) };
+                let Some((guard, watch, value)) = machine.inherited_hint_operands(i.call_link.get(), i.imm(), others) else { property_miss!() };
+                if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+                let other = if others { Some(&raw const machine.heap) } else { None };
+                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
+            } else if const { FLAG == super::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };
                 let Some((watch, value)) = machine.string_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };

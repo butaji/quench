@@ -184,7 +184,7 @@ struct CallOperand {
 const NO_READ_MEMO: u32 = u32::MAX;
 
 /// The `FieldOperand::shape` of a record whose hint is an inherited entry
-/// (`Vm::hinted_inherited_field_hit`): no object's exact shape (`Object::exact_shape`, whose id
+/// (`Vm::inherited_hint_operands`): no object's exact shape (`Object::exact_shape`, whose id
 /// bits never all hold), so an own-field hint read (`LaneInstruction::field_hint`) misses it.
 const INHERITED_HINT: u32 = super::NO_FIELD_RECEIVER - 1;
 
@@ -7507,6 +7507,20 @@ pub(super) const fn held_site(site: u8) -> bool {
 /// whose miss takes the site's holder entry (`lane_get_field_holder_cell_refresh`).
 pub(super) const HELD_CELL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 3);
 
+/// The site facts of a read through the record's inherited hint, a method beyond the immediate
+/// prototype (`FieldSiteTier::Inherited`): of a direct object, then of any receiver's object
+/// part, each of `this` and of a register.
+pub(super) const INHERITED_THIS: u8 = own_site(true, OWN_FORMS.len() + 4);
+pub(super) const INHERITED_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 4);
+pub(super) const INHERITED_OTHER_THIS: u8 = own_site(true, OWN_FORMS.len() + 5);
+pub(super) const INHERITED_OTHER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 5);
+
+/// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
+pub(super) const fn inherited_site(site: u8) -> bool {
+    site == INHERITED_THIS || site == INHERITED_REGISTER || inherited_other_site(site)
+}
+pub(super) const fn inherited_other_site(site: u8) -> bool { site == INHERITED_OTHER_THIS || site == INHERITED_OTHER_REGISTER }
+
 /// Whether held site `site` reads any receiver's object part, not a direct object's alone.
 pub(super) const fn held_other_site(site: u8) -> bool {
     site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER || site == HELD_CELL_REGISTER
@@ -7524,7 +7538,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(super) const fn own_site_decodes(site: u8) -> bool {
-    if held_site(site) || site == STRING_SITE { return false; }
+    if held_site(site) || site == STRING_SITE || inherited_site(site) { return false; }
     let form = own_site_form(site);
     form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
         && form != crate::value_vec::NARROW_FORM)
@@ -7863,24 +7877,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `GetField` of a register or `this` at a site with an inherited entry
-    /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: the entry
-    /// that last answered it, its hint, inline while its proof holds
-    /// (`Vm::hinted_inherited_field_hit`), as a parser's methods read from instances of
-    /// several plugin classes; any other read takes `lane_get_field_inherited_walk`.
-    fn lane_get_field_inherited<THIS: bool>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).hinted_inherited_field_hit(object, i.imm(), i.call_link.get()))
-        else {
-            sibling!(lane_get_field_inherited_walk::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_inherited` past its hint: the site's entries and their chain walk,
+    /// The generated inherited read (`INHERITED_OTHER_*`) past its hint: the site's entries and their chain walk,
     /// which proves one again (`Vm::inherited_field_entry_hit`); the entry that answered
     /// becomes the hint. Any other read takes `lane_get_field_miss`.
     #[inline(never)]
@@ -8044,7 +8041,7 @@ script_handler! {
     /// A miss of a single-entry read (the own-field row, `lane_get_field_holder`, `_inherited`): a nested record moves to
     /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
     /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
-    /// an inherited entry to `lane_get_field_inherited`; the read itself takes
+    /// an inherited entry to the generated inherited read; the read itself takes
     /// `lane_get_field`.
     #[inline(never)]
     fn lane_get_field_miss<>(cx, r, ip, i, view) {
@@ -8106,8 +8103,8 @@ script_handler! {
             )),
             FieldSiteTier::Inherited => Some(single_base_handler(
                 i.b,
-                lane_get_field_inherited::<H, true>,
-                lane_get_field_inherited::<H, false>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, INHERITED_THIS>,
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER>,
                 lane_get_field::<H>,
             )),
             FieldSiteTier::Own

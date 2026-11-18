@@ -2271,7 +2271,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `inherited_field_hit` with the index of the entry that answered, which a lane record
-    /// keeps as its hint (`hinted_inherited_field_hit`).
+    /// keeps as its hint (`inherited_hint_operands`).
     #[inline(always)]
     pub(super) fn inherited_field_entry_hit(
         &mut self,
@@ -2312,17 +2312,27 @@ impl<H: Host> Vm<H> {
         self.proved_inherited_entry_value(index, object)
     }
 
-    /// `proved_inherited_field_hit` of inherited entry `index`, a lane record's hint of the
-    /// entry that last answered its read of `atom` (`inherited_field_entry_hit`): an entry
-    /// answers any read of its name from a receiver of its shape whose prototype its proof
-    /// names, whichever site recorded it.
+    /// The operands of inherited hint `index` for a read of `atom` (`IcOp::Held`): the layout id
+    /// of the receivers its proof last answered, the watch on its answer and the answer's bits;
+    /// `None` where no proved entry of that atom is held, or its slot holds no constant yet.
+    /// `others`: a function, array or builtin receiver reads it too, which the entry answers
+    /// only where functions may stand on its chain and a builtin's own lookup is its shape's.
     #[inline(always)]
-    pub(super) fn hinted_inherited_field_hit(&mut self, object: Value, atom: Atom, index: u16) -> Option<Value> {
-        let index = u32::from(index);
-        if self.heap.dependencies().inherited_get(index)?.atom != atom {
+    pub(super) fn inherited_hint_operands(&self, index: u16, atom: Atom, others: bool) -> Option<(u64, u64, u64)> {
+        let cache = self.heap.dependencies().inherited_get(u32::from(index))?;
+        if cache.atom != atom || !cache.proved {
             return None;
         }
-        self.proved_inherited_entry_value(index, object)
+        if others && !(cache.function_links && self.inherited_entry_answers(super::field_cache::InheritedReceiver::Builtin, u32::from(index))) {
+            return None;
+        }
+        // An absent name answers `undefined` while the proof holds, which the read tests above
+        // each time: its watch is one never retired.
+        let (watch, value) = match cache.answer {
+            InheritedFieldAnswer::Absent => (super::holder_hints::never_retired(), Value::UNDEFINED),
+            InheritedFieldAnswer::Slot(_) => (std::rc::Rc::as_ptr(cache.constant_watch.as_ref()?), cache.constant),
+        };
+        Some((u64::from(cache.proved_layout), watch as u64, value.to_bits()))
     }
 
     /// The value inherited entry `index` answers for `object` while its proof holds: its
