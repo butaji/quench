@@ -21712,7 +21712,6 @@ fn derive_lane_view<'live, H: Host>(
     };
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
-        specialize_load_branch_pairs::<H>(&mut records);
         specialize_update_jumps::<H>(&decoded, &mut records);
         specialize_nullish_back_edges::<H>(&decoded, &mut records);
         specialize_update_back_edges::<H>(&decoded, &mut records);
@@ -22151,28 +22150,6 @@ fn specialize_register_operands<H: Host>(
         record.handler = handler as *const ();
         record.b = left.payload();
         record.c = right.payload();
-    }
-}
-
-/// Coalesce a plain local load or a direct capture read with the following register/register
-/// comparison branch. The second record remains independently callable for branch-table and
-/// jump-target entry.
-fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
-    for pc in 0..records.len().saturating_sub(1) {
-        let reads_capture = is_row::<H, CAPTURE_READ>(records[pc].handler);
-        if !is_row::<H, { opc::LoadLocalPlain }>(records[pc].handler) && !reads_capture {
-            continue;
-        }
-        // A register jump test runs its operator's instantiation (`relation_jump_handler`),
-        // and the fused record that operator's (`load_relation_jump_handler`).
-        let branch = &records[pc + 1];
-        let operator = u32::from(branch.a);
-        let Some(backward) = [false, true].into_iter().find(|&backward| {
-            branch.handler == relation_jump_handler::<H, false>(operator, backward) as *const ()
-        }) else {
-            continue;
-        };
-        records[pc].handler = load_relation_jump_handler::<H>(operator, backward, reads_capture) as *const ();
     }
 }
 
