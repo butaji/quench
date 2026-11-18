@@ -142,8 +142,10 @@ impl<H: Host> Vm<H> {
         let (Some(view), Units::Ascii(separator)) = (self.array_read_view(array), separator.flat().view()) else {
             return 0;
         };
-        let mut text = Vec::new();
         let mut stop = view.len().min(length);
+        // One allocation for typical pieces (short strings and numbers) instead of growing
+        // from empty.
+        let mut text = Vec::with_capacity(stop.saturating_mul(separator.len() + 8).min(1 << 16));
         for (index, value) in view.iter().take(length).enumerate() {
             let mark = text.len();
             if index != 0 {
