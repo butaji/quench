@@ -61,8 +61,8 @@ const CONCEPTS: &[Concept] = &[
     },
     Concept {
         name: "typeof-classifier",
-        homes: &["quench-runtime/src/staged/value.rs", STENCILS],
-        marks: &[Mark::Function("immediate_name"), Mark::Function("immediate_typeof_index")],
+        homes: &["quench-runtime/src/staged/value.rs", "quench-runtime/src/bytecode/typeof_names.rs", STENCILS],
+        marks: &[Mark::Spelled("Value::TRUE.to_bits()&ValueLayout::TAG_MASK"), Mark::Function("typeof_name_index")],
     },
     Concept {
         name: "length-int32-guard",

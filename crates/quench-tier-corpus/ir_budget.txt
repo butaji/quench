@@ -57,7 +57,7 @@ num_to_str 569 1713 1713
 parse_int 196 594 1036.1
 shl_shr 7 27 93
 str_charcodeat 9 33 207.1
-str_compare 4 18 427.1
+str_compare 4 18 285.1
 str_concat 531.56 1601 1601
 str_concat_acc 7 27 559.1
 str_index 9.07 34 375

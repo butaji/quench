@@ -8,7 +8,6 @@ use super::value::{is_direct_array, is_direct_object, is_direct_string};
 use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 use crate::bytecode::{Operand, WideInstruction};
 use crate::typed_ir::Type;
-use crate::value::ValueLayout;
 use crate::vm::operations::{equality_binary_operator, equality_operator, NumberBitwise, NumberRelation};
 use crate::{Value, ValueType};
 
@@ -247,8 +246,7 @@ fn walked_instanceof<S: NumericStage>(stage: &mut S, (records, value): (S::Word,
         let answer = stage.select(holds, yes, no);
         stage.select(decided, answer, unknown)
     }, |stage| {
-        let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
-        let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+        let heap = super::value::is_heap(stage, value);
         let immediate = stage.not(heap);
         let string = is_direct_string(stage, value);
         let primitive = stage.any(immediate, string);
@@ -305,8 +303,7 @@ fn known_equal(ty: Type, expected: Nullish, strict: bool) -> Option<bool> {
 #[inline(always)]
 fn loosely_nullish<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, word: S::Word) -> Option<S::Cond> {
     if frame.html_dda_possible() {
-        let tag = stage.and_imm(word, ValueLayout::TAG_MASK);
-        let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+        let heap = super::value::is_heap(stage, word);
         let (object, array) = (is_direct_object(stage, word), is_direct_array(stage, word));
         let record = stage.either(object, array);
         let unrecorded = stage.not(record);

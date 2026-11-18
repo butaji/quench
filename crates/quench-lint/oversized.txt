@@ -1086,14 +1086,14 @@ concept_runs lane-leaders 4
 concept_runs liveness-graph-solve 3
 concept_runs liveness-solve 3
 concept_runs successor-table 5
-concept_twin length-int32-guard 2
+concept_twin length-int32-guard 1
 concept_twin math-imul 3
 concept_twin packed-instruction-decode 2
 concept_twin string-order 0
 concept_twin to-int32 2
 concept_twin to-uint8-clamp 1
 concept_twin typeof-classifier 2
-concept_twin value-tag-test 41
+concept_twin value-tag-test 26
 dod-bool-array crates/quench-node/src/modules/util_comparisons_shared_vm.rs 1
 dod-bool-array crates/quench-runtime/src/bytecode/validate.rs 3
 dod-bool-array crates/quench-runtime/src/compile/ast.rs 2
