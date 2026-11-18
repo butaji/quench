@@ -394,29 +394,52 @@ impl<H: Host> Vm<H> {
     }
 }
 
-/// The values native code keeps alive across a call into another instance: the environments of
-/// the instances it is running in beyond its own, which no frame or table need hold.
+/// The values native code keeps alive across a call that can collect: the environments of the
+/// instances it is running in beyond its own (`wasm_instance_switch`), and the reference registers
+/// of the compiled frames it runs (`wasm_roots`), which no frame or table need hold.
+///
+/// The slots are a heap buffer of `capacity` values, owned by the record and freed with it. Code
+/// reads the buffer's base from `SLOTS` and the depth from `DEPTH`, and checks `CAPACITY` before it
+/// pushes.
 #[repr(C)]
 pub(crate) struct NativeRoots {
     depth: u64,
-    slots: [Value; NATIVE_ROOT_CAPACITY],
+    capacity: u64,
+    slots: *mut Value,
 }
 
-/// How many instances native code may be inside beyond the one it entered; a deeper call leaves
-/// through the VM, which roots its own.
-pub(super) const NATIVE_ROOT_CAPACITY: usize = 256;
+// SAFETY: the record owns its buffer outright and no other holder reads or writes it, so moving the
+// record to another thread moves the buffer with it.
+unsafe impl Send for NativeRoots {}
+
+/// How many roots native code may hold at once. A push past it traps `CallStackExhausted` (for a
+/// compiled frame) or leaves through the VM (for an instance switch), which roots its own.
+pub(super) const NATIVE_ROOT_CAPACITY: usize = 65536;
 
 impl NativeRoots {
     pub(super) const DEPTH: i32 = std::mem::offset_of!(Self, depth) as i32;
+    pub(super) const CAPACITY: i32 = std::mem::offset_of!(Self, capacity) as i32;
+    /// The base address of the buffer: root `k` is `size_of::<Value>()` bytes past it, `k` times.
     pub(super) const SLOTS: i32 = std::mem::offset_of!(Self, slots) as i32;
 
     pub(crate) fn new() -> Box<Self> {
-        Box::new(Self { depth: 0, slots: [Value::UNDEFINED; NATIVE_ROOT_CAPACITY] })
+        // Zeroed words, not `Value::UNDEFINED`: the allocator hands back untouched zero pages, so
+        // the buffer costs memory only as deep as roots are ever pushed. Only `..depth` is read,
+        // and every slot there was written first.
+        const _: () = assert!(size_of::<Value>() == size_of::<u64>() && align_of::<Value>() == align_of::<u64>());
+        let slots = vec![0_u64; NATIVE_ROOT_CAPACITY].into_boxed_slice();
+        Box::new(Self {
+            depth: 0,
+            capacity: NATIVE_ROOT_CAPACITY as u64,
+            slots: Box::into_raw(slots).cast::<Value>(),
+        })
     }
 
     /// The environments held now: the roots of a collection.
     pub(crate) fn live(&self) -> &[Value] {
-        &self.slots[..self.depth as usize]
+        // SAFETY: `slots` is the buffer `new` leaked, of `capacity` values, and every push keeps
+        // `depth` within it (`CAPACITY` checks).
+        unsafe { std::slice::from_raw_parts(self.slots, self.depth as usize) }
     }
 
     /// The depth an entry restores when it ends, whatever left native frames unreturned.
@@ -426,6 +449,14 @@ impl NativeRoots {
 
     pub(super) fn set_depth(&mut self, depth: u64) {
         self.depth = depth;
+    }
+}
+
+impl Drop for NativeRoots {
+    fn drop(&mut self) {
+        // SAFETY: `slots` is the boxed slice `new` leaked, of `capacity` values, and nothing else
+        // owns it.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.slots.cast::<u64>(), self.capacity as usize)) });
     }
 }
 
@@ -490,7 +521,8 @@ mod tests {
     fn the_native_roots_hold_what_was_pushed_and_no_more() {
         let mut roots = NativeRoots::new();
         assert!(roots.live().is_empty());
-        roots.slots[0] = Value::from_bits(5);
+        // SAFETY: the buffer holds `capacity` values, and slot 0 is one of them.
+        unsafe { *roots.slots = Value::from_bits(5) };
         roots.set_depth(1);
         assert_eq!(roots.live(), [Value::from_bits(5)]);
         assert_eq!(roots.depth(), 1);

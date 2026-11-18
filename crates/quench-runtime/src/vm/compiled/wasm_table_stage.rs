@@ -322,7 +322,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let raw = self.load_word_at(args, offset);
                 match Kind::of(*ty).expect("planned") {
                     Kind::I32 => self.convert(Conversion::WrapI64, raw),
-                    Kind::I64 => raw,
+                    Kind::I64 | Kind::Reference => raw,
                 }
             })
             .collect();
@@ -350,11 +350,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         arguments.extend_from_slice(values);
         let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), self.call_conv);
         let callee = self.body.core.builder.import_signature(callee);
+        let roots = self.root();
         let results = self.call_signature(callee, body, &arguments);
+        self.unroot(roots);
         let bits = match signature.results.first() {
             Some(result) => match Kind::of(*result).expect("planned") {
                 Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, results[1]),
-                Kind::I64 => results[1],
+                Kind::I64 | Kind::Reference => results[1],
             },
             None => self.constant(Width::I64, 0),
         };
@@ -394,7 +396,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let value = self.read(window.base + offset as u16, kind);
             let value = match kind {
                 Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, value),
-                Kind::I64 => value,
+                Kind::I64 | Kind::Reference => value,
             };
             let address = self.slot_address(slot, (offset * WORD) as i32);
             self.store_word(MemFlagsData::trusted(), value, address, 0);
@@ -431,7 +433,10 @@ impl<H: Host> Emitter<'_, '_, H> {
         let table = self.constant(Width::I64, i64::from(table));
         let signature_index = self.constant(Width::I64, i64::from(signature_index));
         let site = self.constant(Width::I64, site as i64);
-        self.call_words(target, &[context, table, row, signature_index, site, args, out])
+        let roots = self.root();
+        let status = self.call_words(target, &[context, table, row, signature_index, site, args, out]);
+        self.unroot(roots);
+        status
     }
 
     /// The bits of the call's result that `out` holds: 0 where the signature has none.
@@ -457,7 +462,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let kind = Kind::of(*ty).expect("planned");
         let value = match kind {
             Kind::I32 => self.convert(Conversion::WrapI64, bits),
-            Kind::I64 => bits,
+            Kind::I64 | Kind::Reference => bits,
         };
         self.write(destination, kind, value);
     }

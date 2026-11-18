@@ -93,7 +93,9 @@ impl<H: Host> WasmMemoryGrow for Emitter<'_, '_, H> {
     fn memory_grow(&mut self, pages: ir::Value) -> ir::Value {
         let delta = self.memory_index(pages);
         let context = self.body.core.context;
+        let roots = self.root();
         let before = self.call_leaf(memory_grow_callout::<H> as *const () as usize, &[context, delta]);
+        self.unroot(roots);
         self.convert(Conversion::WrapI64, before)
     }
 }

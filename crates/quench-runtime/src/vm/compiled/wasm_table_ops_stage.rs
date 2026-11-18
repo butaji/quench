@@ -242,7 +242,7 @@ impl<H: Host> Analysis<'_, H> {
             (value_kind(state.get(register?, registers)?)? == Kind::I32).then_some(())
         };
         let reference = |state: &AnalysisState, register: Option<u16>| -> Option<()> {
-            (value_kind(state.get(register?, registers)?)? == Kind::I64).then_some(())
+            (value_kind(state.get(register?, registers)?)? == Kind::Reference).then_some(())
         };
         let (first, second) = op.bindings(instruction);
         let words = op.words(instruction);
@@ -254,7 +254,7 @@ impl<H: Host> Analysis<'_, H> {
             TableOp::Get => {
                 table(state, first)?;
                 word(state, words[0])?;
-                state.set(instruction.a(), registers, Slot::Value(Kind::I64))
+                state.set(instruction.a(), registers, Slot::Value(Kind::Reference))
             }
             TableOp::Set => {
                 table(state, first)?;
@@ -327,7 +327,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let b = self.table_word(w1);
         let c = self.table_word(w2);
         let value = match op.value(instruction) {
-            Some(register) => self.read(register, Kind::I64),
+            Some(register) => self.read(register, Kind::Reference),
             None => self.constant(Width::I64, 0),
         };
         let context = self.body.core.context;
@@ -339,11 +339,15 @@ impl<H: Host> Emitter<'_, '_, H> {
         let out = self.slot_address(slot, 0);
         let request = self.constant(Width::I64, request as i64);
         let target = table_op_callout::<H> as *const () as usize;
+        // The callout runs the table's operation, which may run JS (a grow's or fill's
+        // conversions), so the frame's references are held across it.
+        let roots = self.root();
         let status = self.call_leaf(target, &[context, request, a, b, c, value, out]);
+        self.unroot(roots);
         self.propagate(status);
         let result = self.load_word(Width::I64, MemFlagsData::trusted(), out, 0);
         match op {
-            TableOp::Get => self.write(instruction.a(), Kind::I64, result),
+            TableOp::Get => self.write(instruction.a(), Kind::Reference, result),
             TableOp::Size | TableOp::Grow => {
                 let wrapped = self.convert(Conversion::WrapI64, result);
                 self.write(instruction.a(), Kind::I32, wrapped);

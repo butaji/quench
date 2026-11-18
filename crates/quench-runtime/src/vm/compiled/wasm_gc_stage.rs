@@ -1,12 +1,12 @@
 //! The Wasm GC operations of the u-jit: the staged rules of `staged::wasm_gc` emitted over the
 //! compiled frame, so the checks, their order and their traps are the rules'. The primitives that
 //! read or write the VM's heap are callouts that run `HeapStage`, the interpreter's stage, so the
-//! two tiers share the heap's operations. A reference is its `I64` Value bits, as every callout
-//! passes it; a field, element or value is the Wasm bits of its kind (`GcFieldValue`): an `I32`
-//! zero-extended, an `I64` number's bits, or a reference's bits. The interpreter's `HeapStage`
-//! works on Value bits, so each callout converts at its boundary. Allocating operations stay
-//! uncompiled: an allocation can make a collection due, and compiled frames do not root the
-//! reference bits they hold yet.
+//! two tiers share the heap's operations. A reference is its `Reference` kind's Value bits, as
+//! every callout passes it; a field, element or value is the Wasm bits of its kind
+//! (`GcFieldValue`): an `I32` zero-extended, an `I64` number's bits, or a reference's bits. The
+//! interpreter's `HeapStage` works on Value bits, so each callout converts at its boundary.
+//! Allocating operations are `wasm_gc_allocate`'s: an allocation only makes a collection due, and
+//! a callout that allocates runs no interpreter code, so it needs no roots of its own.
 
 use super::wasm_instance_stage::value_kind;
 use super::wasm_stage::infallible;
@@ -243,7 +243,8 @@ impl<H: Host> WasmGc for Emitter<'_, '_, H> {
 fn field_kind(field: GcField) -> Option<Kind> {
     match field.value() {
         GcFieldValue::Narrow => Some(Kind::I32),
-        GcFieldValue::Wide | GcFieldValue::Reference => Some(Kind::I64),
+        GcFieldValue::Wide => Some(Kind::I64),
+        GcFieldValue::Reference => Some(Kind::Reference),
         GcFieldValue::Vector => None,
     }
 }
@@ -277,7 +278,7 @@ fn transfer_field(registers: u16, instruction: WideInstruction, state: &mut Anal
     let scalar = field_kind(field)?;
     let write = GcFieldAccess::from_op(instruction.op())? == GcFieldAccess::Write;
     let (reference, index, data) = field_registers(instruction, write, structure_access(instruction.op()));
-    operand(state, registers, reference, Kind::I64)?;
+    operand(state, registers, reference, Kind::Reference)?;
     if let Some(index) = index {
         operand(state, registers, index, Kind::I32)?;
     }
@@ -289,10 +290,10 @@ fn transfer_field(registers: u16, instruction: WideInstruction, state: &mut Anal
 }
 
 impl<H: Host> Analysis<'_, H> {
-    /// Checks a GC step and gives its result the kind its operation returns: references are `I64`
-    /// words, a reference test's and a length's operands as named, and a field write's value the
-    /// kind of its storage. An allocating operation is not admitted, so its function stays
-    /// uncompiled.
+    /// Checks a GC step and gives its result the kind its operation returns: references are
+    /// `Reference` words, a reference test's and a length's operands as named, and a field write's
+    /// value the kind of its storage. An allocating operation checks its own operands
+    /// (`transfer_allocating`).
     pub(super) fn transfer_gc(
         &self,
         function: &Function,
@@ -302,7 +303,7 @@ impl<H: Host> Analysis<'_, H> {
     ) -> Option<()> {
         self.callouts.then_some(())?;
         let registers = function.registers;
-        let reference = |state: &AnalysisState, register: u16| operand(state, registers, register, Kind::I64);
+        let reference = |state: &AnalysisState, register: u16| operand(state, registers, register, Kind::Reference);
         match op {
             GcOp::Field => transfer_field(registers, instruction, state),
             GcOp::ArrayLength => {
@@ -314,7 +315,7 @@ impl<H: Host> Analysis<'_, H> {
                 if instruction.op() == Op::WasmRefAsNonNull {
                     NonNullCheck::from_tag(instruction.imm())?;
                 }
-                let result = if instruction.op() == Op::WasmRefIsNull { Kind::I32 } else { Kind::I64 };
+                let result = if instruction.op() == Op::WasmRefIsNull { Kind::I32 } else { Kind::Reference };
                 state.set(instruction.a(), registers, Slot::Value(result))
             }
             GcOp::Equal => {
@@ -325,35 +326,35 @@ impl<H: Host> Analysis<'_, H> {
             GcOp::Test => {
                 self.vm.programs.wasm_signatures(self.program)?;
                 reference(state, instruction.b())?;
-                let result = if instruction.op() == Op::WasmRefTest { Kind::I32 } else { Kind::I64 };
+                let result = if instruction.op() == Op::WasmRefTest { Kind::I32 } else { Kind::Reference };
                 state.set(instruction.a(), registers, Slot::Value(result))
             }
-            GcOp::Allocating => None,
+            GcOp::Allocating => self.transfer_allocating(function, instruction, state),
         }
     }
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
-    /// Lowers a GC step as its staged rule, over the frame's registers. The analysis admits no
-    /// allocating operation (`transfer_gc`).
-    pub(super) fn gc(&mut self, instruction: WideInstruction, op: GcOp) {
+    /// Lowers a GC step as its staged rule, over the frame's registers, or an allocating step as
+    /// its callout (`gc_allocate`).
+    pub(super) fn gc(&mut self, pc: usize, instruction: WideInstruction, op: GcOp) {
         match op {
             GcOp::Field => self.gc_field(instruction),
             GcOp::ArrayLength => {
-                let reference = self.read(instruction.b(), Kind::I64);
+                let reference = self.read(instruction.b(), Kind::Reference);
                 let length = infallible(array_length(self, reference));
                 let length = self.convert(Conversion::WrapI64, length);
                 self.write(instruction.a(), Kind::I32, length);
             }
             GcOp::Null => self.gc_null(instruction),
             GcOp::Equal => {
-                let left = self.read(instruction.b(), Kind::I64);
-                let right = self.read(instruction.c(), Kind::I64);
+                let left = self.read(instruction.b(), Kind::Reference);
+                let right = self.read(instruction.c(), Kind::Reference);
                 let equal = self.operate(Binary::Equal, Width::I64, left, right);
                 self.write(instruction.a(), Kind::I32, equal);
             }
             GcOp::Test => self.gc_test(instruction),
-            GcOp::Allocating => unreachable!("transfer_gc leaves allocating operations uncompiled"),
+            GcOp::Allocating => self.gc_allocate(pc, instruction),
         }
     }
 
@@ -367,7 +368,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let structure = structure_access(op);
         let (reference, index, data) = field_registers(instruction, write, structure);
         let aggregate = if structure { Aggregate::Struct } else { Aggregate::Array };
-        let reference = self.read(reference, Kind::I64);
+        let reference = self.read(reference, Kind::Reference);
         let index = match index {
             Some(index) => {
                 let index = self.read(index, Kind::I32);
@@ -381,14 +382,14 @@ impl<H: Host> Emitter<'_, '_, H> {
                     let value = self.read(data, Kind::I32);
                     self.zero_extend(value)
                 }
-                Kind::I64 => self.read(data, Kind::I64),
+                Kind::I64 | Kind::Reference => self.read(data, kind),
             };
             infallible(field_write(self, aggregate, reference, index, field, value));
         } else {
             let word = infallible(field_read(self, aggregate, reference, index, field, access));
             let value = match kind {
                 Kind::I32 => self.convert(Conversion::WrapI64, word),
-                Kind::I64 => word,
+                Kind::I64 | Kind::Reference => word,
             };
             self.write(data, kind, value);
         }
@@ -396,7 +397,7 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// `ref.is_null` (a flag) and `ref.as_non_null` (the reference, or its null trap).
     fn gc_null(&mut self, instruction: WideInstruction) {
-        let reference = self.read(instruction.b(), Kind::I64);
+        let reference = self.read(instruction.b(), Kind::Reference);
         if instruction.op() == Op::WasmRefIsNull {
             let flag = self.is_null(reference);
             self.write(instruction.a(), Kind::I32, flag);
@@ -404,7 +405,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
         let check = NonNullCheck::from_tag(instruction.imm()).expect("validated non-null check");
         let word = infallible(non_null(self, reference, check.trap()));
-        self.write(instruction.a(), Kind::I64, word);
+        self.write(instruction.a(), Kind::Reference, word);
     }
 
     /// `ref.test` (a flag) and `ref.cast` (the reference, or a cast failure), against the
@@ -417,7 +418,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             .wasm_signatures(analysis.program)
             .map(|signatures| &signatures.declarations)
             .expect("the analysis admits a reference test only with declarations");
-        let reference = self.read(instruction.b(), Kind::I64);
+        let reference = self.read(instruction.b(), Kind::Reference);
         let target = ReferenceTarget::validated(instruction.imm());
         if instruction.op() == Op::WasmRefTest {
             let admitted = self.admits(reference, target, declarations);
@@ -425,7 +426,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             self.write(instruction.a(), Kind::I32, flag);
         } else {
             let word = infallible(reference_cast(self, reference, target, declarations));
-            self.write(instruction.a(), Kind::I64, word);
+            self.write(instruction.a(), Kind::Reference, word);
         }
     }
 }
