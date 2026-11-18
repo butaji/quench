@@ -43,6 +43,6 @@ fn an_update_fuses_with_its_back_edge_and_test() {
     let test = record(relation_jump_handler::<TestHost, false>(OPERATOR, false) as *const (), OPERATOR as u16);
     let fused = |test: Option<&LaneInstruction>| update_fusion::<TestHost>(&update, &jump, |offset| if offset == 0 { test } else { None }).map(|handler| handler as *const ());
     assert_eq!(fused(Some(&test)), Some(update_loop_handler::<TestHost>(OPERATOR, false, true) as *const ()));
-    assert_eq!(fused(None), Some(update_jump::<TestHost>(false, true) as *const ()));
+    assert_eq!(fused(None), Some(fused_row::<TestHost, { opc::IncDec }, { opc::Jump }>(true) as *const ()));
     assert!(update_fusion::<TestHost>(&jump, &jump, |_| None).is_none(), "only an `IncDec` fuses with the jump after it");
 }

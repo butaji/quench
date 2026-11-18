@@ -223,12 +223,15 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 5] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 8] = [
     (Op::StoreLocalPlain as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpTrue as u16, FUSED_PLAIN),
     (Op::ToNumeric as u16, Op::IncDec as u16, FUSED_PLAIN),
+    (Op::IncDec as u16, Op::Jump as u16, FUSED_PLAIN),
+    (Op::Binary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
+    (Op::Binary as u16, Op::JumpTrue as u16, FUSED_PLAIN),
 ];
 
 /// `FUSED_ROWS` mode: both rows run in full, `A`'s result is written to its register.

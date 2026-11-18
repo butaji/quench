@@ -1261,8 +1261,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             )),*]
         };
     }
-    let pairs = pairs!(0, 1, 2, 3, 4);
-    const { assert!(crate::staged::FUSED_ROWS.len() == 5, "one `pairs!` index per fused pair") };
+    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7);
+    const { assert!(crate::staged::FUSED_ROWS.len() == 8, "one `pairs!` index per fused pair") };
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
         let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {

@@ -3972,20 +3972,6 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
 
 
 script_handler! {
-    /// `IncDec` of a Number followed by an unconditional jump, a loop's update and its back
-    /// edge (`specialize_update_jumps`): the update, then the jump record's jump
-    /// (`lane_jump`, a safepoint when backward). Any other value runs the update's own
-    /// handler, which continues at the jump record.
-    fn lane_inc_dec_jump<DECREMENT: bool, BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            sibling!(inc_dec_row::<H, DECREMENT>(), r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        resume!(cx, lane_jump::<H>(r, following(ip), BACKWARD, Carried::script_in(cx, view), None))
-    }
-}
-
-script_handler! {
     /// `lane_inc_dec_jump` whose backward jump enters the loop's own integer register test
     /// (`lane_jump_binary_false_registers`, `specialize_update_jumps`): the update, the back
     /// edge's safepoint, then the test, continuing in the body or at the loop's exit, a
@@ -5009,26 +4995,6 @@ script_handler! {
         };
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_relation_value` whose next record branches on the boolean it writes
-    /// (the `JumpFalse` row, or the `JumpTrue` row where `WHEN`; `row_jump`, `specialize_relation_jumps`), a
-    /// comparison kept as a value and also tested, as `return (s & HELD) != 0 || ...`: the
-    /// comparison, its value and the branch as one record. Any other pair takes the value's
-    /// own path, which continues at the jump record.
-    fn lane_relation_value_jump<CONSTANT: bool, BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
-        let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        let Some(holds) = super::operations::integer_relation(operator, left, right) else {
-            sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
-        let jump_ip = following(ip);
-        if holds == WHEN {
-            resume!(cx, lane_jump::<H>(r, jump_ip, BACKWARD, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(jump_ip), Carried::script_in(cx, view))
     }
 }
 
@@ -22247,7 +22213,6 @@ fn derive_lane_view<'live, H: Host>(
         specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
-        specialize_relation_jumps::<H>(&mut records);
         specialize_array_literals::<H>(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
@@ -23166,33 +23131,6 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
     }
 }
 
-/// Gives each integer comparison kept as a value (`lane_relation_value`) whose next record
-/// branches on that value (the `JumpFalse` and `JumpTrue` rows, `row_jump`) the fused comparison and branch
-/// (`lane_relation_value_jump`). The jump record stays, for jumps that enter it and for the
-/// comparisons the fused record leaves to the value's own path.
-fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
-    for pc in 0..records.len().saturating_sub(1) {
-        let (value, jump) = (&records[pc], &records[pc + 1]);
-        let Some(constant) = [false, true].into_iter().find(|&constant| {
-            value.handler == if constant { lane_relation_value::<H, true> as Handler } else { lane_relation_value::<H, false> as Handler } as *const ()
-        }) else {
-            continue;
-        };
-        if jump.a != value.a {
-            continue;
-        }
-        let tests: [(*const (), Handler); 4] = [
-            (jump_row::<H, JUMP_IF_FALSE>(false) as *const (), if constant { lane_relation_value_jump::<H, true, false, false> } else { lane_relation_value_jump::<H, false, false, false> }),
-            (jump_row::<H, JUMP_IF_FALSE>(true) as *const (), if constant { lane_relation_value_jump::<H, true, true, false> } else { lane_relation_value_jump::<H, false, true, false> }),
-            (jump_row::<H, JUMP_IF_TRUE>(false) as *const (), if constant { lane_relation_value_jump::<H, true, false, true> } else { lane_relation_value_jump::<H, false, false, true> }),
-            (jump_row::<H, JUMP_IF_TRUE>(true) as *const (), if constant { lane_relation_value_jump::<H, true, true, true> } else { lane_relation_value_jump::<H, false, true, true> }),
-        ];
-        if let Some(&(_, fused)) = tests.iter().find(|(handler, _)| *handler == jump.handler) {
-            records[pc].handler = fused as *const ();
-        }
-    }
-}
-
 /// Gives each register `Move` that a proved element read follows (`specialize_proved_arrays`)
 /// the fused copy and read (`lane_move_get_index_proved`). The read record stays, for a jump
 /// that enters it and for the pair's declined proofs.
@@ -23292,7 +23230,7 @@ fn specialize_update_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [
 }
 
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an unconditional
-/// jump: the fused update and jump (`lane_inc_dec_jump`), or, when the jump goes back to the loop's forward integer
+/// jump: the generated pair of `IncDec` and `Jump` (`fused_row`, a `staged::FUSED_ROWS` pair), or, when the jump goes back to the loop's forward integer
 /// register test (`test`, read only then), the update, jump and test (`lane_inc_dec_loop`). `None` for any other
 /// pair. The loader (`specialize_update_jumps`) and a loop site that retires (`lane_loop_retire`) fuse by it, so a
 /// declined loop runs what the interpreter's own does.
@@ -23319,7 +23257,7 @@ fn update_fusion<'a, H: Host>(update: &LaneInstruction, jump: &LaneInstruction, 
             .find(|&capture| test.handler == load_relation_jump_handler::<H>(operator, false, capture) as *const ())
             .map(|capture| update_load_loop_handler::<H>(operator, decrement, capture))
     };
-    Some(looped().unwrap_or_else(|| update_jump::<H>(decrement, backward)))
+    Some(looped().unwrap_or_else(|| fused_row::<H, { opc::IncDec }, { opc::Jump }>(backward)))
 }
 
 /// Whether `record`, an `IncDec` running its row (`lane_row`), decrements (its immediate flag);
@@ -23333,17 +23271,6 @@ fn update_direction<H: Host>(record: &LaneInstruction) -> Option<bool> {
 #[inline(always)]
 fn inc_dec_row<H: Host, const DECREMENT: bool>() -> Handler {
     if DECREMENT { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_SET> } else { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_CLEAR> }
-}
-
-/// The fused update and jump (`lane_inc_dec_jump`) of an `IncDec` that decrements or not,
-/// and a jump backward or forward.
-fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
-    match (decrement, backward) {
-        (false, false) => lane_inc_dec_jump::<H, false, false>,
-        (false, true) => lane_inc_dec_jump::<H, false, true>,
-        (true, false) => lane_inc_dec_jump::<H, true, false>,
-        (true, true) => lane_inc_dec_jump::<H, true, true>,
-    }
 }
 
 /// Gives each `SetIndex` whose stored value the next record, a register `Move`, copies the
