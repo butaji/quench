@@ -55,6 +55,11 @@ impl Emit<'_, '_> {
         match imm { EmitImm::Const(bits) => self.constant(bits) }
     }
     fn compare(&mut self, relation: Relation, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_compare(relation, a, b) }
+    /// `a` against an immediate at `a`'s own width (`icmp_imm`): a record's 32-bit shape word
+    /// against a shape id is a 32-bit test, where an `i64` constant would not verify.
+    fn compare_imm(&mut self, relation: Relation, a: ir::Value, imm: EmitImm) -> ir::Value {
+        match imm { EmitImm::Const(bits) => self.raw_compare_imm(relation, a, bits as i64) }
+    }
     fn widen(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::ZeroExtend(Lane::I64), a) }
 }
 
@@ -130,12 +135,10 @@ impl Stage for Emit<'_, '_> {
     }
     /// Compared at `a`'s width: a record's 32-bit shape word against a shape id is a 32-bit test.
     fn eq_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.compare(Relation::Equal, a, v)
+        self.compare_imm(Relation::Equal, a, imm.into())
     }
     fn ne_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.compare(Relation::NotEqual, a, v)
+        self.compare_imm(Relation::NotEqual, a, imm.into())
     }
     fn sub(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::Sub, a, b) }
     fn select(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
@@ -191,8 +194,7 @@ impl Stage for Emit<'_, '_> {
         if self.raw_lane(a) == Lane::I32 { self.widen(a) } else { a }
     }
     fn ugt_imm(&mut self, a: ir::Value, imm: impl Into<EmitImm>) -> ir::Value {
-        let v = self.word(imm.into());
-        self.compare(Relation::UnsignedGreater, a, v)
+        self.compare_imm(Relation::UnsignedGreater, a, imm.into())
     }
     fn load_i8(&mut self, at: Access, base: ir::Value, offset: i32) -> ir::Value {
         self.raw_load_extended(Lane::I8, Extend::Sign, Lane::I32, regions::flags(at), base, offset)

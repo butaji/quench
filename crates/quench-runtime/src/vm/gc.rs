@@ -130,9 +130,9 @@ struct OwnedRootFilter {
 
 impl OwnedRootFilter {
     fn new(roots: &OwnedRoots) -> Self {
-        let bits = (roots.len() * OWNED_ROOT_FILTER_BITS_PER_OWNER)
-            .next_power_of_two()
-            .max(u64::BITS as usize);
+        // No owner holds roots: no probe can hit, and `may_hold` reads the empty words.
+        if roots.is_empty() { return Self { words: Vec::new(), mask: 0 }; }
+        let bits = (roots.len() * OWNED_ROOT_FILTER_BITS_PER_OWNER).next_power_of_two().max(u64::BITS as usize);
         let mut filter = Self {
             words: vec![0; bits / u64::BITS as usize],
             mask: bits - 1,
@@ -155,7 +155,7 @@ impl OwnedRootFilter {
 
     #[inline(always)]
     fn may_hold(&self, owner: Value) -> bool {
-        let bit = self.bit(owner);
+        if self.words.is_empty() { return false; } let bit = self.bit(owner);
         self.words[bit / u64::BITS as usize] & (1 << (bit % u64::BITS as usize)) != 0
     }
 }

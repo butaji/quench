@@ -32,6 +32,7 @@ pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, Environm
 mod external;
 mod float_slots;
 #[cfg(test)] mod float_slot_tests;
+#[cfg(test)] mod access_tests;
 mod inline_storage;
 use inline_storage::widen_inline_storage;
 mod memory_stats;
@@ -4046,17 +4047,7 @@ impl Heap {
     /// As for `property_get_flat`, where the shape matches.
     #[inline(always)]
     pub(crate) unsafe fn own_field_hit(&self, object: &Object, shape: u32, slot: u16) -> Option<Value> {
-        // The common form first, as `GuardShape, LoadSlot` reads it: a plain object's arena run,
-        // whose start is the payload itself, so neither the extras tag nor the start mask is
-        // decoded. Packed inline values and extras take the staged reading.
-        // An exact shape has no form bits, so the whole auxiliary word equals it only in the
-        // arena form, whose payload is the start (`Object::formed_plain_start`).
-        if let Some(start) = object.formed_plain_start(shape) {
-            // SAFETY: the caller's: the shape matched, so its run holds `slot`.
-            let value = unsafe { *self.properties.values_base().add(start + usize::from(slot)) };
-            debug_assert_eq!(Some(value), unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) });
-            return Some(value);
-        }
+        // SAFETY: the caller's; the staged hit takes the arena form first, on one compare.
         unsafe { crate::staged::concrete_own_field_hit(object, self.properties.values_base(), shape, slot) }
     }
     /// `own_field_hit` through a lane record's own-field hint (`Object::hint_shape`): `None`
@@ -4082,12 +4073,6 @@ impl Heap {
         }
         // SAFETY: as the caller guarantees.
         unsafe { self.property_get_flat(holder, slot) }
-    }
-    /// The arena's value base, which the interpreter's staged reads address runs from
-    /// (`staged::Table::PropertyValues`).
-    #[cfg(test)]
-    pub(crate) fn property_values_base(&self) -> *const Value {
-        self.properties.values_base()
     }
     #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {

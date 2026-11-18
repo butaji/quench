@@ -5071,17 +5071,14 @@ impl<H: Host> Vm<H> {
                     .get_unchecked_mut(table_index as usize)
             };
             entries.insert(cache);
+            self.set_primary_field_cache(site, cache);
             return;
         }
         let entry = self.field_caches.get(site);
         if (entry.receiver == cache.receiver && entry.holder == cache.holder)
             || entry.receiver == NO_FIELD_RECEIVER
         {
-            let leaves = self.field_site_leaves(site);
-            self.field_caches.set(site, cache);
-            if leaves != 0 {
-                self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD] |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
-            }
+            self.set_primary_field_cache(site, cache);
             return;
         }
         let table_index = self.megamorphic_fields.len() as u32;
@@ -5090,6 +5087,19 @@ impl<H: Host> Vm<H> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         unsafe {
             self.megamorphic_field_indices.set_unchecked(site, table_index);
+        }
+        self.set_primary_field_cache(site, cache);
+    }
+    /// Makes `cache` the site's primary entry, keeping its leave count. The primary entry is the
+    /// one the specializers' site rows read (`staged::entry::site_read`), so it is always the
+    /// latest the interpreter resolved: a receiver whose shape moved on is read natively again
+    /// after one leave, where a primary entry pinned to the first shape left on every read.
+    /// The megamorphic set, which holds every entry, still answers the interpreter's misses.
+    fn set_primary_field_cache(&mut self, site: usize, cache: FieldCache) {
+        let leaves = self.field_site_leaves(site);
+        self.field_caches.set(site, cache);
+        if leaves != 0 {
+            self.field_caches.stored_mut(site)[FIELD_LEAVES_WORD] |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
         }
     }
     #[inline(always)]
