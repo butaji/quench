@@ -12,7 +12,7 @@ pub(super) fn heap_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, fram
         allocate @ Operation::Allocate { .. } => allocation_step(stage, frame, allocate),
         define @ Operation::DefineElement { .. } => element_define_step(stage, frame, define),
         helper @ (Operation::IndexSetHelper { .. } | Operation::FieldStoreMiss { .. }) => helper_step(stage, frame, helper),
-        site @ (Operation::AddSite { .. } | Operation::NamingSite { .. }) => site_step(stage, frame, site),
+        site @ (Operation::AddSite { .. } | Operation::NamingSite { .. } | Operation::InstanceOf { .. }) => site_step(stage, frame, site),
         index => index_step(stage, frame, index),
     }
 }
@@ -27,6 +27,13 @@ fn site_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
             (value, add::site_add(stage, records, object, (edge, link), form, value, frame.miss())),
         Operation::NamingSite { records, function, naming, form, name } =>
             (name, naming::site_name(stage, records, function, naming, form, name, frame.miss())),
+        Operation::InstanceOf { destination, value, constructor } => {
+            let (value, constructor) = (frame.tagged(stage, value), frame.tagged(stage, constructor));
+            let Some(holds) = frame.instance_of(stage, value, constructor) else { return Step::Unresolved };
+            let (boolean, fact) = frame.boolean(stage, holds);
+            frame.write(stage, destination, boolean, fact);
+            (boolean, Some(()))
+        }
         _ => return Step::Unresolved,
     };
     match done {

@@ -282,6 +282,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn store_capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _value: S::Word) -> Option<()> { None }
 
+    /// Whether `value instanceof constructor` holds, decided by the words alone (the frame's
+    /// `object::instanceof_by_words` over its record table and the constructor's proven prototype);
+    /// `None` where the frame does not decide it, leaving the test to the VM's callout.
+    #[inline(always)]
+    fn instance_of(&mut self, _stage: &mut S, _value: S::Word, _constructor: S::Word) -> Option<S::Cond> { None }
+
     /// Where control goes: the edge the interpreter returns, or the branch a specializer
     /// emits.
     type Control;

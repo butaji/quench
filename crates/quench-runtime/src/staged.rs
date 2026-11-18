@@ -965,6 +965,10 @@ pub(crate) enum Operation<W, P> {
     /// through a site's naming edge (`naming::site_name`, the `(edge, empty)` pair). No opcode decodes
     /// to it; a stencil row builds it. Leaves at the miss edge where the naming declines.
     NamingSite { records: W, function: W, naming: (add::Edge<W>, W), form: Form, name: W },
+    /// `value instanceof constructor` into `destination`, decided by the frame's words of the value
+    /// and the constructor (`Frame::instance_of`, the walk `object::instanceof_by_words`); the frame's
+    /// default leaves it to the VM's `Binary` callout. Leaves at the miss edge where the walk declines.
+    InstanceOf { destination: Register, value: Register, constructor: Register },
 }
 impl<W, P> Operation<W, P> {
     /// The staged operation `instruction` denotes, with the operands the catalog fixes and the
