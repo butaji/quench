@@ -2055,6 +2055,11 @@ impl Function {
     /// operations, validation re-derives the same proof, and the interpreter memoizes it in
     /// `plain_locals` to read plain local operands directly.
     pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> crate::bitset::BitSet {
+        self.plain_local_slots_in(superinstructions, &initialization::FlowCell::new())
+    }
+
+    /// `plain_local_slots` over the shared control-flow blocks `flow` (`initialization::FlowCell`).
+    pub(crate) fn plain_local_slots_in(&self, superinstructions: &[Superinstruction], flow: &initialization::FlowCell) -> crate::bitset::BitSet {
         let locals = usize::from(self.locals);
         if !self.plain_local_context_is_safe() {
             return crate::bitset::BitSet::new(locals);
@@ -2067,7 +2072,7 @@ impl Function {
             }
         }
         let initialized =
-            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &Default::default());
+            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &Default::default(), flow);
         crate::bitset::BitSet::from_fn(locals, |slot| {
             plain.contains(slot) && (!dead_zone.contains(slot) || initialized.contains(slot))
         })

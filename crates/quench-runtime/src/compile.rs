@@ -2259,8 +2259,11 @@ pub(crate) fn lower_settled<'a>(
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
     // proof from the specialized code), so frame registers start from the same slots.
     frame_registers::drop_unread_self_binding(function, superinstructions, &atom_name);
-    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    // Specialization renames operations without moving control, so the TDZ analyses of both
+    // passes read one set of blocks.
+    let flow = crate::bytecode::initialization::FlowCell::new();
+    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name, &flow);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
@@ -4490,8 +4493,9 @@ impl<'a> Compiler<'a> {
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
+        flow: &crate::bytecode::initialization::FlowCell,
     ) -> crate::bitset::BitSet {
-        let plain_slots = function.plain_local_slots(superinstructions);
+        let plain_slots = function.plain_local_slots_in(superinstructions, flow);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal
