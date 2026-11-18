@@ -116,6 +116,23 @@ pub(crate) const TYPEOF_OBJECT: u64 = 1;
 pub(crate) const TYPEOF_BOOLEAN: u64 = 2;
 pub(crate) const TYPEOF_NUMBER: u64 = 3;
 
+/// The kind a heap value's `typeof` name follows from its cell (a string, a BigInt, a symbol, an
+/// object or a function), as its index in `bytecode::TYPEOF_NAMES`: what `Frame::type_of` proves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct TypeofKind(u64);
+
+impl TypeofKind {
+    /// The kind whose `typeof` name is `bytecode::TYPEOF_NAMES[index]`.
+    pub(crate) const fn of_index(index: u64) -> Self {
+        Self(index)
+    }
+
+    /// The index in `bytecode::TYPEOF_NAMES` of this kind's name.
+    pub(crate) const fn index(self) -> u64 {
+        self.0
+    }
+}
+
 /// The index in `bytecode::TYPEOF_NAMES` of `typeof` of the value `bits` where its tag alone decides
 /// it (`undefined` and the deleted marker, `null`, a boolean, an int32 or a double): a heap value,
 /// whose cell decides (a string, BigInt, symbol, object or function), or an internal marker leaves

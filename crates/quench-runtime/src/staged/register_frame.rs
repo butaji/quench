@@ -2,6 +2,7 @@
 //! so the b-jit stencil build (`quench-bjit/build.rs`) compiles the same trait the interpreter
 //! and the specializers use.
 
+use super::value::TypeofKind;
 use super::{Allocation, CallOut, Edge, Stage};
 use crate::bytecode::Register;
 use crate::typed_ir::Type;
@@ -268,6 +269,23 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn vm_step(&mut self, _stage: &mut S, _operation: CallOut, _result: Option<Register>)
         -> Option<(S::Word, Self::Fact)> { None }
+
+    /// The `typeof` kind of the heap value `word`, which its cell decides (a string, a BigInt, a
+    /// symbol, an object or a function), where the frame proves it; `None` leaves the row at the
+    /// frame's miss edge, where the interpreter names it.
+    #[inline(always)]
+    fn type_of(&mut self, _stage: &mut S, _word: S::Word) -> Option<TypeofKind> { None }
+
+    /// The interned `typeof` result string of the name `name` (an index in `bytecode::TYPEOF_NAMES`,
+    /// as a word), with the fact the frame keeps of it; `None` where the frame holds no such table.
+    #[inline(always)]
+    fn typeof_string(&mut self, _stage: &mut S, _name: S::Word) -> Option<(S::Word, Self::Fact)> { None }
+
+    /// SetFunctionName: name the function `function` by the program atom `name` through cache
+    /// `site`, as the VM does (`Vm::set_function_name`). `None` where the frame has no host, which
+    /// leaves the row to the interpreter.
+    #[inline(always)]
+    fn set_function_name(&mut self, _stage: &mut S, _function: S::Word, _name: u32, _site: u16) -> Option<()> { None }
 
     /// Read the capture `slot`, `depth` scopes out (a static operand: the walk's length), with the
     /// fact the frame keeps of it; `root` reads the root environment's projected binding (a

@@ -55,6 +55,12 @@ struct LaneHost {
     define: ElementDefiner,
     delete: PropertyDeleter,
     read_name: NameReader,
+    /// The `typeof` kind of a heap value, as the VM names it (`typeof_kind`), for a staged `typeof` row.
+    type_of: unsafe fn(*mut (), Value) -> Option<TypeofKind>,
+    /// The interned `typeof` result string of a name index in `TYPEOF_NAMES` (`typeof_names`).
+    typeof_name: unsafe fn(*mut (), u64) -> Option<Value>,
+    /// SetFunctionName of a function to a program atom through a cache site (`Vm::set_function_name`).
+    set_name: unsafe fn(*mut (), Value, u32, u16) -> Option<()>,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
 }
@@ -345,7 +351,8 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
         let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, define: lane_define_element::<H>, delete: lane_delete_value::<H>,
-            read_name: lane_name_value::<H>, name: None };
+            read_name: lane_name_value::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
+            set_name: set_function_name_in_lane::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -575,6 +582,30 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: the running lane's heap, live for the row's step.
         let heap = unsafe { &*self.heap? };
         Some((heap.array_record_base()? as u64, heap.object_record_base()? as u64, heap.collection_epoch()))
+    }
+
+    /// The `typeof` kind of the heap value `word` (`type_of_in_lane`), for a `typeof` row.
+    #[inline(always)]
+    fn type_of(&mut self, _stage: &mut Concrete, word: u64) -> Option<crate::staged::value::TypeofKind> {
+        let host = self.host?;
+        // SAFETY: the running lane's context, live for the row's step.
+        unsafe { (host.type_of)(host.cx, Value::from_bits(word)) }
+    }
+
+    /// The interned `typeof` result string of the name index `name` (`typeof_string_in_lane`).
+    #[inline(always)]
+    fn typeof_string(&mut self, _stage: &mut Concrete, name: u64) -> Option<(u64, Boxing)> {
+        let host = self.host?;
+        // SAFETY: as `type_of`.
+        unsafe { (host.typeof_name)(host.cx, name) }.map(|text| (text.to_bits(), Boxing::Value))
+    }
+
+    /// SetFunctionName of `function` (`set_function_name_in_lane`), for a naming row.
+    #[inline(always)]
+    fn set_function_name(&mut self, _stage: &mut Concrete, function: u64, name: u32, site: u16) -> Option<()> {
+        let host = self.host?;
+        // SAFETY: as `type_of`.
+        unsafe { (host.set_name)(host.cx, Value::from_bits(function), name, site) }
     }
 
     #[inline(always)]
@@ -1293,8 +1324,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
+        // A `typeof` row answers a heap value's kind and a name's string in the lane context (`LaneHost`).
         return LaneFrame::<ACC> { this: r.this(), frame_this: Some((cx.cast(), read)), capture_slots, captures, callee, reads,
-            ..LaneFrame::<ACC>::new(r, view) };
+            ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
         // A generic row's word-decided answers, and the pure binary of its call-outs (`lane_binary_values`).
@@ -2094,6 +2126,40 @@ unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Op
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
         NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
     }
+}
+
+/// The `typeof` kind of the heap value `value`, as the VM's `typeof` names it (`Vm::typeof_kind`: an
+/// IsHTMLDDA object reads as undefined): the index of its name in `TYPEOF_NAMES`.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn type_of_in_lane<H: Host>(cx: *mut (), value: Value) -> Option<crate::staged::value::TypeofKind> {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    let index = crate::vm::coercion::typeof_name_index(vm.typeof_kind(value));
+    Some(crate::staged::value::TypeofKind::of_index(index as u64))
+}
+
+/// The interned `typeof` result string of the name index `name` (`Vm::typeof_names`), which
+/// `typeof` yields without allocating.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn typeof_string_in_lane<H: Host>(cx: *mut (), name: u64) -> Option<Value> {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    vm.typeof_names.get(usize::try_from(name).ok()?).copied()
+}
+
+/// SetFunctionName of `function` to the program atom `name` through cache `site`, by the VM's own naming
+/// (`Vm::set_function_name`); `None` where it raises.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+unsafe fn set_function_name_in_lane<H: Host>(cx: *mut (), function: Value, name: u32, site: u16) -> Option<()> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    vm.set_function_name(code, function, (name, site)).ok()
 }
 
 /// `IteratorCleanupPush` in the running VM frame, as the general loop runs it: the iterator to close if

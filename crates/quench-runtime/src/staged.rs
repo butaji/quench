@@ -812,6 +812,10 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with whether `typeof source` is the name at `index` in `TYPEOF_NAMES`,
     /// negated where `negated` (`UNARY_TYPEOF_IS`); a heap value leaves at the frame's miss edge.
     TypeofTest { destination: Register, source: Register, index: u64, negated: bool },
+    /// Define `destination` with the `typeof` result string of register `source`'s value (`typeof x`):
+    /// the interned string of its name, where the tag decides the name or the frame's kind of a heap
+    /// value does (`Frame::type_of`); a value neither decides leaves at the frame's miss edge.
+    TypeofString { destination: Register, source: Register },
     /// Store `value` at dense array element `index`, under `proof`.
     IndexWrite { index: W, value: W, proof: P },
     /// The empty object, object or array literal, constant array, regexp literal, closure,
@@ -1140,6 +1144,9 @@ impl<W, P> Operation<W, P> {
         }
         Some(match operator {
             _ if operator == oxc_ast::ast::UnaryOperator::LogicalNot as u32 => Self::LogicalNot { destination, source },
+            // A `typeof` that returns from the frame is the general step's (the record returns the value).
+            _ if operator == oxc_ast::ast::UnaryOperator::Typeof as u32 && !instruction.returns_from_frame() =>
+                Self::TypeofString { destination, source },
             _ if operator == crate::bytecode::UNARY_TYPEOF_INDEX => Self::TypeofIndex { destination, source },
             _ if operator == oxc_ast::ast::UnaryOperator::BitwiseNot as u32 =>
                 Self::Number(NumberOperation::BitwiseNot { destination, source: Operand::register(source) }),

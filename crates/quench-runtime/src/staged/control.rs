@@ -26,19 +26,19 @@ const NUMBER_NAME: i32 = name_index("number");
 
 /// The `typeof` name index (int32) of `source`, into `destination`, where the value's own
 /// word decides it: a Number, a Boolean, `null`, `undefined` or the deleted marker. A heap
-/// value's cell decides its name (a string, a function, the IsHTMLDDA object), so it leaves
-/// at the frame's miss edge.
+/// value's name is the kind the frame proves of its cell (`Frame::type_of`); a frame that proves
+/// no kind leaves at the miss edge.
 #[inline(always)]
 pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
     let bits = frame.tagged(stage, source);
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
     let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
-    if stage.guard_false(heap, miss).is_none() {
-        return Step::Unresolved;
-    }
-    let name = immediate_name(stage, bits, tag);
+    let name = stage.choose_leaving(heap, |stage| Some(immediate_name(stage, bits, tag)), |stage| {
+        let kind = frame.type_of(stage, bits)?;
+        Some(stage.i32_constant(kind.index() as i32))
+    });
+    let Some(name) = name else { return Step::Unresolved };
     let result = frame.int_result(stage, name);
     let fact = frame.int_fact();
     frame.write(stage, destination, result, fact);
@@ -46,19 +46,43 @@ pub(super) fn typeof_index<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, f
 }
 
 /// `typeof source` tested against the name at `index` in `TYPEOF_NAMES`, negated where `negated`
-/// (`typeof x === "name"`): the boolean where the value's own word decides its name; a heap value
-/// leaves at the frame's miss edge, where its cell decides.
+/// (`typeof x === "name"`): the boolean where the value's name is known (`name_word`).
 #[inline(always)]
 pub(super) fn typeof_test<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register, index: u64, negated: bool) -> Step<S::Word, F::Control> {
-    let miss = frame.miss();
     let bits = frame.tagged(stage, source);
-    let Some(name) = super::value::immediate_typeof_index(stage, bits, miss) else { return Step::Unresolved };
+    let Some(name) = name_word(stage, frame, bits) else { return Step::Unresolved };
     let named = stage.eq_imm(name, index);
     let holds = if negated { stage.not(named) } else { named };
     let (word, fact) = frame.boolean(stage, holds);
     frame.write(stage, destination, word, fact);
     Step::Value(word)
+}
+
+/// `typeof source` as its result string, into `destination`: the frame's interned string of the
+/// name `name_word` gives (`Frame::typeof_string`).
+#[inline(always)]
+pub(super) fn typeof_string<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+    destination: Register, source: Register) -> Step<S::Word, F::Control> {
+    let bits = frame.tagged(stage, source);
+    let Some(name) = name_word(stage, frame, bits) else { return Step::Unresolved };
+    let Some((text, fact)) = frame.typeof_string(stage, name) else { return Step::Unresolved };
+    frame.write(stage, destination, text, fact);
+    Step::Value(text)
+}
+
+/// The `typeof` name index of the word `bits` as a word of the form `immediate_typeof_index`
+/// yields: where the tag class decides it, that index; a heap value's is the kind the frame proves
+/// of its cell (`Frame::type_of`). `None` where neither decides, which leaves at the miss edge.
+#[inline(always)]
+fn name_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, bits: S::Word) -> Option<S::Word> {
+    let miss = frame.miss();
+    let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);
+    let heap = stage.eq_imm(tag, ValueLayout::HEAP_TAG);
+    stage.choose_leaving(heap, |stage| super::value::immediate_typeof_index(stage, bits, miss), |stage| {
+        let kind = frame.type_of(stage, bits)?;
+        Some(stage.constant(kind.index()))
+    })
 }
 
 /// The name index of the immediate `bits` (of tag `tag`): every immediate that is no Number,

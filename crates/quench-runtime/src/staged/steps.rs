@@ -61,6 +61,7 @@ fn value_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
         Operation::TypeofTest { destination, source, index, negated } =>
             super::control::typeof_test(stage, frame, destination, source, index, negated),
+        Operation::TypeofString { destination, source } => super::control::typeof_string(stage, frame, destination, source),
         Operation::StringCaseIndex { destination, source, start, count } => string_case_index(stage, frame, destination, source, start, count),
         Operation::Await { destination, source } => suspended(frame.suspend_await(stage, destination, source)),
         Operation::Yield { value } => suspended(frame.suspend_yield(stage, value)),
