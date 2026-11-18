@@ -600,6 +600,13 @@ impl Heap {
         self.held_cell_receiver(value)
     }
 
+    /// The object part of a function, inline: the receiver an own read of a function's static
+    /// field guards (`CELL_OWN_SITE`); `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn function_receiver(&self, value: Value) -> Option<&Object> {
+        value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
+    }
+
     /// `held_other_receiver` of a function or ordinary builtin.
     #[cold]
     #[inline(never)]

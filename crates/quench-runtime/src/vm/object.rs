@@ -2245,6 +2245,18 @@ impl<H: Host> Vm<H> {
         Some(value)
     }
 
+    /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
+    /// object records, at `site`: the receiver's layout id and the slot, where the site's own
+    /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
+    pub(super) fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
+        let receiver = self.heap.object(object)?;
+        let cache = self.field_cache_entry(site);
+        if cache.receiver != receiver.exact_shape() || cache.holder != NO_FIELD_HOLDER {
+            return None;
+        }
+        Some((self.receiver_layout_hint(object)?, cache.slot))
+    }
+
     /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
     /// prototype holds the method (`f.apply`), which a direct object's record lookup misses.
     #[inline(always)]
@@ -2471,7 +2483,6 @@ impl<H: Host> Vm<H> {
     /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
     /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
     /// proves the shape, form and prototype link of a function's or cell's record too.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
         self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }

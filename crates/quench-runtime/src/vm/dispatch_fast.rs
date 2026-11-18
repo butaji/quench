@@ -7552,6 +7552,15 @@ pub(super) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
 /// site fact: a cold row kept to one instantiation for both bases.
 pub(super) const fn runtime_base(site: u8) -> bool { site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS }
 
+/// The site fact of an own read of a receiver outside the object records, as a function's static
+/// field (`Strength.REQUIRED`): the record's hint is the receiver's layout id and slot
+/// (`Vm::cell_own_hint`), guarded by one compare of the function's record (`IcOp::GuardLayout`);
+/// one instantiation per base: the register one (`A.x`) is the common read, and a fixed base
+/// saves the base test (5 Ir per read).
+pub(super) const CELL_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 6);
+pub(super) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
+pub(super) const fn cell_own_site(site: u8) -> bool { site == CELL_OWN_THIS || site == CELL_OWN_REGISTER }
+
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
 pub(super) const fn inherited_site(site: u8) -> bool {
     site == INHERITED_THIS || site == INHERITED_REGISTER || inherited_other_site(site)
@@ -7793,23 +7802,6 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
-        else {
-            sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// the own-field row for a receiver in a heap cell rather than the object records
-    /// (`Vm::cell_own_field_hit`): a function's own field, as `Strength.REQUIRED`. A miss
-    /// moves the record on as `lane_get_field_miss` decides.
-    fn lane_get_field_own_cell<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).cell_own_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
@@ -8144,10 +8136,19 @@ script_handler! {
                 lane_row::<H, FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER>,
                 lane_get_field::<H>,
             )),
+            // A receiver outside the object records, such as a function, reads its own slot by the
+            // receiver's layout id, which the record's hint holds (a loop header's keeps none).
             FieldSiteTier::Own
                 if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
-                Some(lane_get_field_own_cell::<H>)
+                match base.and_then(|object| (unsafe { vm(cx) }).cell_own_hint(object, i.c)) {
+                    Some((layout, slot)) if !holds_loop_site(ip) => {
+                        set_record_hint(ip, layout, slot);
+                        Some(single_base_handler(i.b, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_THIS>,
+                            lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER>, lane_get_field::<H>))
+                    }
+                    _ => Some(lane_get_field::<H>),
+                }
             }
             FieldSiteTier::Own => None,
         };

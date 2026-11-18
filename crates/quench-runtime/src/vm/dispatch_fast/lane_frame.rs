@@ -141,6 +141,9 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// The own-field store the record's hint proves, `(layout, slot)` (`StorePlan::Layout`);
     /// `None` for a read's plan.
     store: Option<(u32, u16)>,
+    /// Whether the plan's receivers are mostly functions (`own_other`): their object part is
+    /// found inline, before any other family.
+    functions: bool,
 }
 
 impl RecordPlan {
@@ -151,7 +154,14 @@ impl RecordPlan {
         use crate::staged::ic::IcOp;
         let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
             rep: crate::staged::object::Rep::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None }
+        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None, functions: false }
+    }
+
+    /// `own` of a receiver of any object part (`Heap::held_other_receiver`): a function's record
+    /// takes the same layout compare.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own_other(layout: u32, slot: u16, records: u64, heap: *const crate::heap::Heap) -> Self {
+        Self { other: Some(heap), functions: true, ..Self::own(layout, slot, records) }
     }
 
     /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
@@ -161,7 +171,7 @@ impl RecordPlan {
         other: Option<*const crate::heap::Heap>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false, store: None }
+        Self { ops: [held, held], len: 1, records, other, word: false, store: None, functions: false }
     }
 }
 
@@ -172,7 +182,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn own_store(layout: u32, slot: u16, records: u64) -> Self {
         use crate::staged::ic::IcOp;
         let none = IcOp::GuardLayout(layout);
-        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some((layout, slot)) }
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some((layout, slot)), functions: false }
     }
 
     /// The read of a string receiver through a `String.prototype` hint whose operands are
@@ -181,7 +191,7 @@ impl RecordPlan {
     pub(in crate::vm::dispatch_fast) fn held_string(watch: u64, value: u64) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false }
     }
 }
 
@@ -430,13 +440,17 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         if let Some(RecordPlan { word: true, .. }) = self.plan {
             return Some(crate::staged::ic::Reached::bare(object));
         }
-        let Some(RecordPlan { records, other: Some(heap), .. }) = self.plan else {
+        let Some(RecordPlan { records, other: Some(heap), functions, .. }) = self.plan else {
             return crate::staged::property::receiver(stage, self, object, miss);
         };
+        // SAFETY: the heap is the lane's, live for the read.
+        if functions && let Some(record) = unsafe { &*heap }.function_receiver(Value::from_bits(object)) {
+            return Some(crate::staged::ic::Reached::bare(record as *const crate::heap::Object as u64));
+        }
         if let Some(id) = Value::from_bits(object).direct_object_index() {
             return Some(crate::staged::ic::Reached::bare(crate::staged::object::object_record_at(stage, records, u64::from(id))));
         }
-        // SAFETY: the heap is the lane's, live for the read.
+        // SAFETY: as above.
         let record = unsafe { &*heap }.held_other_receiver(Value::from_bits(object))?;
         Some(crate::staged::ic::Reached::bare(record as *const crate::heap::Object as u64))
     }
@@ -643,6 +657,10 @@ lane_handler! {
             if const { FLAG == super::STRING_SITE } {
                 sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { super::cell_own_site(FLAG) } {
+                // The record moves on as the site's tier decides, which rebinds the hint.
+                sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::inherited_site(FLAG) && !super::inherited_other_site(FLAG) } {
                 // A direct object's miss; the read of any other receiver's object part.
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
@@ -743,6 +761,15 @@ lane_handler! {
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) { frame.this = r.this(); }
                 let other = if others { Some(&raw const machine.heap) } else { None };
                 frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
+            } else if const { super::cell_own_site(FLAG) } {
+                // A receiver outside the object records (a function) by its layout id; a direct
+                // object, should the site meet one, through the bound records.
+                let machine = unsafe { vm(script) };
+                let records = unsafe { (*script).binding.object_base } as u64;
+                if records == 0 { property_miss!() }
+                if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
+                let hint = i.field_hint();
+                frame.plan = Some(RecordPlan::own_other(hint.receiver, hint.slot, records, &raw const machine.heap));
             } else if const { FLAG == super::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };
