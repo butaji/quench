@@ -156,6 +156,9 @@ struct Decisions {
     prototype: fn(*mut (), Value) -> Option<u32>,
     /// The base of the object record table.
     records: fn(*mut ()) -> Option<u64>,
+    /// `value instanceof constructor` by the VM's published proof of the constructor's chain (`Vm::record_instanceof`),
+    /// else the ordinary walk (`Vm::ordinary_instanceof`): neither runs guest code.
+    instance: fn(*mut (), Value, Value) -> Option<bool>,
 }
 
 impl Decisions {
@@ -165,7 +168,11 @@ impl Decisions {
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
-            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64) }
+            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64),
+            instance: |context, value, constructor| {
+                let machine = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                machine.record_instanceof(value, constructor).or_else(|| machine.ordinary_instanceof(value, constructor))
+            } }
     }
 }
 
@@ -322,6 +329,10 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The running function's `arguments` count in a local slot (`arguments_count`), read only
     /// by the row that asks for it.
     arguments: Option<(*mut (), unsafe fn(*mut (), u16) -> Option<Value>)>,
+    /// The running activation's kept `arguments` binding, read only by a local read of that slot
+    /// (`FLAG_KEPT_MARKER`, `FLAG_KEPT_OBJECT`): the lane context and `kept_arguments_binding`, which
+    /// answers the binding's marker or its object (`Frame::arguments_binding`).
+    kept_binding: Option<(*mut (), unsafe fn(*mut (), Registers, u16) -> Option<Value>)>,
     /// The register a keeping activation's kept values follow its registers from (`ArgumentGet`'s
     /// record `c`, the running function's register count), read by `Frame::argument`.
     kept: u16,
@@ -378,6 +389,82 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The object a `GetField` of a local slot reads, where the local holds a plain value
     /// (`plain_local_operand`); `PropertyFrame::local_base` answers it. `None` otherwise.
     local_object: Option<u64>,
+    /// The VM's element steps an element row's host path runs at its site, where the row is one
+    /// that accesses an element (`ElementFrame::index_set_host`, `PropertyFrame::index_get_host`).
+    elements: Option<ElementSteps>,
+    /// The VM's geometry and length reads a host read row runs (`GeometrySteps`), where the row is
+    /// one that reads a view's geometry or a length (`TYPED_LENGTH_SITE`, `GEOMETRY_SITE`).
+    geometry: Option<GeometrySteps>,
+    /// The VM's stores and adds a named store row joins to, for a store record (`FieldStores`).
+    stores: Option<FieldStores>,
+    /// The form hint the VM's own-field store left for the store record, which the row writes to
+    /// the record once the store completes (`PropertyFrame::field_store_host`).
+    stored: Option<crate::vm::FieldCache>,
+    /// The element kind a typed element row (`TYPED_SITE`) observed, and the typed array record
+    /// pages the view proof reads (`Heap::typed_view_directory`); none elsewhere.
+    typed: Option<(crate::staged::typed_elements::NativeKind, (*const usize, usize))>,
+    /// The VM's Math calls, for a Math row (`PropertyFrame::math_call`); none elsewhere.
+    math: Option<MathCalls>,
+    /// The VM's entry lookups the running lane makes at the row's site, for a row whose plan takes
+    /// one (`PropertyFrame::field_entry`); none elsewhere.
+    entries: Option<EntryReads>,
+}
+
+/// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
+/// frame names no `H`: `field_entry_read` makes the one `kind` names. Runs no guest code.
+#[derive(Clone, Copy)]
+struct EntryReads {
+    context: *mut (),
+    site: Ip,
+    read: fn(*mut (), Ip, Value, crate::staged::property::EntryKind) -> Option<Value>,
+}
+
+impl EntryReads {
+    /// The entry lookups of the running lane's `cx` at the row's site `ip`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Self {
+        Self { context: cx.cast(), site: ip, read: super::field_entry_read::<H> }
+    }
+}
+
+/// The element steps of the running lane, erased of its host so the frame names no `H`: the
+/// read and the store an element row's host path makes at its site `ip` (`row_index_read`,
+/// `row_index_write`). Neither runs guest code; a refusal leaves to the row's miss.
+#[derive(Clone, Copy)]
+struct ElementSteps {
+    context: *mut (),
+    site: Ip,
+    read: fn(*mut (), Ip, Value, Value) -> Option<Value>,
+    write: fn(*mut (), Ip, Value, Value, Value) -> bool,
+}
+
+impl ElementSteps {
+    /// The element steps of the running lane's `cx` at the row's site `ip`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Self {
+        Self { context: cx.cast(), site: ip, read: row_index_read::<H>, write: row_index_write::<H> }
+    }
+}
+
+/// The VM's geometry and length reads of the running lane, erased of its host so the frame names
+/// no `H`: the intrinsic geometry getter of a name on a receiver (`lane_geometry_read`), and the
+/// `length` of a receiver that is no array or string (`length_read`). Neither runs guest code; a
+/// refusal leaves to the row's miss.
+#[derive(Clone, Copy)]
+struct GeometrySteps {
+    context: *mut (),
+    geometry: fn(*mut (), Value, u32) -> Option<Value>,
+    length: fn(*mut (), Value) -> Option<Value>,
+}
+
+impl GeometrySteps {
+    /// The geometry steps of the running lane's `cx`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
+        Self { context: cx.cast(),
+            geometry: |context, base, atom| lane_geometry_read(unsafe { vm(context.cast::<LaneContext<H>>()) }, base, atom),
+            length: |context, base| length_read(unsafe { vm(context.cast::<LaneContext<H>>()) }, base) }
+    }
 }
 
 /// The proof span of an array a proved element row names (`dispatch_fast::proof_span`): the lane
@@ -708,7 +795,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -734,7 +821,150 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+    }
+}
+
+/// The field reads a planned named read runs over the running lane's record: the cached read of
+/// a site, the private field of a record, and the private store.
+impl<const ACC: u8> LaneFrame<ACC> {
+    /// `cached_read` of a read whose private name, if any, has the private-name site
+    /// `private_site` (`private_slot`); `0` for none, which reads it uncached.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn cached_read<H: Host>(
+        cx: *mut LaneContext<H>,
+        code: &ResidualProgram,
+        object: Value,
+        atom: crate::bytecode::Atom,
+        site: u16,
+        private_site: usize,
+    ) -> Option<Value> {
+        let probe = {
+            let vm = unsafe { vm(cx) };
+            // A string's own `length`, which its chain never shadows, as a tokenizer's
+            // `this.input.length` reads: no cache records a primitive's, and the probes below
+            // all decline it (`Vm::cached_string_field_hit`).
+            if atom == vm.length_atom {
+                if let Some(length) = vm.string_length_value(object) {
+                    return Some(length);
+                }
+                // An array's own `length` (`Vm::own_array_length`), which no field cache records
+                // either, as `lane_get_length` reads it: a returning or local-based `GetField`
+                // (`return rest.length`) otherwise reaches it only past the getter and miss paths.
+                if let Some(length) = vm.own_array_length(object) {
+                    return Some(Value::length(length));
+                }
+            }
+            let class = vm.atom_class(atom);
+            // A private field, which no field cache records, at its site.
+            if private_site != 0 && class.contains(super::object::AtomClass::PRIVATE) {
+                return Self::private_value(cx, private_site, code, object, atom);
+            }
+            // A typed array's geometry, which no field cache records (`AtomClass::VIRTUAL_FIELD`).
+            if class.contains(super::object::AtomClass::VIRTUAL_FIELD)
+                && let Some(value) = vm.typed_array_geometry_read(object, atom)
+            {
+                return Some(value);
+            }
+            vm.prepare_named_function_info_lookup(object, atom);
+            vm.cached_field_hit(code, object, site)
+        };
+        match probe {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            // A proxy's handler answers its reads (`lane_getter_activation` runs the trap): no
+            // getter entry or data lookup below holds one.
+            super::object::FieldCacheProbe::Ineligible if unsafe { vm(cx) }.proxy_parts(object).is_some() => None,
+            // An accessor's entry answers before the data lookups, which would walk the chain to
+            // reach the same accessor and decline it.
+            // A getter the lane cannot answer in place is the activation's to call
+            // (`lane_getter_activation`); only a virtual field may still answer.
+            probe => match unsafe { super::AccessorCall::of(cx).getter_read(object, atom, site) } {
+                Some(Some(value)) => Some(value),
+                Some(None) => unsafe { vm(cx) }.pure_virtual_field(object, atom),
+                // SAFETY: the context outlives the lane run.
+                None => Self::cached_miss(unsafe { vm(cx) }, code, object, atom, site, probe, unsafe { (*cx).registers }.env()),
+            },
+        }
+    }
+
+    /// `cached_read` past its probe. Out of line so that no handler inlining the probe
+    /// keeps the lookups' stack locals, which would cost it the tail call to the next record.
+    #[inline(never)]
+    fn cached_miss<H: Host>(
+        vm: &mut Vm<H>,
+        code: &ResidualProgram,
+        object: Value,
+        atom: crate::bytecode::Atom,
+        site: u16,
+        probe: super::object::FieldCacheProbe,
+        environment: Value,
+    ) -> Option<Value> {
+        // A private field reads from the object's private elements before any cache, as the
+        // general loop's `GetField` does. Its home follows the running function and the
+        // environment its frame would capture from: the lane's frame, or a frameless activation's
+        // function and environment, whose frame would hold that environment as its closure's.
+        if vm.is_private_name(atom) {
+            return match vm.lane_stack.activations().last() {
+                None => vm.private_field_value(code, object, atom),
+                Some(activation) => {
+                    let function = activation.script().map(|_| activation.function())?;
+                    vm.memoized_private_field_value(code, environment, function, object, atom)
+                }
+            };
+        }
+        match probe {
+            super::object::FieldCacheProbe::Hit(value) => Some(value),
+            // The order `Vm::get_field_cached` takes: an array's `length` before the lookups.
+            super::object::FieldCacheProbe::OrdinaryMiss => vm
+                .array_length_field(object, atom)
+                // The entries of a site past one shape, whose handler may be a nested site's or a
+                // local base's, as the hashed row reads them.
+                .or_else(|| vm.polymorphic_field_hit(code, object, site))
+                .or_else(|| vm.cell_polymorphic_holder_hit(object, site))
+                .or_else(|| vm.probed_field_miss_value(object, atom, site)),
+            super::object::FieldCacheProbe::Ineligible => vm
+                .array_length_field(object, atom)
+                .or_else(|| vm.cached_string_field_hit(code, object, atom, site))
+                .or_else(|| vm.cached_primitive_field_hit(object, atom)),
+        }
+        // A collection's `size` or a buffer view's field, which no cache records
+        // (`AtomClass::VIRTUAL_FIELD`).
+        .or_else(|| vm.pure_virtual_field(object, atom))
+    }
+
+    /// The private-name slot of `object`'s field `atom` at the record address `site`: the
+    /// record's last shape and slot under the home its environment finds
+    /// (`PrivateSiteHomes::field_slot`). `None` for an object without the field, a private
+    /// method's or accessor's brand included.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn private_slot<H: Host>(cx: *mut LaneContext<H>, site: usize,
+        code: &ResidualProgram, object: Value, atom: crate::bytecode::Atom) -> Option<usize> {
+        let scope = lane_private_site(cx)?;
+        (unsafe { vm(cx) }).site_private_field_slot(code, site, scope, object, atom)
+    }
+
+    /// A `GetField` record's private field value at the record address `site` (`private_slot`):
+    /// `None` for an object without the field, which the general path throws for, or a private
+    /// method's or accessor's name, which it reads.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn private_value<H: Host>(cx: *mut LaneContext<H>, site: usize,
+        code: &ResidualProgram, object: Value, atom: crate::bytecode::Atom) -> Option<Value> {
+        let slot = Self::private_slot(cx, site, code, object, atom)?;
+        let vm = unsafe { vm(cx) };
+        vm.heap.property_get(vm.object_data(object)?, slot)
+    }
+
+    /// The store of private field `atom` of `object` at the record address `site`, under its
+    /// brand there (`private_slot`). `false` leaves the store, a private accessor's or method's
+    /// included, to the general path.
+    #[inline(never)]
+    pub(in crate::vm::dispatch_fast) fn private_store<H: Host>(cx: *mut LaneContext<H>, site: usize,
+        code: &ResidualProgram, object: Value, atom: crate::bytecode::Atom, value: Value) -> bool {
+        let Some(slot) = Self::private_slot(cx, site, code, object, atom) else {
+            return false;
+        };
+        (unsafe { vm(cx) }).heap.property_set(object, slot, value);
+        true
     }
 }
 
@@ -1039,6 +1269,23 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             return None;
         }
         Some((self.registers.get(self.kept + index).to_bits(), Boxing::Value))
+    }
+
+    /// The keeping activation's `arguments` binding in local `slot` (`kept_binding`): the marker a forwarding
+    /// read passes on, the object it makes at its last read, or a frame's binding as the Vm reads it.
+    #[inline(always)]
+    fn arguments_binding(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
+        let (context, binding) = self.kept_binding?;
+        // SAFETY: the running lane's context and register file, live for the row's step.
+        Some((unsafe { binding(context, self.registers, slot) }?.to_bits(), Boxing::Value))
+    }
+
+    /// `value instanceof constructor` by the VM's proof of the constructor's chain, else the ordinary walk
+    /// (`Decisions::instance`), which runs no guest code; `None` where only the full algorithm decides.
+    #[inline(always)]
+    fn instance_of(&mut self, _stage: &mut Concrete, value: u64, constructor: u64) -> Option<bool> {
+        let Decisions { context, instance, .. } = self.decisions?;
+        instance(context, Value::from_bits(value), Value::from_bits(constructor))
     }
 
     /// The by-name read through the window's scope (`ScopeReads::name`): the destination and the call
@@ -1609,6 +1856,12 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         Value::from_bits(word).as_int().map(|int| u64::from(int as u32))
     }
 
+    /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
+    #[inline(always)]
+    fn constant_operand(&mut self, operand: Operand) -> Option<Value> {
+        (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
+    }
+
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let word = self.operand_word(stage, operand)?;
         Value::from_bits(word).as_number().map(f64::to_bits)
@@ -1765,6 +2018,12 @@ pub(in crate::vm::dispatch_fast) const FLAG_LOOP: u8 = 14;
 /// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`load_capture_walk_miss`): its row decodes
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(in crate::vm::dispatch_fast) const FLAG_ROOT: u8 = 15;
+/// `FLAG` of a local read of a keeping activation's `arguments` binding that a forwarding call passes on
+/// (`CallForwardingArguments` after it): the row answers the unmaterialized marker (`kept_arguments_binding`).
+pub(in crate::vm::dispatch_fast) const FLAG_KEPT_MARKER: u8 = 17;
+/// `FLAG` of a local read of a keeping activation's `arguments` binding the activation makes into an object
+/// at its last read (`KeptArguments::Passes`): the row answers that object (`kept_arguments_binding`).
+pub(in crate::vm::dispatch_fast) const FLAG_KEPT_OBJECT: u8 = 18;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -1991,6 +2250,17 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
+    // A keeping activation's `arguments` binding is answered by the Vm (`kept_arguments_binding`) whatever the
+    // frame's locals hold, so the row needs no locals or window of its own: where the Vm declines it, the row
+    // leaves to its miss, as the slot's read would.
+    if const { FLAG == FLAG_KEPT_MARKER || FLAG == FLAG_KEPT_OBJECT } {
+        let binding: unsafe fn(*mut (), Registers, u16) -> Option<Value> = if const { FLAG == FLAG_KEPT_OBJECT } {
+            super::kept_arguments_binding::<H, true>
+        } else {
+            super::kept_arguments_binding::<H, false>
+        };
+        return LaneFrame::<ACC> { kept_binding: Some((cx.cast(), binding)), ..LaneFrame::<ACC>::new(r, view) };
+    }
     // A local access holds the frame's locals only in an activation without its own environment, and
     // not a root body's frame. A window record (`FLAG_WINDOW`) in an activation that holds one reads the
     // window's locals instead. Any other leaves to its miss (`row_miss`).
@@ -2104,6 +2374,29 @@ fn is_row_flagged<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) ->
     let rows: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG>, generated_row::<H, OP, ACC_A, FLAG>,
         generated_row::<H, OP, ACC_B, FLAG>, generated_row::<H, OP, ACC_C, FLAG>, generated_row::<H, OP, ACC_PAIR, FLAG>];
     rows.iter().any(|row| *row as *const () == handler)
+}
+
+/// The row of a local read of a keeping activation's `arguments` binding (`handler`, a local read row at its unread
+/// flag, any accumulator) at the kept flag: `FLAG_KEPT_OBJECT` where the binding makes an object (`object`), else
+/// `FLAG_KEPT_MARKER`. `None` where `handler` is no local read row. Subsumes the forwarded and kept-object loads
+/// (`lane_load_forwarded_arguments`, `lane_load_kept_arguments_object`) of the lane's hand handlers.
+pub(in crate::vm::dispatch_fast) fn kept_row<H: Host>(handler: *const (), object: bool) -> Option<Handler> {
+    kept_row_of::<H, { crate::staged::LOCAL_LOAD_ROW }>(handler, object)
+        .or_else(|| kept_row_of::<H, { crate::staged::LOAD_LOCAL_PLAIN_ROW }>(handler, object))
+}
+
+/// `kept_row` for opcode `OP`'s rows.
+fn kept_row_of<H: Host, const OP: u16>(handler: *const (), object: bool) -> Option<Handler> {
+    if object { kept_row_at::<H, OP, FLAG_KEPT_OBJECT>(handler) } else { kept_row_at::<H, OP, FLAG_KEPT_MARKER>(handler) }
+}
+
+/// `kept_row_of` at one kept `FLAG`: opcode `OP`'s row at `FLAG` for the accumulator field its unread row carries.
+fn kept_row_at<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) -> Option<Handler> {
+    let unread: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG_UNREAD>, generated_row::<H, OP, ACC_A, FLAG_UNREAD>,
+        generated_row::<H, OP, ACC_B, FLAG_UNREAD>, generated_row::<H, OP, ACC_C, FLAG_UNREAD>, generated_row::<H, OP, ACC_PAIR, FLAG_UNREAD>];
+    let kept: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG>, generated_row::<H, OP, ACC_A, FLAG>,
+        generated_row::<H, OP, ACC_B, FLAG>, generated_row::<H, OP, ACC_C, FLAG>, generated_row::<H, OP, ACC_PAIR, FLAG>];
+    unread.iter().position(|row| *row as *const () == handler).map(|position| kept[position])
 }
 
 /// `staged::step` of opcode `$op`'s row, compiled as only the part the row reaches
@@ -2267,6 +2560,37 @@ lane_handler! {
             if const { FLAG == super::LOCAL_FIELD_SITE } {
                 sibling!(super::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { super::general_site(FLAG) } {
+                // The general read the host path did not answer: its activation path, as `lane_get_field` made it.
+                sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+            }
+            if const { super::sink_site(FLAG) } {
+                // The general read and store, which repeats the side-effect-free reads.
+                sibling!(super::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
+            }
+            if const { super::entry_site(FLAG) } {
+                // The polymorphic read past its inline entries probes the hash (`row_polymorphic_miss`); the
+                // hashed read, the holder's and the inherited walk's take the general read, which moves the record on.
+                if const { FLAG == super::POLYMORPHIC_SITE } {
+                    sibling!(super::row_polymorphic_miss::<H>, r, ip, Carried::script_in(script, view))
+                }
+                if const { FLAG == super::HASHED_SITE } {
+                    sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+                }
+                sibling!(super::row_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
+            }
+            if const { super::returning_field_site(FLAG) } {
+                // A returning read's stale hint: the returning miss answers and moves the record on.
+                by_leaf!(super::returning_leaf(FLAG), |L| sibling!(super::row_returning_field_miss::<H, L>, r, ip, Carried::script_in(script, view)))
+            }
+            if const { super::private_field_site(FLAG) } {
+                // A method, accessor or missing private field: the general private read.
+                sibling!(lane_get_private_field::<H>, r, ip, Carried::script_in(script, view))
+            }
+            if const { super::cached_field_site(FLAG) } {
+                // A read the cache does not answer: the general read, which runs the getter.
+                sibling!(super::row_get_field_general::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::held_site(FLAG) && !super::held_other_site(FLAG) } {
                 // A direct object's miss; the read of any other receiver's object part.
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
@@ -2379,7 +2703,8 @@ lane_handler! {
                 }
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == crate::bytecode::FieldBase::THIS.0);
-                } else if const { FLAG != super::LOCAL_FIELD_SITE } {
+                } else if const { FLAG != super::NESTED_SITE && !super::sink_site(FLAG) && FLAG != super::LOCAL_FIELD_SITE } {
+                    // A nested read's base is its site's, not the record's operand; a local's, its slot's.
                     std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
                 }
             }
@@ -2494,6 +2819,10 @@ lane_handler! {
             // installed only once the lane bound the object records (`row_get_field_own_refresh`).
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
+            if const { super::math_site(FLAG) } {
+                // The Math call the read's value feeds, computed by the VM's functions (`PropertyFrame::math_call`).
+                frame.math = Some(MathCalls::of::<H>(script));
+            }
             if const { FLAG == super::LOCAL_FIELD_SITE } {
                 // A local's read through the own-field hint its record holds (`local_field_handler`): the hint's
                 // layout over the bound object records. An unbound table or hint leaves to the local's miss.
@@ -2732,7 +3061,6 @@ lane_handler! {
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element))
                 && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } => {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                // merge: `lane_get_index_slot` exists on neither branch; its current equivalent is the element row's miss (`row_index_read_miss`).
                 sibling!(super::row_index_read_miss::<H>, r, ip, Carried::script_in(script, view))
             }
             // A keyed write past its in-place replacement: an append, a hole, a typed array, a key.

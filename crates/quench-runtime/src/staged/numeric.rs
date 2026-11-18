@@ -93,6 +93,11 @@ pub(crate) trait NumericFrame<S: Stage>: Frame<S> + super::GlobalFrame<S> + supe
     fn int_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
     /// The binary64 word of `operand`, proved here; `None` where it is no Number.
     fn number_operand(&mut self, stage: &mut S, operand: Operand, miss: S::Miss) -> Option<S::Word>;
+    /// The program constant `operand` names, where it names one: the value a numeric operation folds into
+    /// its stage (`int32_word`, `float_word`: `i32_constant`, `f64_constant`) in place of reading it, in every
+    /// tier. `None` for a register or a local, and where the frame holds no constant table.
+    #[inline(always)]
+    fn constant_operand(&mut self, _operand: Operand) -> Option<crate::Value> { None }
     /// Continue where `register` holds a Number; `None` where it does not, so nothing runs
     /// past it. A specializer may prove a narrower representation its facts favor (an
     /// untyped register taken for an int32), leaving at `miss` for the rest.
@@ -307,9 +312,46 @@ fn operands<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     left: Operand, right: Operand, domain: Domain) -> Option<(S::Word, S::Word)> {
     let miss = frame.miss();
     Some(match domain {
-        Domain::Int32 => (frame.int_operand(stage, left, miss)?, frame.int_operand(stage, right, miss)?),
-        Domain::Float64 => (frame.number_operand(stage, left, miss)?, frame.number_operand(stage, right, miss)?),
+        Domain::Int32 => (int32_word(stage, frame, left, miss)?, int32_word(stage, frame, right, miss)?),
+        Domain::Float64 => (float_word(stage, frame, left, miss)?, float_word(stage, frame, right, miss)?),
     })
+}
+
+/// `operand`'s int32 word: a constant int32 is the stage's own constant (`i32_constant`), so a constant
+/// left operand folds in every tier; any other operand is `int_operand`'s.
+#[inline(always)]
+fn int32_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+    match frame.constant_operand(operand) {
+        Some(value) => Some(stage.i32_constant(value.as_int()?)),
+        None => frame.int_operand(stage, operand, miss),
+    }
+}
+
+/// `operand`'s ToInt32 word for a bitwise operator: a constant's ToInt32 is the stage's own constant
+/// (`i32_constant`), else `int32_operand`'s.
+#[inline(always)]
+pub(super) fn bitwise_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+    match frame.constant_operand(operand) {
+        Some(value) => {
+            let int = match value.as_int() {
+                Some(int) => int,
+                None => crate::value::number_to_u32(value.as_number()?) as i32,
+            };
+            Some(stage.i32_constant(int))
+        }
+        None => frame.int32_operand(stage, operand, miss),
+    }
+}
+
+/// `operand`'s binary64 word: a constant Number is the stage's own constant (`f64_constant`), else
+/// `number_operand`'s. Subsumes the constant-left Number handlers (`lane_operator_constant_left`, one per
+/// operator): the operator is the row's, and the constant folds in every tier.
+#[inline(always)]
+fn float_word<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operand: Operand, miss: S::Miss) -> Option<S::Word> {
+    match frame.constant_operand(operand) {
+        Some(value) => Some(stage.f64_constant(value.as_number()?)),
+        None => frame.number_operand(stage, operand, miss),
+    }
 }
 
 /// A relation of two operands in `domain`; its predicate word.
@@ -337,8 +379,8 @@ fn relation_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mu
 fn bitwise_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, left: Operand, right: Operand, operation: NumberBitwise) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(left) = frame.int32_operand(stage, left, miss) else { return Step::Unresolved };
-    let Some(right) = frame.int32_operand(stage, right, miss) else { return Step::Unresolved };
+    let Some(left) = bitwise_word(stage, frame, left, miss) else { return Step::Unresolved };
+    let Some(right) = bitwise_word(stage, frame, right, miss) else { return Step::Unresolved };
     if operation == NumberBitwise::ShiftRightUnsigned {
         let count = stage.and_imm(right, 31u64);
         let zero_count = stage.eq_imm(count, 0u64);

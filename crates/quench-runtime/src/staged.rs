@@ -48,15 +48,6 @@ mod delete;
 mod operation;
 pub(crate) use operation::Operation;
 
-impl<W, P> Operation<W, P> {
-    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
-    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
-    /// same decode, with the constant left for the tier to look up.
-    #[inline(always)]
-    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
-        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
-    }
-}
 mod decode;
 pub(crate) mod meaning_fast;
 pub(crate) mod meaning;
@@ -158,7 +149,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step (`General`, which
 /// runs the interpreter's own step in place for every opcode the general path covers); for a
@@ -967,26 +958,6 @@ pub(crate) mod emit {
     }
 }
 
-// merge: HEAD's decode_completed stays here as its own impl block (theirs moved the decode helpers to operation.rs,
-// and vm/compiled.rs calls this one); the shared closing braces below close it.
-impl<W, P> Operation<W, P> {
-    /// The staged operation `instruction` makes apart from how its result completes the frame
-    /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
-    /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
-    /// operation with no completion.
-    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
-        use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
-        // A numeric local target is where the result goes, not how it completes: it stays.
-        // (It shares its bit with the `this` write: only `ReturnableAndThis` reads that bit as one.)
-        let layout = instruction.op().result_layout();
-        let completing = (layout.allowed_flags() & RETURN_REGISTER)
-            | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
-        let flags = instruction.result_flags() & completing;
-        if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
-        let plain = if flags != 0 { instruction.without_result_flags() } else { instruction };
-        Some((Self::decode(plain, context)?, flags))
-    }
-}
 
 /// Which of an instruction's two control edges it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

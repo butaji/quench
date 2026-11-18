@@ -204,7 +204,7 @@ mod tests {
             Op::RequireObjectCoercible { register: 0 },
             Op::LogicalNot { destination: 0, source: 1 },
             Op::GetField { base: FieldBase(FieldBase::NESTED), lookup: FieldLookup::Site(0) },
-            Op::SetField { value: 0, base: None, atom: 0, site: 0 },
+            Op::SetField { value: 0, base: None, atom: 0, site: 0, strict: false },
             Op::StoreField { base: None, value: 0, fact: Type::ANY, atom: 0, site: 0 },
             Op::FieldGetHost { object: 0, atom: 0, site: 0 },
             Op::FieldAdd { object: 0, atom: 0, site: 0, value: 1 },

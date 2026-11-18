@@ -249,6 +249,14 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn argument(&mut self, _stage: &mut S, _slot: u16, _index: S::Word) -> Option<(S::Word, Self::Fact)> { None }
 
+    /// The word of the `arguments` binding in local `slot` where the frame keeps the activation's
+    /// arguments unmaterialized (`KeptArguments`): the marker a forwarding read passes on, or the object
+    /// the binding makes at its last read; a frame's binding is read as the general path reads it. The
+    /// staged local read asks it before the slot's own word (`read_arguments_binding`). `None` where the
+    /// frame has no such binding, leaving the read to the slot and the row's miss.
+    #[inline(always)]
+    fn arguments_binding(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
+
     /// The by-name read of `atom` through the running window activation's scope chain (its `with`
     /// objects, then its dynamic bindings), defining `destination` and, for a call, `receiver`; `None`
     /// where the frame does not decide it, which leaves the name to the row's miss.
@@ -316,9 +324,10 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn store_capture(&mut self, _stage: &mut S, _depth: u16, _slot: u16, _value: S::Word) -> Option<()> { None }
 
-    /// Whether `value instanceof constructor` holds, decided by the words alone (the frame's
-    /// `object::instanceof_by_words` over its record table and the constructor's proven prototype);
-    /// `None` where the frame does not decide it, leaving the test to the VM's callout.
+    /// Whether `value instanceof constructor` holds, decided by the frame's proof of the constructor's
+    /// chain (the VM's published watch, or an ordinary walk that runs no guest code) or by the words
+    /// alone (`object::instanceof_by_words` over the frame's record table and the constructor's proven
+    /// prototype); `None` where the frame decides neither, leaving the test to the stage's walk and the VM's callout.
     #[inline(always)]
     fn instance_of(&mut self, _stage: &mut S, _value: S::Word, _constructor: S::Word) -> Option<S::Cond> { None }
 
@@ -436,6 +445,16 @@ pub(crate) fn load_this<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, des
 #[inline(always)]
 pub(crate) fn read_local<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16, miss: Option<S::Miss>) -> Option<S::Word> {
     let (value, fact) = frame.load_local(stage, slot, miss)?;
+    frame.write(stage, destination, value, fact);
+    Some(value)
+}
+
+/// `destination` defined from the `arguments` binding of local slot `slot` where the frame answers it
+/// (`Frame::arguments_binding`): the marker a forwarding read passes on, or the object a keeping activation
+/// makes. `None` where the frame does not, and the slot's own read decides.
+#[inline(always)]
+pub(crate) fn read_arguments_binding<S: Stage, F: Frame<S>>(stage: &mut S, frame: &mut F, destination: Register, slot: u16) -> Option<S::Word> {
+    let (value, fact) = frame.arguments_binding(stage, slot)?;
     frame.write(stage, destination, value, fact);
     Some(value)
 }

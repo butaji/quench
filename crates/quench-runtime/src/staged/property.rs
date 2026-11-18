@@ -593,6 +593,19 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     miss: S::Miss) -> Option<S::Word> {
     if let Some(word) = frame.hoisted(stage, lookup) { return Some(word); }
     if let Some(word) = frame.entry_field(stage, lookup) { return Some(word); }
+    if base.0 == FieldBase::NESTED {
+        // A nested lookup's base is the site's, which the frame names; its links keep no proof.
+        // Two own hops inline, each one exact-shape compare and one slot load, as the hand read.
+        let hops = frame.plans().nested_hops()?;
+        let mut object = frame.nested_base(stage, miss)?;
+        for (shape, slot) in hops {
+            let at = frame.receiver_record(stage, Owner::Temporary, object, false, miss)?;
+            let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either,
+                storage_len: usize::from(slot) + 1, rep: crate::typed_ir::Representation::Tagged }];
+            object = ic::run(stage, &ops, at, None, miss)?;
+        }
+        return Some(object);
+    }
     // A local base is read through the frame's local (`PropertyFrame::local_base`), which keeps no
     // proof of its object, as a temporary's.
     let local = base.local_index();

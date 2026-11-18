@@ -5348,7 +5348,7 @@ const OWN_FORMS: [u32; 9] = {
         TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS]
 };
 
-/// The site fact (`lane_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose
+/// The site fact (`generated_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose
 /// hint fixes form `OWN_FORMS[form]`. Zero is no site: the row reads it as unread.
 const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this as u8 }
 
@@ -5407,9 +5407,213 @@ pub(super) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
 pub(super) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
 
 /// The site fact of a `GetField` of a local slot's row (`local_field_handler`): an own-field read of a
-/// plain local, whose hint the record binds like an own read's. `u8::MAX` is past every own-field
-/// site, which `own_site` numbers from one.
-pub(super) const LOCAL_FIELD_SITE: u8 = u8::MAX;
+/// plain local, whose hint the record binds like an own read's. Own-form index 30, a
+/// free one below the returning sites.
+pub(super) const LOCAL_FIELD_SITE: u8 = own_site(false, OWN_FORMS.len() + 30);
+/// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the
+/// record's hint names an own-constant hint (`OWN_CONSTANT_HINT`, `Vm::own_constant_operands`).
+pub(super) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
+pub(super) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
+
+/// The site facts of a register's `length`: an array's (`IcOp::ArrayLength`) and a string's
+/// (`IcOp::StringLength`); a miss takes `row_length_other`.
+pub(super) const ARRAY_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 9);
+pub(super) const STRING_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 10);
+pub(super) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
+
+/// The site facts of a read the VM's geometry or length answers from the receiver's word, which no
+/// record addresses (`FieldPlan::Length`, `FieldPlan::Geometry`): a register's `length` of an
+/// arguments object, a user function or a typed view (`TYPED_LENGTH_SITE`, a miss to the array row),
+/// and any geometry name of a typed view, DataView, Map or Set (`GEOMETRY_SITE`, a miss to the
+/// general read).
+pub(super) const TYPED_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 20);
+pub(super) const GEOMETRY_SITE: u8 = own_site(false, OWN_FORMS.len() + 21);
+pub(super) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
+
+/// The site fact of a number receiver's read through a `Number.prototype` hint (`IcOp::HeldNumber`),
+/// as `n.toFixed`: own-form index 14.
+pub(super) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
+
+/// The site facts of a read that met a getter whose hint returns an own field of the receiver
+/// (`IcOp::GetterOwn`, `Vm::getter_hint_operands`), of `this` and of a register; a miss takes the
+/// getter's refresh, which makes the hint (`row_get_field_getter_refresh`).
+pub(super) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
+pub(super) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
+pub(super) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
+
+/// The site fact of a nested read `a.b.c` of two own entries (`lane_get_field_nested`'s steps):
+/// the record's hint is the first step's entry, the site's second entry the second; the row runs
+/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read that
+/// refreshes the hint.
+pub(super) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
+
+/// The site facts of the general read (`FieldPlan::Host`): the record names no plan the row
+/// runs, so its hit is the VM's cached read of the atom through the site's cache
+/// (`general_field_read`, the value `lane_get_field` made), of `this` and of a register. Its miss
+/// is `row_get_field_general`, the general read's activation path.
+pub(super) const GENERAL_THIS: u8 = own_site(true, OWN_FORMS.len() + 18);
+pub(super) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
+pub(super) const fn general_site(site: u8) -> bool { site == GENERAL_THIS || site == GENERAL_REGISTER }
+
+/// The generated general read of a `GetField` by its base: `GENERAL_THIS` for `this`,
+/// `GENERAL_REGISTER` for a register, and `row_get_field_general` for a nested or local base.
+fn general_handler<H: Host>(base: u16) -> Handler {
+    if base == crate::bytecode::FieldBase::THIS.0 {
+        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GENERAL_THIS>
+    } else if crate::bytecode::FieldBase(base).register_index().is_some() {
+        generated_row::<H, FIELD_LEAF_READ, ACC_NONE, GENERAL_REGISTER>
+    } else {
+        row_get_field_general::<H>
+    }
+}
+
+/// The VM's general read of `atom` of `object` through cache `site`, as the row's host path
+/// (`generated_row`'s `GENERAL_*` answer): a register's hint answers first (`primary_record_holder_field_hit`,
+/// `proved_inherited_field_hit`), then the caches' probe (`lane_field_step`), with `record` the
+/// instruction's address for a private name's site. `None` leaves to `row_get_field_general`.
+#[inline(always)]
+pub(super) fn general_field_read<H: Host>(context: *mut (), record: usize, register: bool, object: Value, atom: u32,
+    site: u16) -> Option<Value> {
+    let cx = context.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let quick = if register && vm.specialized_operations_enabled(code) {
+        vm.primary_record_holder_field_hit(code, object, site).or_else(|| vm.proved_inherited_field_hit(code, object, site))
+    } else {
+        None
+    };
+    quick.or_else(|| lane_field_step(cx, record, code, object, atom, site))
+}
+
+/// Whether the nested site `i` reads two ordinary own entries, which `NESTED_SITE`'s row runs; a
+/// `length` step (an array's or a string's own `length`) or a single step stays with
+/// `lane_get_field_nested`.
+fn nested_row_site<H: Host>(vm: &Vm<H>, code: &ResidualProgram, i: &LaneInstruction) -> bool {
+    code.field_sites.get(i.imm() as usize).is_some_and(|site| site.second.is_some_and(|(atom, _)| atom != vm.length_atom))
+}
+
+/// The site fact of a named store that may add its property (`StorePlan::Add`, `RecordPlan::own_add`):
+/// its row runs the VM's adds, and a refused add takes the general cached write.
+pub(super) const ADD_SITE: u8 = own_site(false, OWN_FORMS.len() + 17);
+
+/// The site fact of a named store whose own hint is a narrow run (`StorePlan::Hinted`, `narrow`):
+/// the row stores the value's narrow form in place (`hinted_narrow_field_store_hit`); a refusal
+/// takes the VM's own-field store, and a store whose object is no longer narrow moves back.
+pub(super) const NARROW_SITE: u8 = own_site(false, OWN_FORMS.len() + 22);
+
+/// The site fact of a named store on a runtime whose arena keeps slot representations
+/// (`Heap::tracks_slot_representations`): the row stores through the record's hint in place of
+/// the untracked own store (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`).
+pub(super) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
+
+/// The site fact of a named store past one shape (`StorePlan::Polymorphic`): the record's hint,
+/// the site's polymorphic entries, then the proved add, all inside the row; a refusal takes
+/// `GENERAL_SITE`'s activation path.
+pub(super) const POLY_SITE: u8 = own_site(false, OWN_FORMS.len() + 24);
+
+/// The site fact of a named store the general cached write completes (`StorePlan::Host`): the VM's
+/// cached store or add inside the row, a private name's or a refusal's activation path after it
+/// (`row_set_field_miss_path`).
+pub(super) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
+/// The site facts of a field read whose value is the callee of a Math call the record after it
+/// makes (`native_calls::install_math_field_call`): one argument, a register second argument,
+/// and a constant second argument. The row runs the call past its read (`math_row_resume`), the
+/// function's identity read by the VM (`PropertyFrame::math_call`).
+pub(super) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
+pub(super) const MATH_CALL2_SITE: u8 = own_site(false, OWN_FORMS.len() + 45);
+pub(super) const MATH_CALL2_CONST_SITE: u8 = own_site(false, OWN_FORMS.len() + 46);
+
+/// The site fact of a nested read that stores its value to `this` (`this.a = this.b.c`), the
+/// read's flag `SET_THIS_REGISTER` its row's store (`PropertyFrame::sink_store`).
+pub(super) const SINK_SITE: u8 = own_site(false, OWN_FORMS.len() + 47);
+
+/// Whether site `site` is a field read of a Math call's callee (`MATH_CALL_SITE`, `MATH_CALL2_SITE`,
+/// `MATH_CALL2_CONST_SITE`).
+pub(super) const fn math_site(site: u8) -> bool {
+    site == MATH_CALL_SITE || site == MATH_CALL2_SITE || site == MATH_CALL2_CONST_SITE
+}
+
+/// The number of arguments the Math call of math site `site` passes.
+pub(super) const fn math_arity(site: u8) -> usize {
+    if site == MATH_CALL_SITE { 1 } else { 2 }
+}
+
+/// Whether site `site` is a sinking read (`SINK_SITE`).
+pub(super) const fn sink_site(site: u8) -> bool { site == SINK_SITE }
+
+/// The store `(atom, cache)` of the sinking read `i` (`SINK_SITE`): its site's sink.
+#[inline(always)]
+pub(in crate::vm::dispatch_fast) fn sink_operands<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<(crate::bytecode::Atom, u16)> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    code.field_sites.get(i.imm() as usize)?.sink
+}
+
+/// The site facts of the generated entry reads (`FieldPlan::Hinted`, `FieldPlan::Entry`): each
+/// one hit shape of the VM's entry lookups, whose host call the row makes (`field_entry_read`).
+/// Of `this` and of a register alike (`runtime_base`).
+/// The polymorphic read: the record's own hint, then the site's inline entries (`row_polymorphic_miss` past them).
+pub(super) const POLYMORPHIC_SITE: u8 = own_site(false, OWN_FORMS.len() + 38);
+/// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`), the polymorphic read's miss.
+pub(super) const HASHED_SITE: u8 = own_site(false, OWN_FORMS.len() + 39);
+/// The site's primary holder entry, of a direct object or of any receiver in a heap cell (`Vm::primary_holder_field_hit`,
+/// `Vm::cell_holder_field_hit`), which holds no hint.
+pub(super) const HOLDER_SITE: u8 = own_site(false, OWN_FORMS.len() + 40);
+/// The site's inherited entry walked past the immediate prototype (`Vm::inherited_field_entry_hit`), whose answer
+/// becomes the record's inherited hint.
+pub(super) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41);
+
+/// Whether site `site` reads through a VM entry lookup (`FieldPlan::Entry`, `FieldPlan::Hinted`).
+pub(super) const fn entry_site(site: u8) -> bool {
+    site == POLYMORPHIC_SITE || site == HASHED_SITE || site == HOLDER_SITE || site == INHERITED_WALK_SITE
+}
+
+/// The entry lookup a non-polymorphic entry site makes (`EntryKind`); the polymorphic site's own
+/// plan is `FieldPlan::Hinted`, whose entry is `EntryKind::Polymorphic` too.
+pub(super) const fn entry_kind(site: u8) -> crate::staged::property::EntryKind {
+    use crate::staged::property::EntryKind;
+    if site == POLYMORPHIC_SITE { EntryKind::Polymorphic }
+    else if site == HASHED_SITE { EntryKind::Hashed }
+    else if site == HOLDER_SITE { EntryKind::Holder }
+    else { EntryKind::Inherited }
+}
+
+/// The site facts of a private name's read of `this` and of a register (`FieldPlan::Private`):
+/// the record's private field at its own address (`LaneFrame::private_value`). A method, accessor
+/// or missing field takes `lane_get_private_field`, the general read.
+pub(super) const PRIVATE_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 48);
+pub(super) const PRIVATE_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 48);
+pub(super) const fn private_field_site(site: u8) -> bool {
+    site == PRIVATE_FIELD_THIS || site == PRIVATE_FIELD_REGISTER
+}
+
+/// The site facts of a read the VM's cache answers, of `this` and of a register (`FieldPlan::Host`):
+/// the cached read of the site's atom (`LaneFrame::cached_read`). A miss takes `lane_get_field`,
+/// the general read, which runs the getter and the data lookups.
+pub(super) const CACHED_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 42);
+pub(super) const CACHED_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 42);
+pub(super) const fn cached_field_site(site: u8) -> bool {
+    site == CACHED_FIELD_THIS || site == CACHED_FIELD_REGISTER
+}
+
+/// The site facts of a returning own-field read (`RETURNING_FIELD_OWN`'s row, k 50 up: the topmost site facts): the record's own
+/// hint, for `this` and a register, at each leaf form the record returns from (`LeafForm`). The
+/// row completes the return with its leaf form's completion, so the leaf forms are const site
+/// facts of one family: `returning_site(this, leaf)`.
+const RETURNING_FORM: usize = OWN_FORMS.len() + 50;
+const RETURNING_BASE: u8 = own_site(false, RETURNING_FORM);
+pub(super) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
+pub(super) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
+pub(super) const fn returning_leaf(site: u8) -> u8 { (site - RETURNING_BASE) / 2 }
+
+/// Whether `handler` is the returning own-field row of no leaf form, at `this` or a register
+/// (`returning_site`): the leaf call's reads recognise it as the own read it is.
+fn returning_own_row<H: Host>(handler: *const ()) -> bool {
+    handler == generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, NOT_LEAF) }> as *const ()
+        || handler == generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, NOT_LEAF) }> as *const ()
+}
+
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
@@ -5457,7 +5661,7 @@ macro_rules! own_sites {
     };
 }
 
-/// The generated own-field read (`lane_row` at an `own_site`) for the base `THIS` names and the
+/// The generated own-field read (`generated_row` at an `own_site`) for the base `THIS` names and the
 /// storage form the layout id `hint`'s form bits name: an arena run, extras or packed inline values,
 /// whose layout it then reads untested; `None` for the form of no particular hint.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: Option<u32>) -> Handler {
@@ -5707,7 +5911,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// The generated number read (`lane_row` at `NUMBER_SITE`) past its hint: the site's `Number.prototype`
+    /// The generated number read (`generated_row` at `NUMBER_SITE`) past its hint: the site's `Number.prototype`
     /// entry (`Vm::number_prototype_field_hit`), whose answer becomes the hint. Any other read
     /// takes `row_get_field_miss`, which decides the record's tier.
     #[inline(never)]
@@ -5724,7 +5928,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// The generated string read (`lane_row` at `STRING_SITE`) past its hint: the site's `String.prototype` entry
+    /// The generated string read (`generated_row` at `STRING_SITE`) past its hint: the site's `String.prototype` entry
     /// (`Vm::string_prototype_field_hit`), whose answer becomes the hint. Any other read
     /// takes `lane_get_field_string`.
     #[inline(never)]
@@ -12735,6 +12939,43 @@ unsafe fn arguments_count<H: Host, const KEPT: bool>(cx: *mut LaneContext<H>, sl
     None
 }
 
+/// The keeping activation's `arguments` binding a local read of its slot takes (`Frame::arguments_binding`): a
+/// frame run reads its own binding as the general path does (`Vm::read_validated_local`, which materializes it);
+/// a frameless activation's is the unmaterialized marker a forwarding read passes on (`OBJECT` false), or the
+/// object made from the values it kept (`OBJECT` true, `Vm::activation_arguments_object`), which the keeping
+/// activation's last read makes. `None` where the object cannot be made: the row leaves to its miss.
+/// Subsumes the hand loads `lane_load_forwarded_arguments` and `lane_load_kept_arguments_object` of the lane.
+///
+/// # Safety
+/// `cx` is the running lane's context, and `r` its register file.
+unsafe fn kept_arguments_binding<H: Host, const OBJECT: bool>(cx: *mut (), r: Registers, slot: u16) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    // The forwarding check: a frame run's registers hold the deleted environment marker.
+    if unsafe { (*cx).registers }.env().is_deleted() {
+        // SAFETY: validated bytecode bounds the slot by Function.locals, and the frame is the running one.
+        return Some(unsafe { vm.read_validated_local((*cx).frame(), usize::from(slot)) });
+    }
+    if !OBJECT {
+        return Some(Value::UNMATERIALIZED_ARGUMENTS);
+    }
+    let Some((function, Some(script))) =
+        vm.lane_stack.activations().last().map(|activation| (activation.function(), activation.script()))
+    else {
+        return None;
+    };
+    // SAFETY: the context's program outlives the lane run.
+    let body = unsafe { &*(*cx).code }.function(function as usize);
+    // A keeping activation's values follow its registers (`lane_activate_keeping`).
+    let kept = (0..script.argc)
+        .map(|index| r.get(body.registers + index))
+        .collect::<SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
+    let context = CallContext::user_function(function, script.callee);
+    let arguments = vm.activation_arguments_object(body, context, &kept).ok()?;
+    note_allocation(vm);
+    Some(arguments)
+}
+
 /// The frameless target of a lane call to `callee`, resolved on first use.
 /// Whether `callee` is the target of a `new` whose `new.target` the general path still
 /// holds (`Vm::construct_target`): a lane activation would not bind it.
@@ -17376,8 +17617,6 @@ fn derive_lane_view<'live, H: Host>(
                             _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
                         })
                     })
-            // merge: theirs' call-forwarding and kept-arguments loads (`lane_load_forwarded_arguments`,
-            // `lane_load_kept_arguments_object`) are not ported; `checked_local_hand` reads that binding.
             } else if admits_row(op) && op.reads_arguments()
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
@@ -17387,11 +17626,18 @@ fn derive_lane_view<'live, H: Host>(
                 row.map(|row| LaneHandler { handler: row_near::<H, ARGUMENTS_COUNT>(row.handler as *const ()).unwrap_or(row.handler), ..row })
             } else if crate::staged::local_read_family(op)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
-                && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
+                && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
-                // The binding a keeping activation may leave unmaterialized is read by the local read's
-                // binding rules (the general step), which materialize it or forward its marker.
-                Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
+                // The binding a keeping activation may leave unmaterialized: its local read's row answers it
+                // (`Frame::arguments_binding`). The object is made where no forwarding call follows the read
+                // and the activation keeps its values to its last read (`KeptArguments::Passes`); else the marker.
+                let forwards = decoded.get(pc + 1).is_some_and(|next| {
+                    crate::staged::forwarded_call_family(next.op()) && next.call_window().last() == Some(instruction.result_register())
+                });
+                let object = kept == crate::bytecode::KeptArguments::Passes && !forwards;
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                    .and_then(|row| lane_frame::kept_row::<H>(row.handler as *const (), object)
+                        .map(|handler| LaneHandler { handler, ..row }))
             } else if crate::staged::calls(op) && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {
@@ -17996,6 +18242,14 @@ fn proved_row<H: Host>(handler: *const ()) -> Option<Handler> {
     }
     None
 }
+
+/// The proved element read row (`proved_row` of `ELEMENT_READ`), which the primitive bench counts.
+#[cfg(test)]
+pub(super) fn proved_element_read_row<H: Host>() -> *const () { generated_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET> as Handler as *const () }
+
+/// The proved element write row (`proved_row` of `ELEMENT_WRITE`), which the primitive bench counts.
+#[cfg(test)]
+pub(super) fn proved_element_write_row<H: Host>() -> *const () { generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET> as Handler as *const () }
 
 /// The span of the array a proved element row (`proved_row`) reads or stores through the proof of its
 /// base register's slot (`ArrayStorageProofs::read_span`, `write_span`), proving the array first where

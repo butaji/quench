@@ -32,7 +32,7 @@ impl<H: Host> Vm<H> {
         (!value.is_deleted()).then_some(value)
     }
 
-    // merge: restored from trunk (4cb40b0d6d); the merge dropped it, but dispatch_fast/mapped_windows.rs calls it.
+
     /// The element of `arguments` that parameter `slot` aliases, while the mapping holds: its
     /// stored element, which writes to the parameter update (`stored_arguments_element`).
     pub(in crate::vm) fn mapped_window_element(&self, arguments: Value, slot: usize) -> Option<Value> {

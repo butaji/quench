@@ -254,8 +254,9 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
         // either branch; the derivation's generated keyed rows stand in for them, and the fused
         // update/read/add row has no equivalent, so it is no longer counted.
         let kinds = [
-            ("read", super::super::dispatch_fast::element_read_row::<TestHost>() as Handler as *const (), false),
-            ("store", super::super::dispatch_fast::element_write_row::<TestHost>() as Handler as *const (), true),
+            ("read", super::super::dispatch_fast::proved_element_read_row::<TestHost>(), false),
+            ("update_read_add", fused_read, false),
+            ("store", super::super::dispatch_fast::proved_element_write_row::<TestHost>(), true),
         ];
         let mut counts = vec![0; kinds.len()];
         for record in view.records.iter() {

@@ -125,10 +125,18 @@ fn register_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 #[inline(always)]
 fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
-        Operation::LoadLocalPlain { destination, slot } => match read_local(stage, frame, destination, slot, frame.local_miss()) {
-            Some(value) => Step::Value(value),
-            None => Step::Unresolved,
-        },
+        // A keeping activation's `arguments` binding is the frame's to answer (`Frame::arguments_binding`); any
+        // other slot, or a frame that declines, is the slot's own read.
+        Operation::LoadLocalPlain { destination, slot } => {
+            let value = match read_arguments_binding(stage, frame, destination, slot) {
+                Some(value) => Some(value),
+                None => read_local(stage, frame, destination, slot, frame.local_miss()),
+            };
+            match value {
+                Some(value) => Step::Value(value),
+                None => Step::Unresolved,
+            }
+        }
         Operation::StoreLocalPlain { source, slot, result } => {
             let Some(value) = write_local(stage, frame, source, slot, frame.local_miss()) else { return Step::Unresolved };
             if let Some(result) = result {
@@ -140,6 +148,10 @@ fn local_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
         Operation::LoadLocalChecked { destination, slot, numeric } => {
             if numeric {
                 return Step::Unresolved;
+            }
+            // An `arguments` binding is initialized from entry, so the frame's answer skips the check.
+            if let Some(value) = read_arguments_binding(stage, frame, destination, slot) {
+                return Step::Value(value);
             }
             match read_initialized_local(stage, frame, destination, slot, frame.miss()) {
                 Some(value) => Step::Value(value),
