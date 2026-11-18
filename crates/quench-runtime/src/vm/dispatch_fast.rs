@@ -3959,7 +3959,7 @@ lane_handler! {
             Ok(StepResult::Continue) => {}
             Ok(_) => unreachable!("an in-place step only continues"),
             Err(error) => {
-                vm.lane_raised = Some(error);
+                vm.lane_completion.raise(error);
                 return exit(ip);
             }
         }
@@ -4047,7 +4047,7 @@ fn lane_in_place<H: Host, T>(
                 vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc: pc, frames: vm.frames.len() });
                 vm.materialize_deferred_lane();
             }
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             None
         }
     }
@@ -6798,7 +6798,7 @@ fn lane_regexp_literal_value<H: Host>(cx: *mut LaneContext<H>, site: u32) -> Opt
         Ok(value) => Some(value),
         Err(error) => {
             if vm.lane_stack.activations.is_empty() {
-                vm.lane_raised = Some(error);
+                vm.lane_completion.raise(error);
             }
             None
         }
@@ -8026,7 +8026,7 @@ script_handler! {
                     match lane_getter_activation(cx, r, ip, i) {
                         Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
                         // A native getter that raised is not called again: the general path raises it.
-                        Err(next) if (unsafe { vm(cx) }).lane_raised.is_some() => return next,
+                        Err(next) if (unsafe { vm(cx) }).lane_completion.is_raised() => return next,
                         Err(_) => {}
                     }
                 }
@@ -8058,7 +8058,7 @@ script_handler! {
         match lane_getter_activation(cx, r, ip, i) {
             Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             // A native getter that raised is not called again: the general path raises it.
-            Err(next) if (unsafe { vm(cx) }).lane_raised.is_some() => next,
+            Err(next) if (unsafe { vm(cx) }).lane_completion.is_raised() => next,
             Err(_) => sibling!(lane_get_field::<H>, unsafe { (*cx).registers }, ip, Carried::script_in(cx, view)),
         }
     }
@@ -8713,7 +8713,7 @@ fn lane_private_field_store<H: Host>(
 fn lane_raise<H: Host>(cx: *mut LaneContext<H>, ip: Ip, error: JsError) -> Ip {
     let vm = unsafe { vm(cx) };
     if vm.lane_stack.activations.is_empty() {
-        vm.lane_raised = Some(error);
+        vm.lane_completion.raise(error);
     }
     exit(ip)
 }
@@ -15826,7 +15826,7 @@ fn lane_regexp_call<H: Host>(
     match result {
         Ok(value) => Some(value),
         Err(error) => {
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             None
         }
     }
@@ -15970,7 +15970,7 @@ fn lane_call_native_out<H: Host>(
                     vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
                     vm.materialize_deferred_lane();
                 }
-                vm.lane_raised = Some(error);
+                vm.lane_completion.raise(error);
                 None
             }
         };
@@ -16020,7 +16020,7 @@ fn lane_call_from_frame<H: Host>(
     match result {
         Ok(value) => Some(value),
         Err(error) => {
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             None
         }
     }
@@ -16075,7 +16075,7 @@ fn lane_construct_native<H: Host>(
                 vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
                 vm.materialize_deferred_lane();
             }
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             None
         }
     }
@@ -18064,7 +18064,7 @@ fn lane_raised_exit<H: Host>(cx: *mut LaneContext<H>, record: Ip) -> Ip {
     let (function, throw_pc) = super::compiled::raise_site_parts(vm.lane_raise_site);
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if let Some(error) = vm.lane_raised.as_mut() { error.capture_source_location(code, function, throw_pc); }
+    if let Some(error) = vm.lane_completion.raised_mut() { error.capture_source_location(code, function, throw_pc); }
     if let Some(settled) = raised_windows::settle_raised_window(cx, record) {
         return settled;
     }
@@ -20079,7 +20079,7 @@ script_handler! {
                     return match lane_getter_activation(cx, r, ip, i) {
                         Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
                         // A native getter that raised is not called again: the general path raises it.
-                        Err(next) if (vm(cx)).lane_raised.is_some() => next,
+                        Err(next) if (vm(cx)).lane_completion.is_raised() => next,
                         Err(_) => sibling!(lane_returning::<H, RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
                     };
                 }
@@ -20304,7 +20304,7 @@ fn lane_async_call_resumed<H: Host>(vm: &mut Vm<H>, cx: *mut LaneContext<H>, ip:
                 vm.lane_deferred = Some(DeferredLaneCall { cx: cx.cast(), call_pc, frames: vm.frames.len() });
                 vm.materialize_deferred_lane();
             }
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             Resumed::Exit(exit(ip))
         }
     }
@@ -20477,7 +20477,7 @@ fn lane_push_frame_call<H: Host>(
         }
         // A failed push (the guest call depth) throws at the call, as the general path's.
         Some(Err(error)) => {
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             Resumed::Exit(exit(ip))
         }
         _ => Resumed::Exit(exit(ip)),
@@ -20530,7 +20530,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
             // An exhausted guest stack traps, which reaches the caller as a `RuntimeError`.
             lane_enter_program(cx, caller_program);
             // SAFETY: the context's program, the caller's again, outlives the lane run.
-            vm.lane_raised = Some(vm.trap_raised_in_javascript(unsafe { &*(*cx).code }, error));
+            let error = vm.trap_raised_in_javascript(unsafe { &*(*cx).code }, error); vm.lane_completion.raise(error);
             return Some(Resumed::Exit(exit(ip)));
         }
     };
@@ -20754,7 +20754,7 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
                 executing.retained = saved.retained;
                 lane_enter_program(cx, saved.id);
             }
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             exit(ip)
         }
     }
@@ -24555,7 +24555,7 @@ impl<H: Host> Vm<H> {
         };
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
-        let outcome = match self.lane_native_returned.take() {
+        let outcome = match self.lane_completion.take_native_returned() {
             Some(value) => {
                 unsafe {
                     (*cx).pending = saved.pending;
@@ -24580,7 +24580,7 @@ impl<H: Host> Vm<H> {
                 let frame = unsafe { (*cx).frame() };
                 debug_assert!(frame >= site.frames, "the callback's activation became a frame");
                 self.frames[frame].pc = pc;
-                let raised = self.lane_raised.take();
+                let raised = self.lane_completion.take_raised();
                 // SAFETY: as above.
                 unsafe { lane_restore_context(cx, saved) };
                 // SAFETY: the lane's program outlives its run.
@@ -24677,7 +24677,7 @@ impl<H: Host> Vm<H> {
         self.lane_deferred = None; let window = self.running_window.take();
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
-        let returned = self.lane_native_returned.take();
+        let returned = self.lane_completion.take_native_returned();
         let mut boundary_frames = std::mem::replace(&mut self.lane_stack.boundary_frames, outer_boundary_frames);
         let outcome = match (returned, boundary_frames) {
             // Completed in the lane above its caller's activations: the call stays deferred.
@@ -24725,7 +24725,7 @@ impl<H: Host> Vm<H> {
                 let result = match (returned, exit_pc) {
                     (Some(value), _) => Ok(value),
                     (None, Some(frame)) => {
-                        let raised = self.lane_raised.take();
+                        let raised = self.lane_completion.take_raised();
                         // SAFETY: the lane's program outlives its run.
                         let code = unsafe { &*code };
                         let exited = super::dispatch_frame::LaneExit { executing, raised };
@@ -25161,7 +25161,7 @@ impl<H: Host> Vm<H> {
         };
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
-        let outcome = match self.lane_native_returned.take() {
+        let outcome = match self.lane_completion.take_native_returned() {
             Some(value) => {
                 restore_pending(cx, &prepared.caller);
                 Ok(value)
@@ -25173,7 +25173,7 @@ impl<H: Host> Vm<H> {
                 let frame = unsafe { (*cx).frame() };
                 debug_assert!(frame >= site.frames, "the callback's activation became a frame");
                 self.frames[frame].pc = pc;
-                let raised = self.lane_raised.take();
+                let raised = self.lane_completion.take_raised();
                 // SAFETY: as `lane_native_callback`'s; the copy holds no drop glue.
                 unsafe { lane_restore_context(cx, std::ptr::read(&prepared.caller)) };
                 // SAFETY: the lane's program outlives its run.

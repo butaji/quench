@@ -382,11 +382,11 @@ impl<H: Host> Vm<H> {
         pending: &mut Vec<PendingGeneralCall>,
         executing: ExecutingProgram,
     ) -> JobEnd {
-        if let Some(value) = self.lane_native_returned.take() {
+        if let Some(value) = self.lane_completion.take_native_returned() {
             self.finish_job_window(job);
             return JobEnd::Returned(value);
         }
-        if let Some(value) = self.lane_suspended.take() {
+        if let Some(value) = self.lane_completion.take_suspended() {
             if self.yielded_async_generator(job) {
                 return JobEnd::Yielded(value);
             }
@@ -394,7 +394,7 @@ impl<H: Host> Vm<H> {
         }
         // A raise the lane settled left the job's root in place: no activation became a frame.
         if matches!(context.root, LaneRoot::Job(_))
-            && let Some(error) = self.lane_raised.take()
+            && let Some(error) = self.lane_completion.take_raised()
         {
             return JobEnd::Threw(error);
         }
@@ -403,7 +403,7 @@ impl<H: Host> Vm<H> {
         let pc = unsafe { ip.offset_from(context.base) } as usize;
         let frame = context.frame();
         self.frames[frame].pc = pc;
-        let raised = self.lane_raised.take();
+        let raised = self.lane_completion.take_raised();
         JobEnd::Frames(self.run_frames_after_lane_exit(code, frame, pending, LaneExit { executing, raised }))
     }
 }
@@ -450,7 +450,7 @@ impl JobWindow {
         let suspended = self.pc.saturating_sub(1);
         // SAFETY: the running lane's context.
         let vm = unsafe { vm(cx) };
-        vm.lane_raised = Some(error);
+        vm.lane_completion.raise(error);
         vm.lane_raise_site = super::super::compiled::raise_site(self.entry.function, suspended as u32);
         // SAFETY: the suspended instruction's record lies in its function's view, which `base` starts.
         lane_raised_exit(cx, unsafe { self.base.add(suspended) })

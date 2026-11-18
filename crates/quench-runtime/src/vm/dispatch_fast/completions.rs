@@ -108,7 +108,7 @@ pub(super) fn lane_returning_call_admitted<H: Host>(cx: *mut LaneContext<H>) -> 
 /// general loop returns it from the frame at that instruction (`Vm::lane_returned`).
 #[inline(always)]
 pub(super) fn lane_frame_return<H: Host>(vm: &mut Vm<H>, call: Ip, value: Value) -> Ip {
-    vm.lane_returned = Some(value);
+    vm.lane_completion.set(LaneCompletion::Returned(value));
     exit(call)
 }
 
@@ -236,7 +236,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
     vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
     lane_restore_caller(cx, activation);
-    vm.lane_native_returned = Some(value);
+    vm.lane_completion.set(LaneCompletion::NativeReturned(value));
     Some(Resumed::Exit(exit(activation.call)))
 }
 

@@ -40,7 +40,7 @@ script_handler! {
                 vm.suspend_job_window(job, pc + 1, destination, value, 0);
             }
             vm.lane_stack.pop_activation();
-            vm.lane_suspended = Some(value);
+            vm.lane_completion.set(LaneCompletion::Suspended(value));
         }
         exit(ip)
     }
@@ -116,7 +116,7 @@ script_handler! {
         let pc = unsafe { ip.offset_from((*cx).base) } as usize;
         vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
         vm.lane_stack.pop_activation();
-        vm.lane_suspended = Some(value);
+        vm.lane_completion.set(LaneCompletion::Suspended(value));
         exit(ip)
     }
 }
