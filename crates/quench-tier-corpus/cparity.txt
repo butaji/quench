@@ -1,11 +1,11 @@
 # kernel tier instructions tag_tests guards spills polls counter_stores cvt_round_trips overflow_checks: ceilings of the hottest loop's machine code per iteration; `-` is not recorded yet, `none` has no loop, `kernel` runs as the interpreter's loop kernel; the gate only lowers them
-crc b-jit 402 45 30 0 1 1 15 13
+crc b-jit 402 45 30 0 1 1 15 1
 crc u-jit 45 0 2 1 0 0 1 1
 dot b-jit kernel
 dot u-jit 9 0 0 0 0 0 0 0
 fib b-jit none
 fib u-jit none
-matmul b-jit 119 4 13 0 1 1 2 5
+matmul b-jit 119 4 13 0 1 1 2 0
 matmul u-jit 12 0 0 0 0 0 0 0
 nbody b-jit 17 3 0 0 0 0 0 0
 nbody u-jit 134 0 6 4 0 0 0 0

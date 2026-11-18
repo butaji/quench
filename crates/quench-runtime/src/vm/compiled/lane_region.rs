@@ -4238,8 +4238,7 @@ impl Lowering<'_, '_> {
         let present = self.raw_compare_imm(Relation::NotEqual, object, 0);
         self.branch_if(present, (found, &[]), (done, &[]));
         self.builder.switch_to_block(found);
-        let shape = super::object_slots::exact_shape(&mut self.builder, regions::shape_word(), object);
-        let inline = super::object_slots::inline_storage(&mut self.builder, object);
+        let (shape, _, inline) = super::object_slots::shape_and_inline(&mut self.builder, object);
         self.builder.def_var(shape_var, shape);
         self.builder.def_var(inline_var, inline);
         self.goto(done, &[]);
