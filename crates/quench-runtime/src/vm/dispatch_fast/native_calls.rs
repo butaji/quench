@@ -234,7 +234,7 @@ script_handler! {
                 Some(Ok(value)) => Some(value),
                 Some(Err(error)) => {
                     note_allocation(vm);
-                    vm.lane_raised = Some(error);
+                    vm.lane_completion.raise(error);
                     resume!(cx, lane_native_complete(cx, ip, i, None))
                 }
                 None => None,
