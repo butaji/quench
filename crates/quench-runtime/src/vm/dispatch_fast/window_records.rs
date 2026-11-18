@@ -4,14 +4,12 @@ use super::*;
 
 /// The handlers derivation gives the records an environment window specializes, which no other
 /// pass changed, beside the local rows' generated handlers (`is_row`).
-pub(super) fn plain_window_handlers<H: Host>() -> [Handler; 9] {
+pub(super) fn plain_window_handlers<H: Host>() -> [Handler; 7] {
     [
         lane_load_local::<H>,
         lane_load_frame_local::<H, true>,
         lane_load_frame_local::<H, false>,
         lane_store_local::<H>,
-        lane_store_frame_local::<H, true>,
-        lane_store_frame_local::<H, false>,
         lane_initialize_tdz::<H>,
         lane_make_closure::<H>,
         lane_exit::<H>,

@@ -4685,55 +4685,6 @@ lane_handler! {
     }
 }
 
-lane_handler! {
-    /// `lane_store_local` of a slot `lane_load_frame_local`'s facts hold for, which is no
-    /// self binding either: the store to an initialized (or initializing) binding.
-    fn lane_store_frame_local<ENVIRONMENT: bool>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).registers }.env().is_deleted() {
-            return exit(ip);
-        }
-        let value = r.get(i.a);
-        let vm = unsafe { vm(cx) };
-        let frame = &mut vm.frames[unsafe { (*cx).frame() }];
-        if ENVIRONMENT && frame.captured {
-            sibling!(lane_store_frame_environment_local::<H>, r, ip, view)
-        }
-        let binding = (frame.function != super::ROOT_FUNCTION_ID)
-            .then(|| frame.locals.get_mut(i.imm() as usize))
-            .flatten();
-        match binding {
-            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
-            _ => return exit(ip),
-        }
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-lane_handler! {
-    /// `lane_store_frame_local` to a slot the frame's captured environment holds; out of
-    /// line, as `lane_load_frame_environment_local`.
-    #[inline(never)]
-    fn lane_store_frame_environment_local<>(cx, r, ip, i, view) {
-        let value = r.get(i.a);
-        let vm = unsafe { vm(cx) };
-        let frame = &vm.frames[unsafe { (*cx).frame() }];
-        let binding = (frame.function != super::ROOT_FUNCTION_ID)
-            .then(|| vm.heap.environment_slot_mut(frame.env, i.imm() as usize))
-            .flatten();
-        match binding {
-            Some(binding) if i.c != 0 || !binding.is_deleted() => *binding = value,
-            _ => return exit(ip),
-        }
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
 
 /// The function `LoadCallee` reads (`Frame::callee`): the innermost script activation's, or the
 /// frame's when none runs, as its activation filled its self binding (`Vm::initialize_frame_locals`).
@@ -22038,9 +21989,11 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
     }
 }
 
-/// Gives each frame `LoadLocal` and `StoreLocal` record the handler of its slot's static
-/// binding facts (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self
-/// binding a store must leave, keeps the general handler.
+/// Gives each frame `LoadLocal` record the handler of its slot's static binding facts
+/// (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self binding, keeps the
+/// general handler. A `StoreLocal` keeps the general store (`lane_store_local`) for every slot:
+/// its binding is resolved there (`staged_store_local_checked`), which also covers a captured
+/// environment's slot.
 fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
     for record in records.iter_mut() {
         let slot = record.imm() as usize;
@@ -22049,15 +22002,15 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
         if (!load && !store) || super::arguments::mapped_arguments_slot(function, slot).is_some() {
             continue;
         }
-        // A slot the frame's captured environment holds is read and written there (`lane_load_frame_local`,
-        // `lane_store_frame_local`); one it does not hold is the frame's own local, which the generated
+        // A slot the frame's captured environment holds is read there (`lane_load_frame_local`); one it does not hold is the frame's own local, which the generated
         // LoadLocal and StoreLocal rows read and write.
         let environment = function.local_slot_uses_environment(slot);
         let handler: Handler = match (load, environment) {
             (true, true) => lane_load_frame_local::<H, true>,
             (true, false) => lane_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_UNREAD>,
             _ if function.is_self_binding_slot(slot) => continue,
-            (false, true) => lane_store_frame_local::<H, true>,
+            // An environment slot's store keeps its row, which misses to the general store.
+            (false, true) => continue,
             (false, false) => lane_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_UNREAD>,
         };
         record.handler = handler as *const ();
