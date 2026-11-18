@@ -1525,12 +1525,12 @@ macro_rules! row_step {
 
 /// Where opcode `op`'s jump row leaves when its words do not decide the edge: a truth test of a
 /// heap value asks its cell (`jump_test_cell_miss`); a comparison the frame leaves takes the
-/// lane's comparison chain (`lane_jump_binary_false_chain`); any other takes the VM's general step.
+/// lane's comparison chain (`binary_false_chain_miss`); any other takes the VM's general step.
 const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::CellTruth { taken: false } => super::jump_test_cell_miss::<H, BACKWARD, false>,
         crate::staged::Miss::CellTruth { taken: true } => super::jump_test_cell_miss::<H, BACKWARD, true>,
-        crate::staged::Miss::CompareChain => super::lane_jump_binary_false_chain::<H, BACKWARD>,
+        crate::staged::Miss::CompareChain => super::binary_false_chain_miss::<H, BACKWARD>,
         _ => lane_general_step::<H>,
     }
 }
@@ -1596,7 +1596,7 @@ lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
     /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
-    /// its target runs the lane's jump (`lane_jump`), whose backward edge (`BACKWARD`, which the
+    /// its target runs the lane's jump (`take_jump`), whose backward edge (`BACKWARD`, which the
     /// view fixes per record) is a safepoint.
     pub(super) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8>(cx, r, ip, i, view) {
         // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
@@ -1630,10 +1630,10 @@ lane_handler! {
         let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
         let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
         match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
-            Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+            Step::Control(Edge::Target) => resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
             // A table's entry is the jump record `k` places after the table record (validation places
             // `entries` of them after it), and the lane jumps from that record.
-            Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+            Step::Control(Edge::Entry(k)) => resume!(cx, super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
             Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
             Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
@@ -1761,8 +1761,8 @@ lane_handler! {
             let carried = if const { LaneFields::<B>::RESULT_A } { Carried::script_in(cx, view) } else { view };
             let mut frame = row_frame::<H, B, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
             match row_step!(LaneFields::<B>::OPCODE, &mut stage, &mut frame, operation) {
-                Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
-                Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+                Step::Control(Edge::Target) => resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+                Step::Control(Edge::Entry(k)) => resume!(cx, super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                 Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
                 Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
                 Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
@@ -1871,8 +1871,8 @@ lane_handler! {
                 let carried = if const { LaneFields::<$L>::RESULT_A } { Carried::script_in(cx, view) } else { view };
                 let mut frame = row_frame::<H, $L, ACC_NONE, FLAG_UNREAD>(cx, r, ip, i, view);
                 match row_step!(LaneFields::<$L>::OPCODE, &mut stage, &mut frame, operation) {
-                    Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
-                    Step::Control(Edge::Entry(k)) => resume!(cx, super::lane_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
+                    Step::Control(Edge::Target) => resume!(cx, super::take_jump::<H>(cx, r, ip, BACKWARD, carried, None)),
+                    Step::Control(Edge::Entry(k)) => resume!(cx, super::take_jump::<H>(cx, r, unsafe { ip.add(1 + k as usize) }, BACKWARD, carried, None)),
                     Step::Control(Edge::Leave) => unreachable!("a jump leaves no lane run"),
                     Step::Control(Edge::Transfer) => unreachable!("a jump transfers no control"),
                     Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),

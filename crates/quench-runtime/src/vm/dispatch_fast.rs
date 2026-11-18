@@ -16,7 +16,7 @@
 //! handlers shares one stack frame; a helper of the default convention that a
 //! handler calls returns where to continue (`Resumed`) for the handler to dispatch; otherwise
 //! every handler returns to the lane loop. A taken safepoint jump spends one unit of
-//! the run's fuel (`script_fuel_out`); once per batch it reaches `lane_safepoint`, which
+//! the run's fuel (`script_fuel_out`); once per batch it reaches `safepoint_at`, which
 //! returns to the lane loop (unwinding the stack should a build not form a sibling call)
 //! or leaves the lane where a collection is due or termination requested. A due
 //! collection zeroes the fuel, so the next safepoint jump leaves; a termination request
@@ -2603,11 +2603,11 @@ struct LaneContext<H: Host> {
     /// Backward jumps left before the running Wasm function is credited with an
     /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
     /// when this run's code earns none (`Vm::lane_credits_backedges`). A crediting run keeps
-    /// its floor raised, so every backward jump reaches `lane_safepoint`, which counts: the
+    /// its floor raised, so every backward jump reaches `safepoint_at`, which counts: the
     /// handlers stay as they are.
     backedges_left: Option<u32>,
     /// The accumulator the lane loop dispatches its next record with: the one a safepoint
-    /// jump carried to its target (`lane_safepoint`), else none.
+    /// jump carried to its target (`safepoint_at`), else none.
     resumed_acc: Slot<Value>,
     /// The record a lane body's native call left the lane to continue at, one of the callee's
     /// records in the activation it made (`lane_body_call`), and the accumulator that record reads.
@@ -2621,7 +2621,7 @@ struct LaneContext<H: Host> {
     /// The run's floor cell (`lane_floor`), which a JavaScript safepoint reads from here
     /// (`script_below_floor`).
     floor: *const std::sync::atomic::AtomicUsize,
-    /// Backward jumps left before one reaches `lane_safepoint` (`script_fuel_out`), which
+    /// Backward jumps left before one reaches `safepoint_at` (`script_fuel_out`), which
     /// credits the work clock and refills it; zero while the floor is raised at entry or a
     /// collection is due (`note_allocation`), so every backward jump reaches it.
     fuel: u32,
@@ -2836,7 +2836,7 @@ fn tls_lane_fuel() -> *mut u32 {
 const LANE_FUEL_BATCH: u32 = 4096;
 
 /// Spend one unit of the running lane's fuel; true when it was out, so the backward jump
-/// takes `lane_safepoint`. One decrement of a context field and one branch: the safepoint
+/// takes `safepoint_at`. One decrement of a context field and one branch: the safepoint
 /// test of every backward jump, in place of the stack-floor compare.
 #[inline(always)]
 fn script_fuel_out<H: Host>(cx: *mut LaneContext<H>) -> bool {
@@ -3109,7 +3109,7 @@ macro_rules! resume {
     }};
 }
 
-/// Continue as a comparison jump's `edge` says: the target through `lane_jump`, whose backward
+/// Continue as a comparison jump's `edge` says: the target through `take_jump`, whose backward
 /// poll every jump shares, or the record after it.
 macro_rules! jump_on_edge {
     ($cx:expr, $r:expr, $ip:expr, $backward:expr, $edge:expr) => {
@@ -3117,7 +3117,7 @@ macro_rules! jump_on_edge {
     };
     ($cx:expr, $r:expr, $ip:expr, $backward:expr, $edge:expr, $carried:expr) => {{
         match $edge {
-            crate::staged::Edge::Target => resume!($cx, lane_jump::<H>($cx, $r, $ip, $backward, $carried, None)),
+            crate::staged::Edge::Target => resume!($cx, take_jump::<H>($cx, $r, $ip, $backward, $carried, None)),
             crate::staged::Edge::Following => next!($cx, $r, following($ip), $carried),
             crate::staged::Edge::Entry(_) => unreachable!("a comparison jump takes no table entry"),
             crate::staged::Edge::Leave => unreachable!("a comparison jump leaves no lane run"),
@@ -3806,7 +3806,7 @@ unsafe fn lane_binary_values<H: Host>(
         None if let Some(value) = lane_concatenation_or_immediate(cx, operator, left, right) => Some(value),
         None if operator == super::operations::ADDITION => lane_concatenation(cx, left, right)
             .or_else(|| lane_bigint_value(cx, operator, left, right)),
-        // A comparison, `instanceof`, or an ordinary-object `in` (`lane_relation_other`),
+        // A comparison, `instanceof`, or an ordinary-object `in` (`relation_other`),
         // decides from the operands; any other operator past Numbers may be a BigInt's.
         None if operator <= super::operations::LAST_COMPARISON_OPERATOR
             || operator == INSTANCEOF_OPERATOR
@@ -3893,7 +3893,7 @@ fn lane_concatenation<H: Host>(cx: *mut LaneContext<H>, left: Value, right: Valu
 }
 
 /// A relation the lane decides without running guest code: Number comparison, identity
-/// decided from the operand words, then `lane_relation_other`. Matches rather than
+/// decided from the operand words, then `relation_other`. Matches rather than
 /// `Option::or_else` closures, which capture the operands by reference and, left out of
 /// line, would cost the calling handler its tail call to the next record.
 #[inline(always)]
@@ -3908,7 +3908,7 @@ fn lane_relation<H: Host>(operator: u32, left: Value, right: Value) -> Option<bo
     if let Some(holds) = Vm::<H>::word_identity_equality(operator, left, right) {
         return Some(holds);
     }
-    lane_relation_other::<H>(operator, left, right)
+    relation_other::<H>(operator, left, right)
 }
 
 /// Return `value` from the running function at the record `ip`, as `Return` would: the
@@ -7047,10 +7047,10 @@ const fn holds_edge(holds: bool) -> crate::staged::Edge {
 
 script_handler! {
     /// The comparison jump's miss arm (`Miss::CompareChain`), for a pair its generated row leaves:
-    /// the relations the lane decides without guest code (`lane_relation_other`); any other takes
+    /// the relations the lane decides without guest code (`relation_other`); any other takes
     /// the general path. Out of line, so the staged case keeps few values live.
     #[inline(never)]
-    fn lane_jump_binary_false_chain<BACKWARD: bool>(cx, r, ip, i, view) {
+    fn binary_false_chain_miss<BACKWARD: bool>(cx, r, ip, i, view) {
         let (Some(left), Some(right)) =
             (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
         else {
@@ -7058,7 +7058,7 @@ script_handler! {
         };
         // SAFETY: the record is a comparison record of the running view.
         unsafe { note_operands(cx, ip, left, right) };
-        let Some(holds) = lane_relation_other::<H>(u32::from(i.a), left, right) else {
+        let Some(holds) = relation_other::<H>(u32::from(i.a), left, right) else {
             return exit(ip);
         };
         jump_on_edge!(cx, r, ip, BACKWARD, holds_edge(holds), Carried::script_in(cx, view))
@@ -7084,7 +7084,7 @@ const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictIneq
 /// Out of line, so the comparison handlers keep their Number path's shape.
 #[cold]
 #[inline(never)]
-fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
+fn relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Option<bool> {
     let vm = unsafe { vm(lane_context::<H>()) };
     // A nullish value is unequal to every Number under both loose and strict equality.
     // The Number/nullish pair cannot invoke conversion hooks or `document.all`; keep this
@@ -7123,7 +7123,7 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
 /// `commit`, the register write the instruction makes before its jump,
 /// applies only when the lane takes the jump itself.
 #[inline(always)]
-fn lane_jump<H: Host>(
+fn take_jump<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
@@ -7139,8 +7139,8 @@ fn lane_jump<H: Host>(
     // thread-local load of the counter's address (`fuel_out`).
     if backward && script_fuel_out(cx) {
         return Resumed::Exit(match commit {
-            None => lane_safepoint::<H>(ip, target, view.acc),
-            Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, view.acc, register, value),
+            None => safepoint_at::<H>(ip, target, view.acc),
+            Some((register, value)) => safepoint_writing::<H>(r, ip, target, view.acc, register, value),
         });
     }
     if let Some((register, value)) = commit {
@@ -7154,8 +7154,8 @@ fn lane_jump<H: Host>(
 /// (`ProgramStore::note_wasm_tier_backedges`) and refill it. A function entered once and
 /// looping hot (JetStream's tsf and zlib) then promotes at its next entry, as one called often
 /// does.
-fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
-    // SAFETY: called from `lane_safepoint` with the run's context.
+fn count_backedge<H: Host>(cx: *mut LaneContext<H>) {
+    // SAFETY: called from `safepoint_at` with the run's context.
     let Some(left) = (unsafe { (*cx).backedges_left }) else {
         return;
     };
@@ -7191,7 +7191,7 @@ script_handler! {
         // every instruction record remains contiguous in this lane view.
         let at = |pc: u32| unsafe { header.offset(pc as isize - site.header as isize) };
         if script_fuel_out(cx) {
-            return lane_safepoint::<H>(ip, header, Slot::unset());
+            return safepoint_at::<H>(ip, header, Slot::unset());
         }
         if site.interprets() {
             next!(cx, r, header, Carried::script_in(cx, view))
@@ -7343,7 +7343,7 @@ fn lane_loop_native<H: Host>(
         LoopContinuation::Inlined { frame, pc } => { let frame = region.inlining.as_ref().expect("an inlining region").frames[frame];
             LoopAttempt::Leave(exit(lane_inlined_activation(cx, r, region, &entry, frame, at(frame.call), pc))) }
         LoopContinuation::Recovered(resumed) => loop_body::loop_attempt(cx, record, resumed),
-        LoopContinuation::Safepoint => LoopAttempt::Leave(lane_safepoint::<H>(record, header, Slot::unset())),
+        LoopContinuation::Safepoint => LoopAttempt::Leave(safepoint_at::<H>(record, header, Slot::unset())),
         // SAFETY: the call set the callee's activation and its resume record before the body
         // left (`lane_body_activate`), so the run leaves at a record of that view.
         LoopContinuation::Callee => LoopAttempt::Leave(exit(unsafe { (*cx).callee_resume })),
@@ -8059,7 +8059,7 @@ script_handler! {
     #[inline(never)]
     fn jump_test_cell_miss<BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
         if unsafe { vm(cx) }.heap_cell_truthy(r.get(i.a)) == WHEN {
-            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            resume!(cx, take_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -8484,7 +8484,7 @@ fn frame_memory_view<H: Host>(
 /// safepoint's fast path neither loads the context nor saves registers.
 #[cold]
 #[inline(never)]
-fn lane_safepoint<H: Host>(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
+fn safepoint_at<H: Host>(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
     let cx = lane_context::<H>();
     // SAFETY: called only while a lane runs, from one of its handlers.
     if unsafe { vm(cx) }.heap.should_collect() || unsafe { vm(cx) }.execution_interrupt.is_termination_requested() {
@@ -8503,16 +8503,16 @@ fn lane_safepoint<H: Host>(ip: Ip, target: Ip, acc: Slot<Value>) -> Ip {
             crate::clock::note_backedges(LANE_FUEL_BATCH);
         }
     }
-    lane_count_backedge::<H>(cx);
+    count_backedge::<H>(cx);
     // SAFETY: as above; the lane loop takes it before dispatching `target`.
     unsafe { (*cx).resumed_acc = acc };
     target
 }
 
-/// `lane_safepoint` for a jump that writes `register` when taken.
+/// `safepoint_at` for a jump that writes `register` when taken.
 #[cold]
 #[inline(never)]
-fn lane_safepoint_writing<H: Host>(
+fn safepoint_writing<H: Host>(
     r: Registers,
     ip: Ip,
     target: Ip,
@@ -8520,7 +8520,7 @@ fn lane_safepoint_writing<H: Host>(
     register: u16,
     value: Value,
 ) -> Ip {
-    let next = lane_safepoint::<H>(ip, target, acc);
+    let next = safepoint_at::<H>(ip, target, acc);
     if next == target {
         r.set(register, value);
     }
@@ -18175,7 +18175,7 @@ impl<H: Host> Vm<H> {
 
     /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
     /// at once where a collection is due or the run credits loop work, so its backward jumps
-    /// count in `lane_safepoint` (`LaneContext::backedges_left`). The floor lives in the VM's
+    /// count in `safepoint_at` (`LaneContext::backedges_left`). The floor lives in the VM's
     /// interrupt state, where a termination request raises it; entry sets it before reading
     /// the request, the request raises it after setting itself, so one of the two sees the
     /// other.
