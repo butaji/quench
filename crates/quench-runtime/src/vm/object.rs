@@ -428,12 +428,17 @@ impl<H: Host> Vm<H> {
     /// second wide object of one layout (a 150K-unit string's wrapper, SunSpider tagcloud)
     /// cost time and index memory quadratic in its width.
     fn carry_lookup_index(&mut self, parent: u32, child: u32) {
-        if self.shapes[child as usize].lookup_index.get().is_some() {
-            return;
-        }
+        // The parent's index leaves it either way. Kept on the parent beside a child that
+        // already has one, it stays for good: every later build of the same wide layout
+        // (an object filled key by key each run) strands one more chain-sized index one
+        // shape further up (SunSpider string-unpack-code: +0.23 MB per iteration, peak RSS
+        // linear in the run length). Dropping it keeps at most one index per walk.
         let Some(index) = self.shapes[parent as usize].lookup_index.take() else {
             return;
         };
+        if self.shapes[child as usize].lookup_index.get().is_some() {
+            return;
+        }
         let mut steps = smallvec::SmallVec::<[ShapeTransition; 2]>::new();
         let mut current = child;
         while current != parent {
