@@ -21,44 +21,50 @@ pub(super) fn bind_loop<H: Host>(
     if region.inlining.is_some() { dispatch.inlined = entry.scratch_address(); }
 }
 
-/// The loop entry's captures as the dense slot view the lane capture reads use, a stored
-/// slot holding `DELETED` so its reads take the lane's own lookup.
-fn dense_captures(region: &LoopRegion, entry: &LoopEntry) -> Vec<crate::Value> {
+/// Fills `captures` with the loop entry's captures as the dense slot view the lane capture
+/// reads use, a stored slot holding `DELETED` so its reads take the lane's own lookup. It is
+/// refilled in place: an entry allocates nothing once the view has its length.
+fn dense_captures(region: &LoopRegion, entry: &LoopEntry, captures: &mut Vec<crate::Value>) {
     let len = region.captures.iter().chain(&region.stored_captures)
         .map(|slot| usize::from(*slot) + 1).max().unwrap_or(0);
-    let mut captures = vec![crate::Value::DELETED; len];
+    captures.clear();
+    captures.resize(len, crate::Value::DELETED);
     for (slot, value) in region.captures.iter().zip(entry.captures(region.captures.len())) {
         captures[usize::from(*slot)] = value;
     }
-    captures
 }
 
-/// Binds the capture view: a region that stores a capture or calls reads the activation's own slots,
-/// as a lane body does; otherwise the returned dense view, which the dispatch points at and
-/// the caller keeps alive for the run.
+/// Whether `region`'s instructions call (`bind_captures`'s `calls`).
+pub(super) fn region_calls(region: &LoopRegion) -> bool {
+    region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call)
+}
+
+/// Binds the capture view: a region that stores a capture or `calls` (`region_calls`) reads the
+/// activation's own slots, as a lane body does; otherwise the dense view in `captures`, which
+/// the dispatch points at and the caller keeps alive, unchanged, for the run.
 ///
 /// # Safety
 /// `lane_context` is the running lane's context for `H`.
 pub(super) unsafe fn bind_captures<H: Host>(
-    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &LoopEntry, lane_context: usize,
-) -> Vec<crate::Value> {
+    dispatch: &mut JsStepDispatch, region: &LoopRegion, entry: &LoopEntry, lane_context: usize, calls: bool,
+    captures: &mut Vec<crate::Value>,
+) {
     // A region that reads and stores no capture binds no view.
-    if region.captures.is_empty() && region.stored_captures.is_empty() { return Vec::new(); }
+    if region.captures.is_empty() && region.stored_captures.is_empty() { return; }
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
-    let calls = region.instructions().iter().any(|instruction| instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
     let live = (calls || !region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
         .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
-    let none = region.captures.is_empty() && region.stored_captures.is_empty();
-    let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
     if let Some(((values, len), stores)) = live {
         (dispatch.capture_values, dispatch.capture_len, dispatch.capture_stores) = (values, len, usize::from(stores));
-    } else if !captures.is_empty() {
+        return;
+    }
+    dense_captures(region, entry, captures);
+    if !captures.is_empty() {
         dispatch.capture_values = captures.as_ptr();
         dispatch.capture_len = captures.len();
     }
-    captures
 }
 
 /// The lane activation's own registers, locals, body and field cache entries. Its locals are where a lane body's
@@ -69,7 +75,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
 /// context for `H`.
 pub(super) unsafe fn bind_frame<H: Host>(
     dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
-    registers: *mut crate::value::Value,
+    registers: *mut crate::value::Value, rebound: bool,
 ) {
     // The activation holds the program and the function's body it was made for (`with_function`).
     if dispatch.program_id == program
@@ -82,13 +88,15 @@ pub(super) unsafe fn bind_frame<H: Host>(
         dispatch.residual = Rc::as_ptr(residual) as usize;
         // A region's inline-cache stores run in place only where the VM and the program run
         // specialized, the fact its rows were planned under (`start_osr_region`'s `stores`).
-        dispatch.stores_specialized = usize::from(vm.specialized && residual.specialized);
+        // A rebound dispatch's base refresh set it from the same program.
+        if !rebound { dispatch.stores_specialized = usize::from(vm.specialized && residual.specialized); }
     }
     // A dispatch with views read its bases as the activation was made, and nothing since moved them.
     if dispatch.layout_seen == u64::MAX { dispatch.refresh_object_bases(vm); }
     // The program's field cache entries, which its site rows read and a body it calls by its entry
-    // finds bound where the region lends it the lane frame's place (`region_lend`).
-    dispatch.field_entries = vm.program_field_entries(program).unwrap_or(0);
+    // finds bound where the region lends it the lane frame's place (`region_lend`). A rebound
+    // dispatch's base refresh read them for this program already (`rebind_region`).
+    if !rebound || dispatch.program_id != program { dispatch.field_entries = vm.program_field_entries(program).unwrap_or(0); }
 }
 
 /// The payload a region runs with: the lane's own, or one lent to it where `lend` names whether it
