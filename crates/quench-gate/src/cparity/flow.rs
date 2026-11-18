@@ -59,12 +59,13 @@ fn reaches(code: &[Instruction], from: usize, to: usize) -> bool {
     false
 }
 
-/// Every loop of `code`, by the position of the jump that closes it.
+/// Every loop of `code`, by the position of the jump that closes it. A branch to its own
+/// instruction is a trap or a spin (`b .`), not a loop body: it has no instruction to iterate.
 pub fn loops(code: &[Instruction]) -> Vec<Loop> {
     (0..code.len())
         .filter_map(|branch| {
             let header = target_index(code, branch)?;
-            (header <= branch && reaches(code, header, branch)).then_some(Loop { header, branch })
+            (header < branch && reaches(code, header, branch)).then_some(Loop { header, branch })
         })
         .collect()
 }
@@ -123,6 +124,14 @@ mod tests {
         assert_eq!(found, [Loop { header: 1, branch: 3 }]);
         let body = hottest(&code).expect("one loop");
         assert_eq!(body.len(), 3);
+    }
+
+    #[test]
+    fn a_branch_to_its_own_instruction_is_not_a_loop() {
+        // `b .` (and x86's `jmp .`) spin in place: no instruction iterates.
+        let code = parse("  0:\tb      0x0\n  4:\tret\n");
+        assert!(loops(&code).is_empty());
+        assert!(hottest(&code).is_none());
     }
 
     #[test]

@@ -11,6 +11,8 @@ use std::{
 use super::classes::{FIELD_COUNT, Fields, field_names};
 
 const UNRECORDED: &str = "-";
+/// The measure's first field, the instruction count.
+const INSTRUCTIONS: &str = super::classes::INSTRUCTIONS;
 /// A row for a kernel whose tier compiles no loop at all.
 const LOOPLESS: &str = "none";
 /// A row for a kernel whose hot loop the interpreter's loop kernel runs: the tier compiles none.
@@ -28,7 +30,11 @@ enum Row {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Measured {
     /// Compiled code, by what its hottest loop spends per iteration.
+    #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
     Code(Fields),
+    /// Compiled code where only its instruction count is read (an architecture whose residual
+    /// classes are not recorded yet): the other fields keep their ceilings untouched.
+    Instructions(u32),
     /// The interpreter's loop kernel.
     Kernel,
     /// Neither: the tier compiled no hot loop.
@@ -111,6 +117,11 @@ impl Row {
     fn first(measured: Measured) -> Self {
         match measured {
             Measured::Code(fields) => Self::Limits(fields.map(Some)),
+            Measured::Instructions(count) => {
+                let mut limits = [None; FIELD_COUNT];
+                limits[0] = Some(count);
+                Self::Limits(limits)
+            }
             Measured::Kernel => Self::Kernel,
             Measured::Nothing => Self::Loopless,
         }
@@ -121,11 +132,11 @@ impl Row {
     fn settle(&mut self, what: &str, measured: Measured, record: bool, tally: &mut Tally) {
         match (&mut *self, measured) {
             (Self::Loopless, _) | (Self::Kernel, Measured::Kernel) => {}
-            (Self::Kernel, Measured::Code(_)) | (Self::Limits(_), Measured::Kernel) if record => {
+            (Self::Kernel, Measured::Code(_) | Measured::Instructions(_)) | (Self::Limits(_), Measured::Kernel) if record => {
                 *self = Self::first(measured);
                 tally.recorded += 1;
             }
-            (Self::Kernel, Measured::Code(_)) => tally.failures.push(format!("{what}: its kernel's loop is compiled now; record its ceilings")),
+            (Self::Kernel, Measured::Code(_) | Measured::Instructions(_)) => tally.failures.push(format!("{what}: its kernel's loop is compiled now; record its ceilings")),
             (Self::Limits(_), Measured::Kernel) => tally.failures.push(format!("{what}: the interpreter's kernel runs its loop now; record that")),
             (Self::Kernel, Measured::Nothing) => tally.failures.push(format!("{what}: no kernel and no compiled code ran its hot loop")),
             (Self::Limits(_), Measured::Nothing) => tally.failures.push(format!("{what}: no hot loop was compiled, but its ceilings are recorded")),
@@ -134,6 +145,10 @@ impl Row {
                     let settled = settle_field(limit, value, record);
                     tally.add(settled, &format!("{what} {name}"), value);
                 }
+            }
+            (Self::Limits(limits), Measured::Instructions(count)) => {
+                let settled = settle_field(&mut limits[0], count, record);
+                tally.add(settled, &format!("{what} {INSTRUCTIONS}"), count);
             }
         }
     }
