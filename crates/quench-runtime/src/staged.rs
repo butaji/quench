@@ -799,6 +799,113 @@ pub(crate) const fn makes_call(op: Op) -> bool {
 pub(crate) const fn leaf_value_or_jump(op: Op) -> bool { op.is_leaf_value() || op.is_leaf_jump() }
 /// Whether `op` is a binary record a leaf admits with register or constant operands (`LEAF_BINARY`).
 pub(crate) const fn leaf_binary_operation(op: Op) -> bool { op.is_leaf_binary() }
+/// Computes a Wasm f64 binary operator (`WasmF64Binary`).
+pub(crate) const fn wasm_f64_binary(op: Op) -> bool { matches!(op, Op::WasmF64Binary) }
+/// Computes a Wasm f64 unary operator (`WasmF64Unary`).
+pub(crate) const fn wasm_f64_unary(op: Op) -> bool { matches!(op, Op::WasmF64Unary) }
+/// Loads an f64 from the function's memory (`WasmF64Load`).
+pub(crate) const fn wasm_f64_load(op: Op) -> bool { matches!(op, Op::WasmF64Load) }
+/// Stores an f64 to the function's memory (`WasmF64Store`).
+pub(crate) const fn wasm_f64_store(op: Op) -> bool { matches!(op, Op::WasmF64Store) }
+/// Binds the instance a Wasm function runs in (`WasmInstanceBinding`).
+pub(crate) const fn wasm_instance_binding(op: Op) -> bool { matches!(op, Op::WasmInstanceBinding) }
+/// Reads the size of the function's memory (`WasmMemorySize`).
+pub(crate) const fn wasm_memory_size(op: Op) -> bool { matches!(op, Op::WasmMemorySize) }
+/// Fills a range of the function's memory (`WasmMemoryFill`).
+pub(crate) const fn wasm_memory_fill(op: Op) -> bool { matches!(op, Op::WasmMemoryFill) }
+/// Fills a Wasm function's registers (`WasmFillRegisters`).
+pub(crate) const fn wasm_fill_registers(op: Op) -> bool { matches!(op, Op::WasmFillRegisters) }
+/// Awaits a value (`Await`).
+pub(crate) const fn awaits(op: Op) -> bool { matches!(op, Op::Await) }
+/// Constructs an object (`Construct`).
+pub(crate) const fn constructs(op: Op) -> bool { matches!(op, Op::Construct) }
+/// Selects a case by a string (`StringCaseIndex`).
+pub(crate) const fn selects_string_case(op: Op) -> bool { matches!(op, Op::StringCaseIndex) }
+/// Stores an environment slot (`StoreEnvLocal`).
+pub(crate) const fn writes_environment_slot(op: Op) -> bool { matches!(op, Op::StoreEnvLocal) }
+/// Checks an iterator result object (`RequireIteratorResult`).
+pub(crate) const fn requires_iterator_result(op: Op) -> bool { matches!(op, Op::RequireIteratorResult) }
+/// Names a binding (the catalog's name operations).
+pub(crate) const fn names_binding(op: Op) -> bool { op.is_name_operation() }
+/// Stores a field of an object (the catalog's field stores).
+pub(crate) const fn stores_field(op: Op) -> bool { op.is_field_store() }
+/// Computes a numeric binary operator (`JsDenotation::NumericBinary`).
+pub(crate) fn computes_numeric_binary(op: Op) -> bool { matches!(op.js_denotation(), crate::bytecode::JsDenotation::NumericBinary) }
+
+// Class families: the record families a tier's lowering and lane handlers select by. Each answers
+// exactly its catalog class, so a family query and the class it names agree on every opcode.
+/// The float binary operator family of an f64 selector (`Class::WasmFloatBinary64`).
+pub(crate) const fn float_binary64_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::WasmFloatBinary64) }
+/// The float binary operator family of an f32 selector (`Class::WasmFloatBinary32`).
+pub(crate) const fn float_binary32_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::WasmFloatBinary32) }
+/// The construction family (`Class::Construct`).
+pub(crate) const fn construction_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Construct) }
+/// The call family (`Class::Call`).
+pub(crate) const fn call_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Call) }
+/// The argument-array call family (`Class::CallArray`).
+pub(crate) const fn call_array_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::CallArray) }
+/// The spread call family (`Class::CallSpread`).
+pub(crate) const fn call_spread_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::CallSpread) }
+/// The known-callee call family (`Class::CallKnown`).
+pub(crate) const fn known_call_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::CallKnown) }
+/// The forwarding-arguments call family (`Class::CallForwardingArguments`).
+pub(crate) const fn forwarded_call_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::CallForwardingArguments) }
+/// The return family (`Class::Return`).
+pub(crate) const fn return_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Return) }
+/// The private field definition family (`Class::DefinePrivateField`).
+pub(crate) const fn private_field_definition_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::DefinePrivateField) }
+/// The private name marking family (`Class::MarkPrivateName`).
+pub(crate) const fn private_name_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::MarkPrivateName) }
+/// The private brand check family (`Class::CheckPrivate`).
+pub(crate) const fn private_check_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::CheckPrivate) }
+/// The private `in` family (`Class::PrivateIn`).
+pub(crate) const fn private_in_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::PrivateIn) }
+/// The named field read family (`Class::GetField`).
+pub(crate) const fn field_read_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::GetField) }
+/// The element read family (`Class::GetIndex`).
+pub(crate) const fn element_read_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::GetIndex) }
+/// The element write family (`Class::SetIndex`).
+pub(crate) const fn element_write_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::SetIndex) }
+/// The property record definition family (`Class::DefinePropertyRecord`).
+pub(crate) const fn property_record_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::DefinePropertyRecord) }
+/// The field definition family (`Class::DefineField`).
+pub(crate) const fn field_definition_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::DefineField) }
+/// The data property copy family (`Class::CopyDataProperties`).
+pub(crate) const fn copy_properties_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::CopyDataProperties) }
+/// The property delete family (`Class::Delete`).
+pub(crate) const fn delete_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Delete) }
+/// The constant array family (`Class::MakeConstArray`).
+pub(crate) const fn const_array_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::MakeConstArray) }
+/// The object pair family (`Class::MakeObject2`).
+pub(crate) const fn object_pair_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::MakeObject2) }
+/// The super constant array pair family (`Class::SuperConstArrayObject2`).
+pub(crate) const fn super_const_array_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::SuperConstArrayObject2) }
+/// The object literal family (`Class::MakeObjectLiteral`).
+pub(crate) const fn object_literal_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::MakeObjectLiteral) }
+/// The unary operator family (`Class::Unary`).
+pub(crate) const fn unary_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Unary) }
+/// The binary operator family (`Class::Binary`).
+pub(crate) const fn binary_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Binary) }
+/// The unconditional jump family (`Class::Jump`).
+pub(crate) const fn jump_family(op: Op) -> bool { matches!(op.class(), crate::bytecode::Class::Jump) }
+/// The local read family (`Class::LoadLocal`, `Class::LoadLocalPlain`).
+pub(crate) const fn local_read_family(op: Op) -> bool {
+    matches!(op.class(), crate::bytecode::Class::LoadLocal | crate::bytecode::Class::LoadLocalPlain)
+}
+/// The Wasm register-fill and instance-binding family (`Class::WasmFillRegisters`, `Class::WasmInstanceBinding`).
+pub(crate) const fn wasm_setup_family(op: Op) -> bool {
+    matches!(op.class(), crate::bytecode::Class::WasmFillRegisters | crate::bytecode::Class::WasmInstanceBinding)
+}
+
+// Row constants of the opcodes the lane's tables name by index.
+/// The opcode whose row runs a Wasm f64 load (`WasmF64Load`).
+pub(crate) const WASM_F64_LOAD_ROW: u16 = Op::WasmF64Load as u16;
+/// The opcode whose row runs a Wasm f64 store (`WasmF64Store`).
+pub(crate) const WASM_F64_STORE_ROW: u16 = Op::WasmF64Store as u16;
+/// The opcode whose row increments or decrements a Number (`IncDec`).
+pub(crate) const INC_DEC_ROW: u16 = Op::IncDec as u16;
+/// The opcode whose row writes a capture (`StoreCapture`).
+pub(crate) const STORE_CAPTURE_ROW: u16 = Op::StoreCapture as u16;
 
 
 /// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering
