@@ -1,6 +1,7 @@
 use super::*;
 use crate::bytecode::index;
 mod loop_stack;
+mod materialized_stops;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
@@ -2391,20 +2392,9 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             }
             };
-            // The frame a generator's activation became yields to its caller, as its return
-            // completes the call (`finish_materialized_generator_step`).
-            let mut yielded = None;
-            let step = match step {
-                Ok(StepResult::Yield { value, destination, delegated_result })
-                    if pending_calls.last().is_some_and(|call| call.completion.is_generator() && call.caller + 1 == frame) =>
-                {
-                    self.frames[frame].pc = pc;
-                    self.frames[frame].pc_is_resume = true;
-                    yielded = Some(super::generator::MaterializedStop::Yielded { destination, delegated_result });
-                    Ok(StepResult::Return(value))
-                }
-                step => step,
-            };
+            // The frame a generator's activation became yields (or an in-place request's awaits)
+            // to its caller, as its return completes the call (`materialized_stop`).
+            let (step, mut yielded) = self.materialized_stop(pending_calls.last(), frame, pc, step);
             match step {
                 Ok(StepResult::Return(mut value)) => {
                     let completion = {
@@ -2425,7 +2415,7 @@ impl<H: Host> Vm<H> {
                     loop {
                     if let Some(mut pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
-                        let completed_frame = self.frames.pop().unwrap();
+                        let (completed_frame, mut request_error) = (self.frames.pop().unwrap(), None);
                         // JavaScript in-loop pushes exclude the script root. Wasm calls
                         // share this return path and may enter defined function zero.
                         debug_assert!(
@@ -2443,10 +2433,17 @@ impl<H: Host> Vm<H> {
                                 let stop = yielded.take().unwrap_or(super::generator::MaterializedStop::Returned);
                                 value = self.finish_materialized_generator_step(completed_frame, resume, value, stop);
                             }
-                            None => {
-                                self.finish_frame_scopes(&completed_frame);
-                                self.pool_frame(completed_frame);
-                            }
+                            None => match pending.completion.take_async_request() {
+                                // SAFETY: as for `p` at the top of the loop; the frame's program.
+                                Some(root) => match self.settle_materialized_request(unsafe { &*executing_residual }, completed_frame, root, value, yielded.take()) {
+                                    Ok(promise) => value = promise,
+                                    Err(error) => request_error = Some((pending.call_pc, error)),
+                                },
+                                None => {
+                                    self.finish_frame_scopes(&completed_frame);
+                                    self.pool_frame(completed_frame);
+                                }
+                            },
                         }
                         frame = pending.caller;
                         if let Some(saved) = pending.caller_program.take() {
@@ -2457,7 +2454,7 @@ impl<H: Host> Vm<H> {
                         }
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // SAFETY: as for `p` at the top of the loop.
-                        settle_error = self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value);
+                        settle_error = request_error.take().or_else(|| self.trap_result_error(unsafe { &*executing_residual }, &pending, frame, value));
                         value = self.completed_call_value(&pending.completion, frame, pending.destination, value);
                         if let CallCompletion::ToWasm(result) = pending.completion {
                             // SAFETY: as for `p` at the top of the loop.
@@ -2744,20 +2741,13 @@ impl<H: Host> Vm<H> {
                         let caller_residual = executing.retained.clone();
                         error = self.trap_raised_in_javascript(caller_residual.as_deref().unwrap_or(entry_program), error);
                     }
-                    // An async callee's abrupt completion rejects its promise, which the
-                    // call yields; the caller resumes after the call.
-                    if let Some(root) = pending.completion.take_promise() {
-                        let promise = self.release_settled_call_root(root);
-                        let caller_residual = executing.retained.clone();
-                        let caller_code = caller_residual.as_deref().unwrap_or(entry_program);
-                        match self.reject_settled_call(caller_code, promise, error) {
-                            Ok(()) => {
-                                self.write(frame, pending.destination, promise);
-                                return Ok((frame, pc));
-                            }
-                            Err(next) => error = next,
-                        }
-                    }
+                    // An async callee's or in-place request's abrupt completion settles its
+                    // promise, which the call yields; the caller resumes after the call.
+                    let caller_residual = executing.retained.clone();
+                    error = match self.settle_abandoned_call(caller_residual.as_deref().unwrap_or(entry_program), (frame, pending.destination), &mut pending.completion, error) {
+                        Ok(()) => return Ok((frame, pc)),
+                        Err(next) => next,
+                    };
                 }
             }
         }

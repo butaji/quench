@@ -366,4 +366,5 @@ impl<H: Host> Vm<H> {
 }
 
 mod job_resume;
+mod requests;
 mod settle;

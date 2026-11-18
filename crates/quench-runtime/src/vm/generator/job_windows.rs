@@ -108,8 +108,8 @@ impl<H: Host> Vm<H> {
     /// Ends the lane run of an async generator `job`'s activation at a `yield` of `value` that
     /// resumes at `pc`, the value it is sent next going to `destination`: the frame parks in its
     /// record, which awaits the yielded value (`Vm::async_generator_yield`; `JobEnd::Yielded`).
-    pub(in crate::vm) fn suspend_async_generator_yield(&mut self, job: JobRoot, pc: usize, destination: crate::bytecode::Register, value: Value) {
-        let continuation = self.park_generator_job(job, pc, destination, Completion::Yield(value), 0);
+    pub(in crate::vm) fn suspend_async_generator_yield(&mut self, job: JobRoot, pc: usize, destination: crate::bytecode::Register, value: Value, depth: usize) {
+        let continuation = self.park_generator_job(job, pc, destination, Completion::Yield(value), depth);
         if let Some(record) = self.generator_record_mut(job.object) {
             record.await_with(continuation);
         }

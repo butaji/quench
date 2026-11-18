@@ -214,7 +214,7 @@ pub(super) fn window_environments<H: Host>(
 /// them, are the record's own, bound as a call binds a fresh one; the frame's receiver and
 /// captures run with it. The registers and record the lane continues at, or `None`, before any
 /// effect, where the lane has no room or no view for it.
-fn lane_resume_generator<H: Host>(
+pub(super) fn lane_resume_generator<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,

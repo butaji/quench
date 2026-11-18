@@ -100,6 +100,11 @@ pub(crate) enum CallCompletion {
     Constructor(Value),
     Promise(crate::heap::RootId),
     Generator(super::generator::GeneratorResume),
+    /// An async generator's request a lane ran in place (`Completion::AsyncRequest`), whose
+    /// promise the root keeps: the generator's frame stops at an `await`, a `yield`, a return or
+    /// a throw and the request settles (`Vm::settle_materialized_request`), the call yielding the
+    /// promise.
+    AsyncRequest(crate::heap::RootId),
     /// A lane's array iteration whose callback became this frame: its return steps and
     /// finishes the iteration (`Vm::finish_array_step`), which yields the method's value.
     ArrayStep(Box<super::array_indexed::ArrayStepCall>),
@@ -152,6 +157,16 @@ impl CallCompletion {
 
     #[inline(always)]
     pub(super) fn is_generator(&self) -> bool { matches!(self, Self::Generator(_)) }
+
+    #[inline(always)]
+    pub(super) fn is_async_request(&self) -> bool { matches!(self, Self::AsyncRequest(_)) }
+
+    #[inline(always)]
+    pub(super) fn take_async_request(&mut self) -> Option<crate::heap::RootId> {
+        let Self::AsyncRequest(root) = *self else { return None; };
+        *self = Self::Value;
+        Some(root)
+    }
 
     /// Whether the call's value is made on the general path from what the callee returns:
     /// an async callee's promise settles there, an array step's iteration finishes there.
