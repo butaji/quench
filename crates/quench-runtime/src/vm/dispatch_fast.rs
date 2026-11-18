@@ -18063,7 +18063,10 @@ script_handler! {
         let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::program_store::derived_lane_view)
             .expect("a lane body entry runs in its view");
         // An entry of the audit's interpreted epoch runs the function's records (`lane_body_audit`).
-        if own.audit_entry(true) {
+        // The activation just pushed is this entry's: its caller runs this function's records
+        // where it is a recursive call.
+        let recursive = vm.lane_stack.activations.last().is_some_and(|activation| activation.caller_base == base);
+        if own.audit_entry(true, recursive) {
             next!(cx, r, base, Carried::script_in(cx, view))
         }
         // A body a lifecycle edge retired gives its prologue back and warms again.
@@ -18939,7 +18942,8 @@ fn lane_enter_cell_body<H: Host>(
     let method = own.cell_method()?;
     // Most entries of a published body come through its cell: one of the audit's interpreted
     // epoch activates the call as the lane's own would (`lane_body_audit`).
-    if own.audit_entry(false) {
+    // SAFETY: the running context; its records are the caller's.
+    if own.audit_entry(false, unsafe { (*cx).base } == own.records()) {
         return None;
     }
     let window = lane_fill_window(vm, target, passed, argc);
