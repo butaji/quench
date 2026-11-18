@@ -4848,19 +4848,6 @@ fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: u32, [
     value
 }
 
-script_handler! {
-    /// `SuperConstArrayObject2` whose two fused operations see primitives only: its parts
-    /// as `Vm::execute_const_array_object2` runs them; any other operand takes the
-    /// general path, which runs the whole record again.
-    fn lane_const_array_object2<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_literal_value(cx, r, i) }) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// A `SuperConstArrayObject2` record's object: a copy of the constant array, the two
 /// fused `Binary` results, and the literal holding them, with each part's result in its
 /// register as the general path leaves it. `None` before any guest code could run: an
@@ -16651,7 +16638,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
-        Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),
         _ => wasm_gc_handler::<H>(opcode),
     }

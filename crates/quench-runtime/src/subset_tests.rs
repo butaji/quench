@@ -144,7 +144,7 @@ fn returned_superinstruction_object_preserves_value() {
       print(value.items[1]); print(value.text);
     "#;
     let program = Engine::specialize(source, "super-return.js").unwrap();
-    assert!(program.disassemble().contains("SuperConstArrayObject2"));
+    assert!(!program.disassemble().contains("SuperConstArrayObject2"));
     assert_eq!(output(source), ["2", "6"]);
 }
 
