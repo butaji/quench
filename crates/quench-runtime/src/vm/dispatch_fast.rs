@@ -25809,11 +25809,18 @@ impl<H: Host> Vm<H> {
             Some(shape) => lane_push_prepared(cx, &shape.activation, shape.room, &shape.entry(&prepared.target, prepared.this), args),
             None => None,
         };
-        let Some(start) = pushed.or_else(|| {
-            lane_push_callback(cx, site.call, &prepared.target, args, prepared.this, false)
-        }) else {
-            restore_pending(cx, &prepared.caller);
-            return None;
+        // A match, not `Option::or_else`: the closure's six captured words were spilled and its
+        // out-of-line call made on every call of the loop, though the prepared push nearly
+        // always succeeds.
+        let start = match pushed {
+            Some(start) => start,
+            None => match lane_push_callback(cx, site.call, &prepared.target, args, prepared.this, false) {
+                Some(start) => start,
+                None => {
+                    restore_pending(cx, &prepared.caller);
+                    return None;
+                }
+            },
         };
         unsafe { (*cx).memory = MemoryView::script(cx) };
         let exit = lane_dispatch(cx, start);
