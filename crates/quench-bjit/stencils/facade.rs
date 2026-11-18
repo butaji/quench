@@ -30,6 +30,11 @@ impl Value {
 }
 
 pub(crate) mod typed_ir {
+    /// A slot word's encoding (`quench_runtime::typed_ir::Representation`), the one lattice the
+    /// shared staged rows name; a stencil names only the variants.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    #[allow(dead_code)]
+    pub(crate) enum Representation { Int32, Int64, Float64, Tagged }
     /// An element kind's integer range, which only the runtime's seeds read.
     #[derive(Clone, Copy)]
     pub(crate) struct IntRange {

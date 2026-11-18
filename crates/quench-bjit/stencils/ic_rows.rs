@@ -40,7 +40,7 @@ use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp, Reached};
 use crate::staged::object::{Form, direct_object_record};
 use crate::staged::region::Region;
-use crate::staged::object::Rep;
+use crate::typed_ir::Representation as Rep;
 use crate::staged::slot_store::own_flat_store;
 use crate::staged::Stage;
 use crate::typed_ir::Type;

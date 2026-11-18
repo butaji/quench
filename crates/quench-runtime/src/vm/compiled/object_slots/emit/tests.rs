@@ -2,9 +2,10 @@
 
 use super::*;
 use crate::heap::{Cell, Heap, Object, PlainPropertyStorage};
-use crate::staged::object::{own_layout, read_slot, Form, PackedAccess, Rep};
+use crate::staged::object::{own_layout, read_slot, Form, PackedAccess};
 use crate::staged::slot_store::store_flat;
 use crate::staged::Region;
+use crate::typed_ir::Representation;
 use crate::vm::switches::with_float_slots;
 
 /// Objects of every storage form, with their values: narrow and wide, inline and spilled,
@@ -47,7 +48,7 @@ fn compiled_own_read(isa: &dyn cranelift_codegen::isa::TargetIsa, form: Form, sl
     let inline = crate::staged::object::inline_storage(&mut stage, record);
     let layout = own_layout(&mut stage, record, inline, form,
         usize::from(slot) + 1, PackedAccess::Reload, miss).unwrap();
-    let value = read_slot(&mut stage, layout, slot, Rep::Tagged);
+    let value = read_slot(&mut stage, layout, slot, Representation::Tagged);
     builder.ins().return_(&[value]);
     builder.switch_to_block(miss);
     let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
@@ -311,7 +312,7 @@ fn a_record_base_is_read_once_outside_a_loop_with_or_without_a_call() {
 }
 
 /// Native code running `record.slot0 -= dx * record.slot1 * mag` over a record whose arena values
-/// are raw doubles (`Rep::Float64`), and its CLIF.
+/// are raw doubles (`Representation::Float64`), and its CLIF.
 fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMemory, String) {
     let mut signature = Signature::new(isa.default_call_conv());
     signature.params.extend([AbiParam::new(types::I64), AbiParam::new(types::I64), AbiParam::new(types::F64), AbiParam::new(types::F64)]);
@@ -326,13 +327,13 @@ fn compiled_float_update(isa: &dyn cranelift_codegen::isa::TargetIsa) -> (CodeMe
     let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None };
     let inline = crate::staged::object::inline_storage(&mut stage, record);
     let layout = own_layout(&mut stage, record, inline, Form::Arena, 2, PackedAccess::Reload, miss).unwrap();
-    let velocity = read_slot(&mut stage, layout, 0, Rep::Float64);
-    let mass = read_slot(&mut stage, layout, 1, Rep::Float64);
+    let velocity = read_slot(&mut stage, layout, 0, Representation::Float64);
+    let mass = read_slot(&mut stage, layout, 1, Representation::Float64);
     let payload = stage.load_u64(Region::Payload.mutable(), record, crate::heap::NATIVE_OBJECT_LAYOUT.payload_offset as i32);
     let pull = stage.builder.ins().fmul(dx, mass);
     let pull = stage.builder.ins().fmul(pull, mag);
     let updated = stage.builder.ins().fsub(velocity, pull);
-    store_flat(&mut stage, payload, 0, (updated, Rep::Float64));
+    store_flat(&mut stage, payload, 0, (updated, Representation::Float64));
     builder.ins().return_(&[]);
     builder.switch_to_block(miss);
     builder.ins().return_(&[]);

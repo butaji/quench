@@ -1104,6 +1104,15 @@ impl Heap {
         })
     }
 
+    /// Marks the object `object`'s values as held by code (`Object::mark_constant`): its next
+    /// value write or layout change retires the readers subscribed under its exact shape and
+    /// clears the mark. No extras are made, so once written it takes every fast store again
+    /// (a prototype mark's extras would keep it off them for good). `None` for a non-object.
+    pub(crate) fn mark_own_constant(&mut self, object: Value) -> Option<()> {
+        self.object_mut(object)?.mark_constant();
+        Some(())
+    }
+
     #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
         if !self.marked_prototypes.contains(&Some(prototype)) {
             self.mark_new_prototype(prototype);
@@ -4137,6 +4146,7 @@ impl Heap {
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let data = self.object_store_mut(object, stored).expect("property owner is an object");
+        data.note_constant_write();
         if data.store_packed_inline_values(values) {
             return;
         }
@@ -4345,7 +4355,12 @@ impl Heap {
             return false;
         };
         // SAFETY: as above; the barrier admitted the write.
-        let start = unsafe { (*self.unlogged_object_record(record_id)).proved_arena_start() };
+        let record = unsafe { &*self.unlogged_object_record(record_id) };
+        // A marked object's store retires its readers first (`store_exact_slot`).
+        if record.holds_constant_mark() {
+            return false;
+        }
+        let start = record.proved_arena_start();
         // SAFETY: the run holds the shape's slots.
         unsafe { self.properties.set_flat_at(start, usize::from(slot), value, ty) };
         true
@@ -5212,6 +5227,9 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     // SAFETY: the caller matched the exact shape, which holds the slot.
     let (widened, ty) = unsafe { properties.note_exact_slot_word(data.shape(), slot, value) };
     if declines_widening(widened, layout, properties) { return false; }
+    // Code that held the object's values as constants retires before the write
+    // (`Object::note_constant_write`); the exact shape a cache records leaves the mark out.
+    data.note_constant_write();
     // A plain arena run first, by one payload compare (`Object::plain_arena_start`): the
     // extras-tag and flag tests of `exact_storage` were six instructions per store.
     if let Some(start) = data.plain_arena_start() {

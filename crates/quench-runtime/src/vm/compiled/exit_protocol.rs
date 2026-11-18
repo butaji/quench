@@ -147,18 +147,12 @@ pub(super) enum Source {
     Scratch(u16),
 }
 
-/// How a live value is stored: the representation the lane reads back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Repr {
-    Tagged,
-}
-
-/// A value live across a leave: its unit register, where the leave stores it, and how.
+/// A value live across a leave: its unit register and where the leave stores it. Every live
+/// value is stored tagged, so no representation is recorded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct LiveValue {
     pub(super) slot: u16,
     pub(super) source: Source,
-    pub(super) repr: Repr,
 }
 
 /// What a leave is and the values it stores that its caller's registers do not already hold.
@@ -208,7 +202,7 @@ impl ExitTable {
         let live = unit.chain(frame).into_iter().flat_map(|index| {
             let inlined = unit.frames[index];
             inlined.base..inlined.base + inlined.registers
-        }).map(|register| LiveValue { slot: register, source: Source::Scratch(register - unit.caller_registers), repr: Repr::Tagged });
+        }).map(|register| LiveValue { slot: register, source: Source::Scratch(register - unit.caller_registers) });
         ExitSig { kind: ExitKind::Inlined, live: live.collect() }
     }
 
@@ -238,8 +232,8 @@ impl ExitTable {
         let Some(site) = self.site(exit) else { return String::new() };
         let sig = &self.sigs[site.sig];
         if sig.kind != ExitKind::Inlined { return format!(" s{}", site.id); }
-        let stores = sig.live.iter().map(|value| match (value.source, value.repr) {
-            (Source::Scratch(at), Repr::Tagged) => format!("{}>{at}", value.slot),
+        let stores = sig.live.iter().map(|value| match value.source {
+            Source::Scratch(at) => format!("{}>{at}", value.slot),
         });
         format!(" s{} {}", site.id, stores.collect::<Vec<_>>().join(","))
     }
