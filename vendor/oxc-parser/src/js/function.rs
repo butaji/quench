@@ -421,10 +421,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 end,
                 id: function.id.map(|id| id.name.as_str()),
                 free_names: &skimmed.free_names,
-                names_exact: skimmed.names_exact,
                 // A method is a function whatever lies around its class.
                 in_function: self.ctx.has_return() || function.form == LazyForm::Method,
                 arrow: function.form == LazyForm::Arrow,
+                names_super: skimmed.names_super,
             };
             // SAFETY: `ParseOptions::lazy_body_skim` outlives the parse.
             unsafe { skim.call(body) }

@@ -29,9 +29,7 @@ pub(super) fn lane_loop_field_stores<H: Host>(
     for field in &region.field_store_sites {
         let object = receiver(field.receiver)?;
         let writes = region.field_store_type(field);
-        let pointer = unsafe {
-            vm.cached_field_store_pointer(code, object, field.atom, field.cache_site, writes)
-        }?;
+        let pointer = vm.cached_field_store_admission(code, object, field.atom, field.cache_site, writes)?;
         // Numeric cells cannot create heap edges. Reference-capable stores log their
         // owner once at admission; nothing collects before the run ends.
         if !writes.is_subtype(crate::typed_ir::Type::NUMBER) {

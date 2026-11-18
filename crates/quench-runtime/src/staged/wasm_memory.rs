@@ -24,7 +24,9 @@ pub(crate) struct Access {
 }
 
 impl Access {
-    /// The access a scalar load makes; a vector load has none.
+    /// The access a scalar load makes; a vector load has none. Always inlined: a handler's
+    /// constant load folds to its width and sign, so the bytes move as one word, not by memcpy.
+    #[inline(always)]
     pub(crate) fn of_load(load: MemoryLoad) -> Option<Self> {
         let ty = match load {
             MemoryLoad::I32Load
@@ -65,7 +67,7 @@ impl Access {
         signed: false,
     };
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn of_store(store: MemoryStore) -> Self {
         Self {
             ty: store.value_type(),

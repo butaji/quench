@@ -928,6 +928,10 @@ impl<H: Host> Vm<H> {
             Op::SetFunctionDebugName => {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
+            Op::RestLength | Op::RestGet => {
+                let value = self.read_rest_view(p, f, i)?;
+                self.write(f, i.result_register(), value);
+            }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
                 let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
@@ -1244,7 +1248,7 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
+            Op::Call | Op::CallArray | Op::CallSpread | Op::CallRest | Op::CallForwardingArguments => {
                 if i.op() == Op::CallForwardingArguments
                     && let Some(result) =
                         self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
@@ -1256,7 +1260,15 @@ impl<H: Host> Vm<H> {
                 // A spread argument array is read before any call state changes, since
                 // reading it can fail; register windows are copied only on the paths that
                 // need an owned argument list.
-                if i.op() == Op::CallSpread {
+                if i.op() == Op::CallRest && self.read(f, window.base) == Value::UNDEFINED {
+                    // A rest view's entry kept the values passed (`Function::rest_view`): the
+                    // rest array they make is the one an entry that gathers would have made.
+                    let fixed = usize::from(p.function(self.frames[f].function as usize).params) - 1;
+                    let passed = self.frames[f].original_arguments.get(fixed..).unwrap_or_default().to_vec();
+                    let rest = self.rest_parameter_array(&passed);
+                    self.write(f, window.base, rest);
+                }
+                if matches!(i.op(), Op::CallSpread | Op::CallRest) {
                     // ArgumentListEvaluation of the one spread: its values, as the argument
                     // array a `CallArray` reads, in the window it reads them from.
                     let iterable = self.read(f, window.base);
@@ -1264,7 +1276,7 @@ impl<H: Host> Vm<H> {
                     self.write(f, window.base, array);
                     self.spread_into_array(p, array, iterable)?;
                 }
-                let spread_arguments = if matches!(i.op(), Op::CallArray | Op::CallSpread) {
+                let spread_arguments = if matches!(i.op(), Op::CallArray | Op::CallSpread | Op::CallRest) {
                     let array = self.read(f, window.base);
                     Some(CallArguments::from_values(self.array_values(array)?))
                 } else {
@@ -1582,8 +1594,21 @@ impl<H: Host> Vm<H> {
                 return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
             }
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
-            _ => return self.step_wasm(p, f, i, pc),
+            _ => return self.step_unlisted(p, f, i, pc),
         }
+        Ok(StepResult::Continue)
+    }
+
+    /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and
+    /// iteration operations runs on the interpreter's stage, whose call-out the VM answers
+    /// (`staged_value_step`); any other is a Wasm step.
+    #[inline(never)]
+    fn step_unlisted(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        if !matches!(i.op().staged(), Some(crate::bytecode::Decoder::Names)) {
+            return self.step_wasm(p, f, i, pc);
+        }
+        let site = super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc };
+        self.staged_value_step(p, site, i)?;
         Ok(StepResult::Continue)
     }
 

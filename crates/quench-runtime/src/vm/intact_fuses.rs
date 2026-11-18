@@ -127,6 +127,14 @@ impl<H: Host> Vm<H> {
             && self.fuse_intact(IntactFuse::ArrayIteratorNext)
     }
 
+    /// Whether spreading an array the VM just made (a rest array: its own present elements on
+    /// the realm's `Array.prototype`, no own `@@iterator`) yields its elements without running
+    /// guest code: the realm's array iterator and its `next` are intact.
+    #[inline]
+    pub(super) fn fresh_array_iteration_intact(&mut self) -> bool {
+        self.fuse_intact(IntactFuse::ArrayIterator) && self.fuse_intact(IntactFuse::ArrayIteratorNext)
+    }
+
     /// The length of `list` when spreading it yields its stored elements without running
     /// guest code: an array whose iteration is intact (`array_iteration_intact`) holding only
     /// present own data elements, no indexed descriptor, sparse storage or hole. One array

@@ -50,8 +50,8 @@ pub(super) fn numeric_number_result(operator: BinaryOperator, left: f64, right: 
         return number_arithmetic_result(operation, left, right);
     }
     if let Some(operation) = NumberBitwise::from_operator(operator as u32) {
-        let left = number_to_u32(left) as i32;
-        let right = number_to_u32(right) as i32;
+        let left = crate::value::number_to_i32(left);
+        let right = crate::value::number_to_i32(right);
         return number_bitwise_f64_result(operation, left, right);
     }
     match operator {

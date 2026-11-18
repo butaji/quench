@@ -408,6 +408,7 @@ fn immediate_domains_in_bounds(
                 || matches!(instruction.unary_operator(), super::UNARY_TO_STRING_PRIMITIVE | super::UNARY_ADD_OPERAND_STRING)
                 || super::typeof_test(instruction.unary_operator()).is_some()
                 || instruction.unary_operator() == super::UNARY_TYPEOF_INDEX
+                || super::array_pattern_test(instruction.unary_operator()).is_some()
         }
         super::ImmediateRole::FunctionNamePrefix => {
             instruction.function_name_prefix() <= super::FUNCTION_NAME_PREFIX_SETTER
@@ -1136,6 +1137,17 @@ mod tests {
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
 
     #[test]
+    fn for_of_pattern_marks_are_validated() {
+        // A value-only array pattern sets RequireIteratorResult's flag; the layout declares it.
+        let program = crate::Engine::specialize(
+            "let t = 0; for (const [k, v] of new Map([[1, 2]])) t += k + v; for (const x of [1]) t += x; for (const [a, ...r] of [[1, 2]]) t += a;",
+            "for-of-pattern.js",
+        )
+        .unwrap();
+        assert_eq!(program.validate(), Ok(()));
+    }
+
+    #[test]
     fn rest_list_closure_layouts_are_validated() {
         // The compiler splits a rest list that binds directly; the validator accepts what it emits.
         let program = crate::Engine::specialize(
@@ -1296,6 +1308,7 @@ mod tests {
             length: 0,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
+            declared_parameters: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,
@@ -1330,7 +1343,7 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),

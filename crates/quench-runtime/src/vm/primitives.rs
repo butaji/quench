@@ -601,9 +601,7 @@ impl<H: Host> Vm<H> {
             Native::MathImul => {
                 let left = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let right = self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                let product = (crate::value::number_to_u32(left) as i32)
-                    .wrapping_mul(crate::value::number_to_u32(right) as i32);
-                Ok(Value::number(product as f64))
+                Ok(Value::number(super::number::math_numbers(native, &[left, right]).expect("Math.imul")))
             }
             Native::MathSumPrecise => self.math_sum_precise(p, args.first().copied()),
             Native::MathRandom => {

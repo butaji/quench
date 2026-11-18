@@ -41,7 +41,6 @@ mod tag {
     pub(super) const PROXY: u8 = 13;
     pub(super) const FUNCTION: u8 = 14;
     pub(super) const BINDING_REFERENCE: u8 = 15;
-    pub(super) const ENVIRONMENT: u8 = 16;
     /// `WebAssembly.JSTag`, the one Wasm cell every realm holds (`wasm_js::js_tag_cell`).
     pub(super) const JS_TAG: u8 = 17;
     pub(super) const BIGINT: u8 = 18;
@@ -435,6 +434,33 @@ impl FunctionRecord {
     }
 }
 
+impl EnvironmentRecord {
+    pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
+        let Self { parent, function, slots, scope } = self;
+        writer.value(*parent);
+        writer.u32(*function);
+        writer.bool(slots.0.marked());
+        writer.len(slots.0.len());
+        for slot in slots.0.iter() {
+            writer.value(slot.0);
+        }
+        scope.write_snapshot(writer);
+        Ok(())
+    }
+
+    pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
+        let parent = reader.value()?;
+        let function = reader.u32()?;
+        let marked = reader.bool()?;
+        let values = reader.values()?;
+        let mut slots = crate::heap::ThinBoxSlice::from(values.into_iter().map(EnvironmentSlot).collect::<Vec<_>>());
+        if marked {
+            slots.mark();
+        }
+        Ok(Self { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? })
+    }
+}
+
 impl IteratorRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         let Self { object, source, kind, index, done, ext } = self;
@@ -643,17 +669,6 @@ impl Cell {
                 writer.u16(*slot);
                 lexical_binding_kind::write(writer, *kind);
             }
-            Self::Environment { parent, function, slots, scope } => {
-                writer.u8(tag::ENVIRONMENT);
-                writer.value(*parent);
-                writer.u32(*function);
-                writer.bool(slots.0.marked());
-                writer.len(slots.0.len());
-                for slot in slots.0.iter() {
-                    writer.value(slot.0);
-                }
-                scope.write_snapshot(writer);
-            }
             Self::BigInt(value) => {
                 writer.u8(tag::BIGINT);
                 writer.bytes(&value.to_num().to_signed_bytes_le());
@@ -818,17 +833,6 @@ impl Cell {
                 slot: reader.u16()?,
                 kind: lexical_binding_kind::read(reader)?,
             },
-            tag::ENVIRONMENT => {
-                let parent = reader.value()?;
-                let function = reader.u32()?;
-                let marked = reader.bool()?;
-                let values = reader.values()?;
-                let mut slots = crate::heap::ThinBoxSlice::from(values.into_iter().map(EnvironmentSlot).collect::<Vec<_>>());
-                if marked {
-                    slots.mark();
-                }
-                Self::Environment { parent, function, slots: EnvironmentSlots(slots), scope: EnvironmentScopeRef::read_snapshot(reader)? }
-            }
             tag::JS_TAG => crate::vm::js_tag_cell(boxed_object(reader)?),
             tag::BIGINT => Self::bigint(num_bigint::BigInt::from_signed_bytes_le(reader.bytes()?)),
             tag::SYMBOL => Self::Symbol(SymbolData {

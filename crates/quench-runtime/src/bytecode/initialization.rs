@@ -23,16 +23,18 @@ enum Access {
     Opaque,
 }
 
+/// The basic blocks of a function's control flow, built on the first analysis that needs them
+/// and shared by every later one over the same flow: a pass that renames operations without
+/// moving control (plain local specialization) keeps them.
+pub(crate) type FlowCell = std::cell::OnceCell<BasicBlocks>;
+
 /// Of `candidates`, the slots that no read can reach while maybe-uninitialized. Function
 /// entry leaves a slot initialized unless `uninitialized_at_entry` names it, as for a
 /// register that replaces a slot and starts with whatever its pooled frame held; after that
 /// only `InitializeTdz` makes a slot maybe-uninitialized.
-pub(crate) fn initialized_before_reads(
-    function: &Function,
-    superinstructions: &[Superinstruction],
-    candidates: &BitSet,
-    uninitialized_at_entry: &BitSet,
-) -> BitSet {
+/// The blocks in `flow`, when set, are those of `function`'s current control flow.
+pub(crate) fn initialized_before_reads(function: &Function, superinstructions: &[Superinstruction],
+    candidates: &BitSet, uninitialized_at_entry: &BitSet, flow: &FlowCell) -> BitSet {
     let mut proven = candidates.clone();
     let dense = dense_indices(candidates);
     let count = dense.iter().flatten().count();
@@ -41,7 +43,7 @@ pub(crate) fn initialized_before_reads(
     }
     let words = count.div_ceil(u64::BITS as usize);
     let decoded: Vec<WideInstruction> = function.instructions().collect();
-    let blocks = BasicBlocks::of(function, &decoded);
+    let blocks = flow.get_or_init(|| BasicBlocks::of(function, &decoded));
     // States are kept per basic block, not per instruction: a row per instruction grows with
     // code length times candidates (lucide-react's 1.2 MB bundle: tens of MiB, TOD-140).
     let mut maybe_uninitialized = crate::bitset::BitRows::new(blocks.count, count);
@@ -135,7 +137,7 @@ fn dense_indices(candidates: &BitSet) -> Vec<Option<usize>> {
 /// successor other than an instruction's own sole fall-through, and after every instruction
 /// that does not only fall through, so control enters a block only at its start and the
 /// states inside it are the forward walk from there.
-struct BasicBlocks {
+pub(crate) struct BasicBlocks {
     /// The first pc of each block, ascending; the entry is block 0.
     starts: Vec<usize>,
     /// The block starting at each pc, with one entry past the end for the function's end.

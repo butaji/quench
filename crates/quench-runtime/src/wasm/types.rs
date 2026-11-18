@@ -298,6 +298,33 @@ impl WasmTypes {
     /// Whether a declaration is equivalent to an embedding's implicit final
     /// singleton function type, including its exact value types. Machine ABI
     /// projections cannot replace concrete reference identities here.
+    /// The parameter and result types of declaration `index` where it is the type an embedder's
+    /// implicit function has (`matches_implicit_function`): a final function type alone in its
+    /// group, with no supertype; none for any other declaration.
+    pub(crate) fn implicit_function(&self, index: usize) -> Option<(&[ValType], &[ValType])> {
+        let (group, member) = self.locate(index)?;
+        let ty = &group[member];
+        let plain = group.len() == 1
+            && ty.is_final
+            && ty.supertype_idx.is_none()
+            && !ty.composite_type.shared
+            && ty.composite_type.descriptor_idx.is_none()
+            && ty.composite_type.describes_idx.is_none();
+        match &ty.composite_type.inner {
+            // A concrete reference names a type of this table, which no embedder's signature
+            // can: such a type compares by its declaration.
+            CompositeInnerType::Func(function)
+                if plain
+                    && function.params().iter().chain(function.results()).all(|value| {
+                        !matches!(value, ValType::Ref(reference) if !matches!(reference.heap_type(), HeapType::Abstract { .. }))
+                    }) =>
+            {
+                Some((function.params(), function.results()))
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn matches_implicit_function(
         &self,
         index: usize,

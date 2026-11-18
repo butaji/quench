@@ -4,16 +4,17 @@ use super::*;
 
 /// The writes the raw stores of `instructions` may make, once per physical slot (shape and
 /// slot), independently of cache-row binding availability: each store site's one proved
-/// field's (`field` of its cache site) declared type.
+/// field's (`field` of its cache site) declared type, and whether the slot's words are raw
+/// doubles, which its in-place arm stores as such (`StoreArm::raw_double`).
 pub(in crate::vm) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn(u16) -> Option<&'a [NativeFieldLoad]>)
-    -> Vec<(u32, u16, Type)> {
-    let mut domains: Vec<(u32, u16, Type)> = Vec::new();
+    -> Vec<(u32, u16, Type, bool)> {
+    let mut domains: Vec<(u32, u16, Type, bool)> = Vec::new();
     for instruction in instructions.iter().filter(|instruction| instruction.op().is_field_store()) {
         let Some([field]) = field(instruction.cache_site_index()) else { continue };
         if field.ty == Type::NEVER { continue; }
-        match domains.iter_mut().find(|(shape, slot, _)| (*shape, *slot) == (field.shape, field.slot)) {
-            Some((_, _, domain)) => *domain = domain.join(field.ty),
-            None => domains.push((field.shape, field.slot, field.ty)),
+        match domains.iter_mut().find(|(shape, slot, _, _)| (*shape, *slot) == (field.shape, field.slot)) {
+            Some((_, _, domain, raw)) => { *domain = domain.join(field.ty); *raw &= field.raw_double; }
+            None => domains.push((field.shape, field.slot, field.ty, field.raw_double)),
         }
     }
     domains
@@ -29,11 +30,11 @@ impl Lowering<'_, '_> {
         if self.vm.online.is_some() && !self.vm.frozen {
             return;
         }
-        for (shape, slot, domain) in store_domains(instructions, |site| super::site_loads(self.fields, site).map(Vec::as_slice)) {
+        for (shape, slot, domain, raw) in store_domains(instructions, |site| super::site_loads(self.fields, site).map(Vec::as_slice)) {
             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
             let shape = self.raw_const(Lane::I64, i64::from(shape));
             let slot = self.raw_const(Lane::I64, i64::from(slot));
-            self.admit_slot_writes(shape, slot, domain, exit);
+            self.admit_slot_writes_as((shape, slot), domain, raw, exit);
         }
     }
 }

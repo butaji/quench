@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
 
     /// Adds to `atoms` the private names the functions of `environment`'s chain declare.
     fn enclosing_private_atoms(&self, mut environment: Value, atoms: &mut Vec<Atom>) {
-        while let Some(Cell::Environment { parent, function, scope, .. }) = self.heap.get(environment) {
+        while let Some(crate::heap::EnvironmentRecord { parent, function, scope, .. }) = self.heap.environment(environment) {
             if let Some(owner) = scope.program().and_then(|program| self.programs.get(ProgramId::from_raw(program)))
                 && let Some(metadata) = owner.function_get(*function as usize)
             {

@@ -52,10 +52,12 @@ Single homes (add to these; never a second copy):
 - `vm/compiled/tier_policy.rs`: every tier-up and tier-down threshold, plus what each memory policy
   compiles.
 - `vm/switches.rs`: every boolean `QUENCH_*` A/B or diagnostic switch.
-- Opcode meaning: only the interpreters (`vm/dispatch.rs`, `vm/dispatch_wasm.rs`) write it by
-  hand. Tiers derive it (`staged`, semantic entries), so an interpreter change reaches the JIT and
-  AOT. `src/staged/hand_semantics.txt` lists the hand-written opcode arms left in tiers, and it
-  may only shrink.
+- Opcode meaning: one staged row per opcode (`staged::step` over `Stage`). The interpreter's
+  handlers are the row on `Concrete` (site facts as const generics, so rustc specializes), b-jit
+  stencils the row on `StencilStage`, u-jit and AOT the row on `Emit`. No other code singles out an
+  opcode or an opcode family (`Op::X`, `index::X`, `.is_x()`, `Class::X`, `JsDenotation::X`, a
+  hand-written `fn lane_*`). `src/staged/derivation_debt.txt` lists what is left, interpreters
+  included, and may only shrink (`tiers_derive_opcode_meaning_from_the_interpreter`).
 - `code_dependencies.rs`: stable facts (binding time `Stable`) fold only under a code
   dependency, compiled code's and the interpreter's caches alike (prototype values, method
   atoms, a lane body's read sites). Retirement sets the body's invalidation word; there is no

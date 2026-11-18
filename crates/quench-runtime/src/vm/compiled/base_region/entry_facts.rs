@@ -32,11 +32,11 @@ impl From<ElementViews> for Views {
 pub(super) enum Facts {
     /// A loop region: `views` say how its arrays are read, `writes` where it
     /// stores a field through a row, which may stale a field value the entry record holds
-    /// (`stores_field`), so its field reads are the site's, live; `calls` where it makes a call by a
-    /// row (`calls_in_place`), whose callee may change anything the entry recorded: such a region
-    /// reads its arrays through their records, its fields through the site's entry, and leaves for
-    /// the captures its entry copied (the interpreter reads them live).
-    Entry { views: Views, writes: bool, calls: bool },
+    /// (`stores_field`), so its field reads are the site's, live. A region that makes a call by a
+    /// row (`calls_in_place`), whose callee may change anything the entry recorded, reads its
+    /// arrays through their records (`Views::Frame`), its fields through the site's entry, and
+    /// its captures live (`osr_lane::bind_captures`), as the interpreter does.
+    Entry { views: Views, writes: bool },
     Site,
 }
 

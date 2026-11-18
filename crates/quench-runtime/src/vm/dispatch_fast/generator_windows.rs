@@ -51,14 +51,18 @@ impl LaneStack {
     /// The iterators a resumed generator's loops left open, now the loops of the activation at
     /// `depth` (`LaneStack::iterators`).
     pub(super) fn restore_iterators(&mut self, depth: usize, open: &mut Vec<super::super::ActiveIterator>) {
-        self.iterators.extend(open.drain(..).map(|iterator| (depth, iterator)));
+        if !open.is_empty() {
+            self.iterators.extend(open.drain(..).map(|iterator| (depth, iterator)));
+        }
     }
 
-    /// The iterators the activation at `depth`, the innermost, pushed: its entries, the last,
-    /// which a suspended frame keeps (`FrameRecord::suspend_at`).
-    pub(in crate::vm) fn drain_iterators(&mut self, depth: usize) -> impl Iterator<Item = super::super::ActiveIterator> + '_ {
-        let first = self.iterators.partition_point(|(owner, _)| *owner < depth);
-        self.iterators.drain(first..).map(|(_, iterator)| iterator)
+    /// The iterators the activation at `depth`, the innermost, pushed (its entries, the last),
+    /// moved to the end of `open`, the suspending frame's (`FrameRecord::active_iterators`).
+    pub(in crate::vm) fn take_iterators(&mut self, depth: usize, open: &mut Vec<super::super::ActiveIterator>) {
+        if self.iterators.last().is_some_and(|(owner, _)| *owner >= depth) {
+            let first = self.iterators.partition_point(|(owner, _)| *owner < depth);
+            open.extend(self.iterators.drain(first..).map(|(_, iterator)| iterator));
+        }
     }
 }
 
@@ -89,9 +93,39 @@ pub(super) fn lane_resume_generator_step<H: Host>(
 /// How a resumed generator's window carries its locals (`FrameRecord::open_environment_window`):
 /// its function's captured-slot mask and, for a frame that made its environment, the slot storage
 /// of that environment.
+#[derive(Clone, Copy)]
 pub(super) struct WindowLocals {
     captured: u64,
     own_slots: Option<*const crate::heap::EnvironmentSlots>,
+}
+
+/// What a suspended frame's windowed resumes derive from its function and environment alone,
+/// kept on its record (`FrameRecord::window_plan`) while `key` holds: the same collection
+/// epoch (the capture's remembered environment), program-store epoch (its view) and
+/// environment, made or not. Each resume of a generator or async body re-derived them.
+#[derive(Clone, Copy)]
+pub(in crate::vm) struct WindowPlan {
+    key: (u64, u64, Value, bool),
+    pub(super) view: *const LaneView,
+    pub(super) parent: Value,
+    pub(super) locals: Option<WindowLocals>,
+    pub(super) capture: *const usize,
+}
+
+/// The plan a windowed resume of `frame`, laid out with an environment window when
+/// `environment`, runs under: its record's own while it still holds, else derived anew (the
+/// caller stores it back on the record it resumes). `None`, before any effect, where the
+/// function has no view or environment layout.
+pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, environment: bool) -> Option<WindowPlan> {
+    let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
+    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), env, captured);
+    if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
+        return Some(plan);
+    }
+    let view = vm.lane_view_any(program, function)?;
+    let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
+    let capture = vm.target_capture(code, program, parent);
+    Some(WindowPlan { key, view, parent, locals, capture })
 }
 
 /// The environment a generator's closures and captures run under, and its window's locals when
@@ -107,7 +141,7 @@ pub(super) fn window_environments<H: Host>(
     environment: bool,
 ) -> Option<(Value, Option<WindowLocals>)> {
     let own = if captured {
-        let Some(Cell::Environment { parent, slots, .. }) = vm.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { parent, slots, .. }) = vm.heap.environment(env) else {
             return None;
         };
         Some((*parent, std::ptr::from_ref(slots)))
@@ -144,13 +178,13 @@ fn lane_resume_generator<H: Host>(
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let (frame, environment) = vm.generator_window_frame(generator, code)?;
-    let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
-    let (this, pc, size) = (frame.this(), frame.pc, frame.registers.len());
+    let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
     let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
-    let view = vm.lane_view_any(program, function)?;
-    let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
-    let capture = vm.target_capture(code, program, parent);
+    // SAFETY: the record holds the frame, which nothing moves before the resume below.
+    let plan = window_plan(vm, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
+    let WindowPlan { view, parent, locals, capture, .. } = plan;
     let frame = vm.resume_generator_window(method, generator, sent, depth)?;
+    unsafe { (*frame).window_plan = Some(plan) };
     if let Some(locals) = locals {
         open_window_locals(vm, frame, locals);
     }

@@ -54,6 +54,9 @@ pub(super) struct LoopKernel {
     declines: std::cell::Cell<u32>,
     /// The run's columns (`run`), kept between runs.
     scratch: std::cell::UnsafeCell<Vec<f64>>,
+    /// The run's entry facts and recurrences (`run::State`), kept between runs: an entry
+    /// writes the slots its shape uses and copies nothing.
+    state: std::cell::UnsafeCell<Box<run::State>>,
 }
 
 /// The recurrence pass that runs the loop of `shape`, where the kernel is that loop's tier. A pass
@@ -99,6 +102,7 @@ impl LoopKernel {
             original: std::cell::Cell::new(original),
             declines: std::cell::Cell::new(0),
             scratch: std::cell::UnsafeCell::new(Vec::new()),
+            state: std::cell::UnsafeCell::new(Box::new(run::State::EMPTY)),
         });
         kernel.slot = register(&kernel)?;
         Some(kernel)

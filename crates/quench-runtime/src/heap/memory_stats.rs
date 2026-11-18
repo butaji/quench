@@ -109,7 +109,7 @@ impl Heap {
             let object_record = self.object_record(identity);
             let direct_array = identity.direct_array_index().is_some();
             let cell = self.get(identity);
-            if let Some(Cell::Environment { slots, .. }) = cell {
+            if let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.environment(identity) {
                 environment_logical_slots += slots.len();
                 environment_storage_bytes += slots.0.allocated_bytes();
                 environment_sparse_count += usize::from(slots.dense().is_none());
@@ -122,6 +122,7 @@ impl Heap {
             let direct_iterator = identity.direct_iterator_index().is_some();
             let direct_string = identity.direct_string_index().is_some();
             let direct_v128 = identity.direct_v128_index().is_some();
+            let direct_environment = identity.direct_environment_index().is_some();
             direct_records += usize::from(
                 direct_object
                     || direct_array
@@ -130,9 +131,12 @@ impl Heap {
                     || direct_await
                     || direct_iterator
                     || direct_string
-                    || direct_v128,
+                    || direct_v128
+                    || direct_environment,
             );
-            let kind = if direct_v128 {
+            let kind = if direct_environment {
+                CellKind::Environment as usize
+            } else if direct_v128 {
                 CellKind::WasmV128 as usize
             } else if direct_string {
                 CellKind::String as usize
@@ -150,7 +154,9 @@ impl Heap {
                 Self::cell_kind(cell.expect("live legacy value has a Cell")) as usize
             };
             cell_counts[kind] += 1;
-            let variant_name = if direct_v128 {
+            let variant_name = if direct_environment {
+                "environment"
+            } else if direct_v128 {
                 "wasm_v128"
             } else if direct_object {
                 "object"

@@ -104,6 +104,11 @@ impl<'a, 'b, 'c> ElementFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             None => { stage.jump(absent, &[]); }
         }
         stage.builder.switch_to_block(absent);
+        if self.hole_leaves {
+            stage.jump(miss, &[]);
+            stage.builder.switch_to_block(join);
+            return Some(value);
+        }
         let mut dominating = self.state.clone();
         std::mem::swap(&mut *self.state, &mut dominating);
         let hosted = host(stage, self, miss);

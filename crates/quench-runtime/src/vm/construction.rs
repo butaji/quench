@@ -399,7 +399,7 @@ impl<H: Host> Vm<H> {
         let slots = crate::heap::EnvironmentSlots::from_values(std::iter::once(Value::DELETED));
         let scope = crate::heap::EnvironmentScopeRef::of_program(self.active_program.raw());
         let (environment, storage) = self.heap.alloc_environment(parent, maker, slots, scope);
-        if let Some(Cell::Environment { function: owner, slots: parent_slots, .. }) = self.heap.get(parent)
+        if let Some(crate::heap::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = self.heap.environment(parent)
             && *owner != u32::MAX
             && *owner != super::ROOT_FUNCTION_ID
             && let Some(parent_storage) = parent_slots.dense_storage()
