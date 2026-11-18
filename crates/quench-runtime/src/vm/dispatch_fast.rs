@@ -15871,8 +15871,8 @@ fn returning_field_first_kind<H: Host, const LEAF: u8>(
         return lane_returning::<H, RETURNING_FIELD_PRIVATE, LEAF>;
     }
     if is_single_field_base(i.b) && !vm.reads_function_info(i.imm()) {
-        by_leaf!(LEAF, |L| single_base_handler(i.b, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
-            lane_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>, lane_returning::<H, RETURNING_FIELD, L>))
+        by_leaf!(LEAF, |L| single_base_handler(i.b, generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(true, L) }>,
+            generated_row::<H, FIELD_LEAF_READ, ACC_NONE, { returning_site(false, L) }>, lane_returning::<H, RETURNING_FIELD, L>))
     } else if lane_field_site_tier(vm, code, i) == FieldSiteTier::Nested {
         lane_returning::<H, RETURNING_FIELD_NESTED, LEAF>
     } else {

@@ -128,6 +128,14 @@ pub(crate) enum Operation<W, P> {
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
+    /// An indexed read whose base is a frame local, not a register (`GetIndex` over a numeric
+    /// local operand): the tier's exact path makes it (`element_rows::step` leaves it unresolved).
+    // merge: restored from trunk (4cb40b0d6d staged.rs); the derivation's decode_element builds it.
+    ElementReadOperand { destination: Register, base: Operand, key: Operand },
+    /// A numeric increment or decrement whose result goes to the frame local `local` instead of a
+    /// register (`IncDec` with a numeric local target): the tier's exact path makes it.
+    // merge: restored from trunk (4cb40b0d6d staged.rs); the derivation's decode_value builds it.
+    IncDecLocal { local: Register, source: Register, decrement: bool },
     /// `base[key] = value`, replacing a present dense element in place where the array owns its
     /// backing alone and the value needs no barrier log, else the VM's store.
     ElementWrite { value: Register, base: Register, key: Register },
@@ -239,9 +247,14 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
-            Op::IncDec if instruction.numeric_local_target().is_none() => Self::Number(NumberOperation::IncDec {
-                destination: instruction.result_register(), source: instruction.register_b(),
-                decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+            // merge: a numeric local target is `IncDecLocal` (restored from trunk), not a register result.
+            Op::IncDec => match instruction.numeric_local_target() {
+                None => Self::Number(NumberOperation::IncDec {
+                    destination: instruction.result_register(), source: instruction.register_b(),
+                    decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+                Some(local) => Self::IncDecLocal { local, source: instruction.register_b(),
+                    decrement: instruction.boolean_flag()? },
+            },
             Op::LoadCapture if instruction.result_flags() == 0 => Self::LoadCapture {
                 destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot(),
                 root: false },

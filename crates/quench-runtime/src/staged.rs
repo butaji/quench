@@ -967,6 +967,27 @@ pub(crate) mod emit {
     }
 }
 
+// merge: HEAD's decode_completed stays here as its own impl block (theirs moved the decode helpers to operation.rs,
+// and vm/compiled.rs calls this one); the shared closing braces below close it.
+impl<W, P> Operation<W, P> {
+    /// The staged operation `instruction` makes apart from how its result completes the frame
+    /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
+    /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
+    /// operation with no completion.
+    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+        use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
+        // A numeric local target is where the result goes, not how it completes: it stays.
+        // (It shares its bit with the `this` write: only `ReturnableAndThis` reads that bit as one.)
+        let layout = instruction.op().result_layout();
+        let completing = (layout.allowed_flags() & RETURN_REGISTER)
+            | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
+        let flags = instruction.result_flags() & completing;
+        if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
+        let plain = if flags != 0 { instruction.without_result_flags() } else { instruction };
+        Some((Self::decode(plain, context)?, flags))
+    }
+}
+
 /// Which of an instruction's two control edges it takes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Edge {
