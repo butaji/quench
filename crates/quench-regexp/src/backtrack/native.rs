@@ -168,7 +168,7 @@ impl Program {
     /// position by the start set alone, which a test of one unit decides in place; through
     /// the caller where a prefix or lookahead scan finds it, or the pattern is anchored.
     fn native_restarts(&self) -> NativeRestarts {
-        if self.anchored || self.prefix.is_some() || self.lookahead.is_some() {
+        if self.anchored || self.prefix.is_some() || self.lookahead.is_some() || self.inner_literal.is_some() {
             return NativeRestarts::Caller;
         }
         match &self.starts {

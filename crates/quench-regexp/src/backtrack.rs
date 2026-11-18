@@ -665,6 +665,9 @@ pub(crate) struct Program {
     /// The test of the atomic repeat a run begins with, where a failed run from a start fails
     /// from every start up to the end of the units it passes (`possessive::restart_skip`).
     restart_skip: Option<UnitTest>,
+    /// The leading run's test and the byte after it (`possessive::run_then_literal`): starts
+    /// are found from occurrences of the byte (`inner_literal_start`).
+    inner_literal: Option<(UnitTest, u8)>,
 }
 
 /// The compiled form of a construct this matcher does not run.
@@ -1421,9 +1424,11 @@ impl Program {
         let class_run = class_run_of(&compiler.instructions, &compiler.sets, capture_count);
         possessive::mark(&mut compiler.instructions, &compiler.sets);
         let restart_skip = possessive::restart_skip(&compiler.instructions, anchored || !prefix.is_empty());
+        let inner_literal = possessive::run_then_literal(&compiler.instructions, &compiler.sets, anchored || !prefix.is_empty());
         Some(Self {
             class_run,
             restart_skip,
+            inner_literal,
             sets: scanned_sets(std::mem::take(&mut compiler.sets), &compiler.instructions),
             anchored_run: anchored_run_of(&compiler.instructions, capture_count),
             native: NativeSlot::default(),
@@ -1607,6 +1612,22 @@ impl Program {
         }
     }
 
+    /// `next_start` of a program whose matches begin with a run of `run`'s units and then
+    /// `literal` (`inner_literal`): the start of the run, from `from` on, before the first
+    /// occurrence of the byte that has one.
+    #[inline(always)]
+    fn inner_literal_start(&self, bytes: &[u8], (run, literal): (UnitTest, u8), from: usize, last: usize) -> Option<usize> {
+        let mut at = from;
+        loop {
+            let found = at + memchr::memchr(literal, bytes.get(at..)?)?;
+            let start = self.run_start_back(run, bytes, found, from);
+            if start < found {
+                return (start <= last).then_some(start);
+            }
+            at = found + 1;
+        }
+    }
+
     /// The first position from `from` through `last` where a match can start.
     /// Whether no match can start at `at` of an ASCII subject's `bytes`, by the start set's
     /// table alone: a sticky search's one start, refused before the search machinery (a
@@ -1640,6 +1661,9 @@ impl Program {
         }
         if let (Some(prefix), Some(bytes)) = (&self.prefix, text.bytes()) {
             return prefix.find(bytes, from, last);
+        }
+        if let (Some((run, literal)), Some(bytes)) = (self.inner_literal, text.bytes()) {
+            return self.inner_literal_start(bytes, (run, literal), from, last);
         }
         if let (Some(lookahead), Some(bytes)) = (&self.lookahead, text.bytes()) {
             // Each start the scan finds must also hold the units the match's next units can be.

@@ -22,6 +22,23 @@ pub(super) fn restart_skip(instructions: &[Inst], scanned: bool) -> Option<UnitT
     }
 }
 
+/// The leading atomic repeat's test and the literal byte that must follow it, where every
+/// match begins with an unbounded run of units passing the test (at least one) and then that
+/// byte, which the test refuses: a match starts only at the start of a run of the test's units
+/// that ends just before an occurrence of the byte (`Program::inner_literal_start`).
+pub(super) fn run_then_literal(instructions: &[Inst], sets: &[MatchSet], scanned: bool) -> Option<(UnitTest, u8)> {
+    let test = restart_skip(instructions, scanned)?;
+    let mut rest = instructions.iter().filter(|inst| !matches!(inst, Inst::CaptureOpen { .. } | Inst::CaptureClose { .. }));
+    let _repeat = rest.next()?;
+    let Inst::Unit(UnitTest::Exact(literal)) = *rest.next()? else { return None };
+    let byte = u8::try_from(literal).ok().filter(u8::is_ascii)?;
+    let refused = match test {
+        UnitTest::Exact(unit) => unit != literal,
+        UnitTest::Set(set) => !sets[set as usize].contains(literal),
+    };
+    refused.then_some((test, byte))
+}
+
 /// Marks each greedy `UnitRepeat` whose follower rejects every unit it takes `atomic`.
 pub(super) fn mark(instructions: &mut [Inst], sets: &[MatchSet]) {
     for pc in 0..instructions.len() {
