@@ -86,6 +86,7 @@ impl Compiler<'_> {
                 && (direct_parameters || hidden_parameters)
                 && with_depth == 0
                 && !dynamic_eval,
+            value.r#async,
             hidden_parameters.then_some(value.params.items.len()),
             None,
             body_statements,

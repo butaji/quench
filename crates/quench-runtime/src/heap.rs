@@ -17,7 +17,6 @@ mod typed_view;
 pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
 use typed_view::TypedViewTable;
 pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
-#[cfg(test)]
 pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};

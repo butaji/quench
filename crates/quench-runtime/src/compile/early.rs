@@ -497,9 +497,6 @@ pub(super) struct FixedRegisterLocalFacts<'a> {
     closures: Option<ClosureReach<'a>>,
     /// Whether the walk gathered what `closures` reach, rather than only that there are some.
     reached: bool,
-    /// The body itself may suspend at an `await` (a `for await`, an `await using`), not
-    /// counting the functions it makes.
-    pub(super) suspends: bool,
 }
 
 /// What functions and classes nested in a body may reach of its bindings, read without
@@ -569,8 +566,6 @@ pub(super) fn fixed_register_local_facts<'a>(
         /// Whether `closures` gathers what the functions and classes reach, or only that the
         /// body makes one.
         reaches: bool,
-        /// The body itself awaits: an `await`, a `for await` or an `await using`.
-        suspends: bool,
         /// The body itself has a loop.
         loops_seen: bool,
     }
@@ -588,7 +583,6 @@ pub(super) fn fixed_register_local_facts<'a>(
                 last_references: rustc_hash::FxHashMap::default(),
                 closures: None,
                 reaches,
-                suspends: false,
                 loops_seen: false,
             }
         }
