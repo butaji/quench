@@ -3,13 +3,21 @@
 
 use super::{IntRange, Type};
 
+/// How a value is held in machine form. It is also how the word of an arena slot encodes its
+/// value: a static projection of the slot owner's type (`SlotType::rep`), not a fact stored apart
+/// from it. A specializer that proved the owner's type under a dependency reads and writes the
+/// word in this representation with no tag test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Representation {
+    /// A `Value` whose tag the owner proved int32; the bits are the tagged word's.
     Int32,
     /// An integer Number of `IntRange::EXACT` in a signed 64-bit word: the Number's own value,
     /// which an index word and a sum of index words need no binary64 round trip to share.
     Int64,
+    /// The Number as its IEEE double, which every Number is stored as (NaN canonical): a raw
+    /// double is already a valid `Value` word, so the collector reads it as a non-reference.
     Float64,
+    /// Any `Value`, as the interpreter holds it.
     Tagged,
 }
 

@@ -131,13 +131,13 @@ impl<H: Host> Vm<H> {
 
     /// Makes `value`, the own field `atom` of the direct object `object` that a site keeps
     /// reading from that one object, a record's own-constant hint: in place of `owned`, else as
-    /// a new one below `limit`. The object is marked, so a write to any of its values or a
-    /// change of its layout retires the watch; a site whose hint retired should not make one
-    /// again (the object is written after all).
+    /// a new one below `limit`. The object is marked (`Heap::mark_own_constant`), so a write to
+    /// any of its values or a change of its layout retires the watch and clears the mark; a
+    /// site whose hint retired should not make one again (the object is written after all).
     pub(super) fn hold_own_constant_hint(&mut self, owned: Option<u16>, atom: Atom, object: Value, value: Value, limit: u16) -> Option<u16> {
+        self.heap.mark_own_constant(object)?;
         let record = self.heap.object_record_by_id(object.direct_object_index()?);
         let (guard, shape) = (record as *const crate::heap::Object as u64, record.exact_shape());
-        self.heap.mark_prototype(object);
         let watch = crate::heap::watch_prototype_values(shape)?;
         let hint = HolderHint { guard, atom, holder: object, value, watch };
         if let Some(index) = owned.filter(|&index| usize::from(index) < self.holder_hints.own.len()) {
@@ -172,11 +172,9 @@ impl<H: Host> Vm<H> {
             None => { self.holder_hints.probes.insert(site, bits); None }
             Some(seen) if seen == bits => {
                 self.holder_hints.probes.insert(site, OWN_CONSTANT_REFUSED);
-                // Only an object already watched as a prototype: marking another one makes every
-                // later write to it take the watch's slow store (a read-and-written `state.count`
-                // went from 219 to 1184 Ir per iteration), and a mark is never undone. An object
-                // a fact proves constant (a TS enum or namespace) is the other admission, once
-                // the fact store names one.
+                // Only an object already watched as a prototype: admitting any direct object (the
+                // CONSTANT_FORM mark) still sends a read-and-written object's stores to the slow
+                // path (`st.count = st.count + st.step`: 219 -> 931 Ir per iteration).
                 let watched = self.heap.object_record(object)
                     .is_some_and(|record| record.was_used_as_prototype() && record.watched_subject().is_some());
                 if !watched { return None; }
