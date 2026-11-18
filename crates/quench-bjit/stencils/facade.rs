@@ -36,17 +36,19 @@ pub(crate) mod typed_ir {
         pub(crate) min: i64,
         pub(crate) max: i64,
     }
-    /// The fact a stage keeps of a word: a stencil keeps none.
+    /// The fact a stage keeps of a word: a stencil keeps only the one a row states, that its word
+    /// is a Number (`ic_rows::write`), which is immediate.
     #[derive(Clone, Copy)]
-    pub(crate) struct Type;
+    pub(crate) struct Type(bool);
     impl Type {
-        pub(crate) const ANY: Self = Self;
-        pub(crate) const IMMEDIATE: Self = Self;
-        pub(crate) const NUMBER: Self = Self;
-        pub(crate) const fn int(_range: IntRange) -> Self { Self }
+        pub(crate) const ANY: Self = Self(false);
+        pub(crate) const IMMEDIATE: Self = Self(false);
+        pub(crate) const NUMBER: Self = Self(true);
+        pub(crate) const fn int(_range: IntRange) -> Self { Self(false) }
         pub(crate) const fn is_int32(self) -> bool { false }
-        /// A stencil proves no subtype: every gate is the stage's.
-        pub(crate) const fn is_subtype(self, _of: Self) -> bool { false }
+        /// A stencil proves no subtype but a stated Number's of Number and immediate: every other
+        /// gate is the stage's.
+        pub(crate) const fn is_subtype(self, _of: Self) -> bool { self.0 }
     }
 }
 
