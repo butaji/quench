@@ -62,6 +62,19 @@ impl Facts {
             contracts: seeds.contracts.to_vec(), observed: seeds.observed.0.to_vec(), rounds: vec![0; blocks], headers: CompoundBitSet::with_capacity(blocks), ..Self::default() }
     }
 
+    /// Room for `rows` rows of types, and of length relations where the run tracks them.
+    fn reserve_rows(&mut self, rows: usize, relations: bool) {
+        // Capped: a unit whose rows outgrow it grows its buffers as before.
+        const MAX_RESERVED_WORDS: usize = 1 << 16;
+        let words = rows.saturating_mul(self.registers).min(MAX_RESERVED_WORDS);
+        self.types.reserve(words);
+        if relations {
+            self.length_of.reserve(words);
+            self.below.reserve(words);
+            self.under.reserve(words);
+        }
+    }
+
     /// The state on entry to the block led by `pc`.
     fn point_at(&self, pc: usize) -> run::Point {
         let start = self.offsets[pc].expect("a pending leader has facts").get() - 1;
