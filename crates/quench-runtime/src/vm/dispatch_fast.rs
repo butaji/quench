@@ -3316,7 +3316,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -3814,13 +3814,10 @@ script_handler! {
 }
 
 script_handler! {
-    /// `ToPropertyKey` of a string, which is itself (the staged fast arm), of a symbol, which is
+    /// `ToPropertyKey` of a value its row leaves (`Miss::PropertyKeyValue`): of a symbol, which is
     /// itself, or of an integer, its decimal string; any other value, which may run guest code
     /// or format a float, takes the general step in place.
     fn lane_to_property_key<>(cx, r, ip, i, view) {
-        if staged_property_key(r, Carried::script_in(cx, view), i.a, i.b) {
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
         let vm = unsafe { vm(cx) };
         let value = r.get(i.b);
         let key = if let Some(integer) = value.as_int() {
@@ -9323,22 +9320,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// The comparison of the record's operator over its register, constant and local operands, by
-    /// the staged step on the interpreter's stage: two observed Numbers decide a relation, the
-    /// words and the lane's strict decision an equality. Any other pair takes
-    /// `lane_jump_binary_false_chain`.
-    fn lane_jump_binary_false<BACKWARD: bool>(cx, r, ip, i, view) {
-        let (Some(left), Some(right)) = (RecordOperand::encoded(i.b), RecordOperand::encoded(i.c)) else {
-            return exit(ip);
-        };
-        let Some(edge) = lane_frame::staged_record_jump::<H>(cx, r, view, u32::from(i.a), [left, right]) else {
-            sibling!(lane_jump_binary_false_chain::<H, BACKWARD>, r, ip, Carried::script(cx))
-        };
-        jump_on_edge!(cx, r, ip, BACKWARD, edge)
-    }
-}
-
 /// The edge a decided comparison takes: the jump is taken where it fails.
 #[inline(always)]
 const fn holds_edge(holds: bool) -> crate::staged::Edge {
@@ -9346,9 +9327,9 @@ const fn holds_edge(holds: bool) -> crate::staged::Edge {
 }
 
 script_handler! {
-    /// `lane_jump_binary_false` of a pair the staged step leaves: the relations the lane decides
-    /// without guest code (`lane_relation_other`); any other takes the general path. Out of line,
-    /// so the staged case keeps few values live.
+    /// The comparison jump's miss arm (`Miss::CompareChain`), for a pair its generated row leaves:
+    /// the relations the lane decides without guest code (`lane_relation_other`); any other takes
+    /// the general path. Out of line, so the staged case keeps few values live.
     #[inline(never)]
     fn lane_jump_binary_false_chain<BACKWARD: bool>(cx, r, ip, i, view) {
         let (Some(left), Some(right)) =
@@ -21117,7 +21098,6 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 /// safepoint, then of the Wasm GC steps (`wasm_gc_handler`).
 const fn jump_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Class::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
         Class::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
         Class::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
@@ -21160,7 +21140,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::GetField => Some(lane_get_field_first::<H>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
         _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
-        Class::ToPropertyKey => Some(lane_to_property_key::<H>),
         Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Class::DefineField => Some(lane_define_field::<H>),
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
@@ -23042,8 +23021,8 @@ fn specialize_register_operands<H: Host>(
     } else {
         lane_get_index::<H> as Handler as *const ()
     };
-    let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
-    let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
+    let forward_test = jump_row::<H, { crate::staged::COMPARE_JUMP_ROW }>(false) as *const ();
+    let backward_test = jump_row::<H, { crate::staged::COMPARE_JUMP_ROW }>(true) as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     let forward_false_jump = jump_row::<H, JUMP_IF_FALSE>(false) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {

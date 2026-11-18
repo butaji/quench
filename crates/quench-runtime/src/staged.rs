@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
@@ -147,6 +147,12 @@ pub(crate) enum Miss {
     /// A global-name store the frame does not hold (its hint misses): the name's first-run
     /// resolution, which resolves the store and holds the record on its row.
     StoreNameFirst,
+    /// A comparison jump the frame leaves (a pair that is no Number relation or word test): the
+    /// lane's comparison chain decides the relations it can without guest code.
+    CompareChain,
+    /// `ToPropertyKey` of a value the frame leaves (an integer's decimal key, a symbol): the
+    /// lane's own answer for it, else the general step.
+    PropertyKeyValue,
 }
 
 /// The row of `op`'s miss route (`Miss`).
@@ -158,6 +164,8 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::LoadEnvLocal => Miss::EnvironmentLoad,
         Op::StoreEnvLocal => Miss::EnvironmentStore,
         Op::StoreName => Miss::StoreNameFirst,
+        Op::JumpBinaryFalse => Miss::CompareChain,
+        Op::ToPropertyKey => Miss::PropertyKeyValue,
         _ => match truth_jump(op) {
             Some(taken) => Miss::CellTruth { taken },
             None => Miss::General,
@@ -179,6 +187,15 @@ pub(crate) const GLOBAL_WRITE_ROW: u16 = Op::StoreName as u16;
 /// The opcode whose row answers a plain `Binary` record (`specialize_register_operands` recognizes
 /// it by this, the hand handler being the fallback for the operands the row does not decode).
 pub(crate) const BINARY_ROW: u16 = Op::Binary as u16;
+/// The opcode of a conditional jump on a comparison of two operands (`Operation::CompareJump`),
+/// the record the default comparison handler and its register forms are told apart by.
+pub(crate) const COMPARE_JUMP_ROW: u16 = Op::JumpBinaryFalse as u16;
+
+/// Whether `op` is a conditional jump whose row answers its control edge from a comparison of
+/// two operands (`Operation::CompareJump`): a jump the lane runs as its generated row.
+pub(crate) const fn compare_jump(op: Op) -> bool {
+    matches!(op, Op::JumpBinaryFalse)
+}
 
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global

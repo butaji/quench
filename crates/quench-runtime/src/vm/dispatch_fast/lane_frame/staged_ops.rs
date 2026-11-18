@@ -34,15 +34,6 @@ pub(in crate::vm::dispatch_fast) fn staged_require_iterator_result(r: Registers,
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::RequireIteratorResult { register }), Step::Value(_))
 }
 
-/// ToPropertyKey of the direct string in `source` into `destination`, by the staged operation;
-/// false, writing nothing, where the value is no direct string.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_property_key(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
-}
-
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
 /// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
 /// storing nothing, where the binding does not take the direct store.

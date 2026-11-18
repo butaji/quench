@@ -135,6 +135,8 @@ pub(crate) enum RowStep {
     Property,
     /// Deletes and element accesses.
     Keyed,
+    /// Comparisons, binaries, `void` and property keys (`generic::step`).
+    Generic,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -147,6 +149,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Names) => RowStep::Names,
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
+        Some(Decoder::Generic) => if matches!(op, Op::Unary) { RowStep::Full } else { RowStep::Generic },
         Some(Decoder::Value) => match op {
             Op::LoadCapture | Op::StoreCapture => RowStep::Names,
             Op::IncDec | Op::ToNumeric => RowStep::Number,
@@ -209,4 +212,10 @@ pub(crate) fn step_property<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
 #[inline(always)]
 pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     keyed_step(stage, frame, operation)
+}
+
+/// `step` of a generic row (`RowStep::Generic`).
+#[inline(always)]
+pub(crate) fn step_generic<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    super::generic::step(stage, frame, operation)
 }

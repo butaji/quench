@@ -685,7 +685,10 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         // A generic row's word-decided answers, and the pure binary of its call-outs (`lane_binary_values`).
         let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> =
             |context, operator, left, right| unsafe { super::lane_binary_values::<H>(context.cast(), operator, left, right) };
-        return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), ..LaneFrame::<ACC>::new(r, view) };
+        // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
+        // leave is the VM's steady decision (`staged_comparison_jump`).
+        return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
+            ..LaneFrame::<ACC>::new(r, view) };
     }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
@@ -698,7 +701,8 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
 /// a capture access the lane's own slow arm, which walks the scopes and requickens the record to
-/// the root binding it finds (`lane_load_capture_walk`, `lane_store_outer_capture`).
+/// the root binding it finds (`lane_load_capture_walk`, `lane_store_outer_capture`), or for a
+/// `ToPropertyKey` the lane's integer and symbol answers (`lane_to_property_key`).
 const fn row_miss<H: Host>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
@@ -707,7 +711,9 @@ const fn row_miss<H: Host>(op: Op) -> Handler {
         crate::staged::Miss::EnvironmentLoad => super::lane_load_local::<H>,
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
         crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
-        crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. } => lane_general_step::<H>,
+        crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
+        crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }
+            | crate::staged::Miss::CompareChain => lane_general_step::<H>,
     }
 }
 
@@ -745,26 +751,30 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::Names) } { crate::staged::step_names($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Property) } { crate::staged::step_property($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Keyed) } { crate::staged::step_keyed($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Generic) } { crate::staged::step_generic($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
 
 /// Where opcode `op`'s jump row leaves when its words do not decide the edge: a truth test of a
-/// heap value asks its cell (`lane_jump_test_cell`); any other takes the VM's general step.
+/// heap value asks its cell (`lane_jump_test_cell`); a comparison the frame leaves takes the
+/// lane's comparison chain (`lane_jump_binary_false_chain`); any other takes the VM's general step.
 const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::CellTruth { taken: false } => super::lane_jump_test_cell::<H, BACKWARD, false>,
         crate::staged::Miss::CellTruth { taken: true } => super::lane_jump_test_cell::<H, BACKWARD, true>,
+        crate::staged::Miss::CompareChain => super::lane_jump_binary_false_chain::<H, BACKWARD>,
         _ => lane_general_step::<H>,
     }
 }
 
 /// Whether opcode `op` runs its generated jump row (`row_jump`): a jump the flow decoder
-/// stages (`Decoder::Flow`), or a loop's exit (`LANE_LOOP_EXIT`), whose names row makes its
-/// step and its edge.
+/// stages (`Decoder::Flow`), a loop's exit (`LANE_LOOP_EXIT`), whose names row makes its step and
+/// its edge, or a jump whose row answers its edge from a comparison (`staged::compare_jump`).
 pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
     op.control_flow_layout().jumps()
-        && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow)) || op.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT))
+        && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow)) || op.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT)
+            || crate::staged::compare_jump(op))
 }
 
 /// Opcode `OP`'s jump row in direction `backward`.
@@ -774,15 +784,19 @@ pub(in crate::vm::dispatch_fast) const fn jump_row<H: Host, const OP: u16>(backw
 
 lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
-    /// `lane_row` is: the flow decoder reads the record, the row steps on `Concrete`, and its
-    /// edge picks the continuation. A jump to its target runs the lane's jump (`lane_jump`),
-    /// whose backward edge (`BACKWARD`, which the view fixes per record) is a safepoint.
+    /// `lane_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
+    /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
+    /// its target runs the lane's jump (`lane_jump`), whose backward edge (`BACKWARD`, which the
+    /// view fixes per record) is a safepoint.
     pub(super) fn row_jump<OP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
         let fields = LaneFields::<OP>(i);
         // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
-        let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
-            Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
-            _ => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
+        let decoded = if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+            Operation::decode_names(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
+            Operation::decode_generic(crate::staged::Fields::wide(fields))
+        } else {
+            Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
         };
         let Some(operation) = decoded else {
             sibling!(lane_general_step::<H>, r, ip, view)

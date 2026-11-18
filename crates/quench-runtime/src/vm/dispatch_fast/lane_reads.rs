@@ -100,7 +100,8 @@ impl Reads {
     pub(super) const NONE: Self = Self { constants: &[], immediate: None, locals: None, captures: None };
 
     /// The reads of a comparison jump of the running lane's `cx`, whose record holds `immediate`.
-    fn of_jump<H: Host>(cx: *mut LaneContext<H>, immediate: Option<Value>) -> Self {
+    #[inline(always)]
+    pub(super) fn of_jump<H: Host>(cx: *mut LaneContext<H>, immediate: Option<Value>) -> Self {
         let context: *mut () = cx.cast();
         Self { constants: unsafe { (*cx).constants }, immediate,
             locals: Some(LocalReads { context, read: |context, slot|
