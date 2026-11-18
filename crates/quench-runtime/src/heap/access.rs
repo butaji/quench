@@ -316,6 +316,27 @@ impl Heap {
         self.environment_records.is_live(record_id).then(|| unsafe { self.environment_records.get_live(record_id) })
     }
 
+    /// `environment` of a value a root reaches (a register file's closure environment, a frame's,
+    /// or a parent link of one): reachable, so live, and only its tag is tested.
+    ///
+    /// # Safety
+    /// `value` is reachable from a root of the running VM.
+    #[inline(always)] pub(crate) unsafe fn reachable_environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        // SAFETY: a reachable environment's id names a live, initialized record.
+        Some(unsafe { self.environment_records.get_live(record_id) })
+    }
+
+    /// `reachable_environment`, mutably, past the write barrier.
+    ///
+    /// # Safety
+    /// `value` is reachable from a root of the running VM.
+    #[inline(always)] pub(crate) unsafe fn reachable_environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        // SAFETY: reachable, so live and initialized; `&mut self` is exclusive.
+        Some(unsafe { self.environment_records.get_live_mut(record_id, &self.properties) })
+    }
+
     /// `environment`, mutably, past the write barrier.
     #[inline(always)] pub(crate) fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
         let record_id = value.direct_environment_index()?;

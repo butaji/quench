@@ -3990,7 +3990,19 @@ lane_handler! {
         note_allocation(vm);
         // SAFETY: the step continues at a record of the running frame's view.
         let target = unsafe { (*cx).base.add(next) };
-        if next > pc { next!(cx, r, target, Carried::script_in(cx, view)) } else { exit(target) }
+        if next <= pc { return exit(target); }
+        // A record the view registered as an accumulator producer (a generated row whose `a` is
+        // its result register, `handler_for`) may fall back here; the record after it then reads
+        // the carried accumulator, so the step defines it from the register as the row would.
+        let carried = Carried::script_in(cx, view);
+        let op = instruction.op();
+        if lane_runs_row(op)
+            && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+            && !matches!(op.staged(), Some(crate::bytecode::Decoder::Local))
+        {
+            next!(cx, r, target, Carried { acc: Slot::of(r.get(instruction.a())), ..carried })
+        }
+        next!(cx, r, target, carried)
     }
 }
 
@@ -6611,7 +6623,8 @@ script_handler! {
         let imm = i.imm();
         let slot = usize::from(ImmediateLayout::capture_slot(imm));
         let vm = unsafe { vm(cx) };
-        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.environment(env) {
+        // SAFETY: `lane_root_environment` answers an environment the running frame's roots reach.
+        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match unsafe { vm.heap.reachable_environment(env) } {
             Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
                 slots.owned(slot).filter(|value| !value.is_internal_marker())
             }
@@ -6636,7 +6649,8 @@ script_handler! {
         let value = r.get(i.a);
         let stored = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).is_some_and(|env| {
             let vm = unsafe { vm(cx) };
-            match vm.heap.environment_mut(env) {
+            // SAFETY: as `lane_load_root_binding`'s read.
+            match unsafe { vm.heap.reachable_environment_mut(env) } {
                 Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
                     match slots.owned_mut(slot) {
                         Some(binding) if !binding.is_internal_marker() => {

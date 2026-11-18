@@ -1,9 +1,8 @@
 # Each op's Ir/iter split by handler (callgrind self cost), recorded by a passing `quench-gate --only ir-budget`.
 # op share handler; the gate names the handlers that grew against these. Not edited by hand.
 alloc_class 173.9 lane_planned_construct_full
-alloc_class 88.0 lane_load_root_binding
+alloc_class 59.0 lane_load_root_binding
 alloc_class 52.0 lane_get_field_own_bound<false, 67108864>
-alloc_class 46.0 Vm::environment_capture_env
 alloc_class 37.0 lane_planned_construct
 alloc_class 29.2 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#1}>
 alloc_class 24.0 lane_inc_dec_loop<false, 4, true>
@@ -11,8 +10,6 @@ alloc_class 19.0 lane_operator_raw<8>
 alloc_class 15.0 lane_operator_int32<8, false>
 alloc_class 12.0 lane_row<3, 0, 0>
 alloc_class 7.0 lane_row<69, 0, 0>
-alloc_class 2.0 Frame::environment
-alloc_class 2.0 Frame::owns_environment
 alloc_class 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 alloc_class 1.2 RecordSpace::sweep_aging_word<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#1}>
 alloc_class 1.0 RecordSpace::load_free_word
@@ -20,9 +17,8 @@ alloc_class 0.9 RecordSpace::claim_slow
 alloc_class 0.8 Vm::collect_inner
 alloc_class 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 alloc_ctor 140.5 lane_planned_construct
-alloc_ctor 88.0 lane_load_root_binding
 alloc_ctor 60.0 lane_get_field_own_bound<false, 536870912>
-alloc_ctor 46.0 Vm::environment_capture_env
+alloc_ctor 59.0 lane_load_root_binding
 alloc_ctor 24.0 lane_inc_dec_loop<false, 4, true>
 alloc_ctor 19.0 lane_operator_raw<8>
 alloc_ctor 15.0 lane_operator_int32<8, false>
@@ -30,8 +26,6 @@ alloc_ctor 14.5 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_
 alloc_ctor 7.0 lane_row<69, 0, 0>
 alloc_ctor 6.0 lane_row<3, 0, 0>
 alloc_ctor 2.4 lane_planned_construct_full
-alloc_ctor 2.0 Frame::environment
-alloc_ctor 2.0 Frame::owns_environment
 alloc_ctor 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 alloc_ctor 1.2 RecordSpace::sweep_aging_word<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#1}>
 alloc_ctor 1.0 RecordSpace::load_free_word
@@ -110,7 +104,7 @@ call_closure 15.0 lane_operator_int32<8, false>
 call_closure 12.0 lane_jump_binary_false_registers<false, 4>
 call_closure 7.0 lane_row<69, 0, 0>
 call_direct 75.0 lane_script_call_leaf<1, 1>
-call_direct 57.0 lane_load_root_binding
+call_direct 43.0 lane_load_root_binding
 call_direct 39.0 lane_returning_operator<17, true, 1>
 call_direct 24.0 lane_inc_dec_loop<false, 4, true>
 call_direct 16.0 lane_operator_integer_constant<8>
@@ -128,8 +122,8 @@ call_method 14.0 lane_row<69, 0, 0>
 call_method 12.0 lane_jump_binary_false_registers<false, 4>
 call_rest 211.0 lane_script_call_keeping
 call_rest 68.0 lane_rest_view<true>
-call_rest 57.0 lane_load_root_binding
 call_rest 48.0 lane_return<0>
+call_rest 43.0 lane_load_root_binding
 call_rest 30.0 lane_operator_int32<8, false>
 call_rest 25.0 lane_rest_view<false>
 call_rest 24.0 lane_inc_dec_loop<false, 4, true>
@@ -139,8 +133,8 @@ call_rest 7.0 lane_row<69, 0, 0>
 call_rest 4.0 lane_jump_always<false>
 call_rest_forward 258.0 lane_call_rest
 call_rest_forward 211.0 lane_script_call_keeping
-call_rest_forward 114.0 lane_load_root_binding
 call_rest_forward 96.0 lane_return<0>
+call_rest_forward 86.0 lane_load_root_binding
 call_rest_forward 68.0 lane_rest_view<true>
 call_rest_forward 30.0 lane_operator_int32<8, false>
 call_rest_forward 25.0 lane_rest_view<false>
@@ -153,8 +147,8 @@ call_rest_forward 4.0 lane_jump_always<false>
 call_spread 228.0 lane_call_spread
 call_spread 112.0 Vm::intact_spread_length
 call_spread 68.0 lane_rest_view<true>
-call_spread 57.0 lane_load_root_binding
 call_spread 48.0 lane_return<0>
+call_spread 43.0 lane_load_root_binding
 call_spread 36.0 lane_set_index_proved
 call_spread 30.0 lane_operator_int32<8, false>
 call_spread 25.0 lane_rest_view<false>
@@ -247,7 +241,7 @@ int_sub 15.0 lane_operator_int32<9, false>
 k01_sum_or 24.0 lane_inc_dec_loop<false, 4, true>
 k01_sum_or 15.0 lane_operator_int32<8, false>
 k02_fib 19293.0 lane_script_call<1, true>
-k02_fib 10089.0 lane_load_root_binding
+k02_fib 7611.0 lane_load_root_binding
 k02_fib 5280.0 lane_returning_operator<17, true, 0>
 k02_fib 4272.0 lane_return<0>
 k02_fib 2816.0 lane_operator_integer_constant<9>
@@ -257,7 +251,7 @@ k02_fib 24.0 lane_inc_dec_loop<false, 4, true>
 k02_fib 15.0 lane_operator_int32<8, false>
 k02_fib 6.0 lane_row<3, 0, 0>
 k03_call_add 75.0 lane_script_call_leaf<1, 2>
-k03_call_add 57.0 lane_load_root_binding
+k03_call_add 43.0 lane_load_root_binding
 k03_call_add 39.0 lane_returning_operator<17, true, 1>
 k03_call_add 24.0 lane_inc_dec_loop<false, 4, true>
 k03_call_add 19.0 lane_operator<8>
@@ -506,10 +500,10 @@ k18_math 10.0 {closure#7}::call_once
 k19_gcd 145.2 lane_operator<12>
 k19_gcd 109.0 lane_script_call<2, true>
 k19_gcd 88.1 lane_move_pair<true, true>
-k19_gcd 57.0 lane_load_root_binding
 k19_gcd 56.7 lane_jump_binary_false_small<false, 3, false>
 k19_gcd 49.7 lane_operator_integer_constant_numbers<11>
 k19_gcd 48.0 lane_return<0>
+k19_gcd 43.0 lane_load_root_binding
 k19_gcd 34.1 lane_operator_integer_constant_numbers<17>
 k19_gcd 24.0 lane_inc_dec_loop<false, 4, true>
 k19_gcd 19.0 lane_operator_raw<8>
@@ -927,7 +921,6 @@ str_concat 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure
 str_concat 1.1 RecordSpace::load_free_word
 str_concat 0.9 RecordSpace::claim_slow
 str_concat 0.8 Vm::collect_inner
-str_concat 0.6 Stealer::steal
 str_concat 0.6 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 str_concat_acc 113.0 Vm::intern_dynamic_concat
 str_concat_acc 101.0 lane_operator_constant_other<8>

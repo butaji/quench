@@ -6,8 +6,8 @@
 #   dispatch allowance per iteration for the loop's backward jump).
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
-alloc_class 146 444 516.3
-alloc_ctor 143 435 435.7
+alloc_class 146 444 444
+alloc_ctor 143 435 435
 alloc_literal 143 435 435
 arr_includes 247.2 747.6 1193.8
 arr_indexof 248.2 750.6 1194.3
@@ -21,11 +21,11 @@ arr_store_int 5 21 72.1
 arr_store_obj 3 15 86.1
 bitwise 8 30 75.1
 call_closure 11 39 233.1
-call_direct 8 30 233.1
+call_direct 8 30 219.1
 call_method 11 39 281.1
-call_rest 10 36 501.1
-call_rest_forward 11 39 883.1
-call_spread 10 36 689.1
+call_rest 10 36 487.1
+call_rest_forward 11 39 855.1
+call_spread 10 36 675.1
 cmp_dbl 6 24 90.1
 cmp_int 7.5 29 63.6
 date_now 34 108 263.1
@@ -50,8 +50,8 @@ int_mul 5 21 108.1
 int_mul_ovf 18 60 118.8
 int_sub 4 18 39.2
 k01_sum_or 4 18 39.1
-k02_fib 1440 4326 45148.1
-k03_call_add 4 18 225.1
+k02_fib 1440 4326 42670.1
+k03_call_add 4 18 211.1
 k04_dot 4 18 212.7
 k05_field_add 4 18 113.6
 k06_list 69 213 1854.3
@@ -67,7 +67,7 @@ k15_isort 266.8 806.4 5544.4
 k16_sieve 310 936 8088.8
 k17_hash 134 408 5395.3
 k18_math 44 138 761.6
-k19_gcd 47.1 147.3 686.9
+k19_gcd 47.1 147.3 672.9
 k20_switch 169 513 3944.3
 k_dispatch 14 48 348.6
 k_dist2 12.9 44.7 252.7
