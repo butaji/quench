@@ -80,11 +80,11 @@ pub(crate) fn is_double<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.ugt_imm(offset, ValueLayout::TAG_FIELD_SPAN)
 }
 
-/// ToBoolean of `bits` as far as its own word decides it (`Value::truthiness`):
-/// `(undecided, truthy)`. A heap value other than an object or array record is undecided, its
-/// cell deciding (a string's length, a BigInt, the IsHTMLDDA object); `truthy` holds for any
-/// other truthy value: a record, a nonzero int32 or Number, or an immediate but `null`,
-/// `undefined`, `false` and the deleted marker.
+/// ToBoolean of `bits` as far as its own word decides it: `(undecided, truthy)`. A heap value
+/// other than an object or array record is undecided, its cell deciding (a string's length, a
+/// BigInt, the IsHTMLDDA object); `truthy` holds for any other truthy value: a record, a nonzero
+/// int32 or Number, or an immediate but `null`, `undefined`, `false` and the deleted marker.
+/// `Value::truthiness` is this at `Concrete`, so every stage decides the same cases.
 #[inline(always)]
 pub(crate) fn tagged_truthiness<S: Stage>(stage: &mut S, bits: S::Word) -> (S::Cond, S::Cond) {
     let tag = stage.and_imm(bits, ValueLayout::TAG_MASK);

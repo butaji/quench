@@ -284,7 +284,7 @@ pub(super) fn double_relation(op: u32, left: f64, right: f64) -> bool {
 
 #[cfg(test)]
 mod numeric_instruction_tests {
-    use super::{NumberArithmetic, NumberBitwise, NumberUnary, Op, number_is_truthy};
+    use super::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberUnary, Op, number_truthiness};
     use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 
     #[test]
@@ -402,7 +402,7 @@ mod numeric_instruction_tests {
             (f64::MIN_POSITIVE, true),
             (-1.0, true),
         ] {
-            assert_eq!(number_is_truthy(value), expected);
+            assert_eq!(number_truthiness(&mut NumberF64Stage, value), expected);
         }
     }
 }

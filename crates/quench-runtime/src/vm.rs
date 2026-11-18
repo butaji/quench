@@ -247,7 +247,6 @@ use var_owner::{EvalCaller, VarOwner};
 pub(crate) mod operations;
 #[cfg(all(test, feature = "bench-primitives"))]
 mod primitive_bench;
-pub(crate) use operations::number_is_truthy;
 mod primitives;
 pub(crate) mod program_store;
 mod promise;
