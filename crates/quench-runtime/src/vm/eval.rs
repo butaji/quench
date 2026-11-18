@@ -607,6 +607,10 @@ impl<H: Host> Vm<H> {
     /// `retained` names static text the program keeps in place of its compiled source, and
     /// the compiled byte offset where that text starts. `provided` is the caller's shared text
     /// of `source`, which the program keeps when it compiled exactly it (`kept_or_provided`).
+    ///
+    /// A rejected compile returns the SyntaxError it always threw, tagged with its
+    /// `CompileFailureKind`: `Syntax` when the first diagnostic is a syntax error, else
+    /// `Unsupported`. A stack exhaustion is not tagged.
     pub(super) fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(crate::bytecode::SourceText, u32)>,
@@ -654,8 +658,14 @@ impl<H: Host> Vm<H> {
                 let message = diagnostics
                     .first()
                     .map_or_else(|| "invalid host script".to_owned(), |diagnostic| diagnostic.syntax_message().to_owned());
+                // The message above comes from the first diagnostic, so its kind classifies the failure.
+                let kind = match diagnostics.first() {
+                    Some(diagnostic) if diagnostic.is_syntax_error() => CompileFailureKind::Syntax,
+                    _ => CompileFailureKind::Unsupported,
+                };
                 self.syntax_error_result(&program, &message)
                     .expect_err("specialized host-script syntax errors must throw")
+                    .with_compile_failure(kind)
             })?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut residual.source, origin) {
             source.line_offset = line_offset;

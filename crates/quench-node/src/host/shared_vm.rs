@@ -2976,6 +2976,10 @@ impl NodeHost {
             let source = esm_wasm::facade(&name, path, &bytes)?;
             return Ok(quench_runtime::ModuleSource::text(name, source));
         }
+        // Detection-first on purpose: a CommonJS file's module source is a facade over
+        // `require`, so its goal is needed before anything is compiled (compile-first would
+        // change the graph's shape: live ES bindings vs the facade). This costs one parse of
+        // the file beyond the loader's own compile; the loader's compile is single-parse.
         let kind = if extension == "json" { quench_runtime::SourceKind::Script }
             else { commonjs::source_kind_of_real_bytes(path, &bytes)? };
         #[cfg(feature = "aot")]

@@ -348,6 +348,11 @@ fn execute_shared_on_worker(
         } => {
             let addons_enabled = !exec_argv.iter().any(|argument| argument == "--no-addons");
             let path = crate::host::shared_vm::commonjs::entry_path(&path, addons_enabled)?;
+            // Detection-first for an undeclared `.js` entry: the goal picks the program that
+            // runs (an ES module main is a different program from the CommonJS entry, which
+            // only the loader can compile). Compile-first here would load a top-level-await
+            // entry as a required module, not as the main, so its `require.main` and `this`
+            // would change. Cost: one parse of the entry beyond the loader's own compile.
             let kind = match goal {
                 EntryGoal::Node => NodeHost::source_kind(&path)?,
                 EntryGoal::CommonJs => SourceKind::Script,

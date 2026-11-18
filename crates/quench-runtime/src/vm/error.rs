@@ -79,6 +79,18 @@ struct ErrorPayload {
     description: ErrorDescription,
     thrown: Option<Value>,
     source_location: Option<ErrorSourceLocation>,
+    /// Set only on the error a script compile returns: why the compile rejected the source.
+    compile_failure: Option<CompileFailureKind>,
+}
+
+/// Why a script compile failed, as the host's compile diagnostics classify it. The thrown
+/// SyntaxError is the same for both; only the embedder can tell them apart from this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompileFailureKind {
+    /// Parsing or ECMAScript early-error validation rejected the source (`Diagnostic::is_syntax_error`).
+    Syntax,
+    /// A backend limit or unsupported syntax rejected the source: the source may be valid.
+    Unsupported,
 }
 
 #[derive(Debug)]
@@ -114,6 +126,7 @@ impl From<String> for ErrorMessage {
                 description: ErrorDescription::Text { message },
                 thrown: None,
                 source_location: None,
+                compile_failure: None,
             }),
         }
     }
@@ -136,7 +149,22 @@ impl fmt::Display for JsError {
 
 impl JsError {
     fn described(description: ErrorDescription, thrown: Option<Value>) -> Self {
-        Self(ErrorMessage { payload: Box::new(ErrorPayload { description, thrown, source_location: None }) })
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload { description, thrown, source_location: None, compile_failure: None }),
+        })
+    }
+
+    /// Mark this error as a script compile's failure of `kind`. The message and the thrown
+    /// value are unchanged.
+    pub(crate) fn with_compile_failure(mut self, kind: CompileFailureKind) -> Self {
+        self.0.payload.compile_failure = Some(kind);
+        self
+    }
+
+    /// Why the script compile that returned this error failed; `None` for any error that is
+    /// not a compile's diagnostic (a host failure, a stack exhaustion, a thrown guest error).
+    pub fn compile_failure(&self) -> Option<CompileFailureKind> {
+        self.0.payload.compile_failure
     }
 
     pub(crate) fn execution_terminated() -> Self {
