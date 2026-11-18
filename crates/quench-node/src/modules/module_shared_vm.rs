@@ -838,13 +838,7 @@ fn set(
     }
 }
 
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 /// `module.constants.compileCacheStatus`.
 const COMPILE_CACHE_STATUS: &[(&str, f64)] = &[("FAILED", 0.0), ("ENABLED", 1.0), ("ALREADY_ENABLED", 2.0), ("DISABLED", 3.0)];

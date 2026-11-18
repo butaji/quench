@@ -25,15 +25,9 @@ const CONVERSIONS: &[(&str, &str, f64)] = &[
 /// `internal/url` helpers beyond the public conversions.
 const INTERNALS: &[(&str, &str, f64)] = &[("isURL", "urlIsURL", 1.0), ("toPathIfFileURL", "toPathIfFileURL", 1.0)];
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
-fn put(c: &mut Context<'_>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(object, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 fn export(c: &mut Context<'_>, object: RootId, export: &str, name: &str, operation_name: &str, length: f64) -> Result<(), RootedError> {
     let function = c.host_function_named(operation(operation_name), name)?;
@@ -50,9 +44,7 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     }
 }
 
-fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
-    c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
-}
+use crate::modules::util_shared_vm::type_of_value as type_of;
 
 /// `node:url`.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {

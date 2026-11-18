@@ -88,9 +88,7 @@ fn cache(c: &mut Context<'_>, key: &str, value: RootId) -> Result<RootId, Rooted
     Ok(value)
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     match args.get(index) {
@@ -99,9 +97,7 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     }
 }
 
-fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
-    c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
-}
+use crate::modules::util_shared_vm::type_of_value as type_of;
 
 /// `StringPrototypeToWellFormed(`${value}`)`.
 pub(crate) fn usv_string(c: &mut Context<'_>, value: RootId) -> Result<String, RootedError> {

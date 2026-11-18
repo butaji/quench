@@ -190,3 +190,9 @@ pub(crate) fn hex_decode(input: &[u8]) -> Vec<u8> {
     }
     out
 }
+
+/// One byte per character: the Latin-1 text Node gives JavaScript for raw octets
+/// (c-ares names, HTTP head fields, and similar byte-string protocol data).
+pub(crate) fn latin1_text(bytes: &[u8]) -> String {
+    bytes.iter().map(|&byte| char::from(byte)).collect()
+}
