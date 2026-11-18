@@ -26,6 +26,9 @@ const _: () = assert!(size_of::<TableTarget>() == 24);
 const _: () = assert!(TableTarget::SIGNATURE == 0 && TableTarget::ENTRY == 4 && TableTarget::INSTANCE == 8);
 const _: () = assert!(TableTarget::BODY == 16);
 const _: () = assert!(TableWords::BASE == 0 && TableWords::LENGTH == 8);
+// The row's `CONTEXT_*_AT` constants: `CallContext`'s offsets, which the row does not take in holes.
+const _: () = assert!(CONTEXT_TABLE_WORDS == 0x48 && CONTEXT_CALL_REFERENCE == 0x58);
+const _: () = assert!(CONTEXT_INSTANCE == 0x100 && CONTEXT_MEMORY_LENGTH == 0x90);
 
 /// Whether `instruction` is a `Call::Reference`.
 fn is_reference(instruction: WideInstruction) -> bool {
@@ -84,16 +87,13 @@ pub(super) fn reference(pc: usize, instructions: &[WideInstruction], world: &Wor
     let destination = u32::try_from(slot(instruction.result_register())).ok()?;
     let window = u32::try_from(slot(instruction.call_window().base)).ok()?;
     let index = u32::try_from(slot(instruction.b())).ok()?;
-    let context = |offset: i32| u16::try_from(offset).ok().map(u64::from);
-    let (words, callout) = (context(CONTEXT_TABLE_WORDS)?, context(CONTEXT_CALL_REFERENCE)?);
-    let (instance, length) = (context(CONTEXT_INSTANCE)?, context(CONTEXT_MEMORY_LENGTH)?);
     // The packing `wasm_rows_indirect.rs` reads (its header).
     let holes = [
         pack(destination, window),
         pack(index, site.table),
         pack(site.canonical, site.signature),
-        u64::from(site.site) | words << 32 | callout << 48,
-        instance << 16 | length << 32,
+        u64::from(site.site),
+        0,
     ];
     let name = leak(codes::wasm_name((codes::CALL_INDIRECT, 0, codes::W64, codes::REGISTER)));
     Some(vec![Planned { stencil: name, holes: padded_holes(holes), taken: None }])

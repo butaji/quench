@@ -80,11 +80,17 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The address of the published words of the table at binding `table`: the instance's table
     /// area holds them, indexed by the binding.
+    ///
+    /// Loaded at each use, not as invariant: an invariant load is hoisted out of the loop and
+    /// then lives across every call in it, taking a callee-saved register (or a spill) from the
+    /// loop's own values. Two loads from the context, which stays in a register, cost no more
+    /// than the spill's reload.
     fn table_words(&mut self, table: u32) -> ir::Value {
         let context = self.body.core.context;
-        let array = self.load_word(Width::I64, invariant(), context, CONTEXT_TABLE_WORDS);
+        let flags = MemFlagsData::trusted();
+        let array = self.load_word(Width::I64, flags, context, CONTEXT_TABLE_WORDS);
         let offset = (table as usize * size_of::<*const TableWords>()) as i32;
-        self.load_word(Width::I64, invariant(), array, offset)
+        self.load_word(Width::I64, flags, array, offset)
     }
 
     /// The address of the row of element `index`.
@@ -255,7 +261,8 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.branch_if(compiled, (present, &[]), (slow, &[]));
         self.enter(present);
         let instance = self.load_word(Width::I64, flags, address, TableTarget::INSTANCE);
-        let running = self.load_word(Width::I64, invariant(), context, CONTEXT_INSTANCE);
+        // At each use, like `table_words`: not a value living across the loop's calls.
+        let running = self.load_word(Width::I64, flags, context, CONTEXT_INSTANCE);
         let mine = self.operate(Binary::Equal, Width::I64, instance, running);
         self.branch_if(mine, (local, &[]), (foreign, &[]));
         self.enter(local);
