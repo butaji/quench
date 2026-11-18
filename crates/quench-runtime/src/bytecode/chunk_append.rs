@@ -97,6 +97,34 @@ impl ResidualProgram {
         }
     }
 
+    /// Takes the chunk room of `compiled`, the compilation this program was decoded from (its
+    /// kept form): the replay, the pending rewrites and every table's headroom, so its
+    /// first-call chunks append to it as they do to the compiled program. `false`, leaving the
+    /// program as it was, where the tables do not match.
+    pub(crate) fn adopt_chunk_room(&mut self, compiled: &mut ResidualProgram) -> bool {
+        if self.replay.is_some() || compiled.replay.is_none() || self.table_lengths() != compiled.table_lengths() {
+            return false;
+        }
+        let fits = self.functions.reserve_unshared(compiled.functions.spare())
+            & self.constants.reserve_unshared(compiled.constants.spare())
+            & self.method_sites.reserve_unshared(compiled.method_sites.spare())
+            & self.method_arguments.reserve_unshared(compiled.method_arguments.spare())
+            & self.field_sites.reserve_unshared(compiled.field_sites.spare())
+            & self.object_sites.reserve_unshared(compiled.object_sites.spare())
+            & self.regexp_literal_sites.reserve_unshared(compiled.regexp_literal_sites.spare())
+            & self.literal_templates.reserve_unshared(compiled.literal_templates.spare())
+            & self.superinstructions.reserve_unshared(compiled.superinstructions.spare());
+        self.cache_sites = SiteCount::with_capacity(self.cache_sites.get(), compiled.cache_sites.capacity());
+        self.rewrite_ranges = std::mem::take(&mut compiled.rewrite_ranges);
+        if !self.rewrite_ranges.kept_pending {
+            // The load ran every kept record's rewrites; only appended chunks' records wait for theirs.
+            *self.rewrite_ranges.settled.borrow_mut() = vec![Some(None); self.functions.len()];
+            self.rewrite_ranges.kept_pending = true;
+        }
+        self.replay = compiled.replay.take();
+        fits
+    }
+
     /// Whether `delta` can be appended: the program follows the chunk's rewrites as they come
     /// (its records' rewrites wait for their first reads), shares its atoms with a VM, and
     /// has room in every table the chunk adds to.
