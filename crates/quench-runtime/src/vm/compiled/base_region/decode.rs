@@ -4,11 +4,12 @@ use crate::staged::property::StoreArm;
 
 /// The row kind of a binary operator, from one table for arithmetic, bitwise and relational
 /// operators.
-pub(super) const OPERATORS: [(BinaryOperator, Kind); 18] = [
+pub(super) const OPERATORS: [(BinaryOperator, Kind); 19] = [
     (BinaryOperator::Addition, Kind::Add),
     (BinaryOperator::Subtraction, Kind::Sub),
     (BinaryOperator::Multiplication, Kind::Mul),
     (BinaryOperator::Division, Kind::Div),
+    (BinaryOperator::Remainder, Kind::Rem),
     (BinaryOperator::BitwiseAnd, Kind::And),
     (BinaryOperator::BitwiseOR, Kind::Or),
     (BinaryOperator::BitwiseXOR, Kind::Xor),
@@ -27,7 +28,7 @@ pub(super) const OPERATORS: [(BinaryOperator, Kind); 18] = [
 
 pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
     let found = OPERATORS.iter().find(|(candidate, _)| *candidate as u32 == operator)?.1;
-    (relational == (found >= Kind::Lt)).then_some(found)
+    (relational == (Kind::Lt..=Kind::Ne).contains(&found)).then_some(found)
 }
 
 /// An operand: a register of the activation or a constant `Value` word.

@@ -108,6 +108,31 @@ fn arith_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: boo
     finish(frame, done)
 }
 
+/// The staged remainder in `domain`; whether it produced its result.
+#[inline(always)]
+fn remainder<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> bool {
+    let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
+    staged(frame, NumberOperation::Remainder { destination: DEST, left, right, domain }).is_some()
+}
+
+/// A remainder row: int32s where the row speculates them, else ints while both operand words are
+/// ints; a zero divisor, a negative zero or any double leaves. A double remainder is `fmod`, a
+/// call no stencil makes, so the row over a pinned double always leaves (the site then widens to
+/// the interpreter's step).
+#[inline(always)]
+fn rem_row<const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
+    let done = if D >= PINF || A >= PINF || B >= PINF {
+        false
+    } else if SPEC {
+        remainder(&mut frame, Domain::Int32)
+    } else {
+        let ints = frame.both_int();
+        frame.prove_ints();
+        ints && remainder(&mut frame, Domain::Int32)
+    };
+    finish(frame, done)
+}
+
 /// A comparison row, which branches to the taken successor where the relation fails.
 #[inline(always)]
 fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
@@ -282,6 +307,7 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),
         NOT | NEG => unary_row::<K, D, A, B>(frame),
+        REM => rem_row::<D, A, B, SPEC>(frame),
         _ => tag_init(frame.s),
     }
 }
