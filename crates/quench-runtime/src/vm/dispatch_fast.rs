@@ -12358,58 +12358,6 @@ fn i32_update_handler<H: Host>(op: Op, left: bool, acc: u8) -> Option<Handler> {
     )
 }
 
-lane_handler! {
-    /// A constant that the next record, direct store `OP`, writes to
-    /// memory: both records run here, the constant written to its register
-    /// as its own record writes it.
-    fn lane_constant_store<OP: u16>(cx, r, ip, i, view) {
-        let store = const {
-            match MemoryStore::from_direct_op(opcode(OP)) {
-                Some(store) => store,
-                None => panic!("not a direct store"),
-            }
-        };
-        let constant = i.constant();
-        r.set(i.a, constant);
-        let next = following(ip);
-        // SAFETY: the view fuses a constant only with a following store.
-        let access = unsafe { &*next };
-        let Some(value) = stored_value(store, constant) else {
-            return exit(next);
-        };
-        // SAFETY: as for `MemoryView::read`.
-        if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, access, view), value) }
-            .is_none()
-        {
-            return exit(next);
-        }
-        next!(cx, r, following(next), view)
-    }
-}
-
-/// The constant-store handler for direct store `op`.
-const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
-    macro_rules! stores {
-        ($($store:ident),+) => {
-            match op as u16 {
-                $(opc::$store => Some(lane_constant_store::<H, { opc::$store }> as Handler),)+
-                _ => None,
-            }
-        };
-    }
-    stores!(
-        WasmI32Store,
-        WasmI64Store,
-        WasmF32Store,
-        WasmF64Store,
-        WasmI32Store8,
-        WasmI32Store16,
-        WasmI64Store8,
-        WasmI64Store16,
-        WasmI64Store32
-    )
-}
-
 /// Continue in `frame` at `pc`: the record the frame's function resumes at.
 #[inline(always)]
 fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -> Resumed {
@@ -21283,17 +21231,6 @@ fn derive_lane_view<'live, H: Host>(
                 && store.a() == combine.a()
                 && serves(records[pc + 2].handler, opc::WasmI32Store, ACC_A)
                 && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
-            {
-                records[pc].handler = fused as *const ();
-            }
-        }
-        // A constant that the next record stores runs with that store as one
-        // record.
-        for pc in 0..records.len().saturating_sub(1) {
-            let next = decoded[pc + 1];
-            if serves(records[pc].handler, opc::LoadConst, ACC_NONE)
-                && serves(records[pc + 1].handler, next.op() as u16, ACC_A)
-                && let Some(fused) = constant_store_handler::<H>(next.op())
             {
                 records[pc].handler = fused as *const ();
             }

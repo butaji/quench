@@ -242,7 +242,17 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 12] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 21] = [
+    // A constant then the direct Wasm store of it (the store reads the constant's register).
+    (Op::LoadConst as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmF32Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmF64Store as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI32Store8 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI32Store16 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store8 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store16 as u16, FUSED_PLAIN),
+    (Op::LoadConst as u16, Op::WasmI64Store32 as u16, FUSED_PLAIN),
     (Op::StoreLocalPlain as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
