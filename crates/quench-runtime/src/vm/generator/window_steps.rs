@@ -69,8 +69,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Ends the windowed run of `generator` at a `yield` that resumes at `pc`, whose value goes to
-    /// `destination` when it resumes: the frame is suspended where it stands, its dead registers
-    /// cleared, and takes back the iterators its loops pushed on the lane stack for the
+    /// `destination` when it resumes: the frame is suspended where it stands, its live registers
+    /// noted, and takes back the iterators its loops pushed on the lane stack for the
     /// activation at `depth`.
     pub(in crate::vm) fn suspend_generator_window(
         &mut self,
@@ -98,8 +98,9 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn park_frame(&mut self, frame: &mut FrameRecord, pc: usize, depth: usize) {
         frame.close_environment_window();
         let live = self.suspension_registers(frame.program, frame.function, pc);
-        let with_objects = self.lane_stack.drain_with_objects(depth);
-        frame.suspend_at(pc, live, self.lane_stack.drain_iterators(depth), with_objects.into_iter());
+        self.lane_stack.take_with_objects(depth, &mut frame.with_objects);
+        self.lane_stack.take_iterators(depth, &mut frame.active_iterators);
+        frame.suspend_at(pc, live);
     }
 
     /// Ends the windowed run of `generator` at its return: it completes, dropping its frame.

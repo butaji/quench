@@ -49,6 +49,8 @@ pub(crate) struct FrameRecord {
     pub(in crate::vm) live_registers: Option<RegisterSet>,
     /// The heap's collection epoch when the frame suspended (`Heap::collection_epoch`).
     suspended_epoch: u64,
+    /// What its windowed resumes derive once (`generator_windows::window_plan`).
+    pub(in crate::vm) window_plan: Option<crate::vm::dispatch_fast::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
     pub(in crate::vm) js_jit_skip_entry_once: bool,
     /// An environment window follows the registers in the file's spare capacity while a lane
@@ -195,6 +197,7 @@ impl FrameRecord {
             with_objects: Vec::new(),
             live_registers: None,
             suspended_epoch: 0,
+            window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
@@ -210,20 +213,11 @@ impl FrameRecord {
     }
 
     /// The suspension of a frame that ran in a lane activation over its register file: it resumes
-    /// at `pc`, with the registers liveness finds live there, and takes back the iterators its
-    /// loops pushed and the `with` objects its scope chain holds while it ran (`with_scopes`).
-    /// Only these change while a window runs the frame.
-    pub(in crate::vm) fn suspend_at(
-        &mut self,
-        pc: usize,
-        live: (Option<RegisterSet>, u64),
-        iterators: impl Iterator<Item = ActiveIterator>,
-        with_objects: impl Iterator<Item = Value>,
-    ) {
+    /// at `pc`, with the registers liveness finds live there. The iterators its loops pushed and
+    /// the `with` objects its scope chain held while it ran come back first (`Vm::park_frame`).
+    pub(in crate::vm) fn suspend_at(&mut self, pc: usize, live: (Option<RegisterSet>, u64)) {
         self.pc = pc;
         self.suspend_registers(live);
-        self.active_iterators.extend(iterators);
-        self.with_objects.extend(with_objects);
     }
 
     /// The registers live at the suspension and the collection epoch it happened in: the
@@ -258,7 +252,7 @@ impl FrameRecord {
         let mut record = Self {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: None, suspended_epoch: 0, js_jit_skip_entry_once, environment_window: false,
+            live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
             binding_site_pc: None,
         };
         record.bind_window();
@@ -275,7 +269,7 @@ impl FrameRecord {
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _, suspended_epoch: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            live_registers: _, suspended_epoch: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -341,6 +335,7 @@ impl Clone for FrameRecord {
             with_objects: self.with_objects.clone(),
             live_registers: self.live_registers,
             suspended_epoch: self.suspended_epoch,
+            window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
             binding_site_pc: None,
@@ -395,6 +390,7 @@ impl Snap for FrameRecord {
             captured: Snap::unsnap(reader)?,
             live_registers: None,
             suspended_epoch: 0,
+            window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,

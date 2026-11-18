@@ -15650,7 +15650,7 @@ mod lane_eval;
 mod root_windows;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::{JobEnd, ParkedLane};
-mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
+mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step}; pub(in crate::vm) use generator_windows::WindowPlan;
 mod raised_windows;
 mod array_steps;
 mod for_in_steps;
