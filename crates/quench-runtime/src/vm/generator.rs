@@ -1321,7 +1321,8 @@ impl<H: Host> Vm<H> {
             return initial_error.map_or(Ok(GeneratorStep::Done(Value::UNDEFINED)), Err);
         }
         let job = JobRoot { object: generator, kind: SuspendKind::Generator };
-        let program = self.job_frame(job).ok_or_else(|| JsError("generator is suspended".into()))?.program;
+        let frame = self.job_frame(job).ok_or_else(|| JsError("generator is suspended".into()))?;
+        let (program, frame) = (frame.program, std::ptr::from_ref(frame));
         if unstarted && let Some(error) = initial_error {
             return self.close_unstarted_generator(generator, error);
         }
@@ -1335,7 +1336,7 @@ impl<H: Host> Vm<H> {
         };
         let previous_program = self.replace_active_program(program);
         let previous_global = self.switch_realm_global(realm);
-        let end = self.run_job(&code, job, how);
+        let end = self.run_job(&code, job, frame, how);
         self.restore_active_program(previous_program);
         self.switch_realm_global(previous_global);
         self.finish_generator_step(generator, end)
@@ -1592,7 +1593,7 @@ impl<H: Host> Vm<H> {
                 None => JobResume::Sends(value),
             };
             let previous_global = vm.switch_realm_global(realm);
-            let resumed = vm.resume_request(generator, promise, how);
+            let resumed = vm.resume_request(p, generator, promise, how);
             vm.switch_realm_global(previous_global);
             resumed?;
             Ok(promise)

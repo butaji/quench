@@ -25,13 +25,16 @@ impl<H: Host> Vm<H> {
     /// parameter list that binds its names apart from their slots (`arguments_own_their_slots`),
     /// a superinstruction, or a local addressed by an instruction no window handler reads
     /// (`Function::window_reads_locals`).
-    pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> JobEnd {
+    ///
+    /// `frame` is the suspended frame the caller looked up (`job_frame`), which the job's owner
+    /// keeps boxed and unmoved until the run resumes it.
+    pub(in crate::vm) fn run_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> JobEnd {
         let nested = !self.lane_stack.activations.is_empty() || self.lane_deferred.is_some();
         let admitted = if nested {
             let innermost = self.innermost_lane_state();
-            self.nested_lane_run(innermost, |vm| vm.run_lane_job(code, job, resume))
+            self.nested_lane_run(innermost, |vm| vm.run_lane_job(code, job, frame, resume))
         } else {
-            self.run_lane_job(code, job, resume)
+            self.run_lane_job(code, job, frame, resume)
         };
         let resume = match admitted {
             Ok(end) => return end,
