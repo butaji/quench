@@ -291,7 +291,39 @@ fn leaves(layout: &Layout, row: &Decoded) -> bool {
 /// instructions than the interpreter's call: the tier-ladder gate (`quench-gate --only ir-budget`,
 /// call_direct, call_closure, k03_call_add) says when.
 fn interprets(row: &Decoded) -> bool {
-    matches!(row.step, Some(Step::Helper | Step::CallOut | Step::Call(_)))
+    match row.step {
+        Some(Step::Helper | Step::CallOut) => true,
+        Some(Step::Call(_)) => !region_call_rows(),
+        _ => false,
+    }
+}
+
+/// Whether loop regions keep their call rows (`interprets` refuses them): never in a build, but a
+/// test of the region call protocol itself (a callee's throw, a callee changing what the entry
+/// recorded) runs under `with_region_call_rows`, so the protocol stays exact for the day calls
+/// leave `interprets`.
+#[cfg(not(test))]
+fn region_call_rows() -> bool {
+    false
+}
+
+#[cfg(test)]
+fn region_call_rows() -> bool {
+    REGION_CALL_ROWS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    static REGION_CALL_ROWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `body` with the calling thread's loop regions keeping their call rows.
+#[cfg(test)]
+pub(in crate::vm) fn with_region_call_rows<R>(body: impl FnOnce() -> R) -> R {
+    let previous = REGION_CALL_ROWS.with(|rows| rows.replace(true));
+    let result = body();
+    REGION_CALL_ROWS.with(|rows| rows.set(previous));
+    result
 }
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
