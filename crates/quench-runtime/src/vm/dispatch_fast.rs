@@ -1264,6 +1264,20 @@ const CONTEXT_THIS: usize = 1;
 const CONTEXT_ENV: usize = 2;
 /// The captures' context word.
 const CONTEXT_CAPTURE: usize = 3;
+/// A plain activation's frame header (call protocol v2 stage C), the context words below
+/// its captures: the caller's call record.
+const CONTEXT_CALL: usize = 4;
+/// The caller's registers.
+const CONTEXT_CALLER_REGISTERS: usize = 5;
+/// The caller's records (`LaneContext::base`).
+const CONTEXT_CALLER_BASE: usize = 6;
+/// `function` (bits 0-31) | flags (bits 32-47) | argc (bits 48-63).
+const CONTEXT_PACKED: usize = 7;
+/// The callee.
+const CONTEXT_CALLEE: usize = 8;
+const _: () = assert!(CONTEXT_CALLEE == super::register_file::FRAME_CONTEXT);
+/// `CONTEXT_PACKED`'s flag of a plain frame.
+pub(in crate::vm) const PLAIN_FRAME_FLAG: u64 = 1 << 32;
 
 /// The active frame's registers. Lane instructions never resize registers or
 /// change the frame stack, so the base stays valid for the whole lane run.
@@ -1312,6 +1326,42 @@ impl Registers {
     fn set_capture(self, capture: *const usize) {
         // SAFETY: as for `capture`.
         unsafe { *self.0.sub(CONTEXT_CAPTURE).cast::<*const usize>() = capture }
+    }
+
+    /// Write a plain activation's frame header below the window (`CONTEXT_CALL`..`CONTEXT_CALLEE`).
+    #[inline(always)]
+    fn write_plain_header(self, call: Ip, caller_registers: Registers, caller_base: Ip, function: u32, argc: u16, callee: Value) {
+        // SAFETY: every lane window has `FRAME_CONTEXT` words free below register 0.
+        unsafe {
+            *self.0.sub(CONTEXT_CALL).cast::<Ip>() = call;
+            *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>() = caller_registers;
+            *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>() = caller_base;
+            *self.0.sub(CONTEXT_PACKED).cast::<u64>() = u64::from(function) | PLAIN_FRAME_FLAG | (u64::from(argc) << 48);
+            *self.0.sub(CONTEXT_CALLEE) = callee;
+        }
+    }
+
+    /// The plain header's call record, caller registers and caller records.
+    #[inline(always)]
+    fn plain_caller(self) -> (Ip, Registers, Ip) {
+        // SAFETY: the window's header was written at its push (`write_plain_header`).
+        unsafe {
+            (
+                *self.0.sub(CONTEXT_CALL).cast::<Ip>(),
+                *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>(),
+                *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>(),
+            )
+        }
+    }
+
+    /// The plain header's function, argc and callee.
+    #[inline(always)]
+    fn plain_callee(self) -> (u32, u16, Value) {
+        // SAFETY: as for `plain_caller`.
+        unsafe {
+            let packed = *self.0.sub(CONTEXT_PACKED).cast::<u64>();
+            (packed as u32, (packed >> 48) as u16, *self.0.sub(CONTEXT_CALLEE))
+        }
     }
 
     #[inline(always)]
@@ -2240,7 +2290,9 @@ pub(super) struct LaneStack {
     /// The activation records. Read and written only through `activations` and
     /// `activations_mut` (call protocol v2 stage C): a plain activation keeps its frame header
     /// in the value stack and becomes a record only when something reads the records.
-    activation_records: LaneActivations,
+    activation_records: std::cell::UnsafeCell<LaneActivations>,
+    /// The plain activations above the innermost record, whose headers the value stack holds.
+    plain: PlainFrames,
     /// Wasm activation payload represented by `values` before lane materialization.
     wasm_storage_bytes: usize,
     /// Resolved targets of lane `Call` records (`Vm::script_call_entry`) of callees of the
@@ -2339,6 +2391,23 @@ pub(super) struct LaneStack {
     pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
 }
 
+/// The plain activations (call protocol v2 stage C): each keeps its frame header in the
+/// context words below its window (`Registers::write_plain_header`) and pushes no record.
+/// They are always the innermost activations; `LaneStack::activations` makes them records
+/// before anything reads the records. Emitted code reads these words at fixed offsets.
+#[repr(C)]
+pub(in crate::vm) struct PlainFrames {
+    /// How many plain activations sit above the innermost record (offset 0).
+    depth: std::cell::Cell<usize>,
+    /// The innermost plain activation's registers (offset 8).
+    registers: std::cell::Cell<*mut Value>,
+    /// Their program, the running one: a plain call never crosses programs (offset 16).
+    program: std::cell::Cell<ProgramId>,
+}
+pub(in crate::vm) const PLAIN_DEPTH_OFFSET: usize = std::mem::offset_of!(PlainFrames, depth);
+pub(in crate::vm) const PLAIN_REGISTERS_OFFSET: usize = std::mem::offset_of!(PlainFrames, registers);
+const _: () = assert!(PLAIN_DEPTH_OFFSET == 0 && PLAIN_REGISTERS_OFFSET == 8);
+
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
 #[derive(Clone, Copy)]
 pub(in crate::vm) struct LaneStackWords {
@@ -2346,16 +2415,91 @@ pub(in crate::vm) struct LaneStackWords {
     pub(in crate::vm) values_end: usize,
     pub(in crate::vm) activations_top: usize,
     pub(in crate::vm) frames_end: usize,
+    /// The plain activations' words (`PlainFrames`): depth at `PLAIN_DEPTH_OFFSET`, the
+    /// innermost window at `PLAIN_REGISTERS_OFFSET`. Emitted calls that write plain headers
+    /// bump the depth and set the window; the lane spills them before entering emitted code.
+    #[expect(dead_code, reason = "the b-jit and u-jit payload slots that read it land with their plain-header rows")]
+    pub(in crate::vm) plain_frames: usize,
 }
 
 impl LaneStack {
     /// The activation records, every frame among them (call protocol v2 stage C,
     /// `/mnt/project-files/calls-frames/call-protocol-v2.md`).
     #[inline(always)]
-    pub(in crate::vm) fn activations(&self) -> &LaneActivations { &self.activation_records }
+    pub(in crate::vm) fn activations(&self) -> &LaneActivations {
+        if self.plain.depth.get() != 0 { self.spill_plain(); }
+        // SAFETY: only `spill_plain` writes through a shared reference, and never while a
+        // reference it returned lives: plain activations are pushed through `&mut self` only.
+        unsafe { &*self.activation_records.get() }
+    }
     /// `activations` for writing.
     #[inline(always)]
-    pub(in crate::vm) fn activations_mut(&mut self) -> &mut LaneActivations { &mut self.activation_records }
+    pub(in crate::vm) fn activations_mut(&mut self) -> &mut LaneActivations {
+        if self.plain.depth.get() != 0 { self.spill_plain(); }
+        self.activation_records.get_mut()
+    }
+
+    /// Every activation, the plain ones counted without making them records: what the
+    /// activation limit bounds.
+    #[inline(always)]
+    pub(in crate::vm) fn activation_count(&self) -> usize {
+        // SAFETY: reads the length alone.
+        unsafe { (*self.activation_records.get()).len() + self.plain.depth.get() }
+    }
+
+    /// The address of the plain activations' words (`PlainFrames`).
+    #[inline(always)]
+    pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).addr() }
+
+    /// Make the plain activations records, outermost first, as their pushes would have.
+    #[cold]
+    #[inline(never)]
+    fn spill_plain(&self) {
+        let depth = self.plain.depth.replace(0);
+        let program = self.plain.program.get();
+        let mut windows: smallvec::SmallVec<[Registers; 32]> = smallvec::SmallVec::with_capacity(depth);
+        let mut registers = Registers(self.plain.registers.get());
+        for _ in 0..depth {
+            windows.push(registers);
+            registers = registers.plain_caller().1;
+        }
+        // SAFETY: no reference into the records lives (`activations`).
+        let records = unsafe { &mut *self.activation_records.get() };
+        for &window in windows.iter().rev() {
+            let (call, caller_registers, caller_base) = window.plain_caller();
+            let (function, argc, callee) = window.plain_callee();
+            let mut activation = Activation::of_parts(
+                crate::vm::compiled::ShadowFrame::EMPTY, function, call, caller_base, caller_registers, program,
+                ActivationKind::Script(ScriptActivation {
+                    callee,
+                    argc,
+                    completion: Completion::Plain,
+                    forwards: false,
+                    kept: 0,
+                    environment: false,
+                    record: std::ptr::null_mut(),
+                }),
+            );
+            activation.native.window = window.0.addr();
+            debug_assert!(records.len() < records.capacity(), "the activation limit counts plain activations");
+            // SAFETY: the activation limit counts plain activations within the capacity.
+            unsafe { records.push_unchecked(activation) };
+        }
+    }
+
+    /// Whether `activation` may be a plain activation: a script activation of the lane's own
+    /// windows that completes plainly and keeps, forwards and promotes nothing.
+    #[inline(always)]
+    fn is_plain(activation: &Activation, window: *mut Value) -> bool {
+        matches!(
+            activation.kind(),
+            ActivationKind::Script(ScriptActivation { completion: Completion::Plain, forwards: false, kept: 0, environment: false, record, .. })
+                if record.is_null()
+        ) && activation.native.callee.is_null()
+            && activation.native.body == 0
+            && activation.native.this == 0
+            && window.addr() & lane_values::HEAP_WINDOW == 0
+    }
 }
 
 /// A generation no lane runs under: an empty target entry never matches.
@@ -2365,7 +2509,12 @@ impl Default for LaneStack {
     fn default() -> Self {
         Self {
             values: LaneValues::with_capacity(LANE_STACK_VALUES),
-            activation_records: LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS),
+            activation_records: std::cell::UnsafeCell::new(LaneActivations::with_capacity(LANE_STACK_ACTIVATIONS)),
+            plain: PlainFrames {
+                depth: std::cell::Cell::new(0),
+                registers: std::cell::Cell::new(std::ptr::null_mut()),
+                program: std::cell::Cell::new(ProgramId::MAIN),
+            },
             wasm_storage_bytes: 0,
             call_sites: std::cell::RefCell::default(),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
@@ -2464,22 +2613,52 @@ impl LaneStack {
     /// The caller checked that the activations' capacity exceeds their length.
     #[inline(always)]
     unsafe fn push_activation(&mut self, mut activation: Activation, window: *mut Value) {
+        // A plain activation writes its header below its window instead of a record, while
+        // the plain activations above the innermost record share its program.
+        if Self::is_plain(&activation, window)
+            && (self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program())
+        {
+            let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
+            Registers(window).write_plain_header(
+                activation.call(), activation.caller_registers(), activation.caller_base(),
+                activation.function(), script.argc, script.callee,
+            );
+            self.plain.program.set(activation.caller_program());
+            self.plain.registers.set(window);
+            self.plain.depth.set(self.plain.depth.get() + 1);
+            return;
+        }
         activation.native.window = window.addr();
-        let len = self.activation_records.len();
         let frame_storage_bytes = activation.frame_storage_bytes();
-        debug_assert!(len < self.activation_records.capacity(), "lane activations stay within capacity");
+        let records = self.activations_mut();
+        debug_assert!(records.len() < records.capacity(), "lane activations stay within capacity");
         // SAFETY: the slot at `len` lies within capacity and is uninitialized; the top
         // covers it only once written.
-        unsafe { self.activation_records.push_unchecked(activation); }
+        unsafe { records.push_unchecked(activation); }
         self.wasm_storage_bytes += frame_storage_bytes;
     }
 
     #[inline(always)]
     fn pop_activation(&mut self) -> Option<Activation> {
-        let activation = self.activation_records.pop()?;
+        let activation = self.activations_mut().pop()?;
         self.wasm_storage_bytes -= activation.frame_storage_bytes();
-        self.drop_owned_from(self.activation_records.len());
+        self.drop_owned_from(self.activations().len());
         Some(activation)
+    }
+
+    /// The return of the innermost plain activation, if one runs: its caller's call record,
+    /// registers and records. Its window is released.
+    #[inline(always)]
+    fn pop_plain(&mut self) -> Option<(Ip, Registers, Ip)> {
+        let depth = self.plain.depth.get();
+        if depth == 0 { return None; }
+        let window = Registers(self.plain.registers.get());
+        let caller = window.plain_caller();
+        self.plain.depth.set(depth - 1);
+        self.plain.registers.set(caller.1.0);
+        // SAFETY: the window is the innermost, the lane stack's own.
+        unsafe { self.values.release_window(window.0.addr()) };
+        Some(caller)
     }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
@@ -2509,8 +2688,9 @@ impl LaneStack {
         let limit = if lane_floor().load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR {
             0
         } else {
-            let admitted = self.activation_records.len() + crate::stack::GuestCallGuard::remaining();
-            self.activation_records.capacity().min(admitted)
+            let admitted = self.activation_count() + crate::stack::GuestCallGuard::remaining();
+            // SAFETY: reads the capacity alone.
+            unsafe { (*self.activation_records.get()).capacity() }.min(admitted)
         };
         self.activation_limit.set(limit);
     }
@@ -14418,6 +14598,7 @@ impl<H: Host> Vm<H> {
             values_end,
             activations_top: stack.activations_mut().top_word().addr(),
             frames_end,
+            plain_frames: stack.plain_frames_word(),
         }
     }
 
@@ -17116,7 +17297,7 @@ fn lane_activate_keeping_window<H: Host, const GENERAL: bool>(
     let count = usize::from(target.registers);
     let window_size = count + usize::from(argc);
     let room = fill_room::<ACTIVATION_FILL_BLOCK>(window_size).max(usize::from(target.room));
-    if vm.lane_stack.activations().len() >= vm.lane_stack.activation_limit.get() || vm.lane_stack.values.room() < room {
+    if vm.lane_stack.activation_count() >= vm.lane_stack.activation_limit.get() || vm.lane_stack.values.room() < room {
         return Err(lane_script_call_frame::<H>(ip, room));
     }
     // SAFETY: the call's window of `r` holds its `argc` values; capacity holds the window
@@ -17966,7 +18147,7 @@ fn lane_activate<H: Host>(
 /// a due collection (`LaneStack::activation_limit`).
 #[inline(always)]
 fn lane_activation_room<H: Host>(vm: &Vm<H>, target: &ScriptCallTarget) -> bool {
-    vm.lane_stack.activations().len() < vm.lane_stack.activation_limit.get()
+    vm.lane_stack.activation_count() < vm.lane_stack.activation_limit.get()
         && crate::staged::call::concrete_fits(vm.lane_stack.values.room() as u64, u64::from(target.room))
 }
 
@@ -18373,7 +18554,7 @@ fn lane_room_admits<H: Host>(cx: *mut LaneContext<H>, room: LaneRecoverySpace, p
     // The values past the stack's top hold the frame slots the rows write past a lane activation's
     // registers (`LaneRecoverySpace::reaching`), whether or not the code inlines an activation.
     (room.activations == 0 && (vm.lane_stack.activations().is_empty() || vm.lane_stack.values.room() >= room.values))
-        || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activations().len() + pending) >= room.activations
+        || (vm.lane_stack.activation_limit.get().saturating_sub(vm.lane_stack.activation_count() + pending) >= room.activations
             && vm.lane_stack.values.room() >= room.values
             && unsafe { (*cx).script_calls }
             && !vm.with_scope_entered)
@@ -19176,7 +19357,7 @@ fn lane_activate_environment<H: Host>(
     let (passed, argc) = if extra { (&passed[..usize::from(target.params)], target.params) } else { (passed, argc) };
     // A rest body keeps every value passed, the room sized for its parameters and the rest.
     let extra = usize::from(argc.saturating_sub(target.params));
-    if vm.lane_stack.activations().len() >= vm.lane_stack.activation_limit.get()
+    if vm.lane_stack.activation_count() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.room()
             < usize::from(target.room) + extra
     {
@@ -19500,7 +19681,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         return Err(exit(ip));
     }
     // Capacity, the guest-call budget and a due collection (`LaneStack::activation_limit`).
-    if vm.lane_stack.activations().len() >= vm.lane_stack.activation_limit.get()
+    if vm.lane_stack.activation_count() >= vm.lane_stack.activation_limit.get()
         || vm.lane_stack.values.room()
             < fill_room::<ACTIVATION_FILL_BLOCK>(window_size)
     {
@@ -19738,6 +19919,18 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     // A construction yields its receiver, the activation's `this`, for a non-object result.
     if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).registers }.this(); }
     let stack: &mut LaneStack = &mut vm.lane_stack;
+    // A plain activation's header sits below the running window (call protocol v2 stage C).
+    if !CROSSES && !CONSTRUCTS && !SETTLES && stack.plain.depth.get() != 0 {
+        debug_assert!(stack.plain.registers.get() == unsafe { (*cx).registers }.0, "the innermost plain activation runs");
+        // SAFETY: the call record belongs to the caller's live view.
+        let destination = unsafe { (*Registers(stack.plain.registers.get()).plain_caller().0).a };
+        if INTO_BODY || destination & crate::bytecode::RETURN_REGISTER == 0 {
+            let (call, caller_registers, caller_base) = stack.pop_plain()?;
+            unsafe { (*cx).registers = caller_registers; (*cx).base = caller_base; }
+            caller_registers.set(destination & crate::bytecode::REGISTER_MASK, value);
+            return Some((caller_registers, following(call)));
+        }
+    }
     let top = stack.activations().last()?;
     let expected = returning_completion(CROSSES, CONSTRUCTS, SETTLES);
     let ActivationKind::Script(script) = top.kind() else { return None };
@@ -21331,7 +21524,7 @@ fn lane_activate_wasm_export<H: Host>(
     let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
     if frame_storage_bytes
         > crate::stack::GuestCallGuard::remaining_storage_bytes().saturating_sub(stack.wasm_storage_bytes)
-        || stack.activations().len() >= stack.activation_limit.get()
+        || stack.activation_count() >= stack.activation_limit.get()
         || vm.frames.len() + stack.activations().len() >= super::dispatch_frame::WASM_ACTIVATION_LIMIT
         || stack.values.room() < fill_room::<ACTIVATION_FILL_BLOCK>(count)
     {
@@ -25719,7 +25912,7 @@ fn lane_push_prepared<H: Host>(
 #[inline(always)]
 fn lane_admit_prepared<H: Host>(cx: *mut LaneContext<H>, activation: &Activation, room: usize) -> Option<*mut Value> {
     let stack = &mut unsafe { vm(cx) }.lane_stack;
-    if stack.activations().len() >= stack.activation_limit.get() || stack.values.room() < room {
+    if stack.activation_count() >= stack.activation_limit.get() || stack.values.room() < room {
         return None;
     }
     // SAFETY: as `lane_push_callback`'s.

@@ -102,7 +102,7 @@ impl LaneStack {
 
     /// The function of the environment window activation at `depth` and where its entries start.
     fn window_at<'a>(&self, code: &'a ResidualProgram, depth: usize) -> Option<(&'a Function, *mut Value)> {
-        let activation = self.activation_records.get(depth)?;
+        let activation = self.activations().get(depth)?;
         activation.script().filter(|script| script.environment)?;
         let body = code.function_get(activation.function() as usize)?;
         // SAFETY: an environment activation's window holds its entries after its registers.
