@@ -241,10 +241,7 @@ fn registers<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
         Inst::EmptyCheck { start } => Step::when(at.position != stage.register(start), at.next()),
         Inst::LoopTail { counter, start, min, head } => loop_tail(stage, (counter, start, min, head), at),
         Inst::Backreference { first, count, ignore_case, unicode } => backreference(stage, (first, count, ignore_case, unicode), at),
-        inst => match backward::advance(stage, inst, at) {
-            Some(position) => Step::Continue(at.then_at(position)),
-            None => Step::Fail,
-        },
+        inst => backward::step(stage, inst, at),
     }
 }
 

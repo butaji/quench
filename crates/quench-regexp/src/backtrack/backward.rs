@@ -1,7 +1,7 @@
 //! The VM's backward reads, which a lookbehind body runs (the spec's `direction` of -1), and
 //! the classes of strings, read either way: each instruction's meaning once over the stage,
 //! as in the parent module.
-use super::{set_capture, start_register, Cursor, Replay, Stage};
+use super::{set_capture, start_register, Cursor, Replay, Stage, Step};
 use crate::backtrack::{equal, Frame, Inst, UnitTest, UNSET};
 
 /// Backtracks a backward repeat's entry, as `replay` does a forward one's.
@@ -27,6 +27,15 @@ pub(super) fn replay<S: Stage>(stage: &mut S, frame: Frame) -> Replay {
             Replay::Resume(Cursor::at(pc, at))
         }
         _ => unreachable!("`replay` hands over only backward repeats"),
+    }
+}
+
+/// The meaning of the instructions `step` hands over: `advance`'s position at the next pc.
+#[inline(always)]
+pub(super) fn step<S: Stage>(stage: &mut S, inst: Inst, at: Cursor) -> Step {
+    match advance(stage, inst, at) {
+        Some(position) => Step::Continue(at.then_at(position)),
+        None => Step::Fail,
     }
 }
 
