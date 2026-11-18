@@ -93,6 +93,7 @@ impl Lowering<'_, '_> {
         self.hoist_stable(state, header);
         self.hoist_receivers(state, header);
         self.hoist_reads(state, header);
+        self.hoist_store_slots(state, header);
         self.hoist_arrays(state, header, true);
         self.version_loops(state, header);
         self.start_inductions(state, header);

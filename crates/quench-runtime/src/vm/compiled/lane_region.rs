@@ -3534,6 +3534,61 @@ impl Lowering<'_, '_> {
 
     /// Prove the views of the arrays the loop at `header` indexes without redefining them, on
     /// its entering edge; a base that is no such array leaves at the header.
+    /// The slots of the loop's own field stores that no read of the same field projects: each
+    /// store's slot addressed once on its entering edge, so `projected_slot` takes
+    /// `StorePlan::Entry` and the row writes in place instead of through the VM's store. The
+    /// store's object is proved against the projected record at the store itself.
+    fn hoist_store_slots(&mut self, state: &mut State, header: usize) {
+        let boundaries = leaders(&self.unit.instructions);
+        for pc in 0..self.unit.instructions.len() {
+            let instruction = self.unit.instructions[pc];
+            if !instruction.op().is_field_store() || self.loop_stores.contains_key(&pc) { continue; }
+            let Some(owner) = self.store_owner(pc, instruction) else { continue };
+            if instruction.writes_current_this() || instruction.returns_from_frame() { continue; }
+            // The entering edge addresses the receiver's slot, so the receiver must be the value
+            // it holds there: a register the unit writes from anything but a local or capture
+            // load (`p = ps[i]`) is another object each iteration and keeps its own store plan.
+            // A register loaded from a local (or a capture) names that binding's object, which
+            // the store's own record guard then holds to be the entry's.
+            // Only the loop's own records matter: a local loaded before it keeps its object.
+            let coverage = self.coverage;
+            let reloaded = owner.is_some_and(|register| self.unit.instructions.iter().enumerate().any(|(at_pc, at)| {
+                coverage.lowered(at_pc) && at.defined_register() == Some(register)
+                    && !(matches!(at.op(), Op::LoadLocal | Op::LoadLocalPlain) || at.op().is_load_capture())
+            }));
+            if reloaded { continue; }
+            if !self.facts.before(pc, instruction.register_a(), &self.unit.instructions, &boundaries,
+                &self.program.constants, &writes, self.native_calls).is_int32() { continue; }
+            let object = match owner {
+                Some(register) => self.tagged(state, register),
+                None => match self.entry.as_ref().map(|entry| entry.this) {
+                    Some(this) => self.builder.use_var(this),
+                    None => continue,
+                },
+            };
+            let exit = self.guard_exit(state, header as u32);
+            let site = instruction.cache_site_index();
+            let known = self.entry.as_ref().and_then(|entry| entry.fields.iter()
+                .find_map(|(bound, binding)| (*bound == site).then_some(*binding)));
+            let mut binding = known.unwrap_or_else(|| emit_js_field_binding(&mut self.builder, self.payload, site, exit, None));
+            let object_header = self.object_header(state, owner, false, exit);
+            self.admit_field_writes(&mut binding, Type::INT32, exit);
+            let allowed = self.store_atom_admitted(instruction.atom_index());
+            emit_js_guard(&mut self.builder, allowed, exit);
+            let packed = self.builder.create_block();
+            let packed_address = self.builder.append_block_param(packed, types::I64);
+            let done = self.builder.create_block();
+            let address = self.builder.append_block_param(done, types::I64);
+            let (arena_address, _) = emit_js_cached_field_slot(&mut self.builder, self.payload, object,
+                site, false, exit, Some(binding), Some(object_header), Some(packed));
+            self.goto(done, &[arena_address]);
+            self.builder.switch_to_block(packed);
+            self.goto(done, &[packed_address]);
+            self.builder.switch_to_block(done);
+            self.loop_stores.insert(pc, LoopStore { header: object_header, address, packed_range: None });
+        }
+    }
+
     fn hoist_arrays(&mut self, state: &mut State, header: usize, captured: bool) {
         let arrays: Vec<LoopArray> = self.loop_arrays.iter().copied()
             .filter(|array| array.header == header && matches!(array.source, ArraySource::Capture(_)) == captured).collect();
@@ -3912,6 +3967,17 @@ impl Lowering<'_, '_> {
         }
         let (atom, site) = (instruction.atom_index(), instruction.cache_site_index());
         let slot = self.projected_slot(state, pc, (register, ty));
+        // The projected address is the entry's object's slot: the object this store names proves
+        // the same record here, once per store, and any other object leaves before the store.
+        if let Some(slot) = slot {
+            let record = self.object_header(state, register, false, exit).record;
+            let same = {
+                let builder = &mut self.builder;
+                let (ours, theirs) = (record.address(builder), slot.header.record.address(builder));
+                emit(builder).raw_compare(Relation::Equal, ours, theirs)
+            };
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         if slot.is_some() {
             state.proofs.write_field(atom);
             self.store_step(state, operation, (StorePlan::Entry, HeldRead { slot, ..HeldRead::default() }), exit)?;
@@ -3947,9 +4013,8 @@ impl Lowering<'_, '_> {
 
     /// The slot a loop's entry projected for the int32 store at `pc` (`LoopStore`), where the
     /// store's object is the record the projection addresses.
-    fn projected_slot(&self, state: &State, pc: usize, (register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
-        self.loop_stores.get(&pc).copied().filter(|slot| ty.is_subtype(Type::INT32)
-            && state.proofs.headers[state.header_index(register)].is_some_and(|header| header.record == slot.header.record))
+    fn projected_slot(&self, _state: &State, pc: usize, (_register, ty): (Option<Register>, Type)) -> Option<LoopStore> {
+        self.loop_stores.get(&pc).copied().filter(|_| ty.is_subtype(Type::INT32))
     }
 
     /// The named store of `operation` through its site's plan: `ty` is the stored value's type,
