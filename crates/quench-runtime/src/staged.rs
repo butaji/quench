@@ -164,6 +164,8 @@ pub(crate) enum Operation<W, P> {
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
+    Nop,
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
@@ -296,6 +298,7 @@ impl<W, P> Operation<W, P> {
                 destination: instruction.result_register(),
                 constant: instruction.constant(context)? },
             Op::Jump => Self::Jump,
+            Op::Nop => Self::Nop,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
