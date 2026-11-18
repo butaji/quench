@@ -10523,7 +10523,7 @@ fn lane_loop_entry<H: Host>(
             if slot & super::compiled::CALLEE_CAPTURE != 0 {
                 let inlining = region.inlining.as_deref()?;
                 let &(frame, callee_slot) = inlining.callee_captures.get(usize::from(slot & !super::compiled::CALLEE_CAPTURE))?;
-                let callee = inlining.frames.get(frame)?.callee;
+                let callee = lane_inlined_callee(cx, r, inlining.frames.get(frame)?)?;
                 let vm = unsafe { vm(cx) };
                 // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
                 let env = unsafe { &*vm.script_call_entry(callee)? }.env;
@@ -10639,16 +10639,12 @@ fn lane_inlined_target<H: Host>(
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
-    match frame.guard {
-        super::compiled::InlineGuard::Capture(slot) => (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?,
-        super::compiled::InlineGuard::Register(register) => (r.get(register) == frame.callee).then_some(())?,
-        _ => {}
-    }
     let vm = unsafe { vm(cx) };
-    let target_pointer = vm.script_call_entry(frame.callee)?;
+    let target_pointer = vm.script_call_entry(lane_inlined_callee(cx, r, frame)?)?;
     // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
     let target = unsafe { &*target_pointer };
-    (target.entry.activates()
+    (target.function == frame.function
+        && target.entry.activates()
         && target.program() == unsafe { (*cx).program }
         && unsafe { (*cx).script_calls }
         && !vm.with_scope_entered
@@ -10657,6 +10653,17 @@ fn lane_inlined_target<H: Host>(
             bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_) | super::compiled::InlineGuard::Register(_))
         }))
     .then_some(target_pointer)
+}
+
+/// The callee an inlined `frame`'s call binds now: the closure its register or capture holds,
+/// which the region binds by its function (a fresh closure of it on each entry is one case,
+/// `osr_compile::unit_frames`), else the identity its field read guards.
+fn lane_inlined_callee<H: Host>(cx: *mut LaneContext<H>, r: Registers, frame: &super::compiled::InlineFrame) -> Option<Value> {
+    match frame.guard {
+        super::compiled::InlineGuard::Capture(slot) => lane_capture_value(cx, 0, slot),
+        super::compiled::InlineGuard::Register(register) => Some(r.get(register)),
+        _ => Some(frame.callee),
+    }
 }
 
 /// The receiver of an inlined `frame`'s call: the field value a register the region writes

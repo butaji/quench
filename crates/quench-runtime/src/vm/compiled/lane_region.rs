@@ -394,6 +394,10 @@ struct InvariantRead {
     owner: Option<Register>,
     /// Whether a root-held binding it reads stays put: its loop stores no global object field.
     rooted: bool,
+    /// The caller register a function-bound inlined capture read takes its closure from, where the
+    /// loop neither writes it nor reads the callee again: the closure it holds at entry is the one
+    /// every iteration reads from, so the read is hoisted to the entry edge (`entry_callee`).
+    callee: Option<Register>,
 }
 
 /// A hoisted view: its base, its elements' address and count, and in a typed region the
@@ -1219,13 +1223,13 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
             let pc = header + offset;
             if matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::LoadCapture { .. }))
                 && matches!(unit.origins[pc], super::lane_unit::Origin::Caller(_)) {
-                return Some(InvariantRead { pc, owner: None, rooted: stored.is_empty() });
+                return Some(InvariantRead { pc, owner: None, rooted: stored.is_empty(), callee: None });
             }
             if !matches!(crate::vm::compiled::performed(candidate), Some(crate::staged::Operation::GetField { .. })) { return None; }
             match candidate.field_lookup() {
             Some(FieldLookup::Atom { atom, base, .. }) if !stored.contains(&atom) && !(resizes && names_length(program, atom)) => {
                 let owner = invariant_field_owner(unit, header, pc, base.register_index()?, &written, &boundaries)?;
-                Some(InvariantRead { pc, owner: Some(owner), rooted: false })
+                Some(InvariantRead { pc, owner: Some(owner), rooted: false, callee: None })
             }
             _ => None,
         }}).collect();
@@ -1235,9 +1239,11 @@ fn invariant_reads(program: &ResidualProgram, unit: &super::lane_unit::Unit, loo
         let captures: Vec<_> = body.iter().enumerate().filter_map(|(offset, instruction)| {
             let pc = header + offset;
             let super::lane_unit::Origin::Inlined { frame, .. } = unit.origins[pc] else { return None };
-            (matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. }))
-                && invariant_callee_read(unit, reads.iter().map(|read| read.pc), frame, &boundaries).is_some())
-                .then_some(InvariantRead { pc, owner: None, rooted: false })
+            if !matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) { return None; }
+            let read = invariant_callee_read(unit, reads.iter().map(|read| read.pc), frame, &boundaries).is_some();
+            // A function-bound callee the loop neither writes nor reads again is held at entry.
+            let callee = (!read).then(|| entry_callee(unit, frame, &written, body)).flatten();
+            (read || callee.is_some()).then_some(InvariantRead { pc, owner: None, rooted: false, callee })
         }).collect();
         reads.extend(captures);
         if !reads.is_empty() { hoists.insert(header, reads); }
@@ -1260,6 +1266,22 @@ fn invariant_field_owner(unit: &super::lane_unit::Unit, header: usize, pc: usize
         }
     }
     (owner < unit.caller_registers && !written.contains(&owner)).then_some(owner)
+}
+
+/// The caller register a function-bound inlined frame's closure sits in, where the loop writes
+/// it nowhere and stores no capture: the closure it holds at loop entry is every iteration's
+/// callee, so its captures are read once on the entry edge (`Lowering::admitted_callee_read`).
+/// `None` for an identity-bound or alternative frame, or a callee the loop may change.
+fn entry_callee(unit: &super::lane_unit::Unit, frame: usize, written: &BTreeSet<Register>,
+    body: &[WideInstruction]) -> Option<Register> {
+    let call = unit.frames[frame];
+    let marker = unit.markers[frame];
+    let register = call.callee_register;
+    (call.target.callee == CalleeBinding::Function && call.alternative.is_none()
+        && !unit.frames.iter().any(|other| other.alternative == Some(marker))
+        && register < unit.caller_registers && !written.contains(&register)
+        && !body.iter().any(|instruction| matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::StoreCapture { .. }))))
+        .then_some(register)
 }
 
 /// A monomorphic frame whose callee comes from an entry read through only
@@ -1779,7 +1801,7 @@ pub(super) fn lower(
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
     for field in &lowering.loop_fields {
-        lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false });
+        lowering.hoists.entry(field.header).or_default().push(InvariantRead { pc: field.reads[0], owner: Some(field.owner), rooted: false, callee: None });
     }
     // Field admissions establish the actual counterpart types used to select
     // capture views. Callee reads/bindings must precede their inlined captures.
@@ -3510,8 +3532,18 @@ impl Lowering<'_, '_> {
     /// The hoisted read of the callee an inlined capture read belongs to, where it is the callee
     /// the frame's call binds: `Ok(None)` for a caller's own read, `Err` where the read is not
     /// admitted (its loop then reads it where it runs).
-    fn admitted_callee_read(&mut self, pc: usize, reads: &[InvariantRead], boundaries: &CompoundBitSet) -> Result<Option<ir::Value>, ()> {
+    fn admitted_callee_read(&mut self, state: &mut State, pc: usize, reads: &[InvariantRead], boundaries: &CompoundBitSet,
+        exit: ir::Block, held: Option<Register>) -> Result<Option<ir::Value>, ()> {
         let super::lane_unit::Origin::Inlined { frame, .. } = self.unit.origins[pc] else { return Ok(None) };
+        if let Some(register) = held {
+            // The closure the entry holds, admitted by its function on this edge: the capture view
+            // every iteration reads through is the one it resolves here.
+            let callee = self.tagged(state, register);
+            let function = self.unit.frames[frame].target.function;
+            let matched = self.function_binding(callee, function);
+            emit_js_guard(&mut self.builder, matched, exit);
+            return Ok(Some(callee));
+        }
         let read = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, boundaries)
             .and_then(|read| self.hoisted.get(&read).copied()).ok_or(())?;
         let target = self.unit.frames[frame].target;
@@ -3526,13 +3558,13 @@ impl Lowering<'_, '_> {
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
         let boundaries = leaders(&self.unit.instructions);
-        for InvariantRead { pc, owner, rooted } in reads.iter().copied() {
+        for InvariantRead { pc, owner, rooted, callee } in reads.iter().copied() {
             let instruction = self.unit.instructions[pc];
             if self.hoisted_by_enclosing_loop(pc, owner) { continue; }
             let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
             let (value, int32) = if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
-                let Ok(admitted_callee) = self.admitted_callee_read(pc, &reads, &boundaries) else { continue };
+                let Ok(admitted_callee) = self.admitted_callee_read(state, pc, &reads, &boundaries, exit, callee) else { continue };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
                 let int32 = self.capture_int32_use(pc, &boundaries) || self.capture_observed_int(instruction);
                 (value, int32)
