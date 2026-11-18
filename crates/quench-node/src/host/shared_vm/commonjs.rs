@@ -232,6 +232,7 @@ fn declared_source_kind(path: &Path) -> Result<Option<quench_runtime::SourceKind
         // Node's `wasm` format is an ES module (`esm_wasm`).
         Some("mjs" | "mts" | "wasm") => return Ok(Some(quench_runtime::SourceKind::Module)),
         Some("cjs" | "cts" | "json" | "node") => return Ok(Some(quench_runtime::SourceKind::Script)),
+        // Node ignores the package type for an unknown extension: its text's syntax decides.
         Some(extension) if extension != "js" && extension != "ts" => return Ok(None),
         _ => {}
     }
@@ -1422,6 +1423,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("_stream_passthrough", BuiltinModule::Internal("internal/streams/passthrough")),
     ("_stream_readable", BuiltinModule::Internal("internal/streams/readable")),
     ("_stream_transform", BuiltinModule::Internal("internal/streams/transform")),
+    ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
     ("_stream_writable", BuiltinModule::Internal("internal/streams/writable")),
     ("internal/options", BuiltinModule::Internal("internal/options")),
     ("node:internal/options", BuiltinModule::Internal("internal/options")),
@@ -2055,6 +2057,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Internal("constants") => constants_module(context),
         // Quench has no inspector; its promise API is as empty as `inspector`.
         BuiltinModule::Internal("inspector/promises") => context.object_rooted(),
+        BuiltinModule::Internal("_stream_wrap") => crate::modules::stream_wrap_shared_vm::module(context),
         BuiltinModule::Internal(name) => Err(RootedError::host(format!("node:{name} has no builder"))),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => crate::modules::url_shared_vm::internal_module(context),
@@ -2630,7 +2633,7 @@ fn require_es_module(context: &mut Context<'_>, filename: &Path, parent: Option<
         return Err(throw_module_load_error(context, error)?);
     }
     let url = url::Url::from_file_path(filename).map_err(|_| RootedError::host("invalid ES module filename"))?;
-    let module = match quench_runtime::Host::resolve_dynamic_import(context.host_mut(), &filename.to_string_lossy(), url.as_str()) {
+    let module = match context.host_mut().resolve_required_module(&filename.to_string_lossy(), url.as_str()) {
         Ok(module) => module,
         Err(error) => return Err(throw_module_load_error(context, error)?),
     }
@@ -3301,14 +3304,14 @@ mod builtin_table_tests {
     use super::is_builtin_specifier;
     use crate::modules::module_shared_vm::BUILTIN_MODULES;
 
-    /// Public builtins Node lists that Quench does not load yet.
-    const NOT_LOADED: &[&str] = &["node:sqlite", "node:test/reporters"];
-    /// Builtins of the targeted Node release the export table knows and Quench does not list yet.
-    const NOT_LISTED: &[&str] = &["_stream_wrap", "bench", "bench/reporters", "stream/iter", "zlib/iter"];
+    /// Builtins of the targeted Node release the export table knows and Quench does not load,
+    /// so does not list either.
+    const NOT_LISTED: &[&str] =
+        &["bench", "bench/reporters", "sqlite", "stream/iter", "test/reporters", "zlib/iter"];
 
     #[test]
     fn every_public_builtin_loads_bare_and_with_the_node_prefix() {
-        for name in BUILTIN_MODULES.iter().filter(|name| !NOT_LOADED.contains(name)) {
+        for name in BUILTIN_MODULES {
             if !name.starts_with("node:") {
                 assert!(is_builtin_specifier(name), "{name}");
             }
