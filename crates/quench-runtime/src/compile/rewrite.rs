@@ -1,6 +1,6 @@
 use super::*;
 use crate::bytecode::{
-    FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction, widen,
+    ControlFlowLayout, FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction, widen,
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
@@ -78,12 +78,8 @@ fusion_recipes! {
             second.try_set_b(crate::bytecode::FieldBase::local(local)?.0)?;
             Some(second)
         };
-    ProducerMove: [
-        LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
-        LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
-        Call, Move; CallKnown, Move; CallMethod, Move; CallThisMethod, Move; Construct, Move;
-        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move
-    ] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
+    // Derived like `ReturnResult`: every op whose row writes one plain result (`plain_producer`).
+    ProducerMove: [] => |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
         Some(first)
@@ -712,12 +708,51 @@ fn rules_for(first: Op, second: Op) -> impl Iterator<Item = &'static Rule> {
 
 /// `ReturnResult`'s rule, for any pair `derived_rule` admits.
 const RETURN_RESULT: Rule = Rule { pattern: [Op::Nop, Op::Return], recipe: Recipe::ReturnResult };
+/// `ProducerMove`'s rule, for any pair `derived_rule` admits.
+const PRODUCER_MOVE: Rule = Rule { pattern: [Op::Nop, Op::Move], recipe: Recipe::ProducerMove };
+
+/// Whether `op`'s row makes one value into its result register and nothing else of its
+/// registers: field A is the result, which it does not read; no other field writes a register
+/// or names a window the result might fall in; it falls through or calls. Writing that value to
+/// another register is then the same operation, which `ProducerMove` retargets to a `Move`'s
+/// destination. A suspension (`Await`, `Yield`) writes its result on resume, from a frame the
+/// tiers rebuild, so it keeps its register.
+const fn plain_producer(op: Op) -> bool {
+    const fn other_field_plain(layout: FieldLayout) -> bool {
+        !matches!(
+            layout,
+            FieldLayout::ResultRegister | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
+                | FieldLayout::OptionalRegister | FieldLayout::RegisterWindowBase | FieldLayout::RegisterCount
+        )
+    }
+    matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+        && other_field_plain(op.field_layout(InstructionField::B))
+        && other_field_plain(op.field_layout(InstructionField::C))
+        && !op.result_layout().reads_result_register()
+        && matches!(op.control_flow_layout(), ControlFlowLayout::Fallthrough | ControlFlowLayout::Call)
+        && !matches!(op, Op::Move | Op::Await | Op::Yield)
+}
+
+/// Which ops are `plain_producer`s, by op.
+const PLAIN_PRODUCERS: [bool; Op::COUNT] = {
+    let mut producers = [false; Op::COUNT];
+    let mut index = 0;
+    while index < Op::COUNT {
+        if let Some(op) = Op::from_index(index) { producers[index] = plain_producer(op); }
+        index += 1;
+    }
+    producers
+};
 
 /// The rule a pair's rows imply: an op whose row declares a returnable result
 /// (`ResultLayout::allows_return`) completes its function itself when a `Return` of that
 /// result follows it, so no hand-written list of producers can fall behind the rows.
 fn derived_rule(first: Op, second: Op) -> Option<&'static Rule> {
-    (second == Op::Return && first.result_layout().allows_return()).then_some(&RETURN_RESULT)
+    match second {
+        Op::Return => first.result_layout().allows_return().then_some(&RETURN_RESULT),
+        Op::Move => PLAIN_PRODUCERS[first as usize].then_some(&PRODUCER_MOVE),
+        _ => None,
+    }
 }
 
 /// Whether a rule of the selected recipe fuses `[first, second]`.
@@ -1124,7 +1159,7 @@ fn relocate_source_positions(
             && widen(old_code[anchor], wide)
                 .op()
                 .control_flow_layout()
-                != crate::bytecode::ControlFlowLayout::Call
+                != ControlFlowLayout::Call
         {
             continue;
         }
@@ -1551,7 +1586,7 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 24);
+        assert_eq!(RULES.len(), 7);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
