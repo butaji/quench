@@ -47,7 +47,7 @@ pub(super) struct ConstructPlan {
     pub(super) forwarded: Option<ForwardedResolution>,
     /// The field a nested construction gives a fresh object each time (`NestedField`).
     pub(super) nested: Option<NestedField>,
-    /// For a class whose constructor only constructs its parent (`lane_super_construction`),
+    /// For a class whose constructor only constructs its parent (`super_construction`),
     /// the parent whose stores the plan holds; `undefined` for any other plan. The plan holds
     /// while the class's [[Prototype]] is still that parent, which `super(...)` constructs.
     pub(super) super_parent: Value,

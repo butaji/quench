@@ -60,7 +60,7 @@ impl<H: Host> LaneContext<H> {
 /// The words of an innermost activation's state that a parked lane keeps: its receiver and its environment.
 const INNERMOST_STATE_LEN: usize = 2;
 
-/// Everything a lane run's context starts from (`Vm::lane_context`).
+/// Everything a lane run's context starts from (`Vm::context_for_start`).
 pub(super) struct LaneStart<'a> {
     pub(super) code: &'a ResidualProgram,
     pub(super) program: ProgramId,
@@ -175,7 +175,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// The context of a lane run that starts as `start` says; its other state starts empty.
-    pub(super) fn lane_context(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
+    pub(super) fn context_for_start(&mut self, start: LaneStart<'_>) -> LaneContext<H> {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
@@ -327,7 +327,7 @@ impl<H: Host> Vm<H> {
         let caller_registers = self.active_registers;
         let entered = self.enter_lane_floor(code, window.entry.program);
         let start = job_start(code, job, &window, (&raw mut pending, &raw mut executing), entered.cell);
-        let mut context = self.lane_context(start);
+        let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
             JobResume::Sends(_) => window.enter(cx),
             JobResume::Throws(error) => window.enter_raising(cx, error),

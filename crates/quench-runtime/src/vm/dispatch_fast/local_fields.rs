@@ -16,9 +16,9 @@ pub(super) fn local_field_handler<H: Host>(cx: *mut LaneContext<H>, i: &LaneInst
     }
     plain_local_operand(cx, slot)?.direct_object_index()?;
     match lane_field_site_tier(vm, code, i) {
-        FieldSiteTier::Own => Some(lane_get_field_local::<H, RETURNING_FIELD_OWN>),
-        FieldSiteTier::Holder => Some(lane_get_field_local::<H, RETURNING_FIELD_HOLDER>),
-        FieldSiteTier::Inherited => Some(lane_get_field_local::<H, RETURNING_FIELD_INHERITED>),
+        FieldSiteTier::Own => Some(get_local_field::<H, RETURNING_FIELD_OWN>),
+        FieldSiteTier::Holder => Some(get_local_field::<H, RETURNING_FIELD_HOLDER>),
+        FieldSiteTier::Inherited => Some(get_local_field::<H, RETURNING_FIELD_INHERITED>),
         FieldSiteTier::Nested | FieldSiteTier::General | FieldSiteTier::Getter | FieldSiteTier::Polymorphic => None,
     }
 }
@@ -27,7 +27,7 @@ script_handler! {
     /// `GetField` of a local slot whose site's `KIND` entry answers it
     /// (`local_field_handler`); any other read goes through `lane_get_field_miss`, which may
     /// move the record to a fitting handler and makes the general read.
-    fn lane_get_field_local<KIND: u8>(cx, r, ip, i, view) {
+    fn get_local_field<KIND: u8>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let value = crate::bytecode::FieldBase(i.b)

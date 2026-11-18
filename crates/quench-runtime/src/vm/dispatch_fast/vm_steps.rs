@@ -233,7 +233,7 @@ unsafe fn activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> 
     if record.without_return().op().steps_on_owner() {
         unsafe { owner_step_in(cx, call_pc, record) }
     } else {
-        unsafe { super::value_steps::lane_activation_value_step(cx, call_pc, record) }.unwrap_or_else(|| unsafe { frames_step_in(cx, call_pc, record) })
+        unsafe { super::value_steps::activation_value_step(cx, call_pc, record) }.unwrap_or_else(|| unsafe { frames_step_in(cx, call_pc, record) })
     }
 }
 

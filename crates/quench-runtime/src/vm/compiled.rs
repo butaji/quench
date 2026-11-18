@@ -1015,8 +1015,8 @@ lane_helper_inventory! { H;
     /// A decision of two words the call-out carries, which needs no VM record
     /// (`dispatch_fast::decide_comparison`).
     Decide => super::dispatch_fast::decide_comparison::<H>,
-    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::lane_handler_edge`).
-    HandlerEdge => super::dispatch_fast::lane_handler_edge::<H>,
+    /// A handler's entry in the frame, for the exception it catches (`dispatch_fast::handler_edge`).
+    HandlerEdge => super::dispatch_fast::handler_edge::<H>,
 }
 
 /// Makes the frames of a chain of native activations, outer to inner, above the payload's

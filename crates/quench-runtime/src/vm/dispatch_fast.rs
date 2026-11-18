@@ -639,7 +639,7 @@ use super::lane_activations::LaneActivations;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::loop_field_stores;
-mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
+mod construct_plan; mod super_chain; use super_chain::super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs};
 use getters::{lane_get_field_getter_hinted, lane_getter_read, lane_read_getter};
@@ -10488,7 +10488,7 @@ script_handler! {
                 if let Some(parent) = lane_super_forwarded_parent(vm, callee) {
                     resume!(cx, lane_construct_forwarded_parent(cx, r, ip, i, callee, parent));
                 }
-                if let Some(this) = lane_super_construction(cx, r, i, callee) {
+                if let Some(this) = super_construction(cx, r, i, callee) {
                     // Allocating the receiver can make a collection due.
                     note_allocation(vm);
                     if returns {
@@ -11121,7 +11121,7 @@ fn lane_native_value<H: Host>(
         }
         // `with (object)` and its exit, in a frameless activation: its scope chain is the lane stack's.
         Native::WithEnter | Native::WithExit => {
-            if let Some(value) = with_scopes::lane_with_scope(cx, native, args) {
+            if let Some(value) = with_scopes::native_with_scope(cx, native, args) {
                 return Some(value);
             }
         }
@@ -11170,7 +11170,7 @@ mod vm_steps;
 mod value_steps;
 pub(in crate::vm) use vm_steps::{body_general_step, body_string_concat, decide_comparison, vm_operation_step};
 mod handler_edges;
-pub(in crate::vm) use handler_edges::lane_handler_edge;
+pub(in crate::vm) use handler_edges::handler_edge;
 use array_steps::*;
 use native_calls::{math_field_call_handlers, native_call_handler, reflect_get_call_handler, string_char_at_ascii, string_char_code_at};
 mod wasm_gc;
@@ -18160,7 +18160,7 @@ impl<H: Host> Vm<H> {
                 }),
             floor: entered.cell,
         };
-        let mut context = self.lane_context(start);
+        let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| {
             // SAFETY: `cx` is the only access path to the context during the run.
             unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };

@@ -1,6 +1,6 @@
 //! Entering an exception handler: the state settled before the handler's block runs, shared by
 //! the interpreter's unwinding (`Vm::exception_handler_target`) and a compiled body's or loop
-//! region's native catch (`dispatch_fast::lane_handler_edge`), in a VM frame or in the
+//! region's native catch (`dispatch_fast::handler_edge`), in a VM frame or in the
 //! environment window of a lane activation (`HandlerHome`): one implementation of each step.
 use super::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS};
 use super::*;
