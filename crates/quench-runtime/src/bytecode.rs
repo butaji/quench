@@ -1027,7 +1027,7 @@ opcodes!($;
     WasmI64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmI64UnaryOperator; class WasmI64UnaryRaw; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmF64BinaryRaw => Effect::PURE; layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64Raw; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     WasmF64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64Raw; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmReturn64 => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; class WasmReturn64, @ Register, @ fields(Register, Unused, Unused),
+    WasmReturn64 => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; class WasmReturn64; staged Flow, @ Register, @ fields(Register, Unused, Unused),
     WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator; class WasmScalarConvert; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator; class WasmFloatBinary32; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     WasmF32Unary => Effect::PURE; layout Scalar; meaning WasmF32UnaryOperator; class WasmFloatUnary32; staged WasmFloat; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),

@@ -408,6 +408,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The VM's entry lookups the running lane makes at the row's site, for a row whose plan takes
     /// one (`PropertyFrame::field_entry`); none elsewhere.
     entries: Option<EntryReads>,
+    /// The lane context and the completion a raw `WasmReturn64` row hands its returned word
+    /// (`lane_complete_wasm_activation`), where the row is one (`returns_raw_row`). `None` otherwise.
+    wasm_return: Option<(*mut (), unsafe fn(*mut (), Value) -> Option<Resumed>)>,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -795,7 +798,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None, wasm_return: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -820,8 +823,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame that may read and write the activation's local slots.
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
-        Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+        Self { this, locals: Some((locals, len)), ..Self::new(registers, view) }
     }
 }
 
@@ -1401,6 +1403,26 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     fn raw_write(&mut self, _stage: &mut Concrete, register: Register, word: u64) -> Option<u64> {
         self.registers.set(register, Value::from_bits(word));
         Some(word)
+    }
+
+    /// The row of a raw return (`returns_raw_row`) holds the Wasm completion it hands its word to.
+    #[inline(always)]
+    fn returns_raw(&self) -> bool {
+        self.wasm_return.is_some()
+    }
+
+    /// A raw return's word completes the Wasm activation it returns from (`lane_complete_wasm_activation`),
+    /// as `lane_return_wasm64` did: the word is the returned value where no tag claims it. The resumption
+    /// is held for `generated_row` to take (`Edge::Transfer`). A tag-claimed word, or no Wasm activation to
+    /// return to, leaves the row to its miss.
+    #[inline(always)]
+    fn return_raw(&mut self, stage: &mut Concrete, register: Register) -> Option<Edge> {
+        let (context, complete) = self.wasm_return?;
+        let value = Value::from_bits64(self.raw_read(stage, register)?)?;
+        // SAFETY: the running lane's context, which `row_frame` took the completion from.
+        let resumed = unsafe { complete(context, value) }?;
+        self.transfer = Some(resumed);
+        Some(Edge::Transfer)
     }
 
     /// The VM's load of the global bound in `binding`, where the frame holds the rules (`globals`).
@@ -2039,9 +2061,17 @@ pub(in crate::vm::dispatch_fast) const fn row_produces(op: Op) -> bool {
 }
 
 pub(in crate::vm::dispatch_fast) const fn admits_row(op: Op) -> bool {
-    matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough)
+    (matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough) || returns_raw_row(op))
         && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
             || op.traits().has(crate::bytecode::Traits::ROW_HANDLER))
+}
+
+/// Whether opcode `op` is a raw return's terminal row (`staged::raw_representation` on a `Terminal`
+/// flow): its `Return` completes the Wasm activation through `Frame::return_raw`, so the row runs in the
+/// lane with no hand handler. A JavaScript `Return` is not one: its completion stays `lane_return`.
+pub(in crate::vm::dispatch_fast) const fn returns_raw_row(op: Op) -> bool {
+    matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Terminal)
+        && crate::staged::raw_representation(op)
 }
 
 /// The window scope `FLAG` reads through (`ScopeReads`), for a row of a window whose names resolve
@@ -2071,6 +2101,11 @@ fn scope_reads<H: Host, const FLAG: u8>(cx: *mut LaneContext<H>, ip: super::Ip, 
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
+    if const { returns_raw_row(LaneFields::<OP>::OPCODE) } {
+        // A raw return completes the Wasm activation it returns to (`lane_complete_wasm_activation`).
+        let complete: unsafe fn(*mut (), Value) -> Option<Resumed> = |context, value| super::lane_complete_wasm_activation::<H>(context.cast(), value);
+        return LaneFrame::<ACC> { wasm_return: Some((cx.cast(), complete)), ..LaneFrame::<ACC>::new(r, view) };
+    }
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.

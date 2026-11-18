@@ -168,6 +168,17 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn ret(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
 
+    /// Whether the running record returns a raw word (`staged::raw_representation`, a `WasmReturn64`):
+    /// its `Return` completes through `return_raw`, not `ret`. `false` where the frame has no raw records.
+    #[inline(always)]
+    fn returns_raw(&self) -> bool { false }
+
+    /// Leave the function with the raw word of `register` (a raw return, `returns_raw`): the word is the
+    /// returned value, unboxed and untagged; `None` where the frame cannot complete it, which leaves the
+    /// row to its miss.
+    #[inline(always)]
+    fn return_raw(&mut self, _stage: &mut S, _register: Register) -> Option<Self::Control> { None }
+
     /// `register`'s Wasm scalar word in the representation `rep` names (zero-extended integer or
     /// IEEE bits); `None` where the frame does not hold it so, which leaves the row to its miss.
     #[inline(always)]
