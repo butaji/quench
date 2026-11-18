@@ -48,11 +48,6 @@ pub(crate) fn array_pattern_test(operator: u32) -> Option<usize> {
     Some(offset as usize + 1)
 }
 
-/// The index in `TYPEOF_NAMES` of `name`, if some value's `typeof` is `name`.
-pub(crate) fn typeof_name_index(name: &str) -> Option<usize> {
-    TYPEOF_NAMES.iter().position(|candidate| *candidate == name)
-}
-
 /// The name index and negation a `UNARY_TYPEOF_IS` operator tests.
 #[inline(always)]
 pub(crate) fn typeof_test(operator: u32) -> Option<(usize, bool)> {

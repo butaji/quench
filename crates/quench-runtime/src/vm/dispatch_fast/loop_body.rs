@@ -109,14 +109,14 @@ pub(super) fn offer_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &
     // SAFETY: the context's program outlives the lane run.
     let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
     let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {
-        let call = decoded_instruction(function, *packed);
+        let call = function.widened(*packed);
         vm.heap.function(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
             FunctionKind::Native(native) => super::super::compiled::inlines_keeping_arrays(native),
             _ => true,
         })
     });
     let calls = (site.header as usize..=site.backedge as usize)
-        .filter(|pc| function.code.get(*pc).is_some_and(|packed| decoded_instruction(function, *packed).op().is_call()));
+        .filter(|pc| function.code.get(*pc).is_some_and(|packed| function.widened(*packed).op().is_call()));
     if !calls.into_iter().all(inline) { return false; }
     let mut body = site.body.borrow_mut();
     if !matches!(*body, LoopBody::Declined) { return false; }
