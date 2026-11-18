@@ -1,6 +1,8 @@
 use super::*;
 use crate::bytecode::index;
+mod interpreter_frame;
 mod loop_stack;
+pub(super) use interpreter_frame::InterpreterFrame;
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
@@ -2137,31 +2139,42 @@ impl<H: Host> Vm<H> {
             self.profile.opcode(ins.op() as usize);
             // Register/local moves and field cache hits cannot allocate, collect or throw, so they
             // need neither the published root-map PC nor the general step result.
-            match ins.op()  as u16 {
-                index::LoadLocalPlain => {
-                    // SAFETY: validated bytecode bounds the slot by Function.locals.
-                    let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
-                    self.write(frame, ins.result_register(), value);
-                    continue;
+            // Register moves, local slot accesses and conditional jumps run as their staged rows on the
+            // running frame's registers. A row that leaves runs the arms below and the general path.
+            if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
+                | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::JumpIf { .. })) =
+                crate::staged::Operation::<u64, ()>::decode(ins, crate::staged::DecodeContext::EMPTY)
+            {
+                #[cfg(feature = "profile-aggregate")]
+                if let crate::staged::Operation::JumpIf { register, .. } = operation {
+                    let value = self.read(frame, register);
+                    self.profile.branch_value(value.profile_kind() as usize, self.truthy(value));
                 }
-                index::StoreLocalPlain => {
-                    let value = self.read(frame, ins.register_a());
-                    // SAFETY: validated bytecode bounds the slot by Function.locals.
-                    unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
-                    if let Some(register) = ins.optional_register_b() {
-                        self.write(frame, register, value);
+                match InterpreterFrame::step_row(&mut self.frames[frame], operation) {
+                    crate::staged::Step::Value(_) | crate::staged::Step::Control(crate::staged::Edge::Following) => continue,
+                    crate::staged::Step::Control(crate::staged::Edge::Target) => {
+                        pc = ins.jump_target() as usize;
+                        if pc <= instruction_pc {
+                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
+                        }
+                        continue;
                     }
-                    continue;
+                    crate::staged::Step::Unresolved => {
+                        // A heap value's truthiness is the VM's, which runs no guest code.
+                        if let crate::staged::Operation::JumpIf { register, taken } = operation {
+                            if self.truthy(self.read(frame, register)) == taken {
+                                pc = ins.jump_target() as usize;
+                                if pc <= instruction_pc {
+                                    self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
+                                }
+                            }
+                            continue;
+                        }
+                    }
                 }
-                index::Move => {
-                    self.write(
-                        frame,
-                        ins.result_register(),
-                        self.read(frame, ins.register_b()),
-                    );
-                    continue;
-                }
-                index::LoadConst => {
+            }
+            match ins.op()  as u16 {
+                crate::staged::LOAD_CONST_ROW => {
                     if let Some(value) = self.active_constant(ins.constant_index()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
@@ -2174,21 +2187,6 @@ impl<H: Host> Vm<H> {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
-                }
-                index::JumpFalse | index::JumpTrue => {
-                    // ToBoolean runs no guest code.
-                    let value = self.read(frame, ins.register_a());
-                    let truthy = self.truthy(value);
-                    #[cfg(feature = "profile-aggregate")]
-                    self.profile
-                        .branch_value(value.profile_kind() as usize, truthy);
-                    if truthy == (ins.op().is_jump_true()) {
-                        pc = ins.jump_target() as usize;
-                        if pc <= instruction_pc {
-                            self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
-                        }
-                    }
-                    continue;
                 }
                 index::JumpBinaryFalse => {
                     let operator = ins.binary_operator_field();
@@ -2249,7 +2247,7 @@ impl<H: Host> Vm<H> {
                         self.frames[frame].locals[usize::from(local)] = value;
                         self.profile.virtual_opcode(
                             self.frames[frame].program.raw(),
-                            index::StoreLocalPlain as usize,
+                            crate::staged::STORE_LOCAL_PLAIN_ROW as usize,
                         );
                     } else {
                         self.write(frame, ins.result_register(), value);
