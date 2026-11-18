@@ -1246,23 +1246,27 @@ fn is_row_flagged_plain<H: Host, const OP: u16>(handler: *const ()) -> bool {
 /// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
 /// pair takes its fused record only where `liveness` proves `A`'s result register dead after
 /// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
+/// `pairs!` index `pair` within `staged::FUSED_ROWS`: indices past its end repeat entry 0, so
+/// the table grows without touching the macro (a repeated entry never matches first).
+const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS.len() { pair } else { 0 } }
+
 pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
-                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }>(handler)) as fn(*const ()) -> bool,
-                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].1 }>(handler)) as fn(*const ()) -> bool,
-                jump_row_backward::<H, { crate::staged::FUSED_ROWS[$pair].1 }> as fn(*const ()) -> bool,
-                crate::staged::FUSED_ROWS[$pair].2,
-                [fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_ROWS[$pair].2 }>(false),
-                    fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_ROWS[$pair].2 }>(true)],
-                [fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_PLAIN }>(false),
-                    fused_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, { crate::staged::FUSED_PLAIN }>(true)],
+                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }>(handler)) as fn(*const ()) -> bool,
+                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
+                jump_row_backward::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
+                crate::staged::FUSED_ROWS[fused_index($pair)].2,
+                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_ROWS[fused_index($pair)].2 }>(true)],
+                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_PLAIN }>(true)],
             )),*]
         };
     }
-    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7);
-    const { assert!(crate::staged::FUSED_ROWS.len() == 8, "one `pairs!` index per fused pair") };
+    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
+    const { assert!(crate::staged::FUSED_ROWS.len() <= 32, "`pairs!` covers 32 fused pairs; add indices") };
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
         let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {

@@ -3733,7 +3733,7 @@ unsafe extern "C" fn lane_strict_equal_cells<H: Host>(vm: u64, _residual: u64, l
 }
 
 /// A lane body's `value instanceof constructor`, decided as the interpreter's own record
-/// decides it (`lane_instanceof_jump_true`): the constructor's proof (`Vm::record_instanceof`),
+/// decides it (`lane_instanceof_value`): the constructor's proof (`Vm::record_instanceof`),
 /// else the ordinary walk (`Vm::ordinary_instanceof`), which calls nothing. 1 or 0, or
 /// `Value::DELETED` where only the full algorithm decides, which leaves the body at the test.
 unsafe extern "C" fn lane_instance_of<H: Host>(vm: u64, _residual: u64, value: u64, constructor: u64) -> u64 {

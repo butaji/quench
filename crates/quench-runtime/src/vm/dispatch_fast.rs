@@ -6649,23 +6649,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `lane_store_capture` followed by a `LoadCapture` of the same capture
-    /// (`specialize_captures`), as `c = c + 1; return c;` compiles: a direct write leaves the
-    /// slot holding the value, which is the read's value, so the record runs both. Any other
-    /// store takes `lane_store_outer_capture`, and the read then runs its own record.
-    fn lane_store_capture_load<>(cx, r, ip, i, view) {
-        let value = r.get(i.a);
-        if !lane_store_own_capture(cx, ImmediateLayout::capture_slot(i.imm()), value) {
-            sibling!(lane_store_outer_capture::<H>, r, ip, view)
-        }
-        // SAFETY: the pair is two records, the second never the view's last.
-        let load = unsafe { &*following(ip) };
-        r.set(load.a, value);
-        next!(cx, r, following(following(ip)), view)
-    }
-}
-
 /// How the run of a fused capture update (`lane_update_capture_int32`) ends, which records it
 /// covers after the store (`specialize_capture_updates`).
 type UpdateForm = u8;
@@ -9287,41 +9270,6 @@ script_handler! {
         r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
         // `instanceof` is a JavaScript record, which carries the script state.
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_instanceof_value` run with the `JumpTrue` of its result that follows it, the
-    /// `!(x instanceof C)` test of compiled code (`specialize_negated_instanceof`): the
-    /// record carries the jump's distance from itself, and the result register is written
-    /// as the pair would. A case the steady test leaves runs the pair unfused, from the walk.
-    fn lane_instanceof_jump_true<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).record_instanceof(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_instanceof_jump_true_proving::<H, BACKWARD>, r, ip, Carried::script_in(cx, view))
-        };
-        if holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), Some((i.a, Value::TRUE))));
-        }
-        r.set(i.a, Value::FALSE);
-        // SAFETY: the fused pair is two records, the second never the view's last.
-        next!(cx, r, unsafe { ip.add(2) }, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_instanceof_jump_true` for whatever its record walk leaves (`Vm::record_instanceof`):
-    /// the proved test in full, which may prove, out of line so the walk calls nothing.
-    #[inline(never)]
-    fn lane_instanceof_jump_true_proving<BACKWARD: bool>(cx, r, ip, i, view) {
-        let Some(holds) = (unsafe { vm(cx) }).proved_instanceof(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_instanceof_value_walk::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        if holds {
-            resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), Some((i.a, Value::TRUE))));
-        }
-        r.set(i.a, Value::FALSE);
-        // SAFETY: the fused pair is two records, the second never the view's last.
-        next!(cx, r, unsafe { ip.add(2) }, Carried::script_in(cx, view))
     }
 }
 
@@ -22177,7 +22125,6 @@ fn derive_lane_view<'live, H: Host>(
     specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
     specialize_updated_index_reads::<H>(&mut records);
     specialize_updated_index_operators::<H>(&mut records);
-    specialize_negated_instanceof::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);
     // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
@@ -23386,10 +23333,6 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
             lane_load_outer_capture::<H>
         } else if store(record.handler) && !own {
             lane_store_outer_capture::<H>
-        } else if store(record.handler)
-            && records.get(pc + 1).is_some_and(|next| load(next.handler) && next.imm() == record.imm())
-        {
-            lane_store_capture_load::<H>
         } else if let Some(near) = row_near::<H, CAPTURE_READ>(record.handler).or_else(|| row_near::<H, CAPTURE_WRITE>(record.handler)) {
             // Its own scope's capture: the row reads its depth as the zero it is.
             near
@@ -23417,7 +23360,6 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
     use super::operations::{ADDITION, SUBTRACTION};
     let load = |handler: *const ()| is_row::<H, CAPTURE_READ>(handler);
     let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
-    let store_load = lane_store_capture_load::<H> as Handler as *const ();
     let add = lane_operator_int32::<H, ADDITION, true> as Handler as *const ();
     let subtract = lane_operator_int32::<H, SUBTRACTION, true> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(3) {
@@ -23425,13 +23367,15 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
         if !load(read.handler)
             || (operator.handler != add && operator.handler != subtract)
             || operator.b != read.a
-            || (!store(write.handler) && write.handler != store_load)
+            || !store(write.handler)
             || write.imm() != read.imm()
             || write.a != truncation.a
         {
             continue;
         }
-        let form = if store(write.handler) { UPDATE_STORES } else { UPDATE_LOADS };
+        // The store's own read of the same capture, the fifth record, makes the `UPDATE_LOADS` run.
+        let loads_back = records.get(pc + 4).is_some_and(|next| load(next.handler) && next.imm() == write.imm());
+        let form = if loads_back { UPDATE_LOADS } else { UPDATE_STORES };
         macro_rules! forms {
             ($($form:ident),*) => {
                 match (operator.handler == add, form) {
@@ -23468,32 +23412,6 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
             (false, false) => lane_store_frame_local::<H, false>,
         };
         record.handler = handler as *const ();
-    }
-}
-
-/// Runs each `instanceof` value record whose result the next record, a `JumpTrue`, tests as
-/// one record (`lane_instanceof_jump_true`), with the jump's distance taken from the fused
-/// record. The `JumpTrue` record stays for jumps that reach it.
-fn specialize_negated_instanceof<H: Host>(records: &mut [LaneInstruction]) {
-    let instanceof = lane_instanceof_value::<H> as Handler as *const ();
-    let forward = jump_row::<H, JUMP_IF_TRUE>(false) as *const ();
-    let backward = jump_row::<H, JUMP_IF_TRUE>(true) as *const ();
-    for pc in 0..records.len().saturating_sub(1) {
-        let (test, jump) = (&records[pc], &records[pc + 1]);
-        if test.handler != instanceof
-            || (jump.handler != forward && jump.handler != backward)
-            || jump.a != test.a
-        {
-            continue;
-        }
-        let handler: Handler = if jump.handler == backward {
-            lane_instanceof_jump_true::<H, true>
-        } else {
-            lane_instanceof_jump_true::<H, false>
-        };
-        let distance = jump.jump() + size_of::<LaneInstruction>() as isize;
-        records[pc].handler = handler as *const ();
-        records[pc].operand = LaneOperand { jump: distance };
     }
 }
 
