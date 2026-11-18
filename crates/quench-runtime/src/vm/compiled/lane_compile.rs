@@ -278,6 +278,8 @@ enum Unstarted {
     Installed(Rc<PublishedLaneMethod>),
     /// Not yet worth compiling.
     Unpaid,
+    /// A b-jit body serves it better than a u-jit body ever would.
+    Base,
     /// Too short for its entries to amortize (`amortizes_entry`), and no body calls it.
     Short,
     Declined,
@@ -298,6 +300,9 @@ pub(in crate::vm) enum LaneBodyOutcome {
     Deferred,
     /// Its function's entries have not yet paid for the compile (`pays_compile`).
     Unpaid,
+    /// A b-jit body serves its function better than a u-jit body ever would (`tier_model::Pick::Base`):
+    /// the entry stitches one (`Vm::base_body_work`), which needs the entry's parameters.
+    Base,
     /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
     /// compile meets a call to it (`LaneView::demand_body`).
     Short,
@@ -472,8 +477,15 @@ impl<H: Host> Vm<H> {
         // each, the loop region's measure): inlining only adds to it.
         let own_ir = |bytecodes: u64| usize::try_from(bytecodes.saturating_mul(tiers.loops.ir_per_bytecode)).unwrap_or(usize::MAX);
         let planned = self.programs.planned_lane_ir(&site);
-        if let Some(entries) = observed
-            && !pays_compile(tiers, program, function, entries, planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64)), caller, true, false) { return Err(Unstarted::Unpaid); }
+        if let Some(entries) = observed {
+            let ir = planned.unwrap_or_else(|| own_ir(program.function_get(function as usize).map_or(0, |body| body.code.len()) as u64));
+            match pays_compile(tiers, program, function, entries, ir, caller, true, false) {
+                super::tier_model::Pick::Ultra => {}
+                super::tier_model::Pick::Interpreter => return Err(Unstarted::Unpaid),
+                // A function whose u-jit body would never get ahead of a b-jit body's takes the b-jit body (`LaneBodyOutcome::Base`).
+                super::tier_model::Pick::Base => return Err(Unstarted::Base),
+            }
+        }
         if let Some((span, taken)) = looped && taken < super::loop_model::body_taken(tiers, span, planned.unwrap_or_else(|| own_ir(span)), true) { return Err(Unstarted::Unpaid); }
         super::base_region::count(super::base_region::Event::BodyPlanned);
         let plan_started = std::time::Instant::now();
@@ -580,6 +592,7 @@ impl<H: Host> Vm<H> {
                 Ok(started) => started,
                 Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
                 Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
+                Err(Unstarted::Base) => return LaneBodyOutcome::Base,
                 Err(Unstarted::Short) => return LaneBodyOutcome::Short,
                 Err(Unstarted::Declined) => return LaneBodyOutcome::Declined,
             };
