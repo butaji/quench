@@ -24,7 +24,7 @@ mod environment_clone;
 pub use environment_clone::{EnvironmentClone, EnvironmentClones};
 pub(crate) use environment_clone::Resets;
 mod field_store;
-pub(crate) use field_store::{FieldStore, StoreReceiver, field_store_op};
+pub(crate) use field_store::{FieldStore, StoreReceiver};
 mod call_plan;
 pub(crate) use call_plan::{CALL_PLAN_FLAG_COUNT, CallPlan};
 mod instruction;

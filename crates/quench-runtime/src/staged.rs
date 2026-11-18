@@ -357,7 +357,7 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
-            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction),
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction.wide()),
             _ => Self::Return { source: instruction.register_a() },
         })
     }

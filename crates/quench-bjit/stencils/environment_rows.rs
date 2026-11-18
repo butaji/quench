@@ -9,7 +9,7 @@ use crate::places::tagged_place;
 use crate::stage::StencilStage;
 use crate::staged::object::{self, Layout, Slots};
 use crate::staged::region::Region;
-use crate::staged::{Stage, RecordSpace, environment, lexical_read};
+use crate::staged::{Stage, StagedRecordSpace, environment, lexical_read};
 use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 use crate::heap_rows::{hop, word_at};
 
@@ -100,7 +100,7 @@ fn global_store_row<const A: u8, const GATED: bool>(s: S, payload: usize) -> Out
     let layout = need!(s, global_layout(&mut stage, payload, id));
     let Slots::Flat(base) = layout.slots else { return Out::Exit(s) };
     if GATED {
-        let open = stage.store_gate(RecordSpace::Object, id, value);
+        let open = stage.store_gate(StagedRecordSpace::Object, id, value);
         need!(s, stage.guard(open, ()));
     }
     let offset = stage.site(0);

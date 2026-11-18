@@ -283,78 +283,6 @@ impl<H: Host> Vm<H> {
         self.embedding_with_buffer_bytes_mut(output, |to| f(from, to))
     }
 
-    /// `plain_typed_element`'s common case, inline: a canonical integer key inside a fixed
-    /// length typed array of Number elements over an owned buffer, of kind `KIND`
-    /// (`TypedArrayKind as usize`, a site's one kind) or of any kind (`ANY_TYPED_KIND`).
-    /// `None` leaves the read to `plain_typed_element`, which answers every other case
-    /// (`undefined` past the end, a tracking or detached view, Float16, a double key).
-    #[inline(always)]
-    pub(super) fn typed_element_quick<const KIND: usize>(&self, object: Value, key: Value) -> Option<Value> {
-        let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
-            return None;
-        };
-        let kind = typed_kind::<KIND>(view.native.kind())?;
-        let length = length.get()?;
-        let Some(Cell::ArrayBuffer { bytes, detached: false, .. }) = self.heap.get(*buffer) else {
-            return None;
-        };
-        let store = bytes.owned()?;
-        let start = typed_element_start(kind, view.offset, length, key, store.len())?;
-        macro_rules! element {
-            ($type:ty) => {
-                // SAFETY: `typed_element_start` proved the element's bytes inside the store.
-                unsafe { store.as_ptr().add(start).cast::<$type>().read_unaligned() }
-            };
-        }
-        Some(match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped => Value::integer(i32::from(element!(u8))),
-            TypedArrayKind::Int8 => Value::integer(i32::from(element!(i8))),
-            TypedArrayKind::Uint16 => Value::integer(i32::from(element!(u16))),
-            TypedArrayKind::Int16 => Value::integer(i32::from(element!(i16))),
-            TypedArrayKind::Int32 => Value::integer(element!(i32)),
-            TypedArrayKind::Uint32 => {
-                let element = element!(u32);
-                match i32::try_from(element) {
-                    Ok(integer) => Value::integer(integer),
-                    Err(_) => Value::number(f64::from(element)),
-                }
-            }
-            TypedArrayKind::Float32 => Value::number(f64::from(element!(f32))),
-            TypedArrayKind::Float64 => Value::number(element!(f64)),
-            _ => return None,
-        })
-    }
-
-    /// `typed_array_set_number`'s common case, inline: a Number stored at a canonical integer
-    /// key inside a fixed length typed array of kind `KIND` (as `typed_element_quick`) whose
-    /// buffer the view owns alone (`BufferBytes::lane_mut`), converted by
-    /// `store_any_number`. False leaves the store to
-    /// `typed_array_set_number`, which stores nothing before it decides.
-    #[inline(always)]
-    pub(super) fn typed_set_quick<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some(Cell::TypedArray { object: view, buffer, length }) = self.heap.get(object) else {
-            return false;
-        };
-        let Some(kind) = typed_kind::<KIND>(view.native.kind()) else {
-            return false;
-        };
-        let (offset, buffer) = (view.offset, *buffer);
-        let Some(length) = length.get() else {
-            return false;
-        };
-        let Some(Cell::ArrayBuffer { bytes, detached: false, immutable: false, .. }) = self.heap.buffer_bytes_mut(buffer) else {
-            return false;
-        };
-        let Some(store) = bytes.lane_mut() else {
-            return false;
-        };
-        let Some(start) = typed_element_start(kind, offset, length, key, store.len()) else {
-            return false;
-        };
-        // SAFETY: `typed_element_start` proved the element's bytes inside the store.
-        unsafe { store_any_number(kind, store.as_mut_ptr().add(start), value) }
-    }
-
     /// The kind of the typed array `object`, which picks a site's kind variant
     /// (`typed_element_quick`).
     pub(super) fn typed_array_kind_of(&self, object: Value) -> Option<TypedArrayKind> {
@@ -1045,19 +973,6 @@ fn typed_kind<const KIND: usize>(kind: TypedArrayKind) -> Option<TypedArrayKind>
     (kind == constant).then_some(constant)
 }
 
-/// The byte offset of the element at `key` of a fixed view of `length` elements of `kind`
-/// from `offset` in a store of `store_length` bytes, where the view lies inside the store
-/// (`ViewLength::within`) and the key is an int32 inside the view: one unsigned compare of
-/// the key's offset (`Value::int_key_offset`) against a bound below 2^31 tests its tag, sign
-/// and bound. `None` otherwise.
-#[inline(always)]
-fn typed_element_start(kind: TypedArrayKind, offset: usize, length: usize, key: Value, store_length: usize) -> Option<usize> {
-    let width = kind.width();
-    let index = key.int_key_offset();
-    (index < length.min(i32::MAX as usize) && offset.saturating_add(length.saturating_mul(width)) <= store_length)
-        .then(|| offset + index * width)
-}
-
 /// Writes `element` at `target`, which need not be aligned.
 ///
 /// # Safety
@@ -1100,39 +1015,6 @@ unsafe fn store_number_element(kind: TypedArrayKind, target: *mut u8, value: Val
             None => return false,
         },
         _ => return false,
-    }
-    true
-}
-
-/// `store_number_element` of any Number, a double into an integer kind by `store_double_element`.
-///
-/// # Safety
-/// As `store_number_element`.
-#[inline(always)]
-unsafe fn store_any_number(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
-    // SAFETY: the caller's contract.
-    unsafe { store_number_element(kind, target, value) || store_double_element(kind, target, value) }
-}
-
-/// `store_number_element` of a non-integer into an integer kind: ToUint32's low bits or
-/// ToUint8Clamp of the double; false for a value that is no Number or a kind with no
-/// conversion here.
-///
-/// # Safety
-/// As `store_number_element`.
-#[inline(always)]
-unsafe fn store_double_element(kind: TypedArrayKind, target: *mut u8, value: Value) -> bool {
-    use crate::value::{number_to_u32, number_to_uint8_clamp};
-    let Some(number) = value.as_number() else { return false };
-    // SAFETY: the caller's contract, for each arm.
-    unsafe {
-        match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => write_element(target, number_to_u32(number) as u8),
-            TypedArrayKind::Uint8Clamped => write_element(target, number_to_uint8_clamp(number)),
-            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => write_element(target, number_to_u32(number) as u16),
-            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => write_element(target, number_to_u32(number)),
-            _ => return false,
-        }
     }
     true
 }
@@ -1249,15 +1131,6 @@ impl<H: Host> Vm<H> {
         let Some((kind, element)) = self.typed_cached_slot::<KIND>(object, key) else { return false };
         // SAFETY: `typed_cached_slot` proved one element of `kind` writable at `element`.
         unsafe { store_number_element(kind, element, value) }
-    }
-
-    /// `typed_cached_store` of any Number, a double into an integer kind included
-    /// (`store_double_element`): the store-miss handler's first try, before it refills the entry.
-    #[inline(always)]
-    pub(super) fn typed_cached_store_number<const KIND: usize>(&mut self, object: Value, key: Value, value: Value) -> bool {
-        let Some((kind, element)) = self.typed_cached_slot::<KIND>(object, key) else { return false };
-        // SAFETY: as `typed_cached_store`.
-        unsafe { store_any_number(kind, element, value) }
     }
 
     /// The kind and element address at `key` of the current, writable cached entry of

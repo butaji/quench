@@ -302,7 +302,7 @@ pub(crate) const JS_STEP_SLOTS_TRACKED: usize = 184;
 pub(crate) const JS_STEP_EPOCH: usize = 336;
 /// The string record range's base, which a string `length` read finds the record from.
 pub(crate) const JS_STEP_STRING_RECORD_BASE: usize = 376;
-/// What a store into a function's own properties reads (`RecordSpace::Function`): the function
+/// What a store into a function's own properties reads (`StagedRecordSpace::Function`): the function
 /// records' mark blocks and their count, as the object records' (`JS_STEP_OBJECT_MARK_BLOCKS`); and the
 /// empty string's word, which a function's inferred name replaces (`staged::naming`).
 pub(crate) const JS_STEP_FUNCTION_MARK_BLOCKS: usize = 416;

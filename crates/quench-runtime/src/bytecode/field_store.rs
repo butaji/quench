@@ -15,18 +15,6 @@ pub(crate) struct FieldStore {
     pub(crate) strict: bool,
 }
 
-/// The pattern of every named field store opcode's catalog index, for a `match` arm over an
-/// opcode index that must stay a jump table entry; `Op::field_store` says what each one means.
-macro_rules! field_store_op {
-    () => {
-        $crate::bytecode::index::SetField
-            | $crate::bytecode::index::SetFieldStrict
-            | $crate::bytecode::index::SetThisField
-            | $crate::bytecode::index::SetThisFieldStrict
-    };
-}
-pub(crate) use field_store_op;
-
 impl Op {
     #[inline(always)]
     pub(crate) const fn field_store(self) -> Option<FieldStore> {

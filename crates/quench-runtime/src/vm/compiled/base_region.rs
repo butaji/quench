@@ -15,7 +15,7 @@
 
 use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
-use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
+use crate::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
 use crate::typed_ir::Representation;
 use crate::value::Value;

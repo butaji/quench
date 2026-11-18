@@ -1,5 +1,5 @@
 #[path = "../../quench-runtime/src/staged/stage.rs"] mod stage;
-pub(crate) use stage::{RecordSpace, Stage, Table};
+pub(crate) use stage::{StagedRecordSpace, Stage, Table};
 pub(crate) type Concrete = crate::stage::StencilStage;
 #[path = "../../quench-runtime/src/staged/region.rs"] #[allow(dead_code)] pub(crate) mod region;
 /// The effect vocabulary of the runtime's call protocol, which a stencil row never makes: the frame's default `call` names them.

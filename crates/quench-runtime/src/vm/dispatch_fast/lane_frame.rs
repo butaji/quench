@@ -1526,7 +1526,7 @@ lane_handler! {
             }
             if const { super::returning_field_site(FLAG) } {
                 // A returning read's stale hint: the returning miss answers and moves the record on.
-                sibling!(super::row_returning_field_miss::<H, { super::returning_leaf(FLAG) }>, r, ip, Carried::script_in(script, view))
+                by_leaf!(super::returning_leaf(FLAG), |L| sibling!(super::row_returning_field_miss::<H, L>, r, ip, Carried::script_in(script, view)))
             }
             if const { super::private_field_site(FLAG) } {
                 // A method, accessor or missing private field: the general private read.
@@ -1913,7 +1913,7 @@ lane_handler! {
                     set_field_hint(ip, hint);
                     // A store the VM made into a narrow run moves the site to the narrow row (`NARROW_SITE`);
                     // a narrow site whose object is no longer narrow goes back to the own store.
-                    if const { (FLAG == FLAG_UNREAD || FLAG == super::NARROW_SITE) } && !unsafe { vm(script) }.heap.tracks_slot_representations() {
+                    if const { FLAG == FLAG_UNREAD || FLAG == super::NARROW_SITE } && !unsafe { vm(script) }.heap.tracks_slot_representations() {
                         let narrow = crate::heap::layouts::auxiliary(hint.receiver) & crate::value_vec::STORAGE_FORM == crate::value_vec::NARROW_FORM;
                         if const { FLAG == FLAG_UNREAD } {
                             if narrow { requicken::<H>(ip, lane_row::<H, OP, ACC_NONE, { super::NARROW_SITE }>); }
@@ -1930,7 +1930,7 @@ lane_handler! {
                 // (`lane_return_value!`), so it writes no register.
                 let value = if const { super::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                if let Some(resumed) = super::lane_complete_plain_activation::<H, { super::returning_leaf(FLAG) }>(script, value) {
+                if let Some(resumed) = by_leaf!(super::returning_leaf(FLAG), |L| super::lane_complete_plain_activation::<H, L>(script, value)) {
                     resume!(script, resumed)
                 }
                 resume!(script, super::lane_return_value_general(script, ip, value));
@@ -1945,7 +1945,7 @@ lane_handler! {
                     let Some((atom, site)) = super::sink_operands(script, i) else {
                         sibling!(super::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
                     };
-                    if frame.sink_store(&mut stage, atom, site, value.to_bits()).is_none() {
+                    if crate::staged::property::PropertyFrame::sink_store(&mut frame, &mut stage, atom, site, value.to_bits()).is_none() {
                         sibling!(super::row_get_field_sink::<H>, r, ip, Carried::script_in(script, view))
                     }
                     r.set(i.a & crate::bytecode::REGISTER_MASK, value);

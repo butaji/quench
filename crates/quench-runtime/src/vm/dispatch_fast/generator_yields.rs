@@ -236,7 +236,7 @@ pub(super) fn activate_settling_environment<H: Host>(
     let entered = lane_activate_environment(cx, r, ip, target, passed, (this, false));
     let vm = unsafe { vm(cx) };
     if entered.is_ok() {
-        let activation = vm.lane_stack.activations.last_mut().expect("the activation was pushed");
+        let activation = vm.lane_stack.activations_mut().last_mut().expect("the activation was pushed");
         if let ActivationKind::Script(script) = &mut activation.kind {
             script.completion = Completion::SettlesPromise;
         }

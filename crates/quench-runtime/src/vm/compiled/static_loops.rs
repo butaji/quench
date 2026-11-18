@@ -65,7 +65,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         return;
     }
     let value = match () {
-        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
             program.constants.get(instruction.constant_index()).and_then(facts::immediate),
         _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
         _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => {

@@ -9,7 +9,7 @@ use crate::layout::{
     JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_SLOTS_TRACKED,
     LAYOUT_TABLE_BASE, NATIVE_OBJECT_LAYOUT as OBJECT, PROPERTY_BUFFER_BASE,
 };
-use crate::staged::{RecordSpace, Stage, Table};
+use crate::staged::{StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
 use crate::staged::region::{Access, Region};
@@ -225,7 +225,7 @@ impl Stage for StencilStage {
     #[inline(always)]
     fn clamp_u8(&mut self, a: u64) -> u64 { crate::units::clamp_u8(a) }
     #[inline(always)]
-    fn store_gate(&mut self, space: RecordSpace, record_id: u64, value: u64) -> bool {
+    fn store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
         let word = |offset: usize| {
             // SAFETY: a payload word at a layout offset; a row that stores was given the live payload.
             unsafe { ((self.payload as usize + offset) as *const u64).read() }
@@ -233,13 +233,13 @@ impl Stage for StencilStage {
         if word(JS_STEP_SLOTS_TRACKED) != 0 {
             return false;
         }
-        // A value that names no heap record joins no barrier log (`RecordSpace::store_logs`).
+        // A value that names no heap record joins no barrier log (`StagedRecordSpace::store_logs`).
         if value & TAG_MASK != HEAP_TAG {
             return true;
         }
         let (blocks_at, count_at) = match space {
-            RecordSpace::Object => (JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT),
-            RecordSpace::Function => (JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
+            StagedRecordSpace::Object => (JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT),
+            StagedRecordSpace::Function => (JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
         };
         let block = record_id >> OBJECT.mark_records_per_block.trailing_zeros();
         if block >= word(count_at) {

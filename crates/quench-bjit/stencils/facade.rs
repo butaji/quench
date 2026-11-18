@@ -65,6 +65,8 @@ pub(crate) mod typed_ir {
 }
 
 pub(crate) mod value {
+    /// 2^63, the first double past `i64` (`number_conversion::EXACT_I64_TRUNCATION_LIMIT`).
+    pub(crate) const EXACT_I64_TRUNCATION_LIMIT: f64 = 9_223_372_036_854_775_808.0;
     use crate::layout::words;
     pub(crate) use super::operations::WORD32_SHIFT_MASK;
     pub(crate) const LOWER_WORD: u64 = words::LOWER_WORD;
