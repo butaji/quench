@@ -3794,7 +3794,7 @@ script_handler! {
             // running function's view.
             let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
             let body = code.function(vm.frames[frame].function as usize);
-            let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
+            let Some(plan) = body.environment_clones.get(body.widened(body.code[pc]).environment_clone_index())
             else {
                 return exit(ip);
             };
@@ -3836,7 +3836,7 @@ script_handler! {
         // running function's view.
         let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
         let body = code.function(function as usize);
-        let Some(plan) = body.environment_clones.get(decoded_instruction(body, body.code[pc]).environment_clone_index())
+        let Some(plan) = body.environment_clones.get(body.widened(body.code[pc]).environment_clone_index())
         else {
             return exit(ip);
         };
@@ -3970,7 +3970,7 @@ lane_handler! {
             (&*(*cx).code, (*cx).frame(), ip.offset_from((*cx).base) as usize)
         };
         let function = code.function(vm.frames[frame].function as usize);
-        let instruction = decoded_instruction(function, function.code[pc]);
+        let instruction = function.widened(function.code[pc]);
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
         let mut next = pc + 1;
@@ -4005,7 +4005,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[pc]);
+    let instruction = body.widened(body.code[pc]);
     if !instruction.op().steps_with_result() {
         return Resumed::Exit(exit(ip));
     }
@@ -6188,7 +6188,7 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[pc]);
+    let instruction = body.widened(body.code[pc]);
     if !instruction.op().is_set_index() {
         return Resumed::Exit(exit(ip));
     }
@@ -6291,11 +6291,30 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_set_index_typed_kind` at a site that has stored a double into its integer kind:
+    /// any Number converts in place (`Vm::typed_cached_store_number`).
+    fn lane_set_index_typed_number_kind<KIND: usize>(cx, r, ip, i, view) {
+        if !(unsafe { vm(cx) }).typed_cached_store_number::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
+            sibling!(lane_set_index_typed_fill::<H, KIND>, r, ip, view)
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// A typed store whose view has no current cached entry (as `lane_get_index_typed_fill`).
     #[inline(never)]
     fn lane_set_index_typed_fill<KIND: usize>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (base, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        // A double into an integer kind misses the hot store only: the entry is current, and a
+        // kind variant's site moves to the variant that converts doubles in place.
+        if vm.typed_cached_store_number::<KIND>(base, key, value) {
+            if KIND != super::typed_array_access::ANY_TYPED_KIND {
+                requicken::<H>(ip, lane_set_index_typed_number_kind::<H, KIND>);
+            }
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         vm.fill_typed_view(base);
         if !vm.typed_set_quick::<KIND>(base, key, value) {
             if KIND == super::typed_array_access::ANY_TYPED_KIND {
@@ -8913,7 +8932,7 @@ fn lane_store_is_strict<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<bool
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    decoded_instruction(body, body.code[pc]).op().field_store().map(|store| store.strict)
+    body.widened(body.code[pc]).op().field_store().map(|store| store.strict)
 }
 
 /// The brand of private name `atom` at the record `ip`, whose home follows the running
@@ -10427,7 +10446,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
     let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).and_then(|packed| {
-            let op = decoded_instruction(body, *packed).op();
+            let op = body.widened(*packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
                 || op.is_field_store() || matches!(op.class(), Class::LoadCapture)).then(|| (op.is_get_index(), op.is_field_store()))
@@ -10752,7 +10771,7 @@ fn lane_loop_trace_exit<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &L
             // native execution has returned and restored the canonical registers.
             let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
             if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
-                let instruction = decoded_instruction(body, packed);
+                let instruction = body.widened(packed);
                 if instruction.op().is_set_index() {
                     let key = r.get(instruction.register_c());
                     let base = r.get(instruction.register_b());
@@ -10852,7 +10871,7 @@ fn lane_inlined_continuation<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
     site.tier.borrow_mut().left_at(site.tiers, super::compiled::base_region::inlined_exit_key(call.call, pc), false);
     // SAFETY: the context's program outlives the lane run.
     if let Some(body) = unsafe { &*(*cx).code }.function_get(call.target.function as usize) {
-        super::compiled::base_region::leave(call.target.function, pc, decoded_instruction(body, body.code[pc as usize]).op());
+        super::compiled::base_region::leave(call.target.function, pc, body.widened(body.code[pc as usize]).op());
     }
     // SAFETY: the context's records are the activation's, which the region ran on.
     let base = unsafe { (*cx).base };
@@ -14024,7 +14043,7 @@ impl<H: Host> Vm<H> {
                 && body
                     .code
                     .iter()
-                    .any(|packed| decoded_instruction(body, *packed).op().is_construct())
+                    .any(|packed| body.widened(*packed).op().is_construct())
         {
             None
         } else {
@@ -14032,7 +14051,7 @@ impl<H: Host> Vm<H> {
         };
         #[cfg(feature = "profile-lane-exits")]
         if view.is_none() {
-            let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op().makes_closure());
+            let closures = body.code.iter().any(|packed| body.widened(*packed).op().makes_closure());
             super::lane_exits::record_detail(format!(
                 "frame entry {} plain={} registers_only={} env_activation={} environment={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} derived={} async={} generator={} locals_promoted={} simple_params={} selective={} cross={} numeric={}",
                 body.name.map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
@@ -16029,7 +16048,7 @@ mod for_in_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
 mod vm_steps;
 mod value_steps;
-pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_string_concat, lane_decide, lane_vm_step};
+pub(in crate::vm) use vm_steps::{lane_body_step, lane_decide, lane_vm_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;
@@ -17939,7 +17958,7 @@ impl<H: Host> Vm<H> {
 fn lane_direct_callees<H: Host>(vm: &Vm<H>, view: &LaneView, function: u32, body: &crate::bytecode::Function) -> Vec<super::compiled::DirectCandidates> {
     let tail_calls = vm.host.proper_tail_calls() && body.strict;
     body.code.iter().enumerate().map(|(pc, packed)| {
-        let instruction = decoded_instruction(body, *packed);
+        let instruction = body.widened(*packed);
         let direct = instruction.op().is_call() && !instruction.direct_eval() && !instruction.parameter_eval()
             && !(tail_calls && instruction.returns_from_frame());
         let mut callees = super::compiled::DirectCandidates::new();
@@ -19538,7 +19557,7 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
     let call = *vm.lane_stack.to_wasm.last().expect("an import activation has its entry");
     let encoded = match call.result {
         None => Some(Value::UNDEFINED),
-        Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_u32(number) as i32)),
+        Some(crate::WasmType::I32) => value.as_number().map(|number| Value::integer(crate::value::number_to_i32(number))),
         Some(crate::WasmType::F32) => value.as_number().map(|number| Value::integer((number as f32).to_bits() as i32)),
         Some(crate::WasmType::F64) => value.as_number().map(|number| vm.encode_bits64(number.to_bits())),
         Some(_) => None,
@@ -20714,7 +20733,7 @@ fn frame_entry_census<H: Host>(vm: &Vm<H>, program: ProgramId, function: u32) ->
     vm.programs.residual(program).and_then(|callee_code| {
         let body = callee_code.function_get(function as usize)?;
         let plan = body.call_plan(callee_code);
-        let closures = body.code.iter().any(|packed| decoded_instruction(body, *packed).op().makes_closure());
+        let closures = body.code.iter().any(|packed| body.widened(*packed).op().makes_closure());
         Some(format!(
             "{} @{:?} registers_only={} env_activation={} arrow={} rest={} closures={} arguments={} handlers={} class_ctor={} async={} generator={} promoted={}/{} simple_params={} selective={} self={} plain={} in_loop={} legacy={} live={} addresses={} initial={:?} name_ops={:?} unpromoted={:?}",
             body.name.map(|atom| callee_code.atoms[atom as usize].to_string()).unwrap_or_default(),
@@ -20723,7 +20742,7 @@ fn frame_entry_census<H: Host>(vm: &Vm<H>, program: ProgramId, function: u32) ->
             body.is_generator, body.local_registers.len(), body.locals, body.simple_parameters, body.selective_capture_slots.is_some(),
             body.self_binding_slot.is_some(), plan.plain, plan.in_loop, plan.legacy_reflection, plan.live_parameters,
             plan.addresses_locals, body.initial_register,
-            body.code.iter().map(|packed| decoded_instruction(body, *packed)).filter(|instruction|
+            body.code.iter().map(|packed| body.widened(*packed)).filter(|instruction|
                 instruction.op().is_name_operation())
                 .map(|instruction| format!("{:?}:{}", instruction.op(), { let atom = instruction.atom_index() as usize; if atom < callee_code.atoms.len() { callee_code.atoms[atom].replace('\0', "~") } else { "?".into() } }))
                 .collect::<Vec<_>>(),
@@ -21876,7 +21895,7 @@ fn lane_returns(instruction: WideInstruction) -> bool {
 /// vector accesses' (`WasmMemoryAddress`) when the prologue binds it, as lowering binds a
 /// memory32 memory once per call.
 pub(super) fn memory_register(function: &Function) -> Option<u16> {
-    let instructions = || function.code.iter().map(|packed| decoded_instruction(function, *packed));
+    let instructions = || function.code.iter().map(|packed| function.widened(*packed));
     let direct = instructions().filter_map(|instruction| match instruction.op() {
         op if MemoryLoad::from_direct_op(op).is_some()
             || MemoryStore::from_direct_op(op).is_some() => Some(instruction.b()),
@@ -22737,7 +22756,7 @@ fn derive_lane_view<'live, H: Host>(
                 }
             }
             for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 if instruction.op().immediate_role() != ImmediateRole::JumpTarget {
                     continue;
                 }
@@ -22813,7 +22832,7 @@ fn derive_lane_view<'live, H: Host>(
                 reads_accumulator[pc] = true;
                 accumulator_registers[pc] = add.b();
                 for (jump, packed) in function.code.iter().enumerate() {
-                    let instruction = decoded_instruction(function, *packed);
+                    let instruction = function.widened(*packed);
                     if instruction.op().immediate_role() == ImmediateRole::JumpTarget
                         && instruction.imm() as usize == pc
                         && let Some(carrying) = carrying_zero_jump(records[jump].handler)
@@ -22847,7 +22866,7 @@ fn derive_lane_view<'live, H: Host>(
             reads_accumulator[pc] = true;
             accumulator_registers[pc] = moving.b();
             for (jump, packed) in function.code.iter().enumerate() {
-                let instruction = decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 if instruction.op().immediate_role() != ImmediateRole::JumpTarget
                     || instruction.imm() as usize != pc
                 {
@@ -24626,7 +24645,7 @@ fn constant_operator_handler<H: Host>(operator: u32, constant: Value) -> Option<
 /// backward jump, or a branch table, whose entries may jump back.
 fn may_loop(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = decoded_instruction(function, *packed);
+        let instruction = function.widened(*packed);
         instruction.op().is_wasm_branch_table()
             || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc)
@@ -24761,17 +24780,6 @@ fn entered_records(instructions: &[WideInstruction], parameter_end_pc: u32) -> I
         targets.insert(parameter_end_pc as usize);
     }
     targets
-}
-
-pub(super) fn decoded_instruction(
-    function: &Function,
-    packed: crate::bytecode::Instr,
-) -> WideInstruction {
-    if packed.is_wide() {
-        function.wide[packed.wide_index()]
-    } else {
-        packed.as_wide()
-    }
 }
 
 impl<H: Host> Vm<H> {
@@ -25648,7 +25656,7 @@ fn lane_dispatch<H: Host>(cx: *mut LaneContext<H>, mut ip: Ip) -> Ip {
             if let Some(body) = code.function_get(function as usize)
                 && let Some(packed) = body.code.get(pc)
             {
-                super::lane_exits::dispatch(decoded_instruction(body, *packed).op());
+                super::lane_exits::dispatch(body.widened(*packed).op());
             }
         }
         // SAFETY: handlers have returned, so no other access is live.

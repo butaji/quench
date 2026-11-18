@@ -2702,60 +2702,24 @@ impl<H: Host> Vm<H> {
         self.iterator_next_with_args(p, this, &[])
     }
 
-    pub(super) fn regexp_string_iterator_next(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if !matches!(
-            self.heap.iterator(this),
-            Some(IteratorRecord {
-                kind: IteratorKind::RegExpStringMatchAll,
-                ..
-            })
-        ) {
-            return Err(self.type_error(
-                p,
-                "RegExp string iterator next called on incompatible receiver".into(),
-            ));
-        }
-        self.iterator_next_with_args(p, this, args)
+    pub(super) fn regexp_string_iterator_next(&mut self, p: &ResidualProgram, this: Value, args: &[Value]) -> Result<Value, JsError> {
+        self.branded_iterator_next(p, this, args, |kind| matches!(kind, IteratorKind::RegExpStringMatchAll), "RegExp string iterator")
     }
 
-    pub(super) fn string_iterator_next(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if !matches!(
-            self.heap.iterator(this),
-            Some(IteratorRecord {
-                kind: IteratorKind::String,
-                ..
-            })
-        ) {
-            return Err(self.type_error(
-                p,
-                "String iterator next called on incompatible receiver".into(),
-            ));
-        }
-        self.iterator_next_with_args(p, this, args)
+    pub(super) fn string_iterator_next(&mut self, p: &ResidualProgram, this: Value, args: &[Value]) -> Result<Value, JsError> {
+        self.branded_iterator_next(p, this, args, |kind| matches!(kind, IteratorKind::String), "String iterator")
     }
 
-    pub(super) fn array_iterator_next(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let is_array_iterator = matches!(self.heap.iterator(this), Some(IteratorRecord {kind,..}) if kind.is_array_iterator());
-        if !is_array_iterator {
-            return Err(self.type_error(
-                p,
-                "Array Iterator next called on incompatible receiver".into(),
-            ));
+    pub(super) fn array_iterator_next(&mut self, p: &ResidualProgram, this: Value, args: &[Value]) -> Result<Value, JsError> {
+        self.branded_iterator_next(p, this, args, |kind| kind.is_array_iterator(), "Array Iterator")
+    }
+
+    /// `%XIteratorPrototype%.next` of the iterators whose kind `brand` accepts: a TypeError
+    /// naming `name` for any other receiver.
+    fn branded_iterator_next(&mut self, p: &ResidualProgram, this: Value, args: &[Value], brand: impl FnOnce(&IteratorKind) -> bool,
+        name: &str) -> Result<Value, JsError> {
+        if !self.heap.iterator(this).is_some_and(|iterator| brand(&iterator.kind)) {
+            return Err(self.type_error(p, format!("{name} next called on incompatible receiver")));
         }
         self.iterator_next_with_args(p, this, args)
     }

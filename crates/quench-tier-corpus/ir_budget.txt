@@ -104,3 +104,4 @@ k_field_acc 3.9 17.7 69.3
 k_list_walk 6.9 26.7 148.3
 k_vec_local 8.9 32.7 201.9
 obj_spread 146 444 1488.5
+typed_store_u8c 24 78 155.9

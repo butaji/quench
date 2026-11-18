@@ -21,11 +21,7 @@ pub(super) fn derive(
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         for (pc, instruction) in function.code.iter().enumerate() {
-            let op = if instruction.is_wide() {
-                function.wide[instruction.wide_index()].op()
-            } else {
-                instruction.op()
-            };
+            let op = function.op_of(*instruction);
             counts[class][op as usize] += sites.get(pc).copied().unwrap_or(0);
         }
     }

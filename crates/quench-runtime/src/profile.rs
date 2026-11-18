@@ -153,7 +153,7 @@ fn object_literal_site(
     use crate::bytecode::Op;
 
     let (op, site) = if encoded.is_wide() {
-        let instruction = function.wide[encoded.wide_index()];
+        let instruction = function.widened(encoded);
         match instruction.op() {
             Op::MakeObject2 | Op::MakeObjectLiteral => {
                 (instruction.op(), instruction.object_site_index())

@@ -1033,10 +1033,6 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
-    /// `+` of strings (`dispatch_fast::lane_body_string_concat`), named by the b-jit call planner
-    /// (`base_region::call_plan`), which the whole-function planner will consume.
-    #[allow(dead_code)]
-    StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
     /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's
@@ -1086,7 +1082,7 @@ fn materialize_chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatc
 fn recover_call<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, caller: usize, entry: ChainFrame)
     -> Result<super::dispatch_frame::PendingGeneralCall, (u32, JsError)> {
     let body = program.function(vm.frames[caller].function as usize);
-    let instruction = super::dispatch_fast::decoded_instruction(body, body.code[entry.call_pc as usize]);
+    let instruction = body.widened(body.code[entry.call_pc as usize]);
     // The activation the instruction's step pushes (`Vm::pushed_frame`).
     let (callee, window, receiver, completion) = vm.pushed_frame(caller, instruction, entry.callee, entry.this);
     let env = vm.heap.function(callee).expect("admitted inline closure").env;
@@ -4750,11 +4746,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 JsError::validation("invalid native semantic opcode".into()))?;
             // Linked operands are already resolved. Admission needs only the
             // source opcode, not a second decoding of every operand field.
-            let source_opcode = if packed.is_wide() {
-                body.wide[packed.wide_index()].op()
-            } else {
-                packed.op()
-            };
+            let source_opcode = body.op_of(packed);
             if selected.opcode != source_opcode {
                 return Err(JsError::validation("native semantic opcode does not match instruction".into()));
             }
@@ -4763,7 +4755,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             }
             #[cfg(feature = "profile-native-ops")]
             {
-                let source_instruction = super::dispatch_fast::decoded_instruction(body, packed);
+                let source_instruction = body.widened(packed);
                 super::native_op_profile::record_site(
                     dispatch.program_id.raw(), vm.frames[dispatch.frame].function, pc, source_instruction,
                     body.name.or(body.inferred_name)
@@ -4776,7 +4768,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
             unsafe { &*arguments.cast::<super::native_operands::NativeJsOperands>() }
                 .instruction(selected.opcode)
         } else {
-            super::dispatch_fast::decoded_instruction(body, packed)
+            body.widened(packed)
         };
         let next_pc = pc.checked_add(1).ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
 
@@ -5057,7 +5049,7 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                         }));
                     };
                     current_instruction =
-                        super::dispatch_fast::decoded_instruction(body, packed);
+                        body.widened(packed);
                     next = current_pc
                         .checked_add(1)
                         .ok_or_else(|| JsError::validation("native JS PC overflow".into()))?;
@@ -5428,7 +5420,7 @@ impl<H: Host> Analysis<'_, H> {
         let instructions: Vec<WideInstruction> = function
             .code
             .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .map(|packed| function.widened(*packed))
             .collect();
         let mut entry = AnalysisState::new();
         for (offset, ty) in params.iter().enumerate() {
@@ -6894,7 +6886,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let instructions: Vec<WideInstruction> = function
             .code
             .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .map(|packed| function.widened(*packed))
             .collect();
         let mut selectors: Vec<u16> = instructions
             .iter()
@@ -8091,7 +8083,7 @@ impl<H: Host> Vm<H> {
                 }
                 *selected_function = true;
                 for packed in &function.code {
-                    let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                    let instruction = function.widened(*packed);
                     if let Some(callee) = Step::of(instruction.op(), instruction.imm())
                         .and_then(|step| step.callee(instruction))
                     {
@@ -8144,7 +8136,7 @@ impl<H: Host> Vm<H> {
                     *selected_function = true;
                     for packed in &function.code {
                         let instruction =
-                            super::dispatch_fast::decoded_instruction(function, *packed);
+                            function.widened(*packed);
                         if let Some(callee) = Step::of(instruction.op(), instruction.imm())
                             .and_then(|step| step.callee(instruction))
                         {
@@ -8234,7 +8226,7 @@ impl<H: Host> Vm<H> {
             let full_plan = full_plans[index].as_ref()?;
             let function = &code.function(index);
             for (pc, packed) in function.code.iter().enumerate() {
-                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = function.widened(*packed);
                 if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
                     continue;
                 }
@@ -9046,7 +9038,7 @@ const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 /// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
 pub(super) fn lane_body_may_amortize(tiers: &Tiers, body: &crate::bytecode::Function) -> bool {
     body.loops() || body.code.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
-        || body.code.iter().any(|packed| super::dispatch_fast::decoded_instruction(body, *packed).op().is_call())
+        || body.code.iter().any(|packed| body.widened(*packed).op().is_call())
 }
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
@@ -10617,7 +10609,7 @@ mod tests {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
         body.code.iter().copied().enumerate().find_map(|(pc, packed)| {
-            let instruction = super::super::dispatch_fast::decoded_instruction(body, packed);
+            let instruction = body.widened(packed);
             (instruction.op() == opcode).then_some((pc, instruction))
         }).expect("test operation exists")
     }
@@ -10629,7 +10621,7 @@ mod tests {
     ) -> (i64, u64, Option<JsNativeStep>) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let body = program.function(0);
-        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let operands = super::super::NativeJsOperands::new(
             instruction.a(), instruction.b(), instruction.c(), instruction.imm(),
         );
@@ -11516,7 +11508,7 @@ mod tests {
         let mut program = crate::Engine::specialize("throw 7;", "wide-semantic-entry.js").unwrap();
         let body = &mut program.functions[0];
         let pc = body.instructions().position(|instruction| instruction.op().is_throw()).unwrap();
-        let instruction = super::super::dispatch_fast::decoded_instruction(body, body.code[pc]);
+        let instruction = body.widened(body.code[pc]);
         let wide_index = body.wide.len();
         body.wide.push(instruction);
         body.code[pc] = crate::bytecode::Instr::wide(wide_index).unwrap();

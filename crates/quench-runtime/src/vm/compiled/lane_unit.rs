@@ -271,7 +271,7 @@ fn completion_length(instruction: WideInstruction) -> u32 {
 }
 
 fn decoded(function: &Function) -> Vec<WideInstruction> {
-    function.code.iter().map(|packed| super::super::dispatch_fast::decoded_instruction(function, *packed)).collect()
+    function.code.iter().map(|packed| function.widened(*packed)).collect()
 }
 
 /// A function's code as the unit splices it: per PC, the call it inlines there, if any.

@@ -1357,11 +1357,7 @@ impl ProgramStore {
         // A function its module lowers on its first call reads only the module's own pool.
         for function in entry.residual.functions.iter().filter_map(crate::bytecode::FunctionSlot::record) {
             for instruction in &function.code {
-                let instruction = if instruction.is_wide() {
-                    function.wide[instruction.wide_index()]
-                } else {
-                    instruction.as_wide()
-                };
+                let instruction = function.widened(*instruction);
                 let valid = match instruction.op().class() {
                     crate::bytecode::Class::WasmRefFunc => {
                         signatures.get(instruction.imm() as usize).is_some()

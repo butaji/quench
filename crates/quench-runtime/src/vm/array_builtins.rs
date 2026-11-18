@@ -166,46 +166,14 @@ impl<H: Host> Vm<H> {
         for &(name, native) in ARRAY_STATIC_METHODS {
             self.set_realm_builtin_named(program, array, name, native, Some(global))?;
         }
-        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.native_with_realm(Native::ArraySpecies, global, global);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(array, species, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                array,
-                PropertyKey::symbol(species),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
+        self.install_species(array, |vm| vm.native_with_realm(Native::ArraySpecies, global, global))?;
         self.install_array_unscopables(prototype)?;
         self.set_builtin_value_named(global, "Array", array)
     }
 
     pub(super) fn install_array_species(&mut self) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
-        let species = self.well_known_symbols.get(WellKnownSymbol::Species).unwrap();
-        let getter = self.native_value(Native::ArraySpecies);
-        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-        self.set_symbol_property(array, species, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            array,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
-        Ok(())
+        self.install_species(array, |vm| vm.native_value(Native::ArraySpecies))
     }
 
     pub(super) fn install_array_unscopables(&mut self, array_proto: Value) -> Result<(), JsError> {

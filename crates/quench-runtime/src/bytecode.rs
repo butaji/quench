@@ -29,7 +29,7 @@ mod instruction;
 mod register_list;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops; mod op_classes; mod op_scan; mod unary_operators;
+mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -1925,6 +1925,13 @@ pub(crate) enum PlainLocalSlotIneligibility {
     Captured,
 }
 
+/// The fixed-width form of `packed`, a wide one read through its function's `wide` table: the one
+/// decoder of the packed encoding, for readers that hold the table apart from its function.
+#[inline(always)]
+pub(crate) fn widen(packed: Instr, wide: &[WideInstruction]) -> WideInstruction {
+    if packed.is_wide() { wide[packed.wide_index()] } else { packed.as_wide() }
+}
+
 impl Function {
     /// Releases the spare capacity of the tables a compilation grew, once it is finished.
     pub(crate) fn shrink_to_fit(&mut self) {
@@ -2065,6 +2072,11 @@ impl Function {
     /// operations, validation re-derives the same proof, and the interpreter memoizes it in
     /// `plain_locals` to read plain local operands directly.
     pub(crate) fn plain_local_slots(&self, superinstructions: &[Superinstruction]) -> crate::bitset::BitSet {
+        self.plain_local_slots_in(superinstructions, &initialization::FlowCell::new())
+    }
+
+    /// `plain_local_slots` over the shared control-flow blocks `flow` (`initialization::FlowCell`).
+    pub(crate) fn plain_local_slots_in(&self, superinstructions: &[Superinstruction], flow: &initialization::FlowCell) -> crate::bitset::BitSet {
         let locals = usize::from(self.locals);
         if !self.plain_local_context_is_safe() {
             return crate::bitset::BitSet::new(locals);
@@ -2077,7 +2089,7 @@ impl Function {
             }
         }
         let initialized =
-            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &Default::default());
+            initialization::initialized_before_reads(self, superinstructions, &dead_zone, &Default::default(), flow);
         crate::bitset::BitSet::from_fn(locals, |slot| {
             plain.contains(slot) && (!dead_zone.contains(slot) || initialized.contains(slot))
         })
@@ -2283,9 +2295,18 @@ impl Function {
         self.widened(self.code[pc])
     }
 
-    #[inline]
-    fn widened(&self, packed: Instr) -> WideInstruction {
-        if packed.is_wide() { self.wide[packed.wide_index()] } else { packed.as_wide() }
+    /// The opcode of the packed instruction `packed` of this function, without decoding its
+    /// operands.
+    #[inline(always)]
+    pub(crate) fn op_of(&self, packed: Instr) -> Op {
+        if packed.is_wide() { self.wide[packed.wide_index()].op() } else { packed.op() }
+    }
+
+    /// The fixed-width form of the packed instruction `packed` of this function: the one
+    /// decoder of the packed encoding every reader of the code takes.
+    #[inline(always)]
+    pub(crate) fn widened(&self, packed: Instr) -> WideInstruction {
+        widen(packed, &self.wide)
     }
 
     /// Whether a closure environment may hold local `slot`: the selective layout names it or,

@@ -27,12 +27,8 @@ pub(crate) fn admits(function: &Function) -> bool {
 
 fn has_backward_jump(function: &Function) -> bool {
     function.code.iter().enumerate().any(|(pc, &packed)| {
-        if packed.is_wide() {
-            let wide = function.wide[packed.wide_index()];
-            wide.op().immediate_role() == ImmediateRole::JumpTarget && wide.jump_target() as usize <= pc
-        } else {
-            packed.op().immediate_role() == ImmediateRole::JumpTarget && packed.jump_target() as usize <= pc
-        }
+        let instruction = function.widened(packed);
+        instruction.op().immediate_role() == ImmediateRole::JumpTarget && instruction.jump_target() as usize <= pc
     })
 }
 

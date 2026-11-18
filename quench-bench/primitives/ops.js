@@ -57,6 +57,7 @@ ops.arr_length = function (n) { const arr = [1, 2, 3, 4, 5]; let a = 0; for (let
 ops.arr_push = function (n) { let arr = []; for (let i = 0; i < n; i++) { arr.push(i); } return arr.length; };
 ops.typed_load = function (n) { const t = new Int32Array(256); for (let i = 0; i < 256; i++) t[i] = i; let a = 0; for (let i = 0; i < n; i++) { a = (a + t[i & 255]) | 0; } return a; };
 ops.typed_store_f64 = function (n) { const t = new Float64Array(256); for (let i = 0; i < n; i++) { t[i & 255] = i * 0.5; } return t[7]; };
+ops.typed_store_u8c = function (n) { const t = new Uint8ClampedArray(256); for (let i = 0; i < n; i++) { t[i & 255] = (i & 511) * 0.75 - 64; } return t[7] + t[200]; };
 function addOne(x) { return (x + 1) | 0; }
 // The object arrives as a parameter, so the front end cannot fold `o.y` to a constant.
 function fieldRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.y) | 0; } return a; }

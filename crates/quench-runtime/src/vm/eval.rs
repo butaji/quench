@@ -76,11 +76,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.in_native_env_realm(|vm| vm.eval_script_native_in_realm(p, args))
+    }
+
+    /// Runs `body` in the realm of the active native environment, when it has one, and
+    /// switches back after.
+    fn in_native_env_realm(&mut self, body: impl FnOnce(&mut Self) -> Result<Value, JsError>) -> Result<Value, JsError> {
         let previous_global = self
             .active_native_env()
             .filter(|global| self.object_data(*global).is_some())
             .map(|global| self.switch_realm_global(global));
-        let result = self.eval_script_native_in_realm(p, args);
+        let result = body(self);
         if let Some(previous_global) = previous_global {
             self.switch_realm_global(previous_global);
         }
@@ -182,15 +188,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let previous_global = self
-            .active_native_env()
-            .filter(|global| self.object_data(*global).is_some())
-            .map(|global| self.switch_realm_global(global));
-        let result = self.eval_native_in_realm(p, args);
-        if let Some(previous_global) = previous_global {
-            self.switch_realm_global(previous_global);
-        }
-        result
+        self.in_native_env_realm(|vm| vm.eval_native_in_realm(p, args))
     }
 
     fn eval_native_in_realm(

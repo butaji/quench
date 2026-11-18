@@ -143,8 +143,7 @@ impl Stage for Concrete {
     fn f64_to_f32(&mut self, a: u64) -> u64 { u64::from((f64::from_bits(a) as f32).to_bits()) }
     #[inline(always)]
     fn clamp_u8(&mut self, a: u64) -> u64 {
-        let number = f64::from_bits(a);
-        if number.is_nan() { 0 } else { u64::from(number.clamp(f64::from(u8::MIN), f64::from(u8::MAX)).round_ties_even() as u8) }
+        u64::from(crate::value::number_to_uint8_clamp(f64::from_bits(a)))
     }
     #[inline(always)]
     fn fill_window(&mut self, top: u64, undefined: u64, prefix: &[u64], passed: super::Passed<'_, u64>, registers: u16) {
