@@ -27,6 +27,12 @@ impl Regex {
 
     /// The range `find_ascii` finds, for a caller that observes no captures.
     pub fn find_range_ascii(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<Range<usize>>> {
+        // A pattern that is one literal run is one search for it (`LiteralRun`).
+        let complete = self.complete();
+        if let Some(finder) = complete.literal_run.finder(&complete.required_literal).filter(|_| !sticky) {
+            let rest = bytes.get(start..)?;
+            return Some(finder.find(rest).map(|at| start + at..start + at + finder.needle().len()));
+        }
         let program = match self.ascii_program(bytes, start, sticky)? {
             Some(program) => program,
             None => return Some(None),
