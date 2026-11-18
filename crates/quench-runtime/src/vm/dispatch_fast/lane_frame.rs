@@ -176,6 +176,13 @@ impl RecordPlan {
         Self { ops: [read, read], len: 1, records: 0, other: None, word: true, store: None, functions: false }
     }
 
+    /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
+    /// `IcOp::StringLength`), no record addressed before it.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn length(length: crate::staged::ic::IcOp<'static>) -> Self {
+        Self { ops: [length, length], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+    }
+
     /// `own_other` of a layout whose storage form `form` the row's site fixed.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn own_other_formed(layout: u32, form: u32, slot: u16, records: u64,
@@ -721,6 +728,10 @@ lane_handler! {
                 // and never holds an own constant again.
                 sibling!(super::refuse_own_constant_row::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { super::length_site(FLAG) } {
+                // Another receiver, or a form the row does not read: the general length reads.
+                sibling!(super::lane_get_length_other::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::cell_own_site(FLAG) } {
                 // The record moves on as the site's tier decides, which rebinds the hint.
                 sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(script, view))
@@ -857,6 +868,14 @@ lane_handler! {
                 let machine = unsafe { vm(script) };
                 let Some((object, watch, value)) = machine.own_constant_word_operands(i.call_link.get()) else { property_miss!() };
                 frame.plan = Some(RecordPlan::own_constant(object, watch, value));
+            } else if const { super::length_site(FLAG) } {
+                // A register's `length`: an array's or a string's, as the site's tier decided.
+                let machine = unsafe { vm(script) };
+                frame.plan = Some(RecordPlan::length(if const { FLAG == super::ARRAY_LENGTH_SITE } {
+                    crate::staged::ic::IcOp::ArrayLength { records: machine.heap.live_array_records() as u64 }
+                } else {
+                    crate::staged::ic::IcOp::StringLength { records: machine.heap.live_string_records() as u64 }
+                }));
             } else if const { FLAG == super::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };

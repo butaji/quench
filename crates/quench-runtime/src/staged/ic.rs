@@ -27,6 +27,12 @@ pub(crate) enum IcOp<'a> {
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.
     OwnConstant { record: u64, watch: u64, value: u64 },
+    /// A direct array's `length` from the receiver's word, its record among the array records
+    /// at `records` (`elements::array_length`); any other receiver or form misses.
+    ArrayLength { records: u64 },
+    /// A flat string's `length` from the receiver's word, its record among the string records
+    /// at `records` (`string_length::string_length`); any other receiver or form misses.
+    StringLength { records: u64 },
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
@@ -101,6 +107,14 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
             IcOp::Held { guard, watch, value } => return holder_read(stage, at.record, guard, watch, value, miss),
             IcOp::OwnConstant { record, watch, value } => return own_constant_read(stage, at.record, record, watch, value, miss),
+            IcOp::ArrayLength { records } => {
+                let records = site_word(stage, records);
+                return super::elements::array_length(stage, records, at.record, miss);
+            }
+            IcOp::StringLength { records } => {
+                let records = site_word(stage, records);
+                return super::string_length::string_length(stage, records, at.record, miss);
+            }
             IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
         }
     }
@@ -146,6 +160,14 @@ pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u6
     let zero = stage.constant(0);
     let value = stage.site(value);
     Some(stage.add_imm(zero, value))
+}
+
+/// The per-site operand `bits` as a word (a record table's base the row names).
+#[inline(always)]
+fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
+    let zero = stage.constant(0);
+    let bits = stage.site(bits);
+    stage.add_imm(zero, bits)
 }
 
 /// The value the string hint `(watch, value)` records for the receiver word `word`: `None`

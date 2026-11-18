@@ -7638,6 +7638,12 @@ pub(super) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
 pub(super) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
 pub(super) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
 
+/// The site facts of a register's `length`: an array's (`IcOp::ArrayLength`) and a string's
+/// (`IcOp::StringLength`); a miss takes `lane_get_length_other`.
+pub(super) const ARRAY_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 9);
+pub(super) const STRING_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 10);
+pub(super) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
+
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
@@ -7667,7 +7673,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(super) const fn own_site_decodes(site: u8) -> bool {
-    if held_site(site) || site == STRING_SITE || inherited_site(site) || own_constant_site(site) { return false; }
+    if held_site(site) || site == STRING_SITE || inherited_site(site) || own_constant_site(site) || length_site(site) { return false; }
     let form = own_site_form(site);
     form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
         && form != crate::value_vec::NARROW_FORM)
@@ -8049,7 +8055,7 @@ script_handler! {
                 && crate::bytecode::FieldBase(i.b).register_index().is_some()
                 && i.b != crate::bytecode::FieldBase::NESTED
             {
-                lane_get_length::<H>
+                lane_row::<H, FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE>
             } else {
                 lane_get_field::<H>
             };
@@ -8066,45 +8072,23 @@ script_handler! {
 }
 
 script_handler! {
-    /// `GetField` of `length` from a register (`lane_get_field_first`): an array's own
-    /// `length` (`Vm::array_length_field`, which `lane_get_field` answers for an array
-    /// after a probe that cannot hit) inline; any other receiver takes `lane_get_field`.
-    fn lane_get_length<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).array_length_value(r.get(i.b)) else {
-            sibling!(lane_get_length_other::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, length);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_length` of a receiver other than an array, which the general cached read
-    /// does not answer: a string primitive's length (`Vm::string_length`) here, and any
-    /// other receiver past `lane_get_length_arguments`.
+    /// The generated `length` row's miss (`ARRAY_LENGTH_SITE`, `STRING_LENGTH_SITE`): an array
+    /// in a form the row does not read (`Vm::array_length_value`), a string primitive's length
+    /// (`Vm::string_length`), whose site then takes the string row, and any other receiver past
+    /// `lane_get_length_arguments`.
     #[inline(never)]
     fn lane_get_length_other<>(cx, r, ip, i, view) {
-        let Some(length) = (unsafe { vm(cx) }).string_length(r.get(i.b)) else {
+        let vm = unsafe { vm(cx) };
+        if let Some(length) = vm.array_length_value(r.get(i.b)) {
+            r.set(i.a, length);
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
+        let Some(length) = vm.string_length(r.get(i.b)) else {
             sibling!(lane_get_length_arguments::<H>, r, ip, Carried::script_in(cx, view))
         };
         // A site that reads a string's length mostly reads strings, as a scan over one does.
-        requicken::<H>(ip, lane_get_length_string::<H>);
+        requicken::<H>(ip, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE>);
         r.set(i.a, Value::length(length));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_length` at a site that read a string's length (`lane_get_length_other`):
-    /// a string's length here; any other receiver, an array's included, takes
-    /// `lane_get_length` out of line, which keeps this one's registers to the string.
-    fn lane_get_length_string<>(cx, r, ip, i, view) {
-        // The staged row (`staged::string_length`), as compiled code reads it; a rope, a slice
-        // or a small string takes the units' count.
-        let Some(length) = (unsafe { vm(cx) }).string_length_value(r.get(i.b)) else {
-            sibling!(lane_get_length::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -8155,7 +8139,7 @@ script_handler! {
     fn lane_get_length_typed<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let Some(length) = vm.typed_array_geometry_read_inline(r.get(i.b), vm.length_atom) else {
-            sibling!(lane_get_length::<H>, r, ip, view)
+            sibling!(lane_row::<H, FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE>, r, ip, view)
         };
         r.set(i.a, length);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
