@@ -222,14 +222,17 @@ fn store_environment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: 
     Step::Value(value)
 }
 
-/// `ForInNext`: the VM's next key, or `Value::DELETED` where none is left, which takes the jump.
+/// `ForInNext`: the VM's next key, or `Value::DELETED` where none is left, which takes the jump. An
+/// exhausted step writes nothing: the destination keeps the word it held, as the general step leaves it.
 #[inline(always)]
 fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     state: Register) -> Step<S::Word, F::Control> {
     match frame.vm_step(stage, CallOut::ForInNext { state }, Some(destination)) {
         Some((key, fact)) => {
-            frame.write(stage, destination, key, fact);
             let exhausted = stage.eq_imm(key, Value::DELETED.to_bits());
+            let kept = frame.tagged(stage, destination);
+            let word = stage.select(exhausted, kept, key);
+            frame.write(stage, destination, word, fact);
             Step::Control(frame.branch(stage, exhausted))
         }
         None => Step::Unresolved,
