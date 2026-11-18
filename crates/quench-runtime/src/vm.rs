@@ -2631,6 +2631,7 @@ impl<H: Host> Vm<H> {
 
     fn report_execution(&mut self, program: &ResidualProgram) {
         self.report_bytecode();
+        self.report_lane_plan();
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.report();
         #[cfg(feature = "profile-memory")]
