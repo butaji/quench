@@ -240,9 +240,10 @@ impl<'a> Graph<'a> {
         self.accesses - 1
     }
 
-    fn inc_dec(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
-        let step = if instruction.boolean_flag()? { -1 } else { 1 };
-        Some(match *file.get(usize::from(instruction.register_b()))? {
+    /// `source ± 1` (`IncDec`, `Number(IncDec)` of the staged row).
+    fn inc_dec(&mut self, source: Register, decrement: bool, file: &[Sym]) -> Option<Sym> {
+        let step = if decrement { -1 } else { 1 };
+        Some(match *file.get(usize::from(source))? {
             Sym::Affine(register, offset) => Sym::Affine(register, offset.checked_add(step)?),
             Sym::Const(value) => Sym::Const(value + f64::from(step)),
             other => self.node(SymOp::Arith(NumberArithmetic::Add), other, Sym::Const(f64::from(step)))?,
@@ -275,9 +276,10 @@ impl<'a> Graph<'a> {
         (!*self.written.get(usize::from(register))?).then_some(Sym::Field(register, atom))
     }
 
-    fn get_index(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<Sym> {
-        let base = self.base(self.operand(file, instruction.operand_b())?)?;
-        let index = Self::index(self.operand(file, instruction.operand_c())?)?;
+    /// `base[key]` (`ElementRead` of the staged row).
+    fn get_index(&mut self, base: Register, key: crate::bytecode::Operand, file: &[Sym]) -> Option<Sym> {
+        let base = self.base(*file.get(usize::from(base))?)?;
+        let index = Self::index(self.operand(file, key)?)?;
         // A second read of an element no store came between reads the first's column.
         let same = |&&(id, order): &&(u16, u16)| {
             matches!(self.nodes[usize::from(id)].0, SymOp::Load { base: b, index: i } if b == base && i == index)
@@ -293,10 +295,11 @@ impl<'a> Graph<'a> {
         Some(node)
     }
 
-    fn set_index(&mut self, instruction: WideInstruction, file: &[Sym]) -> Option<()> {
-        let value = self.arith_operand(*file.get(usize::from(instruction.a()))?)?;
-        let base = self.base(*file.get(usize::from(instruction.b()))?)?;
-        let index = Self::index(*file.get(usize::from(instruction.c()))?)?;
+    /// `base[key] = stored` (`ElementWrite` of the staged row).
+    fn set_index(&mut self, stored: Register, base: Register, key: Register, file: &[Sym]) -> Option<()> {
+        let value = self.arith_operand(*file.get(usize::from(stored))?)?;
+        let base = self.base(*file.get(usize::from(base))?)?;
+        let index = Self::index(*file.get(usize::from(key))?)?;
         let order = self.access();
         self.stores.push((base, index, value, order));
         Some(())
@@ -308,17 +311,27 @@ impl<'a> Graph<'a> {
         if writes_local(instruction) {
             return Err(());
         }
-        let value = match instruction.op().class() {
-            Class::LoadConst => self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const),
-            Class::Move => file.get(usize::from(instruction.register_b())).copied(),
-            Class::LoadCapture => Some(Sym::Capture(instruction.imm())),
-            Class::GetField => self.field(instruction),
-            Class::IncDec => self.inc_dec(instruction, file),
-            Class::GetIndex => self.get_index(instruction, file),
-            Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
-            Class::SetIndex => return self.set_index(instruction, file).map(|()| None).ok_or(()),
-            Class::Nop => return Ok(None),
-            _ => None,
+        // The staged row decides what the instruction means where it has one; the opcode arms
+        // below are the operations the staged decoder does not yet express (`LoadConst` needs the
+        // tier's typed constants, `Binary` decodes register operands only, `NumericAdd` and
+        // `NumericMultiply` have no staged decoder, `Nop` decodes to nothing).
+        let value = match staged_operation(instruction) {
+            Some(crate::staged::Operation::Move { source, .. }) => file.get(usize::from(source)).copied(),
+            Some(crate::staged::Operation::LoadCapture { .. }) => Some(Sym::Capture(instruction.imm())),
+            Some(crate::staged::Operation::GetField { .. }) => self.field(instruction),
+            Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { source, decrement, .. })) => {
+                self.inc_dec(source, decrement, file)
+            }
+            Some(crate::staged::Operation::ElementRead { base, key }) => self.get_index(base, key, file),
+            Some(crate::staged::Operation::ElementWrite { value, base, key }) => {
+                return self.set_index(value, base, key, file).map(|()| None).ok_or(());
+            }
+            _ => match instruction.op().class() {
+                Class::LoadConst => self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const),
+                Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
+                Class::Nop => return Ok(None),
+                _ => None,
+            },
         };
         value.map(Some).ok_or(())
     }
@@ -356,9 +369,15 @@ fn shifted(kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
     }
 }
 
+/// The staged operation `instruction` denotes, if its decoder has one (`Operation::decode`).
+fn staged_operation(instruction: WideInstruction) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode(instruction, crate::staged::DecodeContext::EMPTY)
+}
+
 /// Whether `instruction` writes a numeric local besides its result, which no kernel models.
 fn writes_local(instruction: WideInstruction) -> bool {
-    !matches!(instruction.op().class(), Class::SetIndex | Class::Nop) && instruction.numeric_local_target().is_some()
+    let stores = matches!(staged_operation(instruction), Some(crate::staged::Operation::ElementWrite { .. }));
+    !stores && !matches!(instruction.op().class(), Class::Nop) && instruction.numeric_local_target().is_some()
 }
 
 /// The registers `body` writes.
