@@ -4,7 +4,7 @@
 
 use crate::bytecode::Class;
 use super::{
-    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
+    admitted_store, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, is_move_row, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
     InlineFrame, InlineGuard, LoopRegion, Op, Origin, Register, RegisterSet, WideInstruction, CALLEE_CAPTURE,
     MAX_INLINE_PARAMS, MAX_REGION_FIELDS,
@@ -106,7 +106,7 @@ pub(super) fn bound_parameters(
         body(callee, reached).all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
         let argument = window + parameter;
         let moved = run.iter().rposition(|instruction| instruction.defined_register() == Some(argument))?;
-        (run[moved].op().is_move() && !defines(run[moved].register_b())).then_some(())?;
+        (is_move_row(run[moved]) && !defines(run[moved].register_b())).then_some(())?;
         bound[usize::from(parameter)] = Some(run[moved].register_b());
         dropped.insert(first + moved as u32, ());
     }

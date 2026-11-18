@@ -34,6 +34,7 @@ use crate::bytecode::{
 };
 use crate::compile::liveness::RegisterSet;
 use crate::value::Value;
+use crate::staged::{DecodeContext, Operation};
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
 use super::typed_ir::Type;
@@ -480,7 +481,7 @@ fn tagged_registers_with_failure(
     let numeric_uses: std::collections::BTreeSet<Register> = instructions
         .iter()
         .copied()
-        .filter(|instruction| !instruction.op().is_move())
+        .filter(|instruction| !is_move_row(*instruction))
         .flat_map(number_reads)
         .collect();
     let mut tagged: std::collections::BTreeSet<Register> = instructions
@@ -516,7 +517,7 @@ fn tagged_registers_with_failure(
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.
-        .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| is_truthiness_row(**instruction)).filter_map(|instruction| {
             let value = instruction.register_a();
             field_reads_alone_define(instructions, value).then_some(value)
         }))
@@ -556,7 +557,7 @@ fn tag_definition(instruction: WideInstruction, offset: usize, (constants, heade
     let Some(result) = number_definition(instruction) else {
         return Ok(());
     };
-    if instruction.op().is_move() {
+    if is_move_row(instruction) {
         let source = instruction.register_b();
         if tagged.contains(&result) || tagged.contains(&source) {
             tagged.insert(result);
@@ -648,7 +649,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
             return false;
         }
         let numeric_move_alias = instructions.iter().any(|candidate| {
-            candidate.op().is_move()
+            is_move_row(*candidate)
                 && candidate.register_b() == value
                 && numeric_uses.contains(&candidate.result_register())
         });
@@ -662,7 +663,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
         else {
             break;
         };
-        if !definition.op().is_move() {
+        if !is_move_row(*definition) {
             break;
         }
         moved_argument = true;
@@ -991,7 +992,7 @@ pub(super) fn inline_region<'a>(
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
         let definition = caller[read_offset];
-        let capture = (definition.op().is_load_capture()
+        let capture = (is_load_capture_row(definition)
             && definition.capture_depth() == 0 && definition.result_flags() == 0)
             .then(|| definition.capture_slot());
         let mut callee_path = if capture.is_some() { None } else {
@@ -1604,7 +1605,7 @@ fn admit_lifetime_roles(
             } else {
                 let offset = definition.checked_sub(flow.entry_count())?;
                 let instruction = *flow.instructions.get(offset)?;
-                if !instruction.op().is_move() || instruction.result_flags() != 0 {
+                if !is_move_row(instruction) || instruction.result_flags() != 0 {
                     return None;
                 }
                 array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)?
@@ -2109,7 +2110,7 @@ fn admit_register_roles(
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     let stored: std::collections::BTreeSet<u16> = instructions.iter()
-        .filter(|instruction| instruction.op().is_store_capture() && instruction.capture_depth() == 0)
+        .filter(|instruction| is_store_capture_row(**instruction) && instruction.capture_depth() == 0)
         .map(|instruction| instruction.capture_slot())
         .collect();
     let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
@@ -2172,7 +2173,7 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        opcode if opcode.is_move() => {
+        _ if is_move_row(instruction) => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2262,7 +2263,7 @@ fn admit(
         }
         // The lane stores through the binding's own store, and a binding it does not take
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
-        opcode if opcode.is_store_capture() => {
+        _ if is_store_capture_row(instruction) => {
             let value = instruction.register_a();
             admit_stored(admission, value, tagged, defined_registers)?;
         }
@@ -2338,7 +2339,7 @@ fn admit(
                 admission.source(instruction.operand_c())?;
             }
         }
-        opcode if opcode.is_truthiness_jump() => {
+        _ if is_truthiness_row(instruction) => {
             let register = instruction.register_a();
             // A tagged value's truthiness is decided natively where the value alone
             // decides it; any other value exits.
@@ -2465,7 +2466,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if instruction.op().is_move() || instruction.op().is_truthiness_jump()
+    let expected = if is_move_row(instruction) || is_truthiness_row(instruction)
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {
@@ -2491,6 +2492,27 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         reads.push((instruction.register_a(), expected));
     }
     reads
+}
+
+/// Whether `instruction` is a register move, by its staged row (`Operation::Move`).
+fn is_move_row(instruction: WideInstruction) -> bool {
+    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::Move { .. }))
+}
+
+/// Whether `instruction` jumps on its register's truthiness, by its staged row (`Operation::JumpIf`).
+fn is_truthiness_row(instruction: WideInstruction) -> bool {
+    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::JumpIf { .. }))
+}
+
+/// Whether `instruction` stores to a capture, by its staged row (`Operation::StoreCapture`).
+fn is_store_capture_row(instruction: WideInstruction) -> bool {
+    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::StoreCapture { .. }))
+}
+
+/// Whether `instruction` reads a capture, by its staged row (`Operation::LoadCapture`, which the
+/// row decodes only where the instruction has no result flags).
+fn is_load_capture_row(instruction: WideInstruction) -> bool {
+    matches!(Operation::<(), ()>::decode(instruction, DecodeContext::EMPTY), Some(Operation::LoadCapture { .. }))
 }
 
 /// The value register an instruction defines, numeric or tagged.
