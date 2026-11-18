@@ -1775,7 +1775,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
             Some(Cell::Function(_)) | None => Ok(false),
-            Some(Cell::Array { .. } | Cell::Promise(_) | Cell::Collection(_)) => {
+            Some(Cell::Array { .. } | Cell::Promise(_)) => {
                 unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
             }
             _ if self.is_array(p, value)? => {
@@ -1809,8 +1809,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::WasmTable { .. }) => {
                 self.json_serialize_object(p, value, state).map(|()| true)
             }
-            Some(Cell::Iterator(_))
-            | Some(Cell::ArrayFromAsyncState(_))
+            Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::AwaitState(_))
             | Some(Cell::PromiseResolvingState { .. })
             | Some(Cell::WasmElements(_))

@@ -251,29 +251,19 @@ impl Heap {
         self.get(value)?.object()
     }
 
-    /// An iterator, in its record or in a slot (`IteratorRecord`).
+    /// An iterator's record (`IteratorRecord`).
     #[inline(always)]
     pub(crate) fn iterator(&self, value: Value) -> Option<&IteratorRecord> {
-        if let Some(record_id) = value.direct_iterator_index() {
-            // SAFETY: a direct-iterator Value names an initialized iterator record.
-            return Some(unsafe { self.iterator_records.get_live(record_id) });
-        }
-        match self.get(value)? {
-            Cell::Iterator(iterator) => Some(iterator),
-            _ => None,
-        }
+        let record_id = value.direct_iterator_index()?;
+        // SAFETY: a direct-iterator Value names an initialized iterator record.
+        Some(unsafe { self.iterator_records.get_live(record_id) })
     }
 
     /// `iterator`, mutably, past the write barrier.
     #[inline(always)] pub(crate) fn iterator_mut(&mut self, value: Value) -> Option<&mut IteratorRecord> {
-        if let Some(record_id) = value.direct_iterator_index() {
-            // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) });
-        }
-        match self.get_mut(value)? {
-            Cell::Iterator(iterator) => Some(iterator),
-            _ => None,
-        }
+        let record_id = value.direct_iterator_index()?;
+        // SAFETY: direct-iterator Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.iterator_records.get_live_mut(record_id, &self.properties) })
     }
 
     /// A promise, in its record or in a slot (`PromiseCell`).

@@ -711,7 +711,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::DataView { .. }
             | Cell::WeakRef { .. }
             | Cell::FinalizationRegistry { .. }
-            | Cell::Iterator { .. }
             | Cell::Proxy { .. }
             | Cell::ArrayFromAsyncState(_)
             | Cell::AwaitState(_)
@@ -739,10 +738,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
-            Cell::Collection(collection) => match &collection.entries {
-                CollectionStorage::Map(entries) => entries.capacity() * size_of::<(Value, Value)>(),
-                CollectionStorage::Set(entries) => entries.capacity() * size_of::<Value>(),
-            },
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
             Cell::BigInt(value) => value.spilled_bytes(),

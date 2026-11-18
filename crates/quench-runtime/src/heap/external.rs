@@ -14,7 +14,6 @@ impl Cell {
     pub(super) fn payload_bytes(&self) -> usize {
         match self {
             Self::Array { object } => array_payload_bytes(object),
-            Self::Collection(collection) => collection.entries.payload_bytes(),
             cell => cell.external_bytes(),
         }
     }

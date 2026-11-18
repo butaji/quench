@@ -4189,8 +4189,7 @@ impl IteratorExt {
 }
 
 /// A Map or a Set: its ordinary object and its entries. The heap keeps it in the collection
-/// record family (`Heap::map_entries`, `Heap::set_entries`); a heap whose record range is
-/// unavailable boxes it in a `Cell::Collection` slot.
+/// record family (`Heap::map_entries`, `Heap::set_entries`).
 #[derive(Clone, Debug)]
 pub(crate) struct CollectionRecord {
     pub(crate) object: Object,
@@ -4228,8 +4227,7 @@ impl CollectionRecord {
 }
 
 /// An iterator object: built-in iterators, iterator helpers and generators. The heap keeps
-/// it in the iterator record family (`Heap::iterator`); a heap whose record range is
-/// unavailable boxes it in a `Cell::Iterator` slot.
+/// it in the iterator record family (`Heap::iterator`).
 #[derive(Clone, Debug)]
 pub(crate) struct IteratorRecord {
     pub(crate) object: Object,
@@ -4436,8 +4434,6 @@ pub(crate) enum Cell {
         buffer: Value,
         length: ViewLength,
     },
-    /// A Map or a Set where no collection record is available (`CollectionRecord`).
-    Collection(Box<CollectionRecord>),
     ShadowRealm {
         object: Box<Object>,
         caller_global: Value,
@@ -4460,8 +4456,6 @@ pub(crate) enum Cell {
         callback: Value,
         entries: Box<FinalizationEntries>,
     },
-    /// An iterator where no iterator record is available (`IteratorRecord`).
-    Iterator(Box<IteratorRecord>),
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     AwaitState(Box<AwaitState>),
     Proxy {
@@ -4620,16 +4614,11 @@ impl Cell {
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",
             Self::DataView { .. } => "data_view",
-            Self::Collection(record) => match record.entries {
-                CollectionStorage::Map(_) => "map",
-                CollectionStorage::Set(_) => "set",
-            },
             Self::ShadowRealm { .. } => "shadow_realm",
             Self::WeakMap { .. } => "weak_map",
             Self::WeakSet { .. } => "weak_set",
             Self::WeakRef { .. } => "weak_ref",
             Self::FinalizationRegistry { .. } => "finalization_registry",
-            Self::Iterator(_) => "iterator",
             Self::ArrayFromAsyncState(_) => "array_from_async_state",
             Self::AwaitState(_) => "await_state",
             Self::Proxy { .. } => "proxy",
@@ -4680,7 +4669,6 @@ impl Cell {
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
             Self::Function(function) => function.program().into_iter().for_each(&mut visit),
-            Self::Iterator(iterator) => iterator.program_references(&mut visit),
             Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}
         }

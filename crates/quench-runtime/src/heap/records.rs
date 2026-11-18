@@ -33,8 +33,12 @@ pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
 pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
+/// Iterators: records only, with no legacy-slot fallback. The space keeps the default capacity
+/// (`RECORD_SPACE_CAPACITY`), which the prototype links (`PROTO_ITERATOR_RECORD_BASE`) assume.
 pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
-/// Maps and Sets: records of an object and its entries, in a slot when this is full.
+/// Maps and Sets: records of an object and its entries, with no legacy-slot fallback. The space
+/// keeps the default capacity (`RECORD_SPACE_CAPACITY`), which the prototype links
+/// (`PROTO_COLLECTION_RECORD_BASE`) assume.
 pub(super) type CollectionRecordSpace = RecordSpace<CollectionRecord>;
 /// Environments have no legacy-slot fallback, so their space holds as many records as the
 /// legacy slots do (`MAX_HEAP_CELLS`).

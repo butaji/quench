@@ -531,7 +531,7 @@ pub(crate) struct Heap {
     promise_records: PromiseRecordSpace,
     await_records: AwaitRecordSpace,
     iterator_records: IteratorRecordSpace,
-    /// Maps and Sets: an object and its entries, in a slot when this is full (`alloc_map`).
+    /// Maps and Sets: an object and its entries, with no legacy-slot form (`alloc_map`).
     collection_records: CollectionRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
@@ -1358,24 +1358,6 @@ impl Heap {
                 }
                 Err(promise) => Cell::Promise(Box::new(promise)),
             },
-            Cell::Iterator(iterator) => match self.iterator_records.try_insert(*iterator) {
-                Ok(record_id) => {
-                    let value = Value::direct_iterator(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(iterator) => Cell::Iterator(Box::new(iterator)),
-            },
-            Cell::Collection(collection) => match self.collection_records.try_insert(*collection) {
-                Ok(record_id) => {
-                    let value = Value::direct_collection(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(collection) => Cell::Collection(Box::new(collection)),
-            },
             Cell::AwaitState(state) => match self.await_records.try_insert(*state) {
                 Ok(record_id) => return Value::direct_await(record_id),
                 Err(state) => Cell::AwaitState(Box::new(state)),
@@ -1762,11 +1744,34 @@ impl Heap {
         }
     }
 
-    /// `alloc(Cell::Iterator(..))` without boxing the iterator first: an iterator record
-    /// while one is free.
+    /// A new iterator record, admitted and charged as an object record is (`alloc_object_record`).
+    /// The iterator space holds as many records as `RECORD_SPACE_CAPACITY`, so a full space is a
+    /// panic, as for symbols.
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
-        self.alloc_object_record(iterator, |iterator| &iterator.object, |heap, iterator| heap.iterator_records.try_insert(iterator),
-            Value::direct_iterator, |iterator| Cell::Iterator(Box::new(iterator)))
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = iterator.object.allocated_extra_bytes();
+        self.admit_object_contents(&iterator.object);
+        self.mark_prototype(iterator.object.proto());
+        self.allocated += 1;
+        let Ok(record_id) = self.iterator_records.try_insert(iterator) else {
+            panic!("iterator records exhausted");
+        };
+        let value = Value::direct_iterator(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Iterator, "iterator", bytes);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
+    }
+
+    /// The aggregate profile's counts for a record allocated without a cell, as `alloc_cell`
+    /// counts a cell: its kind, its variant name, and the bytes it owns beyond its slot.
+    #[cfg(feature = "profile-aggregate")]
+    fn profile_record_allocation(&mut self, kind: CellKind, variant: &'static str, bytes: usize) {
+        self.gc_profile.allocated_kinds[kind as usize] += 1;
+        *self.allocated_variants.entry(variant).or_default() += 1;
+        self.gc_profile.allocated_payload_bytes[kind as usize] += bytes as u64;
+        self.gc_profile.allocated_size_buckets[kind as usize][crate::profile::size_bucket(bytes)] += 1;
     }
 
     /// Allocates `record`, an object kind with its own record space: admitted and charged as one
@@ -4786,10 +4791,6 @@ impl Heap {
                 object(value);
                 work.push(*buffer);
             }
-            Cell::Collection(collection) => {
-                object(&collection.object);
-                Self::collection_edges(&collection.entries, work);
-            }
             Cell::ShadowRealm {
                 object: value,
                 caller_global,
@@ -4810,10 +4811,6 @@ impl Heap {
                 object(value);
                 work.push(*callback);
                 work.extend(entries.iter().map(|entry| entry.held));
-            }
-            Cell::Iterator(iterator) => {
-                object(&iterator.object);
-                Self::iterator_edges(iterator, work);
             }
             Cell::AwaitState(state) => state.extend_roots(work),
             Cell::ArrayFromAsyncState(state) => {
@@ -5079,11 +5076,6 @@ impl Heap {
             | Cell::PromiseResolvingState { .. }
             | Cell::Promise(_) => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
-            Cell::Collection(collection) => match collection.entries {
-                CollectionStorage::Map(_) => CellKind::Map,
-                CollectionStorage::Set(_) => CellKind::Set,
-            },
-            Cell::Iterator { .. } => CellKind::Iterator,
             Cell::WeakMap { .. } => CellKind::WeakMap,
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
@@ -5125,7 +5117,6 @@ impl Heap {
                 Cell::Object(_)
                 | Cell::WasmObject { .. }
                 | Cell::ShadowRealm { .. }
-                | Cell::Iterator { .. }
                 | Cell::ArrayFromAsyncState(_)
                 | Cell::AwaitState(_)
                 | Cell::Proxy { .. }
@@ -5171,10 +5162,6 @@ impl Heap {
                 Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
-                Cell::Collection(collection) => match &collection.entries {
-                    CollectionStorage::Map(entries) => entries.capacity() * size_of::<(Value, Value)>(),
-                    CollectionStorage::Set(entries) => entries.capacity() * size_of::<Value>(),
-                },
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
                 Cell::Function(_) => size_of::<FunctionRecord>(),
@@ -5505,24 +5492,7 @@ impl Heap {
             environments.words += environment.slots.len();
         });
         let mut map_bytes = 0usize;
-        for slot in self.slots.iter() {
-            let Some(cell) = slot.cell.as_ref() else { continue };
-            cells += 1;
-            if let Cell::Collection(collection) = cell {
-                match &collection.entries {
-                    CollectionStorage::Map(entries) => {
-                        map_bytes += entries.payload_bytes();
-                        maps.words += 2 * entries.capacity();
-                        maps.take(entries.iter().flat_map(|(key, value)| [key, value]));
-                    }
-                    CollectionStorage::Set(entries) => {
-                        map_bytes += entries.payload_bytes();
-                        sets.words += entries.capacity();
-                        sets.take(entries.iter());
-                    }
-                }
-            }
-        }
+        cells += self.slots.iter().filter(|slot| slot.cell.is_some()).count();
         self.collection_records.for_each_live(|_, collection| {
             map_bytes += collection.entries.payload_bytes();
             match &collection.entries {
@@ -5552,11 +5522,7 @@ impl Heap {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
                 Cell::Object(_) => "object", Cell::Array { .. } => "array", Cell::Function(_) => "function",
-                Cell::Collection(collection) => match collection.entries {
-                    CollectionStorage::Map(_) => "map",
-                    CollectionStorage::Set(_) => "set",
-                },
-                Cell::Iterator(_) => "iter", Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
+                Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",
             };
