@@ -402,9 +402,13 @@ impl<H: Host> Vm<H> {
                 .map(|(shape, _)| shape),
         };
         if memoizes && let Some(shape) = memoized {
+            let shaped = !self.shape_is_dictionary(source_shape);
+            // SAFETY: a shaped source's shape lists each enumerable slot it holds
+            // (`shape_enumerable_slots`), which `property_get_shaped` reads with no bounds test.
             let Some(values) = slots
                 .iter()
-                .map(|(_, slot)| self.heap.property_get(data, *slot as usize))
+                .map(|(_, slot)| if shaped { unsafe { self.heap.property_get_shaped(data, *slot as usize) } }
+                    else { self.heap.property_get(data, *slot as usize) })
                 .collect::<Option<smallvec::SmallVec<[Value; PLAIN_COPY_INLINE_PROPERTIES]>>>()
             else {
                 return false;

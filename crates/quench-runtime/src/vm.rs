@@ -1838,7 +1838,9 @@ pub(crate) struct Vm<H> {
     weak_set_proto: Value,
     weak_ref_proto: Value,
     /// ECMAScript [[KeptAlive]] targets, held until the host ends a job turn.
-    kept_alive: Vec<RootId>,
+    /// The roots `keep_alive` holds until the job ends, by the kept value's bits: one lookup per
+    /// `new WeakRef`, where a scan of the list made N of them in one job cost O(N²).
+    kept_alive: rustc_hash::FxHashMap<u64, RootId>,
     finalization_registry_proto: Value,
     iterator_proto: Value,
     string_iterator_proto: Value,

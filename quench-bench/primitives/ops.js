@@ -103,4 +103,13 @@ ops.k_dist2 = function (n) { const pts = []; for (let i = 0; i < 64; i++) pts.pu
 ops.k_field_acc = function (n) { const p = { x: 0.5, y: 0.25 }; const dx = 0.125; for (let i = 0; i < n; i++) { p.x += dx; } return p.x + p.y; };
 ops.k_list_walk = function (n) { let head = null; for (let i = 63; i >= 0; i--) head = { val: i, next: head }; let s = 0, node = head; for (let i = 0; i < n; i++) { s = (s + node.val) | 0; node = node.next; if (node === null) node = head; } return s; };
 ops.k_vec_local = function (n) { const a = { x: 1.5, y: 2.5 }, b = { x: 0.25, y: 0.75 }; let s = 0; for (let i = 0; i < n; i++) { const c = { x: a.x + i, y: a.y + b.y }; s += c.x * b.x + c.y; } return s; };
+// Object spread of a typical state record with one field replaced (`{...state, n}`), the
+// immutable-update pattern of reducers and option merging: a copy of five fields.
+ops.obj_spread = function (n) { let state = { a: 1, b: 2, c: 3, d: 4, n: 0 }; for (let i = 0; i < n; i++) { state = { ...state, n: i }; } return state.n + state.a; };
+// Reads of `name` and `length` from plain objects (`user.name`, `{ length }`), the names a
+// function answers from its information: a plain object's are own data fields.
+function nameRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.name) | 0; } return a; }
+function lengthRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.length) | 0; } return a; }
+ops.field_name = function (n) { return nameRead(n, { id: 3, name: 4 }); };
+ops.field_length = function (n) { return lengthRead(n, { id: 3, length: 4 }); };
 globalThis.PRIMITIVE_OPS = ops;

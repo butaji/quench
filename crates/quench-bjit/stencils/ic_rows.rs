@@ -70,7 +70,7 @@ fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Opt
 fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let (_, record, records) = receiver::<GET_RECEIVER>(s, &mut stage, payload)?;
-    let at = Reached { record, shape: None, inline: None };
+    let at = Reached::bare(record);
     if HOLDER {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         ic::run(&mut stage, &ops, at, Some(records), ())

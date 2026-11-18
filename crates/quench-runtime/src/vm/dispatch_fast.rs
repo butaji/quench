@@ -1106,6 +1106,18 @@ impl LaneView {
         }
     }
 
+    /// The own-field hint of the field record at `pc`, as the whole auxiliary word
+    /// (`Object::hint_shape`) of the receiver it last answered: what a specializer guards in
+    /// one compare to read the record's storage form with no test (`NativeFieldLoad::formed`).
+    /// `None` where the record holds no own hint, or is no hinted field record.
+    pub(super) fn own_field_hint(&self, pc: usize) -> Option<u32> {
+        let pc = u32::try_from(pc).ok()?;
+        if !self.field_records.contains(&pc) { return None; }
+        // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
+        let shape = unsafe { (*self.records[pc as usize].get()).operand.field.shape };
+        (shape < HOLDER_HINT).then_some(shape)
+    }
+
     /// Clears the global-object hints of its by-name loads and stores: a global
     /// lexical name was declared (`Vm::note_global_lexical_names`).
     pub(super) fn clear_name_hints(&self) {
@@ -7844,7 +7856,12 @@ script_handler! {
             requicken::<H>(ip, lane_get_private_field::<H>);
             sibling!(lane_get_private_field::<H>, r, ip, Carried::script_in(cx, view))
         }
-        if vm.reads_function_info(i.imm()) {
+        // `name` reads take the own-field handlers: an own hit needs the receiver's exact shape
+        // to hold `name` as a data slot the general read recorded, which a function's unprepared
+        // `name` never is (it is no slot until `prepare_function_info_prototypes` makes it one),
+        // and every miss still reaches the general read, which prepares it. `user.name` then
+        // costs an own read, not the general probe.
+        if vm.reads_function_info(i.imm()) && i.imm() == vm.length_atom {
             // A register's `length` is most often an array's, which no function information
             // can answer.
             let handler: Handler = if i.imm() == vm.length_atom
@@ -7928,6 +7945,24 @@ script_handler! {
             if let Some(length) = vm.typed_array_geometry_read(receiver, vm.length_atom) {
                 requicken::<H>(ip, lane_get_length_typed::<H>);
                 r.set(i.a, length);
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            // A plain object's own `length` data slot (`{ length: n }`), as the site's primary
+            // entry recorded it; a miss takes the general read, which prepares function info.
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            if let Some(value) = vm.primary_own_field_hit(code, receiver, i.c) {
+                // A site that read a plain object's own `length` mostly reads such objects: it
+                // takes the own-field handler, whose misses still reach the general read.
+                if crate::bytecode::FieldBase(i.b).register_index().is_some() && i.b != crate::bytecode::FieldBase::NESTED {
+                    let own: Handler = if unsafe { (*cx).binding.object_base.is_null() } {
+                        lane_get_field_own::<H, false>
+                    } else {
+                        lane_get_field_own_bound::<H, false, HINTED_FORM>
+                    };
+                    requicken::<H>(ip, own);
+                }
+                r.set(i.a, value);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
             sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))

@@ -714,6 +714,26 @@ static double NOINL op_k_vec_local(long n) {
   return s;
 }
 
+struct state5 { int32_t a, b, c, d, n; };
+
+static double NOINL op_obj_spread(long n) {
+  int32_t N = (int32_t)n;
+  struct state5 *state = malloc(sizeof *state);
+  *state = (struct state5){1, 2, 3, 4, 0};
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct state5 *next = malloc(sizeof *next);
+    *next = *state;
+    next->n = i;
+    ESCAPE(next);
+    free(state);
+    state = next;
+  }
+  double r = state->n + state->a;
+  free(state);
+  return r;
+}
+
 struct triple { int32_t x, y, z; };
 
 static double NOINL op_alloc_literal(long n) {
@@ -817,7 +837,7 @@ static double NOINL op_k_str_build(long n) {
 
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
-  {"field_read", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
+  {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
   {"call_closure", op_call_closure}, {"call_method", op_call_method},
   {"empty", op_empty}, {"int_add", op_int_add}, {"int_add_noor", op_int_add_noor},
   {"int_sub", op_int_sub}, {"int_mul", op_int_mul}, {"int_mul_ovf", op_int_mul_ovf},
@@ -842,7 +862,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
   {"k_dist2", op_k_dist2}, {"k_field_acc", op_k_field_acc}, {"k_list_walk", op_k_list_walk}, {"k_vec_local", op_k_vec_local},
-  {"alloc_literal", op_alloc_literal}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
+  {"obj_spread", op_obj_spread}, {"alloc_literal", op_alloc_literal}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
 };
 

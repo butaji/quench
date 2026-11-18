@@ -121,8 +121,8 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let entry = self.entry()?;
         if self.is_receiver(owner) {
             let receiver = &entry.receiver;
-            return Some(Reached { record: stage.builder.use_var(receiver.object),
-                shape: Some(stage.builder.use_var(receiver.shape)), inline: Some(stage.builder.use_var(receiver.inline)) });
+            return Some(Reached { shape: Some(stage.builder.use_var(receiver.shape)), inline: Some(stage.builder.use_var(receiver.inline)),
+                ..Reached::bare(stage.builder.use_var(receiver.object)) });
         }
         let header = match owner {
             Owner::Temporary => {
@@ -133,7 +133,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
         };
-        Some(Reached { record: header.address, shape: Some(header.shape), inline: Some(header.inline) })
+        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, ..Reached::bare(header.address) })
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.

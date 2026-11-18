@@ -126,7 +126,14 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
     let loads = fast.loads();
     let lists = loads.iter().zip(pairs).map(|(load, pairs)| load_ops(load, pairs));
     match fast {
-        Fast::Single(load) => lists.map(|ops| std::iter::once(IcOp::GuardShape(load.shape)).chain(ops).collect()).collect(),
+        Fast::Single(load) => {
+            // An own read whose receivers' storage form the site observed guards the whole word.
+            let guard = match load.formed {
+                Some(word) if load.holder.is_none() && word & !crate::staged::ic::FORM_BITS == load.shape => IcOp::GuardFormed(word),
+                _ => IcOp::GuardShape(load.shape),
+            };
+            lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()
+        }
         _ => lists.collect(),
     }
 }
