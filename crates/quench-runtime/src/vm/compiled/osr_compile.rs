@@ -57,17 +57,104 @@ impl OsrFacts {
 /// 34 ms of a 733 ms run). Its facts are the observation's at the start, to which `watch`
 /// subscribes: a shape compaction or a slot widening meanwhile discards the code.
 pub(in crate::vm) struct PendingOsrRegion {
-    code: super::super::jit_backend::Pending<Result<Vec<u8>, NativeCompileRejection>>,
+    /// Its lowering's end, which a drop waits for: the lowering reads `directs` by pointer.
+    /// First, so it drops before them.
+    done: Option<super::super::jit_backend::Done>,
+    code: super::super::jit_backend::Pending<super::lane_compile::AssertSend<Option<LoopLowered>>>,
     watch: Rc<crate::code_dependencies::PublishedCode<()>>,
     header: u32,
-    clif: Option<String>,
     facts: OsrFacts,
     /// What a run of the code builds around it.
     crossing: super::Crossing,
     /// Where a run may re-enter the code mid-region.
     resumes: super::base_region::ResumeTable,
-    /// What its code owns of its calls (`CallCode`).
-    calls: CallCode,
+    /// What its code owns of its calls (`CallCode`): known at the start for a b-jit region, made
+    /// from the plan the lowering took (`directs`) for a Cranelift one.
+    calls: Option<CallCode>,
+    /// Per plan the lowering may take (`LoopInput`), its direct callees, which its code names.
+    directs: Vec<Box<[DirectCallee]>>,
+    /// The caller's registers and invalidation word, which a Cranelift region's `CallCode` takes.
+    call_frame: (u16, Invalidation),
+}
+
+/// What a loop region's lowering and code generation came to: the plan it took (an index of
+/// `PendingOsrRegion::directs`), the Stable facts and roots its code folded, its CLIF text where
+/// dumps are on, and its code.
+pub(in crate::vm) struct LoopLowered {
+    plan: usize,
+    stable: StableFacts,
+    roots: crate::folded_roots::FoldedRoots,
+    clif: Option<String>,
+    code: Result<Vec<u8>, NativeCompileRejection>,
+}
+
+/// One plan a loop region's lowering may take, owned (`loop_inputs`): its unit and entry
+/// words, the span it covers, its earlier leaves, the global reads and observed reads taken for
+/// it, and its direct calls by unit PC (pointers into `PendingOsrRegion::directs`).
+struct LoopInput {
+    unit: lane_unit::Unit,
+    entry_fields: Vec<Option<u32>>,
+    span: (usize, usize),
+    generic: Vec<usize>,
+    global_reads: crate::vm::global_facts::GlobalReads,
+    number_reads: Vec<super::facts::ObservedRead>,
+    sites: super::lane_region::DirectSites,
+}
+
+/// What the observation tells a loop region's lowering, owned (`Observation`'s borrowed parts).
+struct LoopFacts {
+    int_entries: Vec<(Register, crate::typed_ir::IntRange)>,
+    double_registers: Vec<Register>,
+    typed_captures: Vec<u16>,
+    int_captures: Vec<u16>,
+    frame_captures: Vec<(usize, usize)>,
+    entry_bounds: bool,
+}
+
+/// Everything a loop region's lowering reads, owned: it reads nothing of the VM, so it runs on
+/// the code generator's thread (`ResidualProgram::detached` for the program).
+struct LoopJob {
+    program: crate::bytecode::DetachedProgram,
+    plans: Vec<LoopInput>,
+    fields: Vec<Option<Vec<NativeFieldLoad>>>,
+    facts: LoopFacts,
+    isa: std::sync::Arc<dyn cranelift_codegen::isa::TargetIsa>,
+    function_id: u32,
+    helpers: LaneHelpers,
+    views: super::ElementViews,
+    tiers: &'static Tiers,
+    /// The names method caches held at the start, and the code's invalidation word, in a
+    /// specialized run (`VmFacts::held_atoms`).
+    held: Option<(crate::vm::method_cache::AtomBits, usize)>,
+}
+
+impl LoopJob {
+    /// Lowers the first plan that lowers (the inlined unit before the function's own) and
+    /// compiles its code; `None` where none lowers.
+    fn run(&self) -> Option<LoopLowered> {
+        let held = self.held.as_ref().map(|(names, invalidation)| super::HeldAtoms { names, invalidation: *invalidation });
+        let (index, lowered) = self.plans.iter().enumerate().find_map(|(index, plan)| {
+            super::lane_region::RegionSpecializer {
+                number_reads: &plan.number_reads, int_entries: &self.facts.int_entries, number_entries: &self.facts.double_registers,
+                typed_captures: &self.facts.typed_captures, int_captures: &self.facts.int_captures,
+                function_id: self.function_id, unit: &plan.unit, helpers: self.helpers, fields: &self.fields,
+                global_reads: &plan.global_reads, facts: VmFacts { tiers: self.tiers, held_atoms: held, ..VmFacts::STATIC }, generic: &plan.generic,
+                direct: &plan.sites, frame_captures: &self.facts.frame_captures, isa: &*self.isa,
+                entry_fields: &plan.entry_fields,
+                plan: super::lane_region::RegionPlan { entry_bounds: self.facts.entry_bounds,
+                    coverage: super::lane_region::Coverage::Loop { header: plan.span.0, backedge: plan.span.1, poll: true },
+                    completion: super::lane_region::Completion::Body, views: self.views,
+                },
+            }.specialize(&self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
+                .map(|lowered| (index, lowered))
+        })?;
+        let header = self.plans[index].span.0 as u32;
+        super::residuals::report_clif(header, &lowered.function);
+        let clif = native_dump_directory().map(|_| lowered.function.display().to_string());
+        let code = compile_native_function(lowered.function, &*self.isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()));
+        Some(LoopLowered { plan: index, stable: StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, ..StableFacts::default() },
+            roots: lowered.stable.roots, clif, code })
+    }
 }
 
 /// What a background loop-region compile came to.
@@ -334,48 +421,6 @@ pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
     reads
 }
 
-/// What lowers a loop's unit: the region specializer, the same plan a lane body and a static
-/// typed region use. A region it declines stays in the interpreter; there is no second
-/// lowering with its own facts, widenings and entry record.
-struct LoopPlanner<'a> {
-    observation: &'a Observation<'a>,
-    fields: &'a super::lane_region::FieldSites,
-    isa: &'a dyn cranelift_codegen::isa::TargetIsa,
-    program: &'a ResidualProgram,
-    function_id: u32,
-    helpers: LaneHelpers,
-    views: super::ElementViews,
-    tiers: &'static Tiers,
-    /// The names method caches hold now, in a specialized run (`VmFacts::held_atoms`).
-    stores: Option<super::HeldAtoms<'a>>,
-    /// By function PC, the callees each call site reached: the lowered unit calls them by their
-    /// entries (`unit_direct_calls`).
-    unit_calls: &'a [DirectCandidates],
-}
-
-impl LoopPlanner<'_> {
-    /// The function's own unit run over the loop is the general plan: a call inside it leaves
-    /// at the call's exact PC, with no callee inlined. The inlined unit is an optimization over
-    /// that plan, used only where the general plan declines; an inlined callee the region
-    /// cannot prove exactly then costs the region nothing but the inlining.
-    fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
-        unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, (header, backedge): (usize, usize),
-        generic: &[usize], direct: &super::lane_region::DirectSites) -> Option<super::lane_region::LoweredRegion> {
-        let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
-        super::lane_region::RegionSpecializer {
-            number_reads: &number_reads, int_entries: self.observation.int_entries, number_entries: self.observation.double_registers, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
-            function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, ..VmFacts::STATIC }, generic,
-            direct, frame_captures: self.observation.frame_captures, isa: self.isa,
-            entry_fields,
-            plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
-                coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
-                completion: super::lane_region::Completion::Body, views: self.views,
-            },
-        }.specialize(self.program).ok().filter(|lowered| self.views == super::ElementViews::Dense || lowered.hoists_arrays)
-    }
-}
-
 use crate::vm::compiled::tier_policy::REGION_CODE_BUDGET;
 /// The BaseJIT tier's answer for `region`: `Some(code)` where it builds or (under `--b-jit`) declines the
 /// region, `None` where Cranelift compiles it. A region BaseJIT builds skips Cranelift: every instruction has a lowering (`base_region::steps`).
@@ -398,42 +443,48 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
     let facts = OsrFacts { stable: StableFacts { globals: stable, holders, atoms, layouts, slots: slot_types, ..Default::default() },
         calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    let code = super::super::jit_backend::run_in_background(move || Ok(code));
-    Some(Some(PendingOsrRegion { code, watch, header: region.header, clif: None, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes, facts, calls }))
+    let code = super::super::jit_backend::run_in_background(move || super::lane_compile::AssertSend(Some(LoopLowered {
+        plan: 0, stable: StableFacts::default(), roots: Default::default(), clif: None, code: Ok(code) })));
+    let call_frame = (registers, calls.invalidation.clone());
+    Some(Some(PendingOsrRegion { done: None, code, watch, header: region.header, crossing: if bare { super::Crossing::Bare } else { super::Crossing::Lean }, resumes, facts,
+        calls: Some(calls), directs: Vec::new(), call_frame }))
 }
 
-/// Lowers the loop: the inlined unit where the region has one, else (or where that plan
-/// declines) the function's own unit over the loop. One plan lowers a loop, the region
-/// specializer, the same plan a lane body and a static typed region use; a region it declines
-/// stays in the interpreter, with no second lowering with its own facts, widenings and entry
-/// record. The plain unit calls the region's direct callees by their entries (`planner.direct`);
-/// the second value says it lowered, so that its code owns them.
-fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
+/// The plans a loop's lowering may take, in order: the inlined unit where the region has one,
+/// then the function's own unit over the loop. One plan lowers a loop, the region specializer,
+/// the same plan a lane body and a static typed region use; a region it declines stays in the
+/// interpreter, with no second lowering with its own facts, widenings and entry record. Each
+/// plan calls the region's direct callees by their entries (the second value, per plan: the code
+/// of the plan taken owns them).
+fn loop_inputs(program: &ResidualProgram, region: &LoopRegion, function_id: u32, observation: &Observation<'_>,
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads, widened: &[usize],
-) -> Option<(super::lane_region::LoweredRegion, Box<[DirectCallee]>)> {
-    let program = planner.program;
-    let mut plan = |unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, header: usize, backedge: usize, generic: &[usize], direct: &super::lane_region::DirectSites|
-        planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic, direct);
-    let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
-    inlined
-        .as_ref()
-        .and_then(|(unit, fields)| {
-            // A unit that inlined no frame calls its callees by their entries as the plain unit does:
-            // its leaves write no inlined registers, so the lane's scratch window is its callees' alone.
-            let (direct, sites) = if unit.frames.is_empty() { super::lane_facts::unit_direct_calls(unit, planner.unit_calls) } else { Default::default() };
-            plan(unit, fields.as_slice(), 0, unit.instructions.len().saturating_sub(1), &[], &sites).map(|lowered| (lowered, direct))
-        })
-        .or_else(|| {
-            let plain = loop_unit(program.function(planner.function_id as usize));
-            let (direct, sites) = super::lane_facts::unit_direct_calls(&plain, planner.unit_calls);
-            // The plain unit's PCs are the function's, which the site's leaves name.
-            plan(&plain, plain_entry_fields(region, program).as_slice(), region.header as usize, region.backedge as usize, widened, &sites)
-                .map(|lowered| (lowered, direct))
-        })
+    unit_calls: &[DirectCandidates]) -> (Vec<LoopInput>, Vec<Box<[DirectCallee]>>) {
+    let mut input = |unit: lane_unit::Unit, entry_fields: Vec<Option<u32>>, span: (usize, usize), generic: Vec<usize>, sites| {
+        let number_reads = observed_reads(program, &unit, observation.number_arrays, observation.abandoned, &generic);
+        let global_reads = global_reads(&unit, GlobalTable::Lane);
+        LoopInput { unit, entry_fields, span, generic, global_reads, number_reads, sites }
+    };
+    let (mut plans, mut directs) = (Vec::new(), Vec::new());
+    if let Some((unit, fields)) = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten() {
+        // A unit that inlined no frame calls its callees by their entries as the plain unit does:
+        // its leaves write no inlined registers, so the lane's scratch window is its callees' alone.
+        let (direct, sites) = if unit.frames.is_empty() { super::lane_facts::unit_direct_calls(&unit, unit_calls) } else { Default::default() };
+        let span = (0, unit.instructions.len().saturating_sub(1));
+        plans.push(input(unit, fields, span, Vec::new(), sites));
+        directs.push(direct);
+    }
+    let plain = loop_unit(program.function(function_id as usize));
+    let (direct, sites) = super::lane_facts::unit_direct_calls(&plain, unit_calls);
+    // The plain unit's PCs are the function's, which the site's leaves name.
+    plans.push(input(plain, plain_entry_fields(region, program), (region.header as usize, region.backedge as usize), widened.to_vec(), sites));
+    directs.push(direct);
+    (plans, directs)
 }
 
 /// Starts compiling `region`'s code over its entry's element `views` from `observation`, or
 /// `None` where it lowers no code (a typed plan hoisting no view would leave at an access).
+/// A Cranelift region is planned here and lowered on the code generator's thread with its code
+/// (`LoopJob`): lowering on the loop's own thread stalled it as compiling did.
 pub(in crate::vm) fn start_osr_region(
     region: &LoopRegion, views: super::ElementViews,
     observation: &Observation<'_>,
@@ -462,22 +513,24 @@ pub(in crate::vm) fn start_osr_region(
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone())) {
         return decided;
     }
-    // The calls' callees, by the sites that reached them: the lowered unit calls them by their entries.
-    let caller = program.function(function_id as usize);
-    let held = stores.map(|names| super::HeldAtoms { names, invalidation: invalidation.address() });
-    let planner = LoopPlanner { observation, fields: &fields, isa: &*isa, program, function_id, helpers, views, tiers, stores: held, unit_calls: &unit_calls };
-    let (lowered, direct) = lower_loop(&planner, region, global_reads, widened)?;
-    let function = lowered.function;
-    super::residuals::report_clif(region.header, &function);
-    let clif = native_dump_directory().map(|_| function.display().to_string());
-    let stable = StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, ..StableFacts::default() };
-    let calls = if !direct.is_empty() { CallCode::of((Vec::new(), direct, Vec::new()), caller.registers, invalidation) } else { CallCode::holding(invalidation) };
-    let facts = OsrFacts { roots: lowered.stable.roots, stable, calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
-    let code = super::super::jit_backend::run_in_background(move || {
-        compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
+    let (plans, directs) = loop_inputs(program, region, function_id, observation, global_reads, widened, &unit_calls);
+    // The functions the lowering reads: its own, its plans' inlined callees' and their direct callees'.
+    let functions: Vec<u32> = std::iter::once(function_id)
+        .chain(plans.iter().flat_map(|plan| plan.unit.frames.iter().map(|frame| frame.target.function)))
+        .chain(directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.target.function))).collect();
+    let facts = LoopFacts { int_entries: observation.int_entries.to_vec(), double_registers: observation.double_registers.to_vec(),
+        typed_captures: observation.typed_captures.to_vec(), int_captures: observation.int_captures.to_vec(),
+        frame_captures: observation.frame_captures.to_vec(), entry_bounds: observation.entry_bounds };
+    let job = super::lane_compile::AssertSend(LoopJob { program: program.detached(&functions), plans, fields, facts, isa, function_id, helpers, views, tiers,
+        held: stores.map(|names| (names.clone(), invalidation.address())) });
+    let (code, done) = super::super::jit_backend::run_in_background_guarded(move || {
+        let super::lane_compile::AssertSend(job) = job;
+        super::lane_compile::AssertSend(job.run())
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), calls })
+    let call_frame = (program.function(function_id as usize).registers, invalidation);
+    Some(PendingOsrRegion { done: Some(done), code, watch, header: region.header, facts: OsrFacts::observed(observation), crossing: super::Crossing::General,
+        resumes: super::base_region::ResumeTable::empty(), calls: None, directs, call_frame })
 }
 
 impl PendingOsrRegion {
@@ -490,9 +543,13 @@ impl PendingOsrRegion {
     }
 
     /// The watch a collection that frees any of the callees its code names retires, and those callees
-    /// (`ProgramStore::note_pending_native_calls`).
+    /// (`ProgramStore::note_pending_native_calls`): while it lowers, those of every plan it may take.
     pub(in crate::vm) fn native_calls(&self) -> (Rc<crate::code_dependencies::PublishedCode<()>>, Box<[crate::value::Value]>) {
-        (self.watch.clone(), self.calls.identities())
+        let identities = match &self.calls {
+            Some(calls) => calls.identities(),
+            None => self.directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.callee)).collect(),
+        };
+        (self.watch.clone(), identities)
     }
 
     /// Makes it stale where its code names shape ids, which a compaction renumbers.
@@ -500,15 +557,39 @@ impl PendingOsrRegion {
         if !self.facts.shape_dependencies.is_empty() { self.watch.retire(); }
     }
 
-    /// What its compile came to, or itself while its code compiles.
-    pub(in crate::vm) fn poll(self: Box<Self>) -> Result<OsrCompile, Box<Self>> {
-        let code = match self.code.poll() {
+    /// What its compile came to, or itself while its code lowers and compiles. A Cranelift
+    /// region's Stable facts and roots are its lowering's, which the watch takes here: a fact
+    /// that changed while it lowered (a method cache naming an atom it stores in place) fails
+    /// the subscription and the code is stale.
+    pub(in crate::vm) fn poll(mut self: Box<Self>, heap: &mut crate::heap::Heap, method_atoms: &mut crate::code_dependencies::CodeReaders)
+        -> Result<OsrCompile, Box<Self>> {
+        let lowered = match self.code.poll() {
             std::task::Poll::Pending => return Err(self),
             std::task::Poll::Ready(_) if !self.watch.is_published() => return Ok(OsrCompile::Stale),
-            std::task::Poll::Ready(Some(Ok(code))) => code,
+            std::task::Poll::Ready(Some(super::lane_compile::AssertSend(Some(lowered)))) => lowered,
             std::task::Poll::Ready(_) => return Ok(OsrCompile::Failed),
         };
-        let Self { header, clif, facts, crossing, resumes, calls, .. } = *self;
+        drop(self.done.take());
+        let LoopLowered { plan, stable, roots, clif, code } = lowered;
+        let Ok(code) = code else { return Ok(OsrCompile::Failed) };
+        let calls = match self.calls.take() {
+            Some(calls) => calls,
+            None => {
+                let (registers, invalidation) = self.call_frame.clone();
+                let direct = self.directs.get_mut(plan).map(std::mem::take).unwrap_or_default();
+                let calls = if direct.is_empty() { CallCode::holding(invalidation) } else { CallCode::of((Vec::new(), direct, Vec::new()), registers, invalidation) };
+                self.facts.roots = roots;
+                self.facts.stable = stable;
+                self.facts.calls = LaneDependencies::of(std::iter::empty(), &calls.direct);
+                self.watch.hold_roots(self.facts.roots.clone(), heap);
+                let watch: Rc<dyn crate::code_dependencies::DependentCode> = self.watch.clone();
+                if !self.facts.calls.subscribe(&self.facts.stable, &watch, heap, method_atoms) {
+                    return Ok(OsrCompile::Stale);
+                }
+                calls
+            }
+        };
+        let Self { header, facts, crossing, resumes, .. } = *self;
         let Some((memory, entry)) = publish_body(&code) else { return Ok(OsrCompile::Failed) };
         super::entry_cell::reserve_lane_scratch(calls.window());
         if let (Some(directory), Some(clif)) = (native_dump_directory(), clif) {

@@ -159,7 +159,7 @@ impl LoopTier {
             return true;
         }
         use super::super::compiled::OsrCompile;
-        match pending.poll() {
+        match pending.poll(&mut vm.heap, vm.method_cache_atoms.readers()) {
             Err(pending) => {
                 self.wait = site.tiers.lane_body.compile_poll_interval;
                 self.pending = Some(pending);
@@ -167,7 +167,12 @@ impl LoopTier {
             }
             Ok(OsrCompile::Done(region)) => self.publish(vm, region),
             Ok(OsrCompile::Stale) => {}
-            Ok(OsrCompile::Failed) => self.compilations = site.tiers.loops.max_compilations,
+            Ok(OsrCompile::Failed) => {
+                // A region that lowered no code (it is lowered off the loop's thread) or whose
+                // code failed retires the site, as one declined at the start does.
+                self.compilations = site.tiers.loops.max_compilations;
+                site.entering.set(false);
+            }
         }
         if site.diagnostics && self.is_published() {
             site.compile_successes.set(site.compile_successes.get().saturating_add(1));
