@@ -3746,6 +3746,31 @@ impl EnvironmentSlots {
         };
         self.0.get_mut(position)?.owned_mut()
     }
+    /// Appends the heap values `roots` yields (owned heap values, and the owner of each
+    /// shared slot) to `out`. A dense storage takes a branch-free compaction over its words:
+    /// a loop's per-iteration copy repeats every binding of its function, which the filtered
+    /// iterator decoded at ~20 Ir a slot.
+    #[inline]
+    pub(crate) fn extend_heap_roots(&self, out: &mut Vec<Value>) {
+        if self.0.marked() {
+            out.extend(self.roots().filter(|value| value.is_heap()));
+            return;
+        }
+        let slots: &[EnvironmentSlot] = &self.0;
+        out.reserve(slots.len());
+        let start = out.len();
+        let mut kept = 0;
+        for slot in slots {
+            let (value, heap) = slot.0.environment_slot_edge();
+            // SAFETY: `kept` never passes the slots read so far, so every write lands within
+            // the `slots.len()` values reserved past `start`.
+            unsafe { out.as_mut_ptr().add(start + kept).write(value) };
+            kept += usize::from(heap);
+        }
+        // SAFETY: the first `kept` values past `start` were written above.
+        unsafe { out.set_len(start + kept) };
+    }
+
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         // A sparse storage's index words are not values; its owner and slots are.
         let sparse = self.0.marked();

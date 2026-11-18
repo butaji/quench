@@ -394,6 +394,18 @@ impl Value {
     }
 
     /// The owner environment of a `shared_environment_slot`.
+    /// An environment slot word's edge for a collection, branch-free: the owner a shared
+    /// slot names, else the word itself; and whether that edge is a heap value.
+    #[inline(always)] pub(crate) fn environment_slot_edge(self) -> (Self, bool) {
+        // A shared slot is `TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT | payload`; its owner is
+        // `TAG_HEAP | payload`, one xor away.
+        const SHARED_PATTERN: u64 = TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT;
+        const TO_OWNER: u64 = TAG_DELETED ^ TAG_HEAP ^ SHARED_ENVIRONMENT_SLOT_BIT;
+        let shared = self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == SHARED_PATTERN;
+        let edge = self.0 ^ (TO_OWNER & (shared as u64).wrapping_neg());
+        (Self(edge), edge & TAG_MASK == TAG_HEAP)
+    }
+
     #[inline(always)] pub(crate) fn shared_environment_owner(self) -> Option<Self> {
         (self.0 & (TAG_MASK | SHARED_ENVIRONMENT_SLOT_BIT) == TAG_DELETED | SHARED_ENVIRONMENT_SLOT_BIT)
             .then_some(Self(TAG_HEAP | (self.0 & PAYLOAD_MASK & !SHARED_ENVIRONMENT_SLOT_BIT)))

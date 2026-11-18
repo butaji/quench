@@ -4756,7 +4756,7 @@ impl Heap {
                     work.push(*parent);
                 }
                 // Only heap values are edges: a slot's number or `undefined` costs a pop.
-                work.extend(slots.roots().filter(|value| value.is_heap()));
+                slots.extend_heap_roots(work);
                 let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
