@@ -1,65 +1,77 @@
 //! The lane's suspensions: `yield` and `yield*` of a generator the lane runs over its record's
-//! register file (`generator_windows`), and the `await` of a promise job's activation. Each
-//! suspends the activation in place; any other `yield` or `yield*`, a materialized generator
-//! frame's, takes the general path, which suspends the frame back into its generator.
+//! register file (`generator_windows`) or of an async generator's in-place request, and the
+//! `await` of a promise job's activation or a request's. Each runs its staged row on the lane's
+//! frame (`lane_frame::lane_suspension`), which suspends the activation in place
+//! (`lane_suspend_at`); any other `yield` or `yield*`, a materialized generator frame's, and any
+//! step the lane's frame declines take the general path, which suspends the frame back into its
+//! generator.
 use super::*;
-use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
-use super::async_requests::running_request;
-use super::lane_frame::lane_await_source;
+use super::lane_frame::{lane_await_source, lane_suspension, yield_star_kind, Suspender, LANE_YIELD};
 use super::super::activation::{JobRoot, SuspendKind};
+use crate::staged::{SuspendEffect, Suspending, Suspension};
 
 script_handler! {
-    /// `yield` of the generator activation the lane runs over its record (`running_generator`):
-    /// the frame suspends in place and the caller continues with the step's result
-    /// (`lane_yield_in_window`). The root of a native `next`'s run (`LaneRoot::Job` of a sync
-    /// generator) suspends into its record and ends the run with the yielded value
-    /// (`Vm::suspend_job_window`); an async generator's root parks likewise, its record awaiting
-    /// the value before the request settles (`Vm::suspend_async_generator_yield`). Any other
+    /// `yield` of a generator activation that suspends in place (`Suspender::of_yield`): a
+    /// window's frame suspends into its record and the caller continues with the step's result;
+    /// a request's parks, its record awaiting the value before the request settles; the root of
+    /// a job's run suspends into its record and ends the run (`lane_suspend_at`). Any other
     /// `yield` takes the general path.
     #[inline(never)]
     fn lane_yield<>(cx, r, ip, i, view) {
-        if running_generator(unsafe { vm(cx) }) {
-            resume!(cx, lane_yield_in_window(cx, r, ip, i))
-        }
-        if running_request(unsafe { vm(cx) }) {
-            resume!(cx, super::async_requests::lane_suspend_request(cx, r, ip, i, true))
-        }
-        if let LaneRoot::Job(job) = unsafe { (*cx).root }
-            && matches!(job.kind, SuspendKind::Generator | SuspendKind::AsyncGenerator)
-        {
-            let vm = unsafe { vm(cx) };
-            let mut value = r.get(i.b);
-            if job.kind == SuspendKind::AsyncGenerator {
-                // The yield awaits its value, converted as an `await`'s source is.
-                let Some(source) = lane_await_source(cx, r, value) else {
-                    return exit(ip);
-                };
-                value = source;
-                note_allocation(vm);
-            }
-            lane_suspend_job_root(cx, ip, i, job, value, true);
-        }
-        exit(ip)
+        let Some(suspender) = Suspender::of_yield(cx) else {
+            return exit(ip);
+        };
+        resume!(cx, lane_suspension(cx, r, ip, i, (LANE_YIELD, suspender)))
     }
 }
 
-/// Where a frame stopping at the `yield` or `await` record `i` at `ip` resumes: the pc after
-/// the record, and the register that takes the value it is resumed with. Every lane suspension
-/// (`lane_yield_in_window`, `lane_suspend_request`, `lane_suspend_job_root`) reads it here.
+/// The pc of the record at `ip` in the running view.
 #[inline(always)]
-pub(super) fn resume_point<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> (usize, crate::bytecode::Register) {
+fn record_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
     // SAFETY: the record lies in the running view.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    (pc + 1, i.a & crate::bytecode::REGISTER_MASK)
+    unsafe { ip.offset_from((*cx).base) as usize }
 }
 
-/// The activation a job's lane run is rooted in (`LaneRoot::Job`) stops at the record `i` at
-/// `ip` with `value`, a `yield` when `yielded`, else an `await`: its frame suspends into its
-/// owner as its kind does (`Vm::suspend_async_generator_yield` for an async generator's
-/// `yield`, `Vm::suspend_job_window` for the rest), the activation pops, and the run ends.
-fn lane_suspend_job_root<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, job: JobRoot, value: Value, yielded: bool) {
+/// Where a frame stopping at the `yield` or `await` record `i` at `ip` resumes: the pc after
+/// the record, and the register that takes the value it is resumed with (`lane_await`).
+#[inline(always)]
+fn resume_point<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> (usize, crate::bytecode::Register) {
+    (record_pc(cx, ip) + 1, i.a & crate::bytecode::REGISTER_MASK)
+}
+
+/// The suspension a row on the lane's frame makes of the record at `ip` (`suspending`), in place
+/// as `suspender` says: the frame resumes at this record (a `yield*` step,
+/// `Suspending::again`) or after it, with the value it is resumed with in the row's
+/// destination. A window's frame suspends into its generator and its caller takes the step's
+/// result (`generator_windows::lane_suspend_generator`); a request's parks
+/// (`async_requests::lane_suspend_request`); a job root's suspends into its owner and the run
+/// ends (`suspend_job_root`).
+pub(super) fn lane_suspend_at<H: Host>(cx: *mut LaneContext<H>, ip: Ip, suspender: Suspender, suspending: Suspending<u64>) -> Resumed {
+    let at = (record_pc(cx, ip) + usize::from(!suspending.again), suspending.destination);
+    let (value, yielded) = (Value::from_bits(suspending.value), suspending.effect == SuspendEffect::Yield);
+    match suspender {
+        Suspender::Window => {
+            let delegated = suspending.delegated.map(Value::from_bits);
+            super::generator_windows::lane_suspend_generator(cx, at.0, at.1, value, delegated)
+        }
+        Suspender::Request => super::async_requests::lane_suspend_request(cx, at, yielded, value),
+        Suspender::JobRoot(job) => {
+            // The converted value may be a fresh promise, which the safepoints after the run collect.
+            note_allocation(unsafe { vm(cx) });
+            suspend_job_root(cx, at, job, value, yielded);
+            Resumed::Exit(exit(ip))
+        }
+    }
+}
+
+/// The activation a job's lane run is rooted in (`LaneRoot::Job`) stops with `value`, a `yield`
+/// when `yielded`, else an `await`, resuming at `pc` with the value it is resumed with in
+/// `destination`: its frame suspends into its owner as its kind does
+/// (`Vm::suspend_async_generator_yield` for an async generator's `yield`,
+/// `Vm::suspend_job_window` for the rest), the activation pops, and the run ends.
+fn suspend_job_root<H: Host>(cx: *mut LaneContext<H>, (pc, destination): (usize, crate::bytecode::Register), job: JobRoot,
+    value: Value, yielded: bool) {
     let vm = unsafe { vm(cx) };
-    let (pc, destination) = resume_point(cx, ip, i);
     if yielded && job.kind == SuspendKind::AsyncGenerator {
         vm.suspend_async_generator_yield(job, pc, destination, value, 0);
     } else {
@@ -71,13 +83,16 @@ fn lane_suspend_job_root<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstr
 
 script_handler! {
     /// `yield*` of a generator activation the lane runs over its record
-    /// (`lane_yield_star_in_window`). Any other `yield*` takes the general step.
+    /// (`generator_windows::running_generator`), by its row on the lane's frame: the delegate's
+    /// result read where it is a plain iterator result, a delegate generator stepped in place,
+    /// and the result passed on as this generator's own yield. Any other `yield*` takes the
+    /// general step.
     #[inline(never)]
     fn lane_yield_star<>(cx, r, ip, i, view) {
-        if running_generator(unsafe { vm(cx) }) {
-            resume!(cx, lane_yield_star_in_window(cx, r, ip, i))
+        if !super::generator_windows::running_generator(unsafe { vm(cx) }) {
+            return exit(ip);
         }
-        exit(ip)
+        resume!(cx, lane_suspension(cx, r, ip, i, (yield_star_kind(i), Suspender::Window)))
     }
 }
 
@@ -113,7 +128,7 @@ script_handler! {
             resume!(cx, lane_await_settling(cx, r, ip, i))
         }
         if completion == Some(Completion::AsyncRequest) {
-            resume!(cx, super::async_requests::lane_suspend_request(cx, r, ip, i, false))
+            resume!(cx, lane_suspension(cx, r, ip, i, (Suspension::Await, Suspender::Request)))
         }
         // Only the job's own activation suspends into its owner.
         let (LaneRoot::Job(job), Some(Completion::ResumesJob)) = (unsafe { (*cx).root }, completion) else {
@@ -130,7 +145,7 @@ script_handler! {
             r.set(i.a & crate::bytecode::REGISTER_MASK, settled);
             next!(cx, r, following(ip), Carried::script(cx))
         }
-        lane_suspend_job_root(cx, ip, i, job, value, false);
+        suspend_job_root(cx, resume_point(cx, ip, i), job, value, false);
         exit(ip)
     }
 }

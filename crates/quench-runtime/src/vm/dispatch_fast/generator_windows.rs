@@ -5,7 +5,6 @@
 //! return completes the generator.
 use super::*;
 use super::super::activation::{FrameRecord, GeneratorRecord};
-use super::generator_yields::resume_point;
 
 impl Activation {
     /// What its caller's frame resumes with when the activation becomes a frame, as the register
@@ -330,7 +329,7 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
 /// `destination`, and the activation pops. The caller resumes with the step's result: the
 /// iterator result of a yield of `value`, or `passed_on`, a delegate's own result object.
 #[inline(never)]
-fn lane_suspend_generator<H: Host>(
+pub(super) fn lane_suspend_generator<H: Host>(
     cx: *mut LaneContext<H>,
     pc: usize,
     destination: crate::bytecode::Register,
@@ -395,41 +394,17 @@ fn lane_resume_generated<H: Host>(vm: &mut Vm<H>, activation: &Activation, memor
     lane_resume_after_call(activation, memory, result)
 }
 
-/// `yield` of the running generator activation (`running_generator`): the frame suspends in
-/// place, resuming after this record, and its caller continues with the step's result.
-pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
-    // The generator receives the next value in this record's A register.
-    let (pc, destination) = resume_point(cx, ip, i);
-    lane_suspend_generator(cx, pc, destination, r.get(i.b), None)
-}
-
-/// `yield*` of the running generator activation (`running_generator`): a step of a delegate
-/// generator made in place as an activation whose fresh result waits in the state register for
-/// this record, made again; that result taken back, the delegate's completion goes to the
-/// destination, and any other step passes on as this generator's own yield of the delegate's
-/// result object. Anything else takes the general step.
-pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
-    let vm = unsafe { vm(cx) };
-    let (state, next_method) = ImmediateLayout::register_pair(i.imm());
-    let (after, destination) = resume_point(cx, ip, i);
-    let waiting = r.get(state);
-    if waiting.is_undefined() {
-        let (delegate, method) = (r.get(i.c), r.get(next_method));
-        if vm.steps_as_generator(delegate, method)
-            && let Some((registers, start)) = lane_resume_generator(cx, r, ip, delegate, method, r.get(destination), Completion::Delegates)
-        {
-            return Resumed::At(registers, start, Carried::script(cx));
-        }
-        return Resumed::Exit(exit(ip));
+/// The `next` step of the delegate `delegate` by `method` with `input`, a `yield*` at `ip` of
+/// the running generator activation with registers `r` makes in place (the lane frame's answer to
+/// `CallFrame::delegation_in_place`): a delegate generator resumes as an activation whose fresh
+/// result waits in the record's state register for this record, run again
+/// (`Completion::Delegates`, `lane_resume_generated`). `None`, before any effect, where the
+/// delegate is no generator `method` steps, or the lane has no room or view for it.
+pub(super) fn lane_delegate_in_place<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, (delegate, method, input): (Value, Value, Value))
+    -> Option<Resumed> {
+    if !unsafe { vm(cx) }.steps_as_generator(delegate, method) {
+        return None;
     }
-    let Some((value, done)) = vm.own_iterator_result_parts(waiting) else {
-        return Resumed::Exit(exit(ip));
-    };
-    r.set(state, Value::UNDEFINED);
-    if done {
-        r.set(destination, value);
-        return Resumed::At(r, following(ip), Carried::script(cx));
-    }
-    // The generator resumes at this record, which takes the value its caller sends next.
-    lane_suspend_generator(cx, after - 1, destination, Value::UNDEFINED, Some(waiting))
+    let (registers, start) = lane_resume_generator(cx, r, ip, delegate, method, input, Completion::Delegates)?;
+    Some(Resumed::At(registers, start, Carried::script(cx)))
 }

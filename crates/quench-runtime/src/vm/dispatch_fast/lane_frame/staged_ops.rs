@@ -12,9 +12,10 @@ pub(in crate::vm::dispatch_fast) fn staged_jump_if<const TAKEN: bool>(r: Registe
 
 /// The edge a staged jump's step takes, or `None` where the interpreter's own path decides it.
 #[inline(always)]
-fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
+fn jump_edge(step: Step<u64, LaneControl>) -> Option<Edge> {
     match step {
-        Step::Control(edge) => Some(edge),
+        Step::Control(LaneControl::Edge(edge)) => Some(edge),
+        Step::Control(LaneControl::Resumed(_)) => unreachable!("a jump suspends nothing"),
         Step::Unresolved => None,
         Step::Value(_) => unreachable!("a jump produces no value"),
     }
@@ -267,7 +268,7 @@ pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> 
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     match crate::staged::step(&mut stage, &mut frame, Operation::Jump) {
-        Step::Control(edge) => edge,
+        Step::Control(LaneControl::Edge(edge)) => edge,
         _ => unreachable!("a jump produces no value"),
     }
 }
@@ -309,6 +310,28 @@ impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
     fn promise_resolve(&mut self, _stage: &mut Concrete, value: u64) -> Option<u64> {
         let host = self.host?;
         (host.awaits.resolve)(host.cx, Value::from_bits(value)).map(Value::to_bits)
+    }
+
+    /// Whether the activation that suspends in place is async; `None` on a frame that suspends nothing.
+    fn asynchronous(&self) -> Option<bool> {
+        self.suspends.map(LaneSuspends::asynchronous)
+    }
+
+    /// The row's suspension made in place (`LaneSuspends::suspend`), which the handler chose
+    /// before the row ran, so it never declines after the row's effects.
+    fn suspend(&mut self, _stage: &mut Concrete, suspending: crate::staged::Suspending<u64>) -> Option<LaneControl> {
+        self.suspends.map(|suspends| LaneControl::Resumed(suspends.suspend(suspending)))
+    }
+
+    /// The delegation's reads the lane finishes without guest code (`LaneSuspends::delegation`).
+    fn delegation(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>) -> Option<(u64, ())> {
+        self.suspends?.delegation(step).map(|word| (word, ()))
+    }
+
+    /// A delegate generator's step made in place (`LaneSuspends::in_place`).
+    fn delegation_in_place(&mut self, _stage: &mut Concrete, step: crate::staged::DelegationStep<u64>, _state: Register)
+        -> Option<LaneControl> {
+        self.suspends?.in_place(self.registers, step).map(LaneControl::Resumed)
     }
 }
 

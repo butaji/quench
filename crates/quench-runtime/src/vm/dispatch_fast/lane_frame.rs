@@ -1,4 +1,5 @@
-//! The interpreter's register frame: `staged` moves and constants over the live file.
+//! The interpreter's register frame: `staged` rows over the live file, a move or constant, a
+//! jump, an allocation, a suspension (`suspends`).
 
 use super::*;
 use super::lane_reads::{RecordOperand, Reads};
@@ -110,6 +111,8 @@ struct LaneFrame<const ACC: u8> {
     capture_slots: Option<*const usize>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
+    /// How the running activation suspends in place, for a staged suspension row.
+    suspends: Option<LaneSuspends>,
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -117,7 +120,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, reads: Reads::NONE }
+            capture_slots: None, reads: Reads::NONE, suspends: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -141,13 +144,13 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, reads: Reads::NONE }
+            capture_slots: None, reads: Reads::NONE, suspends: None }
     }
 }
 
 impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     type Fact = ();
-    type Control = Edge;
+    type Control = LaneControl;
 
     #[inline(always)]
     fn fact(&self, _register: Register) -> Self::Fact {}
@@ -183,13 +186,13 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
-        if condition { Edge::Target } else { Edge::Following }
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> LaneControl {
+        LaneControl::Edge(if condition { Edge::Target } else { Edge::Following })
     }
 
     #[inline(always)]
-    fn jump(&mut self, _stage: &mut Concrete) -> Edge {
-        Edge::Target
+    fn jump(&mut self, _stage: &mut Concrete) -> LaneControl {
+        LaneControl::Edge(Edge::Target)
     }
 
     #[inline(always)]
@@ -354,6 +357,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
 #[path = "lane_frame/staged_ops.rs"]
 mod staged_ops;
 pub(super) use staged_ops::*;
+#[path = "lane_frame/suspends.rs"]
+mod suspends;
+pub(super) use suspends::*;
 
 lane_handler! {
     pub(super) fn lane_move<ACC: u8>(cx, r, ip, i, view) {
