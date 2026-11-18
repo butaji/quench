@@ -28,7 +28,7 @@ fn region_over(source: &str, observed: bool, left: bool, views: ElementViews) ->
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &reads, &[], &[], &[],
+        &generic, &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &reads, (&[], &[]), &[], &[],
         Coverage::PrefixFrom(header), Completion::Body, views, true).expect("a loop region").function
 }
 
@@ -150,7 +150,7 @@ fn entered_region(source: &str, views: ElementViews, entering: IntRange) -> ir::
     let isa = super::super::super::jit_backend::target_isa().unwrap();
     let addresses = LaneHelper::addresses::<crate::test_host::TestHost>();
     lower(&program, 1, &unit, LaneHelpers::Process(addresses), &[], &Default::default(), VmFacts::STATIC,
-        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], &entries, &[], &[],
+        &[], &BTreeMap::new(), &[], &*isa, &NO_ENTRY_FIELDS, &[], (&entries, &[]), &[], &[],
         Coverage::Loop { header, backedge, poll: false }, Completion::Body, views, true).expect("a loop region").function
 }
 

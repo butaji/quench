@@ -480,6 +480,8 @@ struct Lowering<'a, 'f> {
     observed: super::facts::Observed<'a>,
     /// The registers observed to hold int32s at entry (`RegionSpecializer::int_entries`).
     int_entries: &'a [(Register, IntRange)],
+    /// The registers observed to hold doubles at entry (`RegionSpecializer::number_entries`).
+    number_entries: &'a [Register],
     /// The capture slots observed to hold int32s (`RegionSpecializer::int_captures`).
     int_captures: &'a [u16],
     /// The by-name loads that read the global scope (`Vm::lane_global_reads`).
@@ -1486,6 +1488,9 @@ pub(super) struct RegionSpecializer<'p> {
     /// The registers whose values at entry were int32s: candidates for an int32 entry contract
     /// (`refine_inductive_inputs`), kept where every definition in the loop yields an int32.
     pub(super) int_entries: &'p [(Register, IntRange)],
+    /// The registers whose values at entry were doubles: with `int_entries`, candidates for a
+    /// Number entry contract (`refine_inductive_inputs`) where an int32 one fails.
+    pub(super) number_entries: &'p [Register],
     /// The capture slots that held typed arrays at compilation (`Observation::typed_captures`).
     pub(super) typed_captures: &'p [u16],
     /// The capture slots that held int32s at compilation (`Observation::int_captures`).
@@ -1499,7 +1504,7 @@ impl Specializer for RegionSpecializer<'_> {
     fn specialize(self, program: &ResidualProgram) -> Result<Self::Residual, String> {
         lower(program, self.function_id, self.unit, self.helpers, self.fields,
             self.global_reads, self.facts, self.generic, self.direct, self.frame_captures,
-            self.isa, self.entry_fields, self.number_reads, self.int_entries, self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
+            self.isa, self.entry_fields, self.number_reads, (self.int_entries, self.number_entries), self.typed_captures, self.int_captures, self.plan.coverage, self.plan.completion, self.plan.views, self.plan.entry_bounds)
             .ok_or_else(|| format!("function {} does not lower under {:?}", self.function_id, self.plan))
     }
 }
@@ -1522,7 +1527,7 @@ pub(super) fn lower_body(
 ) -> Option<LoweredLane> {
     let isa = super::jit_backend::target_isa()?;
     let body = RegionSpecializer { function_id, unit, helpers, fields, global_reads, facts: vm,
-        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], typed_captures: &[], int_captures: &[],
+        generic, direct, frame_captures, isa: &*isa, entry_fields: &NO_ENTRY_FIELDS, number_reads, int_entries: &[], number_entries: &[], typed_captures: &[], int_captures: &[],
         plan: RegionPlan { entry_bounds: true, coverage: entry.map_or(Coverage::Prefix, Coverage::PrefixFrom),
             completion: Completion::Body, views: ElementViews::Dense } };
     // The scalar entry lowers first: the body calls it only where it exists.
@@ -1557,7 +1562,7 @@ pub(super) fn lower(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
     entry_fields: &EntryWords,
     number_reads: &[super::facts::ObservedRead],
-    int_entries: &[(Register, IntRange)],
+    (int_entries, number_entries): (&[(Register, IntRange)], &[Register]),
     typed_captures: &[u16],
     int_captures: &[u16],
     coverage: Coverage,
@@ -1666,6 +1671,7 @@ pub(super) fn lower(
         entry_fields,
         observed,
         int_entries,
+        number_entries,
         int_captures,
         interrupt,
         fault_poll,
@@ -3440,6 +3446,23 @@ impl Lowering<'_, '_> {
             instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, &self.raises, self.observed) {
             self.facts = facts;
         }
+        // An accumulator that entered as a Number (an int32 or a double) and that every
+        // definition keeps a Number is carried as a double, as C carries its `double` sum: the
+        // entering edge proves it once, and the loop neither boxes nor tests it.
+        let mut numbers: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
+        self.facts.for_each_definition(instructions, boundaries, &self.program.constants, &writes, self.native_calls,
+            |pc, register, _| {
+                let index = usize::from(register);
+                let entered = self.int_entries.iter().any(|(entry, _)| *entry == register) || self.number_entries.contains(&register);
+                if (header..=back).contains(&pc) && register < self.unit.caller_registers && entered
+                    && self.is_live(header, register) && self.written.contains(index) && initial[index] == Type::ANY {
+                    numbers.insert(index);
+                }
+            });
+        if !numbers.is_empty() && let Some(facts) = super::facts::inductive(initial, numbers, Type::NUMBER, header..=back,
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
+            self.facts = facts;
+        }
     }
 
     /// The registers a loop never writes whose every use proves them Numbers, each a Number header
@@ -3591,7 +3614,7 @@ impl Lowering<'_, '_> {
                 // A `length` read is made once, natively where its base is a direct array.
                 match register.filter(|_| super::names_length(self.program, atom)) {
                     Some(register) => {
-                        let length = self.array_length(state, register, (atom, cache_site), exit);
+                        let length = self.length_read(state, pc, register, (atom, cache_site), exit, Some(header));
                         (int_tagged(&mut self.builder, length), true)
                     }
                     None => {
@@ -3984,17 +4007,7 @@ impl Lowering<'_, '_> {
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
             && super::names_length(self.program, first.0)
         {
-            // A typed array its loop's entry proved (`hoist_arrays`) has the view's element count:
-            // no store in the loop resizes it, so the read is that word, as C's length is.
-            if let Some(array) = self.loop_array(pc, Some(register)).filter(|array| matches!(array.views, ElementViews::Typed(_))) {
-                let (_, count) = self.hoisted_view(array);
-                let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
-                emit_js_guard(&mut self.builder, fits, exit);
-                let length = self.raw_unary(Unary::Narrow(Lane::I32), count);
-                self.set_int(state, destination, length);
-                return Some(true);
-            }
-            let length = self.array_length(state, register, *first, exit);
+            let length = self.length_read(state, pc, register, *first, exit, None);
             self.set_int(state, destination, length);
             return Some(true);
         }
@@ -4055,6 +4068,24 @@ impl Lowering<'_, '_> {
     /// array's from its record (`emit_array_length_read`), a flat string's from its own
     /// (`string_length`), any other's the VM's read, which leaves through `exit` where it
     /// misses or is not an int32.
+    /// The `length` read at `pc` of `register`: a typed array a loop's entry proved
+    /// (`hoist_arrays`) has the view's element count, which no store in the loop resizes, so the
+    /// read is that word, as C's length is; any other base is `array_length`'s. On the entry
+    /// edge of `entering`, only a view that edge already proved counts (captures are proved
+    /// after the invariant reads).
+    fn length_read(&mut self, state: &mut State, pc: usize, register: Register, read: (Atom, u16), exit: ir::Block,
+        entering: Option<usize>) -> ir::Value {
+        let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
+            && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
+        if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
+            let (_, count) = self.hoisted_view(array);
+            let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
+            emit_js_guard(&mut self.builder, fits, exit);
+            return self.raw_unary(Unary::Narrow(Lane::I32), count);
+        }
+        self.array_length(state, register, read, exit)
+    }
+
     fn array_length(&mut self, state: &mut State, register: Register, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let base = self.tagged(state, register);
         let (generic, join) = (self.builder.create_block(), self.builder.create_block());

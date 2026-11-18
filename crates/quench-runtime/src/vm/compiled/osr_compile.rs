@@ -363,7 +363,7 @@ impl LoopPlanner<'_> {
         generic: &[usize], direct: &super::lane_region::DirectSites) -> Option<super::lane_region::LoweredRegion> {
         let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
-            number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
+            number_reads: &number_reads, int_entries: self.observation.int_entries, number_entries: self.observation.double_registers, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
             global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, ..VmFacts::STATIC }, generic,
             direct, frame_captures: self.observation.frame_captures, isa: self.isa,
