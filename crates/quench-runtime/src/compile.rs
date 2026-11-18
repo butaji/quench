@@ -4282,6 +4282,7 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
+            declared_parameters: options.defaults.map_or_else(Vec::new, typescript::declared_parameters).into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
