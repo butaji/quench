@@ -102,7 +102,7 @@ fn lane_fixtures_use_the_generic_helper_only_for_residual_opcodes() {
         for index in 0..program.functions.len() {
             let function = program.function(index);
             for packed in &function.code {
-                let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = crate::vm::function.widened(*packed);
                 let row = decode_step(0, instruction, known(&program), (process, false));
                 if row.step == Some(Step::Helper) {
                     assert!(RESIDUAL.contains(&instruction.op()) || !instruction.op().steps_in_lane(), "{path:?}: {:?} takes the generic helper", instruction.op());
@@ -224,7 +224,7 @@ fn nothing_in_the_lane_fixtures_is_refused() {
         for index in 0..program.functions.len() {
             let function = program.function(index);
             for packed in &function.code {
-                let instruction = crate::vm::dispatch_fast::decoded_instruction(function, *packed);
+                let instruction = crate::vm::function.widened(*packed);
                 let row = decode_step(0, instruction, known(&program), (process, false));
                 assert!(row.step.is_some() || row.target.is_some(), "{path:?}: {:?}", instruction.op());
                 instructions += 1;

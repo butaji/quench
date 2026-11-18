@@ -657,7 +657,7 @@ pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> 
                     Native::MathMax => return Some(Value::integer(x.max(y))),
                     Native::MathMin => return Some(Value::integer(x.min(y))),
                     // ToInt32 of an int32 is itself: the product's low 32 bits.
-                    Native::MathImul => return Some(Value::integer(x.wrapping_mul(y))),
+                    Native::MathImul => return Some(Value::integer(crate::staged::math::int_multiply(x, y))),
                     _ => {}
                 }
             }

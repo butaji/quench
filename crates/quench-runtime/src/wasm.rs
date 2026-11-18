@@ -1968,11 +1968,7 @@ impl Lowering<'_> {
     }
 
     pub(super) fn instruction(&self, pc: usize) -> WideInstruction {
-        if self.code[pc].is_wide() {
-            self.wide[self.code[pc].wide_index()]
-        } else {
-            self.code[pc].as_wide()
-        }
+        crate::bytecode::widen(self.code[pc], &self.wide)
     }
 
     /// Write `value` into `local`: redirect its producer when it was the

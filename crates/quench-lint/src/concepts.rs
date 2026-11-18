@@ -76,8 +76,8 @@ const CONCEPTS: &[Concept] = &[
     },
     Concept {
         name: "packed-instruction-decode",
-        homes: &["quench-runtime/src/bytecode/control_flow.rs"],
-        marks: &[Mark::Function("decoded_instruction"), Mark::Function("instruction_at")],
+        homes: &["quench-runtime/src/bytecode/control_flow.rs", "quench-runtime/src/bytecode.rs"],
+        marks: &[Mark::Function("decoded_instruction"), Mark::Function("instruction_at"), Mark::Function("widened"), Mark::Spelled(".wide_index()]")],
     },
 ];
 

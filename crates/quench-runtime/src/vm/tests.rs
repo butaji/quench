@@ -14544,7 +14544,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
             .filter_map(|(pc, packed)| {
                 (site.header_pc as usize <= pc
                     && pc <= site.backedge_pc as usize
-                    && super::dispatch_fast::decoded_instruction(body, *packed).op()
+                    && body.widened(*packed).op()
                         == crate::bytecode::Op::Call)
                     .then_some(pc as u32)
             })

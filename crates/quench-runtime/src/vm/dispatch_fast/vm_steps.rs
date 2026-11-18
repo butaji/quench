@@ -34,7 +34,7 @@ unsafe fn lane_vm_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let body = code.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[call_pc as usize]);
+    let instruction = body.widened(body.code[call_pc as usize]);
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
     let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
@@ -76,7 +76,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_string_concat<H: Host>(_vm: u64
     };
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
-    let instruction = decoded_instruction(body, body.code[call_pc as usize]);
+    let instruction = body.widened(body.code[call_pc as usize]);
     let [Some(left), Some(right)] = [instruction.operand_b(), instruction.operand_c()].map(|operand| operand.register_index().map(|register| r.get(register))) else { return LANE_CALL_MISSED };
     match lane_concatenation(cx, left, right) {
         Some(value) => {
@@ -229,7 +229,7 @@ unsafe fn lane_body_step_record<H: Host>(_vm: u64, _residual: u64, context: u64,
 /// As `lane_body_step`.
 unsafe fn lane_activation_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
     let body = unsafe { &*(*cx).code }.function(lane_running_function(cx) as usize);
-    let record = decoded_instruction(body, body.code[call_pc as usize]);
+    let record = body.widened(body.code[call_pc as usize]);
     if record.without_return().op().steps_on_owner() {
         unsafe { lane_owner_step_in(cx, call_pc, record) }
     } else {
@@ -257,7 +257,7 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
     let function = code.function(vm.frames[frame].function as usize);
     // A returning record (`return a + b`) is made as the step that writes its result register: the body's
     // own `Return` row completes the activation with it.
-    let instruction = decoded_instruction(function, function.code[call_pc as usize]).without_return();
+    let instruction = function.widened(function.code[call_pc as usize]).without_return();
     if !(instruction.op().steps_in_body() || instruction.op().makes_script_call()) { return LANE_CALL_MISSED; }
     let following = call_pc as usize + 1;
     let branched = lane_in_place(cx, ip, |vm, code| {

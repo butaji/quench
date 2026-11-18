@@ -5,7 +5,7 @@
 //! holds exactly what the slot would; opening its dead zone writes nothing anyone reads.
 
 use super::liveness::ROOT_MAP_REGISTERS;
-use super::rewrite::{fixed_width, relocate};
+use super::rewrite::relocate;
 /// The binding legacy argument reflection looks for.
 const ARGUMENTS_NAME: &str = "arguments";
 
@@ -237,7 +237,7 @@ pub(super) fn promote<'a>(
     let mut map = vec![0; old.len() + 1];
     for (pc, &packed) in old.iter().enumerate() {
         map[pc] = code.len();
-        let mut instruction = fixed_width(packed, &function.wide);
+        let mut instruction = function.widened(packed);
         let promoted = (instruction.op().immediate_role() == ImmediateRole::LocalSlot)
             .then(|| register(instruction.local_slot()))
             .flatten();

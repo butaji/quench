@@ -1,6 +1,6 @@
 use super::*;
 use crate::bytecode::{
-    FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
+    FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction, widen,
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
@@ -405,7 +405,7 @@ fn update_transfers(
     superinstructions: &[Superinstruction],
 ) {
     for &pc in changed {
-        let instruction = fixed_width(function.code[pc], &function.wide);
+        let instruction = function.widened(function.code[pc]);
         transfers[pc] = liveness::transfer(instruction, methods, field_sites, superinstructions);
     }
 }
@@ -592,7 +592,7 @@ fn block_producer(
         if protected.contains(pc + 1) {
             return None;
         }
-        let instruction = fixed_width(function.code[pc], &function.wide);
+        let instruction = function.widened(function.code[pc]);
         if !instruction.op().control_flow_layout().only_falls_through() || instruction.returns_from_frame()
         {
             return None;
@@ -839,7 +839,7 @@ pub(super) fn protected_positions(
 ) -> crate::bitset::BitSet {
     let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
-        let instruction = fixed_width(*instruction, wide);
+        let instruction = widen(*instruction, wide);
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             protected.insert(instruction.jump_target() as usize);
         }
@@ -847,14 +847,6 @@ pub(super) fn protected_positions(
     protected
 }
 
-/// `instruction` in fixed-width form: a wide one through the function's wide table.
-pub(super) fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
-    if instruction.is_wide() {
-        wide[instruction.wide_index()]
-    } else {
-        instruction.as_wide()
-    }
-}
 
 /// Positions that open or close a handler or parameter region, or resume a binding site.
 fn region_boundaries(
@@ -988,7 +980,7 @@ fn rewrite_once(
     *current = transfers.map(|mut transfers| {
         transfers.truncate(function.code.len());
         for pc in replaced {
-            let replacement = fixed_width(function.code[pc], &function.wide);
+            let replacement = function.widened(function.code[pc]);
             transfers[pc] = liveness::transfer(replacement, methods, field_sites.as_slice(), superinstructions);
         }
         CodeFacts::Transfers(transfers)
@@ -1043,7 +1035,7 @@ pub(super) fn relocate(
     old_code: &[Instr],
 ) {
     for instruction in code.iter_mut() {
-        let decoded = fixed_width(*instruction, wide);
+        let decoded = widen(*instruction, wide);
         if decoded.op().immediate_role() != ImmediateRole::JumpTarget {
             continue;
         }
@@ -1118,7 +1110,7 @@ fn relocate_source_positions(
         // Call anchors are observable even when their location matches a
         // preceding Move that a later pass may remove.
         if previous_location == Some(location)
-            && fixed_width(old_code[anchor], wide)
+            && widen(old_code[anchor], wide)
                 .op()
                 .control_flow_layout()
                 != crate::bytecode::ControlFlowLayout::Call

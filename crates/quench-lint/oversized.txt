@@ -1087,8 +1087,8 @@ concept_runs liveness-graph-solve 3
 concept_runs liveness-solve 3
 concept_runs successor-table 5
 concept_twin length-int32-guard 1
-concept_twin math-imul 3
-concept_twin packed-instruction-decode 2
+concept_twin math-imul 2
+concept_twin packed-instruction-decode 6
 concept_twin string-order 0
 concept_twin to-int32 2
 concept_twin to-uint8-clamp 1
