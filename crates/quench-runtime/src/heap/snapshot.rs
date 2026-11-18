@@ -246,9 +246,9 @@ mod tests {
         // A snapshot keeps no watches; the restored heap registers each prototype anew, so a
         // collection in which no prototype died retires no proofs (`retire_dead_prototypes`).
         let mut heap = Heap::new();
-        let prototype = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let prototype = heap.alloc_object(Object::new(Value::NULL));
         let record_prototype = heap.alloc_object(Object::new(Value::NULL));
-        let plain = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+        let plain = heap.alloc_object(Object::new(Value::NULL));
         heap.mark_prototype(prototype);
         heap.mark_prototype(record_prototype);
         let mut writer = crate::snapshot::Writer::new();

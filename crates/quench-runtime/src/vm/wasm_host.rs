@@ -1125,7 +1125,7 @@ mod tests {
         assert!(vm.heap.is_live(descriptor));
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<EchoHost>::empty_object(Value::NULL)));
+            .alloc_object(Vm::<EchoHost>::empty_object(Value::NULL));
         let payload_root = vm.root(payload);
         let args = [
             WasmValue::ExternRef(payload),

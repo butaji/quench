@@ -96,7 +96,7 @@ fn compare(proofs: &ArrayStorageProofs, initial: [Value; REGISTER_COUNT]) -> Sto
 #[test]
 fn indexed_number_forwarding_restores_every_fallback_boundary() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(Object::new(Value::NULL)));
+    let object = heap.alloc_object(Object::new(Value::NULL));
     let mut values = vec![0.0, -0.0, 0.25, -0.25, f64::from(i32::MIN), f64::from(i32::MAX),
         f64::from(i32::MAX) + 1.0, f64::MIN_POSITIVE, f64::MIN_POSITIVE * f64::EPSILON,
         f64::MAX, -f64::MAX, f64::INFINITY, f64::NEG_INFINITY, f64::NAN].into_iter().map(Value::number).collect::<Vec<_>>();

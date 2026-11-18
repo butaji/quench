@@ -352,9 +352,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn temporal_plain_time_object(&mut self, time: [i32; 6]) -> Result<Value, JsError> {
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(
+        let object = self.heap.alloc_object(Self::empty_object(
             self.temporal_plain_time_proto,
-        )));
+        ));
         for (name, value) in PLAIN_TIME_FIELDS.into_iter().zip(time) {
             let atom = self.intern_atom(name);
             self.set_property(object, atom, Value::number(f64::from(value)))?;

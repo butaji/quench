@@ -393,12 +393,11 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::ModuleNamespaceObject => {
-                (value.direct_object_index().is_some()
+                value.direct_object_index().is_some()
                     && self
                         .heap
                         .object(value)
-                        .is_some_and(Object::is_module_namespace))
-                    || matches!(cell, Some(Cell::Object(object)) if object.is_module_namespace())
+                        .is_some_and(Object::is_module_namespace)
             }
             B::BooleanObject
             | B::NumberObject
@@ -679,11 +678,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::RegExp { .. }) => D::RegExp,
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
             Some(Cell::Error(_)) => D::Error,
-            Some(Cell::Object(_)) => {
-                return Ok(self
-                    .boxed_primitive_data(value)
-                    .map(|(brand, value)| D::Primitive { brand, value }));
-            }
             _ => return Ok(None),
         };
         Ok(Some(data))

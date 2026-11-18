@@ -322,7 +322,7 @@ impl<H: Host> Vm<H> {
         let empty = self.heap.alloc_string(JsString::from_str(""));
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_proto)));
+            .alloc_object(Self::empty_object(object_proto));
         self.object_data_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(empty);

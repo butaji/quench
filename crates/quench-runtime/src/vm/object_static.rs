@@ -14,7 +14,7 @@ impl<H: Host> Vm<H> {
         if !proto.is_null() && self.object_data(proto).is_none() && !self.is_wasm_gc_object(proto) {
             return None;
         }
-        Some(self.heap.alloc(Cell::Object(Self::empty_object(proto))))
+        Some(self.heap.alloc_object(Self::empty_object(proto)))
     }
 
     pub(super) fn intrinsic_builtin_prototype(&mut self, native: Native) -> Value {
@@ -648,7 +648,7 @@ impl<H: Host> Vm<H> {
                 .get(&(self.realm.globals, Native::Object))
                 .copied()
                 .unwrap_or(self.object_proto);
-            let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let result = self.heap.alloc_object(Self::empty_object(prototype));
             let result = self.heap.root(result);
             result_root = Some(result);
             loop {

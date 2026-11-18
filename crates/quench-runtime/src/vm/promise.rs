@@ -1603,7 +1603,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let value = self.heap.alloc_object(Self::empty_object(prototype));
         self.realm.promise.module_sources.insert(identity, value);
         Ok(value)
     }
@@ -4717,7 +4717,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let namespace = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         if let Some(object) = self.object_data_mut(namespace) {
             object.set_module_namespace();
         }

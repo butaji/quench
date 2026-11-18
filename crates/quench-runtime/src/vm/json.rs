@@ -1174,7 +1174,7 @@ fn hex_digit(unit: u16) -> Option<u16> {
 impl<H: Host> Vm<H> {
     fn json_object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc(Cell::Object(Self::empty_object(prototype)))
+        self.heap.alloc_object(Self::empty_object(prototype))
     }
 
     pub(super) fn json_raw_json(

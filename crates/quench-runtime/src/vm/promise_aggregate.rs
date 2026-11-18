@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
         };
         let result = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc_object(Self::empty_object(Value::NULL));
         for (key, value) in keys.into_iter().zip(values) {
             let key = if let Some(name) = self.heap.string(key).cloned() {
                 PropertyKey::string(self.intern_js_atom(&name))

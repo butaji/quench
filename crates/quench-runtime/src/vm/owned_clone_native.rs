@@ -153,7 +153,7 @@ impl<H: Host> Vm<H> {
             }
             Node::Object(_) => self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(self.object_proto))),
+                .alloc_object(Self::empty_object(self.object_proto)),
             Node::Array(length, _) => {
                 let prototype = self.array_prototype_for_realm(self.realm.globals);
                 let v = self.heap.alloc(Cell::Array {
@@ -307,7 +307,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(self.type_error(p, "Unknown owned Error kind".into())),
         };
         let proto = self.intrinsic_builtin_prototype(native);
-        Ok(self.heap.alloc(Cell::Object(Object::error(proto))))
+        Ok(self.heap.alloc_object(Object::error(proto)))
     }
 
     pub(crate) fn embedding_clone_collection_insert(

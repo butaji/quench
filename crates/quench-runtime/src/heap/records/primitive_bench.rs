@@ -4,7 +4,7 @@
 extern crate test;
 
 use super::{OCCUPANCY_WORD_BITS, PromotionAge, RecordSpace};
-use crate::heap::{ArrayElements, ArrayObject, Cell, Heap, Object};
+use crate::heap::{ArrayElements, ArrayObject, Heap, Object};
 use crate::value::Value;
 use std::hint::black_box;
 use test::Bencher;
@@ -133,12 +133,12 @@ fn primitive_record_object_mark_sweep_live_batch(b: &mut Bencher) {
 fn primitive_heap_object_allocate_collect_batch(b: &mut Bencher) {
     let mut heap = Heap::new();
     for _ in 0..BATCH_RECORDS {
-        heap.alloc(Cell::Object(empty_object()));
+        heap.alloc_object(empty_object());
     }
     heap.collect([]);
     b.iter(|| {
         for _ in 0..BATCH_RECORDS {
-            black_box(black_box(&mut heap).alloc(Cell::Object(empty_object())));
+            black_box(black_box(&mut heap).alloc_object(empty_object()));
         }
         black_box(black_box(&mut heap).collect([]));
     });
