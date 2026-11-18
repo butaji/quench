@@ -382,6 +382,9 @@ struct LaneFields<'a, const OP: u16>(&'a LaneInstruction);
 
 impl<const OP: u16> LaneFields<'_, OP> {
     const OPCODE: Op = match Op::from_index(OP as usize) { Some(op) => op, None => panic!("no such opcode") };
+    const FLAG: bool = matches!(Self::OPCODE.immediate_role(), crate::bytecode::ImmediateRole::BooleanFlag);
+    const REGISTER_B: bool = Self::OPCODE.field_layout(crate::bytecode::InstructionField::B).is_register_field();
+    const REGISTER_C: bool = Self::OPCODE.field_layout(crate::bytecode::InstructionField::C).is_register_field();
 }
 
 impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
@@ -399,7 +402,17 @@ impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
     }
     #[inline(always)]
     fn wide(self) -> WideInstruction {
-        WideInstruction::new(self.op(), self.0.a, self.0.b, self.0.c, self.0.imm())
+        // SAFETY: the view admits a record only with its register fields inside the function's
+        // registers (`lane_fields_fit`), which `REGISTER_MASK` bounds; stated so a row's operand
+        // kind test folds.
+        unsafe {
+            if Self::REGISTER_B { std::hint::assert_unchecked(self.0.b <= crate::bytecode::REGISTER_MASK) }
+            if Self::REGISTER_C { std::hint::assert_unchecked(self.0.c <= crate::bytecode::REGISTER_MASK) }
+        }
+        // A flag the compiler writes is 0 or 1; any other word reads as set, so the flag's decode
+        // is the one test.
+        let imm = if Self::FLAG { self.0.imm().min(1) } else { self.0.imm() };
+        WideInstruction::new(self.op(), self.0.a, self.0.b, self.0.c, imm)
     }
 }
 

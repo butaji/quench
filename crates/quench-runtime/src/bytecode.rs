@@ -554,6 +554,7 @@ impl ResultLayout {
         matches!(self, Self::RegisterReadWrite)
     }
 
+    #[inline(always)]
     const fn allows_numeric_local(self) -> bool {
         matches!(self, Self::NumericReturnable)
     }
@@ -757,6 +758,7 @@ macro_rules! opcodes {
                 Self::IMMEDIATE_LAYOUTS[self as usize]
             }
 
+            #[inline(always)]
             pub(crate) const fn result_layout(self) -> ResultLayout {
                 Self::RESULT_LAYOUTS[self as usize]
             }
