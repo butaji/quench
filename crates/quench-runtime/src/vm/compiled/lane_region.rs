@@ -3460,7 +3460,7 @@ impl Lowering<'_, '_> {
                 }
             });
         if !numbers.is_empty() && let Some(facts) = super::facts::inductive(initial, numbers, Type::NUMBER, header..=back,
-            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, self.observed) {
+            instructions, boundaries, &self.program.constants, &writes, own_shape, self.native_calls, &self.raises, self.observed) {
             self.facts = facts;
         }
     }

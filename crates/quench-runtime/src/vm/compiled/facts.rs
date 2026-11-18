@@ -395,8 +395,8 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
-    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
-    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, observed)
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, raises: &[Raise], observed: Observed<'_>) -> Option<Facts> {
+    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, raises, observed)
 }
 
 /// `inductive_int32` for the header contract `required`: an int32, or a Number (an
