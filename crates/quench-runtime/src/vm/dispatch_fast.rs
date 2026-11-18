@@ -3316,7 +3316,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -6237,21 +6237,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// A capture the frame's environment owns directly; any other read takes the general path.
-    /// A read through the frame's current capture cache runs here, saving no registers; any
-    /// other takes `lane_load_capture_walk`.
-    fn lane_load_capture<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        // Deeper reads take `lane_load_outer_capture` (`specialize_captures`).
-        debug_assert_eq!(ImmediateLayout::capture_depth(imm), 0);
-        if !lane_frame::staged_load_own_capture::<H>(cx, r, view, i.a, ImmediateLayout::capture_slot(imm)) {
-            sibling!(lane_load_capture_walk::<H>, r, ip, view)
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
 /// `lane_load_outer_capture`'s first read: up the links from the closure environment's
 /// storage (`EnvironmentSlots::link`) to the capture `imm` names, in an activation; `None`
 /// leaves the read to that handler's other ways.
@@ -6753,18 +6738,6 @@ fn lane_store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Va
 }
 
 script_handler! {
-    /// `StoreCapture` of the running function's own scope that writes an initialized slot
-    /// directly (`lane_store_own_capture`); a deeper one is `lane_store_outer_capture`
-    /// (`specialize_captures`), which any other store takes too.
-    fn lane_store_capture<>(cx, r, ip, i, view) {
-        if lane_store_own_capture(cx, ImmediateLayout::capture_slot(i.imm()), r.get(i.a)) {
-            next!(cx, r, following(ip), view)
-        }
-        sibling!(lane_store_outer_capture::<H>, r, ip, view)
-    }
-}
-
-script_handler! {
     /// `StoreCapture` past the running function's dense slots, or of a capture past its own
     /// scope: the lane's store (`lane_capture_store`), else the general path.
     #[inline(never)]
@@ -6843,7 +6816,7 @@ script_handler! {
     /// than an integer, run the read's own record, then the others.
     fn lane_update_capture_int32<OP: u32, FORM: u8>(cx, r, ip, i, view) {
         let Some((old, value)) = capture_int32_update::<OP>(unsafe { (*cx).registers }.capture(), i) else {
-            sibling!(lane_load_capture::<H>, r, ip, view)
+            sibling!(lane_row::<H, CAPTURE_READ, ACC_NONE, FLAG_UNREAD>, r, ip, view)
         };
         // SAFETY: the run is the read, the operator, its truncation and the store, then the
         // store's read past `UPDATE_STORES` (`specialize_capture_updates`).
@@ -10282,7 +10255,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
             let op = decoded_instruction(body, *packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
+                || crate::staged::miss(op) == crate::staged::Miss::WalkScopes).then(|| op.is_get_index())
         })
     });
     if let Some(read) = counted { site.tier.borrow_mut().left_at(site.tiers, pc as usize, read); }
@@ -19106,14 +19079,17 @@ fn lane_script_call_frame<H: Host>(ip: Ip, room: usize) -> Ip {
 const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 
 /// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
-/// enters Wasm functions and a return completes a Wasm activation; a capture store's handler
-/// reads the context a Wasm view lacks.
+/// enters Wasm functions and a return completes a Wasm activation; a value row (a capture
+/// access, `this`) reads the context a Wasm view lacks.
 fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
     let ret = LaneHandler { handler: lane_return_wasm::<H>, produces: false };
+    if matches!(op.staged(), Some(crate::bytecode::Decoder::Value)) {
+        // A value row reads the receiver and the captures from the context, which a Wasm view lacks.
+        return Some(None);
+    }
     match op.class() {
         Class::Call => Some(Some(call)),
-        Class::StoreCapture => Some(None),
         Class::Return => Some(Some(ret)),
         _ => None,
     }
@@ -21190,10 +21166,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         lane_store::<H, OP, ACC>
     } else {
         if lane_runs_row(op) {
-            // The row defines the accumulator where its record's `a` is its result register.
-            let produces = matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
-                && !matches!(op.staged(), Some(crate::bytecode::Decoder::Local));
-            return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces });
+            return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
         }
         match op.class() {
             Class::WasmI32ShiftRightUnsignedAnd => {
@@ -21295,11 +21268,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
-        Class::LoadCapture => Some(lane_load_capture::<H>),
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
         Class::LoadLocal | Class::LoadEnvLocal => Some(lane_load_local::<H>),
-        Class::StoreCapture => Some(lane_store_capture::<H>),
         Class::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Class::WasmGlobalGet => Some(lane_global_get::<H>),
         Class::WasmSimd => Some(lane_wasm_simd::<H>),
@@ -21954,6 +21925,20 @@ fn derive_lane_view<'live, H: Host>(
                     .get(op as usize)
                     .copied()
                     .flatten()
+            });
+            // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
+            // a record whose `a` carries result flags (a numeric local target) runs the general
+            // step, which decodes them, so no row tests for them.
+            let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
+            let selected = selected.map(|chosen| {
+                let flagged = lane_runs_row(op)
+                    && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+                    && instruction.a() & !crate::bytecode::REGISTER_MASK != 0;
+                if flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ()) {
+                    LaneHandler { handler: lane_general_step::<H>, ..chosen }
+                } else {
+                    chosen
+                }
             });
             producer = selected
                 .filter(|selected| selected.produces)
@@ -23340,9 +23325,8 @@ fn specialize_register_operands<H: Host>(
 /// comparison branch. The second record remains independently callable for branch-table and
 /// jump-target entry.
 fn specialize_load_branch_pairs<H: Host>(records: &mut [LaneInstruction]) {
-    let capture = lane_load_capture::<H> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
-        let reads_capture = records[pc].handler == capture;
+        let reads_capture = is_row::<H, CAPTURE_READ>(records[pc].handler);
         if !is_row::<H, { opc::LoadLocalPlain }>(records[pc].handler) && !reads_capture {
             continue;
         }
@@ -24044,6 +24028,11 @@ fn specialize_environment_window<H: Host>(
     })
 }
 
+/// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,
+/// `specialize_load_branch_pairs`) and whose read a fused update falls back to.
+const CAPTURE_READ: u16 = opc::LoadCapture;
+const CAPTURE_WRITE: u16 = opc::StoreCapture;
+
 /// Gives each capture record its handler by the capture's depth, which the bytecode fixes:
 /// a `LoadCapture` past the function's own scope the one that reads remembered walks
 /// (`lane_load_outer_capture`), a `StoreCapture` past it the lane's walking store
@@ -24051,19 +24040,22 @@ fn specialize_environment_window<H: Host>(
 /// both (`lane_store_capture_load`). The other depth-0 records keep the handlers that read
 /// the running function's dense slots.
 fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
-    let load = lane_load_capture::<H> as Handler as *const ();
-    let store = lane_store_capture::<H> as Handler as *const ();
+    let load = |handler: *const ()| is_row::<H, CAPTURE_READ>(handler);
+    let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
     for pc in 0..records.len() {
         let record = &records[pc];
         let own = ImmediateLayout::capture_depth(record.imm()) == 0;
-        let handler: Handler = if record.handler == load && !own {
+        let handler: Handler = if load(record.handler) && !own {
             lane_load_outer_capture::<H>
-        } else if record.handler == store && !own {
+        } else if store(record.handler) && !own {
             lane_store_outer_capture::<H>
-        } else if record.handler == store
-            && records.get(pc + 1).is_some_and(|next| next.handler == load && next.imm() == record.imm())
+        } else if store(record.handler)
+            && records.get(pc + 1).is_some_and(|next| load(next.handler) && next.imm() == record.imm())
         {
             lane_store_capture_load::<H>
+        } else if let Some(near) = row_near::<H, CAPTURE_READ>(record.handler).or_else(|| row_near::<H, CAPTURE_WRITE>(record.handler)) {
+            // Its own scope's capture: the row reads its depth as the zero it is.
+            near
         } else {
             continue;
         };
@@ -24086,23 +24078,23 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
 /// stay for jumps and for steps the update leaves to them.
 fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
     use super::operations::{ADDITION, SUBTRACTION};
-    let load = lane_load_capture::<H> as Handler as *const ();
-    let store = lane_store_capture::<H> as Handler as *const ();
+    let load = |handler: *const ()| is_row::<H, CAPTURE_READ>(handler);
+    let store = |handler: *const ()| is_row::<H, CAPTURE_WRITE>(handler);
     let store_load = lane_store_capture_load::<H> as Handler as *const ();
     let add = lane_operator_int32::<H, ADDITION, true> as Handler as *const ();
     let subtract = lane_operator_int32::<H, SUBTRACTION, true> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(3) {
         let (read, operator, truncation, write) = (&records[pc], &records[pc + 1], &records[pc + 2], &records[pc + 3]);
-        if read.handler != load
+        if !load(read.handler)
             || (operator.handler != add && operator.handler != subtract)
             || operator.b != read.a
-            || (write.handler != store && write.handler != store_load)
+            || (!store(write.handler) && write.handler != store_load)
             || write.imm() != read.imm()
             || write.a != truncation.a
         {
             continue;
         }
-        let form = if write.handler == store { UPDATE_STORES } else { UPDATE_LOADS };
+        let form = if store(write.handler) { UPDATE_STORES } else { UPDATE_LOADS };
         macro_rules! forms {
             ($($form:ident),*) => {
                 match (operator.handler == add, form) {
