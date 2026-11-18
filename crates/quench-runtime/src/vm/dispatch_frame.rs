@@ -2141,9 +2141,8 @@ impl<H: Host> Vm<H> {
             // need neither the published root-map PC nor the general step result.
             // Register moves, local slot accesses and conditional jumps run as their staged rows on the
             // running frame's registers. A row that leaves runs the arms below and the general path.
-            if let Some(operation @ (crate::staged::Operation::Move { .. } | crate::staged::Operation::LoadLocalPlain { .. }
-                | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::JumpIf { .. })) =
-                crate::staged::Operation::<u64, ()>::decode(ins, crate::staged::DecodeContext::EMPTY)
+            if let Some(operation) = crate::staged::Operation::<u64, ()>::decode(ins, crate::staged::DecodeContext::of_constants(&p.constants))
+                && InterpreterFrame::runs_row(operation)
             {
                 #[cfg(feature = "profile-aggregate")]
                 if let crate::staged::Operation::JumpIf { register, .. } = operation {

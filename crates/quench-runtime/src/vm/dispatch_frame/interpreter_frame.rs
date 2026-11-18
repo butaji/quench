@@ -36,6 +36,19 @@ impl InterpreterFrame {
         crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation)
     }
 
+    /// Whether the general loop runs `operation` as its staged row on this frame before its arms
+    /// (`step_row`): the register, local, constant, capture, Number, compare and property rows the
+    /// frame may answer. A row it leaves runs the arm the operation's opcode has.
+    #[inline(always)]
+    pub(in crate::vm) fn runs_row(operation: Operation<u64, ()>) -> bool {
+        matches!(operation,
+            Operation::Move { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
+                | Operation::JumpIf { .. } | Operation::LoadConst { .. } | Operation::LoadCapture { .. }
+                | Operation::StoreCapture { .. } | Operation::Number(_) | Operation::CompareJump { .. }
+                | Operation::ElementRead { .. } | Operation::ElementWrite { .. } | Operation::GetField { .. }
+                | Operation::SetField { .. })
+    }
+
     /// The register `register` of the file.
     #[inline(always)]
     fn slot(&self, register: Register) -> *mut Value {
