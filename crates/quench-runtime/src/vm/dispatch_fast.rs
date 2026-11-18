@@ -13938,8 +13938,6 @@ fn lane_promise_native_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, native: Na
 mod named_keys;
 mod denoted;
 mod wasm_calls;
-mod i64_operators;
-use i64_operators::i64_operator_handler;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
@@ -19923,10 +19921,6 @@ fn derive_lane_view<'live, H: Host>(
                             _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
                         })
                     })
-            } else if let Some(handler) = i64_operator_handler::<H>(op, instruction.imm(), acc)
-            {
-                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
-                    .and_then(|_| LaneHandler::producer(handler))
             } else if lane_runs_row(op) && op.reads_arguments()
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
