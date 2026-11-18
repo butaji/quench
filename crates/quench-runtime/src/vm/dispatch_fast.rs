@@ -11112,68 +11112,6 @@ fn offset_mask_jump_handler<H: Host>(first: Op, jump: Op, backward: bool, acc: u
 }
 
 lane_handler! {
-    /// An immediate comparison jump `JUMP`, reading its operand through field `ACC`, that
-    /// falls through to direct i32 load `LOAD` (`if c == k goto L; v = *p`): both records run
-    /// here, the load only when the jump falls through.
-    fn lane_compare_jump_load<JUMP: u16, LOAD: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
-        let comparison = const {
-            match I32BinaryOperator::from_immediate_jump_op(opcode(JUMP)) {
-                Some(comparison) => comparison,
-                None => panic!("not an i32 immediate comparison jump"),
-            }
-        };
-        let load = const { direct_load(LOAD) };
-        let Ok(taken) = comparison.evaluate(read_i32::<ACC, ACC_A>(r, i.a, view), i32::from(i.b as i16)) else {
-            return exit(ip);
-        };
-        if taken != 0 {
-            resume!(cx, lane_jump::<H>(cx, r, ip, BACKWARD, view, None));
-        }
-        let load_ip = following(ip);
-        // SAFETY: the view fuses a comparison jump only with a following plain load.
-        let access = unsafe { &*load_ip };
-        let address = u64::from(r.get(access.c).wasm_bits32()) + u64::from(access.imm());
-        // SAFETY: as for `MemoryView::read`.
-        let Some(value) = (unsafe { view.memory.read(load, address) }) else {
-            return exit(load_ip);
-        };
-        let Some(value) = lane_encode(view, value) else {
-            return exit(load_ip);
-        };
-        produce!(cx, r, load_ip, access.a, value, view)
-    }
-}
-
-/// The compare-jump-load handler for immediate comparison jump `jump` and i32 load `load`.
-fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u8) -> Option<Handler> {
-    macro_rules! accs {
-        ($jump:ident, $load:ident) => {
-            match (backward, acc) {
-                (false, ACC_NONE) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, false, ACC_NONE> as Handler),
-                (true, ACC_NONE) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, true, ACC_NONE> as Handler),
-                (false, ACC_A) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, false, ACC_A> as Handler),
-                (true, ACC_A) => Some(lane_compare_jump_load::<H, { opc::$jump }, { opc::$load }, true, ACC_A> as Handler),
-                _ => None,
-            }
-        };
-    }
-    macro_rules! loads {
-        ($jump:ident) => {
-            match load.class() {
-                Class::WasmI32Load => accs!($jump, WasmI32Load),
-                Class::WasmI32Load8U => accs!($jump, WasmI32Load8U),
-                _ => None,
-            }
-        };
-    }
-    match jump.class() {
-        Class::WasmJumpI32EqualImmediate => loads!(WasmJumpI32EqualImmediate),
-        Class::WasmJumpI32NotEqualImmediate => loads!(WasmJumpI32NotEqualImmediate),
-        _ => None,
-    }
-}
-
-lane_handler! {
     /// An i32 operator `OP` (reading through field `ACC`; a comparison, typically), a constant
     /// load and a select choosing among their results and other registers (`cur = cur > clip
     /// ? 0 : cur`): three records run here, each result written as its own record writes it,
@@ -20614,23 +20552,6 @@ fn derive_lane_view<'live, H: Host>(
             records[pc].handler = carried as *const ();
             reads_accumulator[pc] = true;
             accumulator_registers[pc] = moving.b();
-        }
-        // An immediate equality jump that falls through to a plain i32 load runs with it as one
-        // record (which reads the address from its register, written whether or not the
-        // accumulator also holds it).
-        for pc in 0..records.len().saturating_sub(1) {
-            let jump = decoded[pc];
-            if !matches!(jump.op().class(), Class::WasmJumpI32EqualImmediate | Class::WasmJumpI32NotEqualImmediate)
-                || i32_load(&records, pc + 1).is_none()
-            {
-                continue;
-            }
-            let Some((backward, acc)) = plain_served(records[pc].handler, jump.op() as u16, &[ACC_NONE, ACC_A]) else {
-                continue;
-            };
-            if let Some(fused) = compare_jump_load_handler::<H>(jump.op(), decoded[pc + 1].op(), backward, acc) {
-                records[pc].handler = fused as *const ();
-            }
         }
     specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
     specialize_updated_index_reads::<H>(&mut records);
