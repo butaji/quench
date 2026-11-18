@@ -196,7 +196,19 @@ pub(crate) struct SourcePositionIter<'a> {
 }
 
 impl SourcePositionIter<'_> {
+    #[inline(always)]
     fn read(&mut self) -> u64 {
+        // Most deltas are one byte: no continuation, no loop.
+        if let Some((&byte, rest)) = self.bytes.split_first()
+            && byte < LEB128_CONTINUATION
+        {
+            self.bytes = rest;
+            return u64::from(byte);
+        }
+        self.read_multi_byte()
+    }
+
+    fn read_multi_byte(&mut self) -> u64 {
         let mut value = 0;
         let mut shift = 0;
         while let Some((&byte, rest)) = self.bytes.split_first() {

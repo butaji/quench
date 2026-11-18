@@ -1067,9 +1067,6 @@ fn rewrite_once(
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    // Decoded at most once, for the rules that record their sources.
-    let positions = std::cell::OnceCell::new();
-    let positions = || positions.get_or_init(|| function.source_positions.iter().collect::<Vec<_>>()).as_slice();
     let mut code = Vec::with_capacity(old.len());
     // A kept instruction keeps its transfer masks, which name registers and not positions, and
     // moves to a pc no later than its old one, so the masks move down in place; only a pair's
@@ -1101,7 +1098,7 @@ fn rewrite_once(
                         | liveness::definitions(second.as_wide(), superinstructions);
                 let live_out = liveness::live_out(successors, live, index + 1);
                 rules.find_map(|rule| {
-                    let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
+                    let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
                     let removed_definitions = original_definitions
                         & !liveness::definitions(replacement.as_wide(), superinstructions);
                     (live_out & removed_definitions == 0).then_some(replacement)
@@ -1150,24 +1147,25 @@ fn rewrite_once(
     true
 }
 
-fn apply_rule<'p>(
+fn apply_rule(
     rule: Rule,
     first: Instr,
     second: Instr,
     field_sites: &mut SiteTable<'_, FieldSite>,
-    positions: &impl Fn() -> &'p [crate::bytecode::SourcePosition],
+    source_positions: &crate::bytecode::SourcePositions,
     pc: usize,
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let positions = positions();
+            // The entry in effect at a pc, found by the table's own lookup rather than a
+            // decoded copy of the whole table.
             let at = |pc: usize| {
-                positions
-                    .partition_point(|p| p.pc as usize <= pc)
-                    .checked_sub(1)
-                    .map(|index| (positions[index].line, positions[index].column))
+                u32::try_from(pc)
+                    .ok()
+                    .and_then(|pc| source_positions.at(pc))
+                    .map(|position| (position.line, position.column))
             };
             let site = &mut field_sites[index];
             if site.sources[0].is_none() {
@@ -1235,13 +1233,25 @@ fn relocate_source_positions(
     wide: &[WideInstruction],
     map: &[usize],
 ) {
-    let surviving_positions = source_positions
+    let relocated = relocated_source_positions(code_len, source_positions, old_code, wide, map);
+    *source_positions = relocated;
+}
+
+/// The table `source_positions` becomes once the code is relocated through `map`. Surviving
+/// entries stream in pc order, one ahead of the cursor, so no list of them is built.
+fn relocated_source_positions(
+    code_len: usize,
+    source_positions: &crate::bytecode::SourcePositions,
+    old_code: &[Instr],
+    wide: &[WideInstruction],
+    map: &[usize],
+) -> crate::bytecode::SourcePositions {
+    let mut survivors = source_positions
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
-        .collect::<Vec<_>>();
+        .peekable();
     // Relocation keeps or drops entries, so the old coding bounds the new one's.
     let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
-    let mut position_index = 0;
     let mut origin_pc = 0;
     let mut effective = None;
     let mut previous_location = None;
@@ -1258,12 +1268,11 @@ fn relocate_source_positions(
         }
         let anchor = origin_pc;
         origin_pc += 1;
-        while surviving_positions
-            .get(position_index)
+        while survivors
+            .peek()
             .is_some_and(|position| position.pc as usize <= anchor)
         {
-            effective = surviving_positions.get(position_index).copied();
-            position_index += 1;
+            effective = survivors.next();
         }
         let Some(position) = effective else {
             continue;
@@ -1286,7 +1295,7 @@ fn relocate_source_positions(
         });
         previous_location = Some(location);
     }
-    *source_positions = relocated;
+    relocated
 }
 
 fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize]) -> bool {
