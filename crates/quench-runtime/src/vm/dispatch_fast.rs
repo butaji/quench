@@ -2269,6 +2269,10 @@ pub(super) struct LaneStack {
     /// The exported Wasm function a JavaScript call last entered (`Vm::wasm_export_frame_call`),
     /// so the next call of it reads its closure and signature once. A collection forgets it.
     pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
+    /// The window plan last derived for a frame that made no environment of its own
+    /// (`generator_windows::cached_window_plan`): every new activation of the same function
+    /// under the same environment, as each call of an async function is, shares it.
+    pub(super) last_window_plan: Option<(ProgramId, u32, generator_windows::WindowPlan)>,
 }
 
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
@@ -2317,6 +2321,7 @@ impl Default for LaneStack {
             body_boundary: None,
             boundary_frames: None,
             wasm_export: None,
+            last_window_plan: None,
         }
     }
 }

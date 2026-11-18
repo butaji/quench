@@ -131,15 +131,27 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
     Some(WindowPlan { key, view, parent, locals, capture, environment })
 }
 
-/// `window_plan` of a generator's suspended `frame`, of the active program: its record's own
-/// while it holds, laid out as its function's plan says (`Vm::window_layout`) otherwise.
-fn generator_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<WindowPlan> {
+/// `window_plan` of a suspended `frame`, of the active program: its record's own while it
+/// holds, else the last one derived for its function under the same environment
+/// (`LaneStack::last_window_plan`), else laid out as its function's plan says
+/// (`Vm::window_layout`).
+pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<WindowPlan> {
     let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
         return Some(plan);
     }
+    let shared = (vm.active_program, frame.function);
+    if frame.program == vm.active_program
+        && let Some((.., plan)) = vm.lane_stack.last_window_plan.filter(|(program, function, plan)| (*program, *function) == shared && plan.key == key)
+    {
+        return Some(plan);
+    }
     let environment = vm.window_layout(frame, code)?;
-    window_plan(vm, code, frame, environment)
+    let plan = window_plan(vm, code, frame, environment)?;
+    if !frame.captured {
+        vm.lane_stack.last_window_plan = Some((shared.0, shared.1, plan));
+    }
+    Some(plan)
 }
 
 /// The environment a generator's closures and captures run under, and its window's locals when
@@ -194,7 +206,7 @@ fn lane_resume_generator<H: Host>(
     let (record, frame) = resumable_generator_frame(vm, generator)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
     let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
-    let plan = generator_window_plan(vm, code, frame)?;
+    let plan = cached_window_plan(vm, code, frame)?;
     let WindowPlan { view, parent, locals, capture, environment, .. } = plan;
     let frame = vm.resume_generator_window((generator, record), method, sent, depth)?;
     unsafe { (*frame).window_plan = Some(plan) };

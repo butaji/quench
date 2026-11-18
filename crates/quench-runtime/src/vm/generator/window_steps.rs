@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
+    /// Starts a windowed run of `generator`, which `lane_resume_generator` admitted: the
     /// frame stays in its record, `sent` is the value the suspending `yield` evaluates to, and
     /// the native activation roots the generator while the run lasts. The frame's address, which
     /// its box keeps until the run ends.
