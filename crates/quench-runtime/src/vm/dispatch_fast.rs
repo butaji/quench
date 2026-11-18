@@ -3715,7 +3715,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 lane_handler! {
@@ -11277,10 +11277,15 @@ script_handler! {
                     && let Ok(index) = u16::try_from(index)
                     && index != NO_CALL_LINK
                 {
-                    // A declared name's read names its binding by index (`lane_load_name_lexical`),
+                    // A declared name's read names its binding by index (`FLAG_NAME_LEXICAL`'s row),
                     // which the global lexical bindings never move.
                     set_field_hint(ip, super::FieldCache::own(atom, index));
-                    requicken::<H>(ip, lane_load_name_lexical::<H, KIND>);
+                    let load = match KIND {
+                        LOAD_NAME_CALL => crate::staged::NameLoad::Call,
+                        LOAD_NAME_TYPEOF => crate::staged::NameLoad::Typeof,
+                        _ => crate::staged::NameLoad::Read,
+                    };
+                    requicken::<H>(ip, name_row::<H, FLAG_NAME_LEXICAL>(load));
                 }
                 value
             }

@@ -39,6 +39,10 @@ pub(super) enum NameRead {
     Intrinsic,
     /// The global object's own data field the record's hint names.
     Field(crate::vm::FieldCache),
+    /// The active realm's global lexical binding the record's hint locates by index (`slot`), taken
+    /// only while it is the name's and initialized (`Vm::global_lexical_at`). Subsumes the hand
+    /// `lane_load_name_lexical`.
+    Lexical(crate::vm::FieldCache),
 }
 
 /// What a by-name load's record resolved its name to: the global `undefined`, a constant no
@@ -69,6 +73,8 @@ struct LaneHost {
     kept_values: KeptValues,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
+    /// The VM's `is_object_like` of a heap value, for a staged object test (`RequireIteratorResult`).
+    object_like: unsafe fn(*mut (), Value) -> bool,
 }
 
 /// The lane's environment clone for a `CloneEnv` row (`clone_environment_of`): the lane context, the
@@ -477,7 +483,8 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
         let host = LaneHost { cx: cx.cast(), allocate: allocation_in_lane::<H>, define: define_element_in_lane::<H>, delete: delete_value_in_lane::<H>,
             read_name: name_value_in_lane::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
-            set_name: set_function_name_in_lane::<H>, kept_values: kept_values::<H>, name: None };
+            set_name: set_function_name_in_lane::<H>, kept_values: kept_values::<H>, name: None,
+            object_like: object_like_in_lane::<H> };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -645,6 +652,15 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let host = self.host?;
         // SAFETY: the definer was made for the lane context this frame runs in.
         unsafe { (host.define)(host.cx, array, index, value) }.then_some(())
+    }
+
+    /// The VM's `is_object_like` of `word` (`object_like_in_lane`): any object kind, which a direct
+    /// record test does not all prove.
+    #[inline(always)]
+    fn object_like(&mut self, _stage: &mut Concrete, word: u64) -> Option<()> {
+        let host = self.host?;
+        // SAFETY: the test was made for the lane context this frame runs in.
+        unsafe { (host.object_like)(host.cx, Value::from_bits(word)) }.then_some(())
     }
 
     /// Writes local `slot` of the running activation, its window's where the run holds one (`window`).
@@ -1310,6 +1326,10 @@ pub(in crate::vm::dispatch_fast) const FLAG_NAME_INTRINSIC: u8 = 6;
 /// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
 /// but a refresh checks the scopes' declarations first (`global_name_refresh_miss`, `SCOPED`).
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
+/// `FLAG` of a by-name load of a declared global lexical name: its record's hint locates the binding by
+/// index (`NameRead::Lexical`), which a refresh of a global name requickens to (`global_name_refresh_miss`).
+/// Subsumes the hand `lane_load_name_lexical`, whose fast read is this row's `global_read`.
+pub(in crate::vm::dispatch_fast) const FLAG_NAME_LEXICAL: u8 = 16;
 /// `FLAG` of a `StringCaseIndex` record its tier filtered (`string_case_filter::specialize`): the row
 /// answers from the filter the record's operand names. Not a flag role, so its immediate is whole.
 pub(in crate::vm::dispatch_fast) const FLAG_CASE_FILTER: u8 = 8;
@@ -1390,6 +1410,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
             FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
+            FLAG_NAME_LEXICAL => Some(NameBinding::Read(NameRead::Lexical(i.field_hint()))),
             FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
             _ => None,
         };
@@ -1628,7 +1649,7 @@ const fn name_load_miss<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) 
 /// `name_load_miss` for the by-name load of kind `KIND`.
 const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
-        FLAG_NAME_GLOBAL => super::global_name_refresh_miss::<H, KIND, false> as Handler,
+        FLAG_NAME_GLOBAL | FLAG_NAME_LEXICAL => super::global_name_refresh_miss::<H, KIND, false> as Handler,
         FLAG_NAME_GLOBAL_SCOPED => super::global_name_refresh_miss::<H, KIND, true> as Handler,
         FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::lane_exit::<H> as Handler,
         FLAG_PROBE => super::probe_handler::<H, KIND>(),
@@ -2496,7 +2517,18 @@ unsafe fn name_value_in_lane<H: Host>(cx: *mut (), read: NameRead, atom: u32) ->
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
         NameRead::Field(hint) => vm.record_field_entry_hit(hint, vm.realm.globals),
+        NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
     }
+}
+
+/// Whether `value` is an object of any kind the VM admits as an iterator result (`Vm::is_object_like`),
+/// for `RequireIteratorResult`'s object arm (`LaneFrame::object_like`).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn object_like_in_lane<H: Host>(cx: *mut (), value: Value) -> bool {
+    unsafe { vm(cx.cast::<LaneContext<H>>()) }.is_object_like(value)
 }
 
 /// The `typeof` kind of the heap value `value`, as the VM's `typeof` names it (`Vm::typeof_kind`: an

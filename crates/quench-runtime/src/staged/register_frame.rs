@@ -97,6 +97,13 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn define_element(&mut self, _stage: &mut S, _array: S::Word, _index: u32, _value: S::Word) -> Option<()> { None }
 
+    /// Whether the object `word` is an object of any kind the VM's `is_object_like` admits, for an
+    /// operation that accepts an object but no primitive (`RequireIteratorResult`) and a word the
+    /// direct record test does not prove. `None` where the frame keeps no such answer, the operation's
+    /// miss.
+    #[inline(always)]
+    fn object_like(&mut self, _stage: &mut S, _word: S::Word) -> Option<()> { None }
+
     /// The heap value `allocation` makes, defined into `destination`; `None` where the frame
     /// has no allocator for it or the value is the general path's (a due collection).
     #[inline(always)]
