@@ -3,6 +3,14 @@
 
 use crate::vm::compiled::loop_model;
 
+/// The widest backoff after declined entries: `2^16 - 1` entries pass untried between attempts.
+const MAX_ENTRY_BACKOFF: u32 = 16;
+
+/// The entries passed untried after `declines` declined entries in a row.
+fn backoff(declines: u8) -> u32 {
+    (1u32 << u32::from(declines).min(MAX_ENTRY_BACKOFF)) - 1
+}
+
 impl super::LoopSite {
     /// The bytecodes of one iteration, from the header to the backward jump.
     pub(super) fn span(&self) -> u64 {
@@ -11,14 +19,32 @@ impl super::LoopSite {
 
     /// Weighs a native run that took `backedges` backward jumps against the entry it paid.
     pub(super) fn note_run(&self, backedges: u64) {
+        self.declines_in_row.set(0);
         self.tier.borrow_mut().weigh_run(backedges);
         self.settle();
     }
 
-    /// Weighs an entry the guards declined: an entry paid for no iteration.
+    /// Weighs an entry the guards declined: an entry paid for no iteration. The `k`th decline in
+    /// a row passes the next `2^k - 1` entries (at most `MAX_ENTRY_BACKOFF`) to the interpreter
+    /// untried, so a cause that persists is retried at doubling distances. The entries passed
+    /// since the last decline weigh as declined ones too: each took the site's backward jump
+    /// and ran no iteration natively, so the site retires where it would retrying every entry.
     pub(super) fn note_decline(&self) {
-        self.tier.borrow_mut().weigh_decline();
+        let before = self.declines_in_row.get();
+        let declines = before.saturating_add(1);
+        self.declines_in_row.set(declines);
+        self.skipped_entries.set(backoff(declines));
+        self.tier.borrow_mut().weigh_declines(1 + backoff(before));
         self.settle();
+    }
+
+    /// Whether this entry passes to the interpreter untried, counting it off the backoff.
+    #[inline(always)]
+    pub(super) fn skips_entry(&self) -> bool {
+        let skipped = self.skipped_entries.get();
+        if skipped == 0 { return false; }
+        self.skipped_entries.set(skipped - 1);
+        true
     }
 
     /// Stops entering native code once the entries cost more than the iterations they ran save.
