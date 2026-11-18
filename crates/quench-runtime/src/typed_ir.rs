@@ -206,8 +206,15 @@ impl Type {
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
+    /// Whether this is `ANY`, by pattern rather than the derived `==`, so a frame's constant
+    /// fact folds even where the comparison is not inlined.
+    #[inline(always)]
+    pub(crate) const fn is_any(self) -> bool { matches!(self.0, TypeKind::Language(u16::MAX)) }
+
     #[inline(always)]
     pub(crate) fn is_subtype(self, expected: Self) -> bool {
+        // Nothing but `ANY` holds every value: the common unproved fact answers with no compare.
+        if self.is_any() { return expected.is_any(); }
         self == Self::NEVER || self == expected
             || matches!((self.0, expected.0), (TypeKind::Int(known), TypeKind::Int(allowed)) if allowed.contains(known))
             || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }

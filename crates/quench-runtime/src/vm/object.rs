@@ -1909,7 +1909,7 @@ impl<H: Host> Vm<H> {
         layout: crate::heap::PropertyStoreLayout,
     ) -> bool {
         if !LOGS && layout == crate::heap::PropertyStoreLayout::Preserve {
-            // The unlogged store `lane_set_this_field_own` makes through a hint: one compare
+            // The unlogged store the generated store row makes through a hint: one compare
             // proves the exact shape and the arena form (`Object::formed_plain_start`), then
             // the store gate; any other form takes the staged store. A refusal changes nothing,
             // so an observed arena's store goes on to the flat store below.

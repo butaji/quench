@@ -7468,6 +7468,38 @@ const FIELD_LEAF_READ: u16 = {
     }
 };
 
+/// The opcode of the catalog's named field store of `receiver`, strict or not (`Op::field_store`),
+/// whose generated row (`lane_row`) a store record runs: its hint as a layout store.
+const fn field_store_opcode(receiver: StoreReceiver, strict: bool) -> u16 {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) => match op.field_store() {
+                Some(FieldStore { receiver: found, strict: s })
+                    if s == strict && matches!((found, receiver), (StoreReceiver::This, StoreReceiver::This)
+                        | (StoreReceiver::Register, StoreReceiver::Register)) => break index as u16,
+                _ => index += 1,
+            },
+            None => panic!("the catalog names every field store"),
+        }
+    }
+}
+const FIELD_STORE: u16 = field_store_opcode(StoreReceiver::Register, false);
+const FIELD_STORE_STRICT: u16 = field_store_opcode(StoreReceiver::Register, true);
+const THIS_FIELD_STORE: u16 = field_store_opcode(StoreReceiver::This, false);
+const THIS_FIELD_STORE_STRICT: u16 = field_store_opcode(StoreReceiver::This, true);
+
+/// The generated own-field store (`lane_row` of the store opcode) of a store record whose
+/// receiver and strictness `store` names.
+const fn field_store_row<H: Host>(store: FieldStore) -> Handler {
+    match (store.receiver, store.strict) {
+        (StoreReceiver::Register, false) => lane_row::<H, FIELD_STORE, ACC_NONE, FLAG_UNREAD>,
+        (StoreReceiver::Register, true) => lane_row::<H, FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD>,
+        (StoreReceiver::This, false) => lane_row::<H, THIS_FIELD_STORE, ACC_NONE, FLAG_UNREAD>,
+        (StoreReceiver::This, true) => lane_row::<H, THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD>,
+    }
+}
+
 /// The storage forms an own-field read's hint fixes, by index: the generated row's site fact
 /// (`own_site`) names one, so the row folds the layout it reads (`concrete_hinted_own_field_hit`).
 /// `HINTED_FORM` reads the hint layout's own bits.
@@ -8921,6 +8953,11 @@ fn lane_set_field_in_place<H: Host>(
 /// Whether the named field store at the record `ip` rejects a refused write with a
 /// `TypeError`, as its opcode says; `None` for any other record.
 fn lane_store_is_strict<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<bool> {
+    field_store_at(cx, ip).map(|store| store.strict)
+}
+
+/// The named field store at the record `ip`, as its opcode says; `None` for any other record.
+fn field_store_at<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<FieldStore> {
     let vm = unsafe { vm(cx) };
     let function = match vm.lane_stack.activations.last() {
         Some(activation) => activation.function,
@@ -8930,7 +8967,7 @@ fn lane_store_is_strict<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<bool
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    body.widened(body.code[pc]).op().field_store().map(|store| store.strict)
+    body.widened(body.code[pc]).op().field_store()
 }
 
 /// The brand of private name `atom` at the record `ip`, whose home follows the running
@@ -9294,33 +9331,35 @@ script_handler! {
 }
 
 script_handler! {
-    /// `SetField` or `SetFieldStrict` at a site whose primary entry names an own data field
-    /// (`Vm::hinted_primary_field_store_hit`): that store inline where the write barrier logs
-    /// nothing; any other takes `lane_set_field_logged`.
-    fn lane_set_object_field_own<TRACKED: bool>(cx, r, ip, i, view) {
-        if !unsafe { vm(cx) }.hinted_primary_field_store_hit::<TRACKED>(i.field_hint(), r.get(i.b), i.imm(), r.get(i.a)) {
-            sibling!(lane_set_field_own_miss::<H, false, TRACKED>, r, ip, Carried::script_in(cx, view))
+    /// A named store's own-field hint in a runtime whose arena keeps slot representations
+    /// (`Heap::tracks_slot_representations`), which the generated store (`field_store_row`)
+    /// refuses: the tracked store (`Vm::hinted_primary_field_store_hit`), of `this` or field
+    /// B's register; any other takes `lane_set_field_logged`.
+    fn lane_set_field_own_tracked<THIS: bool>(cx, r, ip, i, view) {
+        let object = if THIS { unsafe { lane_held_this(cx, r) } } else { r.get(i.b) };
+        if !unsafe { vm(cx) }.hinted_primary_field_store_hit::<true>(i.field_hint(), object, i.imm(), r.get(i.a)) {
+            sibling!(lane_set_field_own_miss::<H, THIS, true>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 
 script_handler! {
-    /// A refused hinted own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
+    /// A refused hinted own-field store (`field_store_row`, `lane_set_field_own_tracked`):
     /// in a runtime whose arena keeps slot representations, which the untracked store refuses,
-    /// the record moves to its `TRACKED` instantiation for good; the store itself takes
+    /// the record moves to the tracked store for good; the store itself takes
     /// `lane_set_field_logged`.
     #[inline(never)]
     fn lane_set_field_own_miss<THIS: bool, TRACKED: bool>(cx, r, ip, i, view) {
         if !TRACKED && unsafe { vm(cx) }.heap.tracks_slot_representations() {
-            requicken::<H>(ip, if THIS { lane_set_this_field_own::<H, true> } else { lane_set_object_field_own::<H, true> });
+            requicken::<H>(ip, lane_set_field_own_tracked::<H, THIS>);
         }
         sibling!(lane_set_field_logged::<H, THIS>, r, ip, Carried::script_in(cx, view))
     }
 }
 
 script_handler! {
-    /// An own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`) the write
+    /// An own-field store (`field_store_row`, `lane_set_field_own_tracked`) the write
     /// barrier logs, which may grow its log: the store with the barrier, out of line so the
     /// inline store makes no call. Any other takes `lane_set_field_miss`.
     #[inline(never)]
@@ -9342,7 +9381,9 @@ script_handler! {
                     if narrow {
                         requicken::<H>(ip, lane_set_field_narrow::<H, THIS>);
                     } else if handler_is::<H>(ip, lane_set_field_narrow::<H, THIS>) {
-                        requicken::<H>(ip, if THIS { lane_set_this_field_own::<H, false> } else { lane_set_object_field_own::<H, false> });
+                        if let Some(store) = field_store_at(cx, ip) {
+                            requicken::<H>(ip, field_store_row::<H>(store));
+                        }
                     }
                 }
             }
@@ -9364,18 +9405,6 @@ script_handler! {
         let object = if THIS { unsafe { lane_held_this(cx, r) } } else { r.get(i.b) };
         if !unsafe { vm(cx) }.hinted_narrow_field_store_hit(i.field_hint(), object, i.imm(), r.get(i.a)) {
             sibling!(lane_set_field_logged::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_object_field_own` for `SetThisField` and `SetThisFieldStrict`.
-    fn lane_set_this_field_own<TRACKED: bool>(cx, r, ip, i, view) {
-        let this = unsafe { lane_held_this(cx, r) };
-        let stored = unsafe { vm(cx) }.hinted_primary_field_store_hit::<TRACKED>(i.field_hint(), this, i.imm(), r.get(i.a));
-        if !stored {
-            sibling!(lane_set_field_own_miss::<H, true, TRACKED>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -9421,7 +9450,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A miss of an own-field store (`lane_set_object_field_own`, `lane_set_this_field_own`):
+    /// A miss of an own-field store (`field_store_row`, `lane_set_field_own_tracked`):
     /// a site that adds properties or went polymorphic moves to the general cached write
     /// (`lane_set_object_field`, `lane_set_this_field`), which the store itself takes.
     #[inline(never)]
@@ -21614,8 +21643,10 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Class::CloneEnv => Some(lane_clone_env::<H>),
         Class::GetField => Some(lane_get_field_first::<H>),
-        _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::Register, .. })) => Some(lane_set_object_field_own::<H, false>),
-        _ if matches!(opcode.field_store(), Some(FieldStore { receiver: StoreReceiver::This, .. })) => Some(lane_set_this_field_own::<H, false>),
+        _ if opcode.field_store().is_some() => match opcode.field_store() {
+            Some(store) => Some(field_store_row::<H>(store)),
+            None => None,
+        },
         Class::ToPropertyKey => Some(lane_to_property_key::<H>),
         Class::DefinePropertyRecord => Some(lane_define_property_record::<H>),
         Class::DefineField => Some(lane_define_field::<H>),

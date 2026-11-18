@@ -28,6 +28,7 @@ macro_rules! field_store_op {
 pub(crate) use field_store_op;
 
 impl Op {
+    #[inline(always)]
     pub(crate) const fn field_store(self) -> Option<FieldStore> {
         let (receiver, strict) = match self {
             Self::SetField => (StoreReceiver::Register, false),
@@ -39,6 +40,7 @@ impl Op {
         Some(FieldStore { receiver, strict })
     }
 
+    #[inline(always)]
     pub(crate) const fn is_field_store(self) -> bool {
         self.field_store().is_some()
     }
@@ -52,6 +54,7 @@ impl Op {
 impl WideInstruction {
     /// A named field store's receiver register, or `None` for a store to `this` or an
     /// instruction that is no field store.
+    #[inline(always)]
     pub(crate) fn field_store_register(self) -> Option<Register> {
         match self.op().field_store()?.receiver {
             StoreReceiver::Register => Some(self.register_b()),

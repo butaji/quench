@@ -138,6 +138,9 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// Whether the plan starts from the receiver's word rather than its object record
     /// (`IcOp::HeldString`).
     word: bool,
+    /// The own-field store the record's hint proves, `(layout, slot)` (`StorePlan::Layout`);
+    /// `None` for a read's plan.
+    store: Option<(u32, u16)>,
 }
 
 impl RecordPlan {
@@ -148,7 +151,7 @@ impl RecordPlan {
         use crate::staged::ic::IcOp;
         let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
             rep: crate::staged::object::Rep::Tagged };
-        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false }
+        Self { ops: [IcOp::GuardLayout(layout), load], len: 2, records, other: None, word: false, store: None }
     }
 
     /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
@@ -158,24 +161,33 @@ impl RecordPlan {
         other: Option<*const crate::heap::Heap>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records, other, word: false }
+        Self { ops: [held, held], len: 1, records, other, word: false, store: None }
     }
 }
 
 impl RecordPlan {
+    /// The own-field store of the hint `(layout, slot)`: one compare of the record's layout id,
+    /// whose entry names the storage form (`StorePlan::Layout`); what it refuses is the VM's.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn own_store(layout: u32, slot: u16, records: u64) -> Self {
+        use crate::staged::ic::IcOp;
+        let none = IcOp::GuardLayout(layout);
+        Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some((layout, slot)) }
+    }
+
     /// The read of a string receiver through a `String.prototype` hint whose operands are
     /// `watch` and `value` (`IcOp::HeldString`), from the receiver's word.
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn held_string(watch: u64, value: u64) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::HeldString { watch, value };
-        Self { ops: [held, held], len: 1, records: 0, other: None, word: true }
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None }
     }
 }
 
 /// The plans a lane frame holds: the record's own, or none.
 #[derive(Clone, Copy)]
-pub(in crate::vm::dispatch_fast) struct LanePlans(Option<([crate::staged::ic::IcOp<'static>; 2], usize)>);
+pub(in crate::vm::dispatch_fast) struct LanePlans(Option<([crate::staged::ic::IcOp<'static>; 2], usize)>, Option<(u32, u16)>);
 
 impl crate::staged::property::PlanSource for LanePlans {
     #[inline(always)]
@@ -183,7 +195,11 @@ impl crate::staged::property::PlanSource for LanePlans {
         self.0.as_ref().map(|(ops, len)| crate::staged::property::FieldPlan::Ops(&ops[..*len]))
     }
     #[inline(always)]
-    fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> { None }
+    fn store_plan(&self, _site: u16) -> Option<crate::staged::property::StorePlan<'_>> {
+        // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`),
+        // which the lane frame answers as a miss: the record's store handlers take it.
+        self.1.map(|(id, slot)| crate::staged::property::StorePlan::Layout { id, slot, join: crate::staged::property::StoreJoin::Host })
+    }
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -399,7 +415,7 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = LanePlans;
 
     #[inline(always)]
-    fn plans(&self) -> LanePlans { LanePlans(self.plan.map(|plan| (plan.ops, plan.len))) }
+    fn plans(&self) -> LanePlans { LanePlans(self.plan.map(|plan| (plan.ops, plan.len)), self.plan.and_then(|plan| plan.store)) }
 
     /// The activation's `this` as the lane holds it: an unbound one (`Value::DELETED`) is no
     /// direct object, so the receiver's record test refuses it with no test of its own.
@@ -655,7 +671,19 @@ lane_handler! {
             sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(script, view))
         }} }
         let property = const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property)) };
-        if property {
+        // A named store (`SetField` and its `this` and strict forms): its record's own-field hint
+        // as a layout store (`RecordPlan::own_store`); whatever it refuses, the store handlers.
+        let store = const { LaneFields::<OP, FLAG>::OPCODE.field_store().is_some() };
+        let this_store = const { matches!(LaneFields::<OP, FLAG>::OPCODE.field_store(),
+            Some(crate::bytecode::FieldStore { receiver: crate::bytecode::StoreReceiver::This, .. })) };
+        macro_rules! store_miss { () => {{
+            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            if this_store {
+                sibling!(super::lane_set_field_own_miss::<H, true, false>, r, ip, Carried::script_in(script, view))
+            }
+            sibling!(super::lane_set_field_own_miss::<H, false, false>, r, ip, Carried::script_in(script, view))
+        }} }
+        if property && !store {
             // The site fact names the base (`own_site`), `this` or a register, and the lane admits
             // the record only without result flags: stated so the decode's tests fold.
             unsafe {
@@ -679,15 +707,27 @@ lane_handler! {
         };
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
-        let property_values = if property {
+        let property_values = if property && !store {
             // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
             unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap.arena_values_base()
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
-        let mut stage = Concrete::new(property_values);
+        let mut stage = if store {
+            // A store's gate reads the heap's barrier state (`Stage::store_gate`).
+            Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap)
+        } else { Concrete::new(property_values) };
         let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
-        if property {
+        if store {
+            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            let records = unsafe { (*script).binding.object_base } as u64;
+            // A method cache that may name the atom must see the store (`store_admitted`); an
+            // unbound table is the miss's to bind.
+            if records == 0 || unsafe { vm(script) }.method_caches_may_name(i.imm()) { store_miss!() }
+            if this_store { frame.this = r.this(); }
+            let hint = i.field_hint();
+            frame.plan = Some(RecordPlan::own_store(hint.receiver, hint.slot, records));
+        } else if property {
             // The record's plan: its own-field hint over the object records the lane bound; an
             // unbound table is the miss's to bind.
             // A JavaScript view carries its context (`script_handler!`); an own-field row is
@@ -743,6 +783,11 @@ lane_handler! {
             }
         }
         match crate::staged::step(&mut stage, &mut frame, operation) {
+            Step::Value(_) if store => {
+                let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                next!(script, r, following(ip), Carried::script_in(script, view))
+            }
+            Step::Unresolved if store => store_miss!(),
             Step::Value(value) if property => {
                 // The register takes the read's value, a slot word decoded where the form may hold a raw double.
                 let value = if const { super::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value) } else { Value::from_bits(value) };
