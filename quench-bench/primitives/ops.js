@@ -96,4 +96,11 @@ ops.k_dispatch = function (n) { const tasks = [new KernelTaskA(3), new KernelTas
 ops.k_json = function (n) { const o = { id: 0, name: "ab", ok: true }; let a = 0; for (let i = 0; i < n; i++) { o.id = i & 1023; const t = JSON.stringify(o); a = (a + JSON.parse(t).id + t.length) | 0; } return a; };
 ops.k_regexp = function (n) { const r = /o+x/, words = ["foox", "bar", "ox", "zoooox"]; let a = 0; for (let i = 0; i < n; i++) { if (r.test(words[i & 3])) a++; } return a; };
 ops.k_str_build = function (n) { let a = 0, s = ""; for (let i = 0; i < n; i++) { s += "k" + (i & 7); if ((i & 63) === 63) { a += s.length; s = ""; } } return a + s.length; };
+// Kernels 4, 5, 6 and 8 of the C-parity table: a shape proven once with unboxed double fields,
+// an in-place double field store in a loop, a pointer chase whose `next` is the same shape or
+// null, and a literal consumed locally (escape analysis and scalar replacement).
+ops.k_dist2 = function (n) { const pts = []; for (let i = 0; i < 64; i++) pts.push({ x: i + 0.5, y: i + 0.25 }); let s = 0; for (let i = 0; i < n; i++) { const p = pts[i & 63]; s += p.x * p.x + p.y * p.y; } return s; };
+ops.k_field_acc = function (n) { const p = { x: 0.5, y: 0.25 }; const dx = 0.125; for (let i = 0; i < n; i++) { p.x += dx; } return p.x + p.y; };
+ops.k_list_walk = function (n) { let head = null; for (let i = 63; i >= 0; i--) head = { val: i, next: head }; let s = 0, node = head; for (let i = 0; i < n; i++) { s = (s + node.val) | 0; node = node.next; if (node === null) node = head; } return s; };
+ops.k_vec_local = function (n) { const a = { x: 1.5, y: 2.5 }, b = { x: 0.25, y: 0.75 }; let s = 0; for (let i = 0; i < n; i++) { const c = { x: a.x + i, y: a.y + b.y }; s += c.x * b.x + c.y; } return s; };
 globalThis.PRIMITIVE_OPS = ops;

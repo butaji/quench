@@ -657,6 +657,63 @@ static double NOINL op_k_struct_sum(long n) {
   return s;
 }
 
+struct dpoint { double x, y; };
+
+static double NOINL op_k_dist2(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  struct dpoint *pts = malloc(64 * sizeof *pts);
+  for (int32_t i = 0; i < 64; i++) { pts[i].x = i + 0.5; pts[i].y = i + 0.25; }
+  ESCAPE(pts);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct dpoint *p = &pts[i & 63];
+    s += p->x * p->x + p->y * p->y;
+  }
+  free(pts);
+  return s;
+}
+
+static double NOINL op_k_field_acc(long n) {
+  int32_t N = (int32_t)n;
+  struct dpoint *p = malloc(sizeof *p);
+  p->x = 0.5; p->y = 0.25;
+  ESCAPE(p);
+  double dx = 0.125;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); p->x += dx; }
+  double r = p->x + p->y;
+  free(p);
+  return r;
+}
+
+struct node { int32_t val; struct node *next; };
+
+static double NOINL op_k_list_walk(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  struct node *nodes = malloc(64 * sizeof *nodes), *head = 0;
+  for (int32_t i = 63; i >= 0; i--) { nodes[i].val = i; nodes[i].next = head; head = &nodes[i]; }
+  ESCAPE(nodes);
+  struct node *node = head;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    s = (int32_t)((uint32_t)s + (uint32_t)node->val);
+    node = node->next;
+    if (!node) node = head;
+  }
+  free(nodes);
+  return s;
+}
+
+static double NOINL op_k_vec_local(long n) {
+  int32_t N = (int32_t)n; double s = 0;
+  struct dpoint a = {1.5, 2.5}, b = {0.25, 0.75};
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct dpoint c = {a.x + i, a.y + b.y};
+    s += c.x * b.x + c.y;
+  }
+  return s;
+}
+
 struct triple { int32_t x, y, z; };
 
 static double NOINL op_alloc_literal(long n) {
@@ -784,6 +841,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"arr_length", op_arr_length}, {"arr_push", op_arr_push},
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
+  {"k_dist2", op_k_dist2}, {"k_field_acc", op_k_field_acc}, {"k_list_walk", op_k_list_walk}, {"k_vec_local", op_k_vec_local},
   {"alloc_literal", op_alloc_literal}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
 };
