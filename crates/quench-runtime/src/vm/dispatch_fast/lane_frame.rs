@@ -71,6 +71,8 @@ struct LaneHost {
     /// The values a keeping activation kept (`kept_values`): their count and the register
     /// that holds the first, past the function's registers.
     kept_values: KeptValues,
+    /// What an `await`'s source conversion asks (`staged_ops::lane_await_source`).
+    awaits: AwaitSource,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
     /// The VM's `is_object_like` of a heap value, for a staged object test (`RequireIteratorResult`).
@@ -811,7 +813,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
         let host = LaneHost { cx: cx.cast(), allocate: allocation_in_lane::<H>, define: define_element_in_lane::<H>, delete: delete_value_in_lane::<H>,
             read_name: name_value_in_lane::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
             set_name: set_function_name_in_lane::<H>, kept_values: kept_values::<H>, name: None,
-            object_like: object_like_in_lane::<H> };
+            object_like: object_like_in_lane::<H>, awaits: AwaitSource::of::<H>() };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -1618,8 +1620,6 @@ unsafe fn global_name_store<H: Host>(cx: *mut (), hint: crate::vm::FieldCache, a
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     vm.hinted_own_field_store_hit(hint, vm.realm.globals, atom, value)
 }
-
-impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {}
 
 impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = LanePlans;

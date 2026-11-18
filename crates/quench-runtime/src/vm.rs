@@ -153,6 +153,7 @@ mod call_out_classes;
 mod call_out_values;
 mod call_out_owned;
 mod call_out_wasm;
+mod suspension;
 mod coercion;
 mod collection_intake;
 mod collections;
