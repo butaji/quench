@@ -27,18 +27,25 @@
 //!    `PROTO_NULL` and `PROTO_UNDEFINED` values, so a null prototype needs no entry.
 //!
 //!    `Heap::proto_link_of(proto: Value) -> ProtoLink` interns `proto` on first use.
-//!    `Heap::prototype_of_link(link: ProtoLink) -> Value` is a table load. A proto read is a mask
-//!    and one `Vec` index. `Object::proto()` and `set_proto()` lose their implicit encoding:
-//!    `Object` keeps the raw link, and the callers that need a `Value` go through the heap.
+//!    `Heap::prototype_of_link(link: ProtoLink) -> Value` is a table load. `Object` keeps the
+//!    raw link, and only the callers that need the prototype object itself go through the heap.
 //!
-//! 2. Equal links mean the same prototype. Chain walks keep comparing links and never decode
-//!    them, as they do now.
+//! 2. Hot paths compare links, not values. Holder guards, chain walks, and `instanceof` checks
+//!    compare `ProtoLink` indices directly wherever equality is enough, with no table load.
+//!    A link is decoded to a `Value` only where the prototype object is actually needed (a
+//!    property lookup on it, a `Value` result, a snapshot). Equal links name the same prototype
+//!    because the interning map gives each `Value` one index.
 //!
-//! 3. Weak entries and reuse. After a mark, entries whose `Value` is dead become free. The
-//!    simplest correct rule is never to reuse an index within the process. 2^28 distinct
-//!    prototypes is far beyond real programs, so this is documented and deferred. A free list
-//!    may be added later, but an index is reused only after a full collection proves that no
-//!    live object or layout names it.
+//! 3. Monotonic table, no reuse. An index is never handed out again within the process. When
+//!    the collector finds a prototype's `Value` dead, its entry becomes a tombstone: the slot
+//!    stays, the `Value` is cleared, and the reverse-map key is removed. A tombstone is never
+//!    reused. Reuse would let a stale reference pass on a different prototype. A layout id, a
+//!    code dependency (holder watch, construct plan), or a compiled guard may still hold the
+//!    old index after its prototype died. If that index were reissued, the stale guard would
+//!    compare equal to a new prototype and pass. Without reuse, equal indices always mean the
+//!    same prototype. The cost is a `u32`-sized slot per distinct prototype ever created,
+//!    bounded by the 2^28 index width. Real programs never approach that, and the table
+//!    reports exhaustion as a fatal error rather than wrapping.
 //!
 //! 4. Windows gone. `PROTO_*_RECORD_BASE`, `PROTO_RECORD_END`, `LEGACY_SLOT_CAPACITY` as a link
 //!    bound, and the per-family `*_RECORD_CAPACITY` link asserts are removed. Every record space
@@ -55,6 +62,9 @@
 //! 6. Snapshots. A prototype link is written as a `Value`, or the table is serialized in full.
 //!    Either way `FORMAT_VERSION` is bumped, since an old snapshot's link indices mean nothing
 //!    under the new table.
+//! 7. The auxiliary word is unchanged. Only the `meta` proto bits change meaning. Bit 25 of the
+//!    auxiliary word is `CONSTANT_FORM`, and shapes must stay below `1 << 25`, so the
+//!    `auxiliary` layout of `heap::layouts` keeps its current encoding.
 //!
 //! # Open decision: the layout table is process-wide
 //!
