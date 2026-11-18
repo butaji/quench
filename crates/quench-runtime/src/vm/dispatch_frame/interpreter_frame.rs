@@ -1,12 +1,16 @@
 //! The interpreter's register frame for staged rows: the running frame's registers and local
-//! slots, read and written in place. It decides the register, local and conditional-jump rows
-//! (`step_row`); a row it leaves runs the general path, which takes the VM's own rules.
+//! slots, read and written in place, and the VM's own answers to the rows it leaves to the VM
+//! (captures, name reads and writes, `typeof`, suspensions, completions). A row the frame does not
+//! decide is `Step::Unresolved`, and the general path takes it under the VM's own rules.
 
-use super::Frame;
-use crate::bytecode::{Operand, Register};
-use crate::staged::{Concrete, Constant, Edge, NumericFrame, Operation, Step};
+use crate::bytecode::{Operand, Register, ResidualProgram, WideInstruction};
+use crate::host::Host;
+use crate::staged::{CallOut, Concrete, Constant, Edge, NumericFrame, Operation, Step};
 use crate::staged::Frame as _;
-use crate::Value;
+use crate::vm::call_out::CallSite;
+use crate::vm::var_owner::VarOwner;
+use crate::vm::{StepResult, Vm};
+use crate::{JsError, Value};
 
 /// The fact the interpreter keeps about a register: how its word becomes a `Value`. A staged
 /// numeric row defines a binary64 result as its raw bits, which the write boxes.
@@ -16,37 +20,123 @@ pub(in crate::vm) enum InterpreterFact {
     Double,
 }
 
-/// The running frame's register file and local slots, borrowed for one staged row.
-pub(in crate::vm) struct InterpreterFrame {
+/// Where the interpreter frame's row goes beyond an edge: a return or a raise (the frame's
+/// completion), or a suspension of the running activation. The value a suspension carries is
+/// stashed in the frame.
+pub(in crate::vm) enum InterpreterControl {
+    Edge(Edge),
+    Return(Value),
+    Throw(Value),
+    Await,
+    Yield,
+}
+
+/// How a staged row ends in the general loop: the edge it takes, that the arm's own path runs the
+/// instruction, or the step result the VM's run stops with.
+pub(in crate::vm) enum RowRun {
+    Done(Edge),
+    Declined,
+    Stop(Result<StepResult, JsError>),
+}
+
+/// Whether the general loop may run `operation` as its staged row before its arms
+/// (`InterpreterFrame::step_row`): the register, local, constant, capture, Number, compare,
+/// property, name, `typeof`, `void`, completion and suspension rows the frame may answer. A row it
+/// leaves runs the arm the operation's opcode has.
+#[inline(always)]
+pub(in crate::vm) fn runs_row(operation: Operation<u64, ()>) -> bool {
+    matches!(operation,
+        Operation::Move { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
+            | Operation::JumpIf { .. } | Operation::LoadConst { .. } | Operation::LoadCapture { .. }
+            | Operation::StoreCapture { .. } | Operation::Number(_) | Operation::CompareJump { .. }
+            | Operation::ElementRead { .. } | Operation::ElementWrite { .. } | Operation::GetField { .. }
+            | Operation::SetField { .. } | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. }
+            | Operation::LoadName { .. } | Operation::GlobalTypeof { .. } | Operation::Void { .. }
+            | Operation::Return { .. } | Operation::Throw { .. } | Operation::Await { .. } | Operation::Yield { .. })
+}
+
+/// The running frame's register file and local slots, and the VM the row's calls answer through,
+/// borrowed for one staged row.
+pub(in crate::vm) struct InterpreterFrame<'a, H: Host> {
+    /// The running VM (`InterpreterFrame::step_row`). The row runner holds no other reference into
+    /// the VM while the row runs, so the frame's calls are its only access to it.
+    vm: *mut Vm<H>,
+    program: &'a ResidualProgram,
+    site: CallSite,
     registers: *mut Value,
     locals: *mut Value,
     locals_len: usize,
+    /// The error a VM call raised. The row answers `None` after raising, and the runner throws
+    /// this rather than running the operation again on its miss path.
+    raised: Option<JsError>,
+    /// The value an `Await` or `Yield` suspends the run on.
+    stashed: Value,
+    /// The register an `Await` resumes into.
+    resume: Option<Register>,
 }
 
-impl InterpreterFrame {
-    /// `operation` run on `frame`'s registers and locals, where it decides it (`Step::Unresolved`
-    /// where it does not).
+impl<'a, H: Host> InterpreterFrame<'a, H> {
+    /// `operation` run on frame `frame`'s registers and locals and the VM's own answers, where it
+    /// decides it (`RowRun::Declined` where it does not). `pc` is the resume PC of `instruction`,
+    /// which a `Yield` takes its destination from.
     #[inline(always)]
-    pub(in crate::vm) fn step_row(frame: &mut Frame, operation: Operation<u64, ()>) -> Step<u64, Edge> {
-        let mut interpreted = Self {
-            registers: frame.registers.as_mut_ptr(),
-            locals: frame.locals.as_mut_ptr(),
-            locals_len: frame.locals.len(),
+    pub(in crate::vm) fn step_row(vm: *mut Vm<H>, program: &'a ResidualProgram, frame: usize, pc: usize,
+        instruction: WideInstruction, operation: Operation<u64, ()>) -> RowRun {
+        // SAFETY: `vm` is the running VM, live for the row. The register and local pointers are the
+        // running activation's, which stay allocated for the activation's run.
+        let (registers, locals, locals_len, function) = unsafe {
+            let running = &mut (*vm).frames[frame];
+            (running.registers.as_mut_ptr(), running.locals.as_mut_ptr(), running.locals.len(), running.function)
         };
-        crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation)
+        let site = CallSite { owner: VarOwner::Frame(frame), function, resume: pc };
+        let mut interpreted = Self {
+            vm,
+            program,
+            site,
+            registers,
+            locals,
+            locals_len,
+            raised: None,
+            stashed: Value::UNDEFINED,
+            resume: None,
+        };
+        let step = crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut interpreted, operation);
+        if let Some(error) = interpreted.raised.take() {
+            return RowRun::Stop(Err(error));
+        }
+        match step {
+            Step::Value(_) => RowRun::Done(Edge::Following),
+            Step::Unresolved => RowRun::Declined,
+            Step::Control(InterpreterControl::Edge(Edge::Leave | Edge::Transfer | Edge::Entry(_))) =>
+                unreachable!("the interpreter frame neither suspends the lane nor enters a branch table"),
+            Step::Control(InterpreterControl::Edge(edge)) => RowRun::Done(edge),
+            Step::Control(InterpreterControl::Return(value)) => RowRun::Stop(Ok(StepResult::Return(value))),
+            Step::Control(InterpreterControl::Throw(value)) => RowRun::Stop(Err(Self::thrown(vm, value))),
+            Step::Control(InterpreterControl::Await) => RowRun::Stop(Ok(StepResult::Await {
+                value: interpreted.stashed,
+                destination: interpreted.resume.expect("an await resumes into its destination"),
+            })),
+            Step::Control(InterpreterControl::Yield) => RowRun::Stop(Ok(StepResult::Yield {
+                value: interpreted.stashed,
+                destination: instruction.result_register(),
+                delegated_result: None,
+            })),
+        }
     }
 
-    /// Whether the general loop runs `operation` as its staged row on this frame before its arms
-    /// (`step_row`): the register, local, constant, capture, Number, compare and property rows the
-    /// frame may answer. A row it leaves runs the arm the operation's opcode has.
+    /// The error a `Throw` of `value` raises: the primitive's own, else the object's with its detail.
+    fn thrown(vm: *mut Vm<H>, value: Value) -> JsError {
+        // SAFETY: the row has finished with the VM's calls; `vm` is live (`step_row`).
+        let vm = unsafe { &*vm };
+        JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, vm.detail_string(value)))
+    }
+
+    /// The running VM, which the frame's calls answer through.
     #[inline(always)]
-    pub(in crate::vm) fn runs_row(operation: Operation<u64, ()>) -> bool {
-        matches!(operation,
-            Operation::Move { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
-                | Operation::JumpIf { .. } | Operation::LoadConst { .. } | Operation::LoadCapture { .. }
-                | Operation::StoreCapture { .. } | Operation::Number(_) | Operation::CompareJump { .. }
-                | Operation::ElementRead { .. } | Operation::ElementWrite { .. } | Operation::GetField { .. }
-                | Operation::SetField { .. } | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. })
+    fn vm<'v>(&self) -> &'v mut Vm<H> {
+        // SAFETY: `vm` is the running VM, live for the row (`step_row`), and the row holds no other
+        // reference into it while its calls run.
+        unsafe { &mut *self.vm }
     }
 
     /// The register `register` of the file.
@@ -58,9 +148,9 @@ impl InterpreterFrame {
     }
 }
 
-impl crate::staged::Frame<Concrete> for InterpreterFrame {
+impl<H: Host> crate::staged::Frame<Concrete> for InterpreterFrame<'_, H> {
     type Fact = InterpreterFact;
-    type Control = Edge;
+    type Control = InterpreterControl;
 
     #[inline(always)]
     fn fact(&self, _register: Register) -> InterpreterFact { InterpreterFact::Value }
@@ -103,12 +193,12 @@ impl crate::staged::Frame<Concrete> for InterpreterFrame {
     }
 
     #[inline(always)]
-    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
-        if condition { Edge::Target } else { Edge::Following }
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> InterpreterControl {
+        InterpreterControl::Edge(if condition { Edge::Target } else { Edge::Following })
     }
 
     #[inline(always)]
-    fn jump(&mut self, _stage: &mut Concrete) -> Edge { Edge::Target }
+    fn jump(&mut self, _stage: &mut Concrete) -> InterpreterControl { InterpreterControl::Edge(Edge::Target) }
 
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, InterpreterFact) {
@@ -134,21 +224,125 @@ impl crate::staged::Frame<Concrete> for InterpreterFrame {
         unsafe { *self.locals.add(usize::from(slot)) = Value::from_bits(value) };
         true
     }
+
+    /// The VM's operation for a name read, a global `typeof` or a global store (`CallOut`), at the
+    /// frame's site. A raise is stashed for the runner.
+    #[inline(always)]
+    fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, InterpreterFact)> {
+        if !matches!(operation, CallOut::LoadName { .. } | CallOut::GlobalTypeof { .. } | CallOut::GlobalWrite { .. }) {
+            return None;
+        }
+        let (program, site) = (self.program, self.site);
+        let vm = self.vm();
+        let operands = operation.operands().read(&program.method_arguments, |operand| match operand.register_index() {
+            Some(register) => vm.owner_register(site.owner, register),
+            None => vm.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"),
+        });
+        match vm.call_out(program, site, operation, operands) {
+            Ok(value) => Some((value.map_or(0, Value::to_bits), InterpreterFact::Value)),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// Read the capture `slot`, `depth` scopes out, by the VM's binding rules. A raise (a binding in
+    /// its temporal dead zone) is stashed for the runner.
+    #[inline(always)]
+    fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, _root: bool) -> Option<(u64, InterpreterFact)> {
+        let (program, owner) = (self.program, self.site.owner);
+        match self.vm().capture(program, owner, depth, slot) {
+            Ok(value) => Some((value.to_bits(), InterpreterFact::Value)),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// Store `value` to the capture `slot`, `depth` scopes out, by the VM's binding rules.
+    #[inline(always)]
+    fn store_capture(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, value: u64) -> Option<()> {
+        let (program, owner) = (self.program, self.site.owner);
+        match self.vm().store_capture(program, owner, depth, slot, Value::from_bits(value)) {
+            Ok(()) => Some(()),
+            Err(error) => {
+                self.raised = Some(error);
+                None
+            }
+        }
+    }
+
+    /// The frame's return of the register `register`: the completion the general loop makes of a `Return`.
+    #[inline(always)]
+    fn ret(&mut self, stage: &mut Concrete, register: Register) -> Option<InterpreterControl> {
+        Some(InterpreterControl::Return(Value::from_bits(self.read(stage, register))))
+    }
+
+    /// `Throw` of the value in `source`: the frame's completion, which the runner raises.
+    #[inline(always)]
+    fn raise(&mut self, stage: &mut Concrete, source: Register) -> Option<InterpreterControl> {
+        Some(InterpreterControl::Throw(Value::from_bits(self.read(stage, source))))
+    }
+
+    /// `Await` of `source` (a promise for an object, as the general step makes it), suspending the
+    /// run to resume into `destination`. A raise is stashed for the runner.
+    #[inline(always)]
+    fn suspend_await(&mut self, stage: &mut Concrete, destination: Register, source: Register) -> Option<InterpreterControl> {
+        let awaited = Value::from_bits(self.read(stage, source));
+        let (program, vm) = (self.program, self.vm());
+        let value = if vm.is_object_like(awaited) {
+            match vm.promise_for_value(program, awaited) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.raised = Some(error);
+                    return None;
+                }
+            }
+        } else {
+            awaited
+        };
+        self.stashed = value;
+        self.resume = Some(destination);
+        Some(InterpreterControl::Await)
+    }
+
+    /// `Yield` of `value`: a promise for it in an async function, as the general step makes it.
+    /// A raise is stashed for the runner.
+    #[inline(always)]
+    fn suspend_yield(&mut self, stage: &mut Concrete, value: Register) -> Option<InterpreterControl> {
+        let yielded = Value::from_bits(self.read(stage, value));
+        let (program, function, vm) = (self.program, self.site.function, self.vm());
+        let value = if program.function(function as usize).is_async {
+            match vm.promise_for_value(program, yielded) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.raised = Some(error);
+                    return None;
+                }
+            }
+        } else {
+            yielded
+        };
+        self.stashed = value;
+        Some(InterpreterControl::Yield)
+    }
 }
 
-impl crate::staged::GlobalFrame<Concrete> for InterpreterFrame {}
+impl<H: Host> crate::staged::GlobalFrame<Concrete> for InterpreterFrame<'_, H> {}
 
-impl crate::staged::CallFrame<Concrete> for InterpreterFrame {}
+impl<H: Host> crate::staged::CallFrame<Concrete> for InterpreterFrame<'_, H> {}
 
-impl crate::staged::ElementFrame<Concrete> for InterpreterFrame {}
+impl<H: Host> crate::staged::ElementFrame<Concrete> for InterpreterFrame<'_, H> {}
 
-impl crate::staged::PropertyFrame<Concrete> for InterpreterFrame {
+impl<H: Host> crate::staged::PropertyFrame<Concrete> for InterpreterFrame<'_, H> {
     type Plans = crate::staged::NoPlans;
 
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
 }
 
-impl NumericFrame<Concrete> for InterpreterFrame {
+impl<H: Host> NumericFrame<Concrete> for InterpreterFrame<'_, H> {
     /// An int32 operand's word, from its register's tagged word.
     #[inline(always)]
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {

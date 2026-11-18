@@ -2,7 +2,7 @@ use super::*;
 use crate::bytecode::index;
 mod interpreter_frame;
 mod loop_stack;
-pub(super) use interpreter_frame::InterpreterFrame;
+pub(super) use interpreter_frame::{InterpreterFrame, RowRun, runs_row};
 
 /// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
 const RETAINED_FRAME_VALUES: usize = 256;
@@ -2148,8 +2148,8 @@ impl<H: Host> Vm<H> {
             // Register moves, local slot accesses and conditional jumps run as their staged rows on the
             // running frame's registers. A row that leaves runs the arms below and the general path.
             self.pending_row = None;
-            if let Some(operation) = crate::staged::Operation::<u64, ()>::decode(ins, crate::staged::DecodeContext::of_constants(&p.constants))
-                && InterpreterFrame::runs_row(operation)
+            if let Some(operation) = Self::decode_row(ins, crate::staged::DecodeContext::of_constants(&p.constants))
+                && runs_row(operation)
                 && self.row_admitted(p, frame, operation)
             {
                 #[cfg(feature = "profile-aggregate")]
@@ -2157,16 +2157,18 @@ impl<H: Host> Vm<H> {
                     let value = self.read(frame, register);
                     self.profile.branch_value(value.profile_kind() as usize, self.truthy(value));
                 }
-                match InterpreterFrame::step_row(&mut self.frames[frame], operation) {
-                    crate::staged::Step::Value(_) | crate::staged::Step::Control(crate::staged::Edge::Following) => continue,
-                    crate::staged::Step::Control(crate::staged::Edge::Target) => {
+                match InterpreterFrame::step_row(self as *mut Self, p, frame, pc, ins, operation) {
+                    RowRun::Done(crate::staged::Edge::Following) => continue,
+                    RowRun::Done(crate::staged::Edge::Target) => {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
                         }
                         continue;
                     }
-                    crate::staged::Step::Unresolved => {
+                    RowRun::Done(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
+                        unreachable!("the interpreter frame neither suspends the lane nor enters a branch table"),
+                    RowRun::Declined => {
                         // A heap value's truthiness is the VM's, which runs no guest code.
                         if let crate::staged::Operation::JumpIf { register, taken } = operation {
                             if self.truthy(self.read(frame, register)) == taken {
@@ -2180,8 +2182,8 @@ impl<H: Host> Vm<H> {
                         // The arm below runs the miss path; its step takes this declined row, undecoded.
                         self.pending_row = Some(operation);
                     }
-                    crate::staged::Step::Control(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
-                        unreachable!("the interpreter frame neither suspends nor enters a branch table"),
+                    // A return, a raise or a suspension: the step result the run completes with.
+                    RowRun::Stop(stop) => self.row_stop = Some(stop),
                 }
             }
             match ins.op()  as u16 {
@@ -2379,6 +2381,8 @@ impl<H: Host> Vm<H> {
             // Returns and inline calls produce their step result here rather than through the
             // general `step` dispatch.
             match ins.op()  as u16 {
+                // A row that stopped the run (a return, a raise or a suspension) is the step result.
+                _ if let Some(stop) = self.row_stop.take() => stop,
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = self.lane_returned.take() => Ok(StepResult::Return(value)),
                 _ if let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(ins) => Ok(StepResult::Return(self.read(frame, source))),

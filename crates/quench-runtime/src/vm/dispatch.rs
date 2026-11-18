@@ -1,4 +1,5 @@
 use super::*;
+use super::dispatch_frame::{InterpreterFrame, RowRun};
 
 mod increment;
 pub(super) use increment::{integer_increment, number_increment};
@@ -577,8 +578,12 @@ impl<H: Host> Vm<H> {
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of_constants(&p.constants)) {
-                    return self.load_const_miss(f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of_constants(&p.constants)) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.load_const_miss(f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::CreateRegExpLiteral => {
@@ -588,15 +593,23 @@ impl<H: Host> Vm<H> {
             // Checked local reads and writes run their staged rows first; a row that leaves (a binding in
             // its temporal dead zone, a root or mirrored binding) is the owner's step.
             Op::LoadLocal | Op::StoreLocal => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreEnvLocal | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             // Captures and name loads run their staged rows first; a row that leaves is the owner's step.
             Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::LoadThis => {
@@ -756,13 +769,21 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::GetField => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.get_field_miss(p, f, i, pc, allow_inline_calls);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.get_field_miss(p, f, i, pc, allow_inline_calls);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::GetIndex => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.get_index_miss(p, f, i, pc, allow_inline_calls);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.get_index_miss(p, f, i, pc, allow_inline_calls);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::CheckPrivate => {
@@ -840,8 +861,12 @@ impl<H: Host> Vm<H> {
                 self.store_resolved_name(p, object, atom, self.read(f, i.register_a()), strict)?;
             }
             Op::ToNumeric => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.to_numeric_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.to_numeric_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::CopyDataProperties => self.copy_data_properties(
@@ -898,23 +923,39 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::Await => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.await_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.await_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::Yield => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.yield_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.yield_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::YieldStar => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.yield_star_miss(p, f, i, pc);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.yield_star_miss(p, f, i, pc);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::SetField | Op::SetFieldStrict => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.set_field_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.set_field_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::DefinePropertyRecord => {
@@ -967,8 +1008,12 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             Op::SetIndex => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.set_index_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.set_index_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::DefineArrayElement => {
@@ -976,13 +1021,21 @@ impl<H: Host> Vm<H> {
                 self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
             }
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.binary_miss(p, f, i, pc);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.binary_miss(p, f, i, pc);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::IncDec => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.inc_dec_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.inc_dec_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::StringConcat => {
@@ -990,8 +1043,12 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::Unary => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.unary_miss(p, f, i);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.unary_miss(p, f, i);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
@@ -999,8 +1056,12 @@ impl<H: Host> Vm<H> {
                 None => *pc = i.jump_target() as usize,
             },
             Op::JumpBinaryFalse => {
-                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
-                    return self.jump_binary_false_miss(p, f, i, pc);
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    RowRun::Done(_) => {}
+                    RowRun::Declined => {
+                        return self.jump_binary_false_miss(p, f, i, pc);
+                    }
+                    RowRun::Stop(stop) => return stop,
                 }
             }
             Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
@@ -1335,57 +1396,48 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            // Return and Throw complete the frame as their decoded operations; no interpreter row
-            // answers a return (`Frame::ret`) or a raise (`Operation::Throw`), so these are the VM's.
-            Op::Return => {
-                let Some(crate::staged::Operation::Return { source }) = crate::staged::Operation::<u64, ()>::of(i) else {
-                    unreachable!("a Return record decodes to Return");
-                };
-                return Ok(StepResult::Return(self.read(f, source)));
-            }
-            Op::Throw => {
-                let Some(crate::staged::Operation::Throw { source }) = crate::staged::Operation::<u64, ()>::of(i) else {
-                    unreachable!("a Throw record decodes to Throw");
-                };
-                let value = self.read(f, source);
-                return Err(JsError::thrown_primitive(value).unwrap_or_else(|| JsError::thrown(value, self.detail_string(value))));
-            }
+            // Return and Throw are rows: the frame's completion (`Frame::ret`, `Frame::raise`) stops the run.
+            Op::Return | Op::Throw => match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                RowRun::Stop(stop) => return stop,
+                RowRun::Done(_) | RowRun::Declined => unreachable!("a return or a raise row stops the run"),
+            },
             Op::WasmBranchTable => *pc += self.branch_table_case(f, i),
             _ => return self.step_unlisted(p, f, i, pc),
         }
         Ok(StepResult::Continue)
     }
 
-    /// Runs `operation` as its staged row on the running frame `f` (`InterpreterFrame::step_row`),
-    /// taking the edge the row answers: a taken jump sets `pc`, and a back-edge jump publishes its
-    /// PC and checks for a due collection. `false` where the row leaves, so the arm's own body runs.
+    /// Runs `operation`, decoded from `i` at resume PC `pc`, as its staged row on the running frame
+    /// `f` (`InterpreterFrame::step_row`). A taken jump sets `pc`, and a back-edge jump publishes its
+    /// PC and checks for a due collection.
     #[inline(always)]
-    fn step_staged(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
-        operation: crate::staged::Operation<u64, ()>) -> bool {
-        use crate::staged::{Edge, Operation, Step};
+    fn run_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+        operation: crate::staged::Operation<u64, ()>) -> RowRun {
+        use crate::staged::{Edge, Operation};
         if !self.row_admitted(p, f, operation) {
-            return false;
+            return RowRun::Declined;
         }
-        match super::dispatch_frame::InterpreterFrame::step_row(&mut self.frames[f], operation) {
-            Step::Control(Edge::Target) => {
-                *pc = i.jump_target() as usize;
-                if matches!(operation, Operation::Jump) {
-                    self.frames[f].pc = *pc;
-                    self.frames[f].pc_is_resume = true;
-                    self.maybe_collect(p);
-                }
-                true
+        let run = InterpreterFrame::step_row(self as *mut Self, p, f, *pc, i, operation);
+        if matches!(run, RowRun::Done(Edge::Target)) {
+            *pc = i.jump_target() as usize;
+            if matches!(operation, Operation::Jump) {
+                self.frames[f].pc = *pc;
+                self.frames[f].pc_is_resume = true;
+                self.maybe_collect(p);
             }
-            Step::Value(_) | Step::Control(Edge::Following) => true,
-            Step::Unresolved => false,
-            Step::Control(Edge::Leave | Edge::Transfer | Edge::Entry(_)) =>
-                unreachable!("the interpreter frame neither suspends nor enters a branch table"),
         }
+        run
     }
 
-    /// `i` decoded under `context` (a name load under no context: its proof is the frame's, so it
-    /// takes `decode_load_name`), run as its staged row by `step_staged`. `false` where the row
-    /// does not decide `i` on this frame.
+    /// The staged row `i` decodes to under `context`: a general row, a name load (under no context:
+    /// its proof is the frame's), or the lane's suspension and string-case rows.
+    #[inline(always)]
+    pub(super) fn decode_row(i: WideInstruction, context: crate::staged::DecodeContext<'_>) -> Option<crate::staged::Operation<u64, ()>> {
+        crate::staged::Operation::<u64, ()>::decode(i, context)
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i))
+    }
+
     /// Whether the staged row `operation` may run on frame `f`: the checked local rows need the
     /// frame's slots to be its own (`Function::has_plain_locals`); every other row is admitted.
     #[inline(always)]
@@ -1399,20 +1451,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `i` decoded under `context` and run as its staged row (`run_row`). The fast prelude already
+    /// decoded this instruction and tried its row where it declined (`pending_row`): the arm runs its
+    /// miss path without decoding or trying the row again.
     #[inline(always)]
     fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
-        context: crate::staged::DecodeContext<'_>) -> bool {
-        // The fast prelude already decoded this instruction and tried its row: that row left, so the
-        // arm runs its miss path without decoding or trying it again.
+        context: crate::staged::DecodeContext<'_>) -> RowRun {
         if self.pending_row.take().is_some() {
-            return false;
+            return RowRun::Declined;
         }
-        let decoded = crate::staged::Operation::<u64, ()>::decode(i, context)
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
-            .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i));
-        match decoded {
-            Some(operation) => self.step_staged(p, f, i, pc, operation),
-            None => false,
+        match Self::decode_row(i, context) {
+            Some(operation) => self.run_row(p, f, i, pc, operation),
+            None => RowRun::Declined,
         }
     }
 
@@ -1752,8 +1802,10 @@ impl<H: Host> Vm<H> {
             | crate::staged::Operation::StoreLocalPlain { .. } | crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) =
             crate::staged::Operation::<u64, ()>::of(i)
         {
-            if self.step_staged(p, f, i, pc, operation) {
-                return Ok(StepResult::Continue);
+            match self.run_row(p, f, i, pc, operation) {
+                RowRun::Done(_) => return Ok(StepResult::Continue),
+                RowRun::Stop(stop) => return stop,
+                RowRun::Declined => {}
             }
             let crate::staged::Operation::JumpIf { register, taken } = operation else {
                 unreachable!("validated bytecode bounds the registers and slots of a register row");

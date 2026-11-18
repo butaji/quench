@@ -122,6 +122,11 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn suspend_yield(&mut self, _stage: &mut S, _value: Register) -> Option<Self::Control> { None }
 
+    /// `Throw`: raises the value in `source` as the frame's completion; `None` where the frame cannot, which
+    /// the general step does.
+    #[inline(always)]
+    fn raise(&mut self, _stage: &mut S, _source: Register) -> Option<Self::Control> { None }
+
     /// `YieldStar`: the `yield*` of the iterable in `iterable`, transferring control as `suspend_yield` does;
     /// `None` where the frame cannot, which the general step does.
     #[inline(always)]

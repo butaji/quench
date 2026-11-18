@@ -8,7 +8,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
     match operation {
         Operation::Jump => Step::Control(frame.jump(stage)),
         Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
-        Operation::Throw { .. } => Step::Unresolved,
+        Operation::Throw { source } => suspended(frame.raise(stage, source)),
         Operation::Number(operation) => numeric::step(stage, frame, operation),
         property @ (Operation::GetField { .. } | Operation::SetField { .. } | Operation::StoreField { .. } | Operation::FieldGetHost { .. }
             | Operation::FieldAdd { .. } | Operation::IndexGetHost { .. }) => super::property::property_step(stage, frame, property),

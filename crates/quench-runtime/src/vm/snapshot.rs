@@ -98,6 +98,7 @@ impl<H: Host> Vm<H> {
             free_cache_layouts: _,
             active_registers: _,
             pending_row: _,
+            row_stop: _,
             lane_raised: _,
             lane_raise_site: _,
             lane_returned: _,
