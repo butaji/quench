@@ -59,6 +59,13 @@ arr_indexof 24.0 lane_inc_dec_loop<false, 4, true>
 arr_indexof 15.0 lane_operator_int32<8, false>
 arr_indexof 12.0 lane_operator_integer_constant<19>
 arr_indexof 7.0 lane_row<69, 0, 0>
+arr_isarray 58.0 lane_call_builtin<8>
+arr_isarray 57.0 lane_get_field_own_cell
+arr_isarray 34.0 lane_load_name_bound<0, 2>
+arr_isarray 24.0 lane_inc_dec_loop<false, 4, true>
+arr_isarray 16.0 lane_row<63, 0, 1>
+arr_isarray 15.0 lane_jump_false<false>
+arr_isarray 7.0 lane_row<69, 0, 0>
 arr_length 32.0 lane_get_length
 arr_length 24.0 lane_inc_dec_loop<false, 4, true>
 arr_length 19.0 lane_operator<8>
@@ -80,6 +87,43 @@ arr_push 41.0 lane_get_field_holder_cell_register
 arr_push 24.0 lane_inc_dec_loop<false, 4, true>
 arr_push 14.0 lane_row<69, 0, 0>
 arr_push 10.9 __memcpy_avx_unaligned_erms
+arr_slice 162.0 Vm::array_slice_native
+arr_slice 161.8 Vm::array_of
+arr_slice 154.0 Vm::array_species_is_array_create
+arr_slice 137.0 lane_call_native
+arr_slice 119.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
+arr_slice 112.0 Vm::has_intrinsic_species_getter
+arr_slice 109.0 Vm::call_native
+arr_slice 65.0 lane_native_call
+arr_slice 61.0 Vm::array_read_view
+arr_slice 60.5 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#7}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#8}>
+arr_slice 58.0 Vm::to_number
+arr_slice 54.0 Vm::present_dense_elements
+arr_slice 47.0 Vm::call_native_table
+arr_slice 45.0 lane_native_value
+arr_slice 41.0 lane_get_field_holder_cell_register
+arr_slice 38.0 Vm::array_like_length
+arr_slice 32.0 lane_get_length
+arr_slice 30.0 trunc
+arr_slice 28.0 Vm::call_native_dispatch
+arr_slice 27.0 CallArguments::from_slice
+arr_slice 26.0 Vm::primitive_to_number
+arr_slice 24.0 lane_inc_dec_loop<false, 4, true>
+arr_slice 23.0 SmallVec::from_slice
+arr_slice 22.1 __memcpy_avx_unaligned_erms
+arr_slice 22.0 Vm::materialize_lane_activations
+arr_slice 19.0 lane_operator<8>
+arr_slice 17.0 Vm::box_object
+arr_slice 13.0 Vm::string_method_receiver
+arr_slice 12.0 lane_row<3, 0, 0>
+arr_slice 7.0 StackGuard::drop
+arr_slice 7.0 lane_row<69, 0, 0>
+arr_slice 2.1 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+arr_slice 1.2 RecordSpace::sweep_aging_word<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#7}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#8}>
+arr_slice 1.0 RecordSpace::load_free_word
+arr_slice 0.9 RecordSpace::claim_slow
+arr_slice 0.9 Vm::collect_inner
+arr_slice 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 arr_store_dbl 36.0 lane_set_index_proved
 arr_store_dbl 25.0 lane_operator_double_constant<10>
 arr_store_dbl 24.0 lane_inc_dec_loop<false, 4, true>
@@ -553,7 +597,7 @@ k_json 305.9 __memcpy_avx_unaligned_erms
 k_json 178.4 __rust_dealloc
 k_json 171.8 Heap::alloc_object_with_properties
 k_json 157.9 QuenchAlloc::alloc_enabled
-k_json 133.0 lane_call_native
+k_json 137.0 lane_call_native
 k_json 119.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
 k_json 103.0 Vm::call_native
 k_json 103.0 drop_glue<quench_runtime::vm::json::heap_builder::JsonHeapBuilder>
@@ -575,7 +619,7 @@ k_json 52.0 Vm::json_plain_members
 k_json 51.1 RecordSpace::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
 k_json 48.8 RecordSpace::release<<quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#0}, <quench_runtime::heap::Heap>::collect_with_object_roots<alloc::vec::Vec<quench_runtime::value::Value>, <quench_runtime::vm::Vm>::collect_inner::{closure#46}>::{closure#6}::{closure#1}>
 k_json 48.0 lane_call_builtin<12>
-k_json 48.0 Vm::call_native_table
+k_json 46.0 Vm::call_native_table
 k_json 46.0 {closure#0}
 k_json 45.0 lane_native_value
 k_json 42.0 JsonHeapBuilder::object
@@ -605,12 +649,9 @@ k_json 13.0 Vm::string_method_receiver
 k_json 12.0 Object::drop
 k_json 12.0 Object::is_raw_json
 k_json 12.0 lane_operator_integer_constant<19>
-k_json 11.0 Native::runs_from_lane
-k_json 8.0 Native::is_host_control_native
 k_json 8.0 Vm::boxed_primitive_data
 k_json 8.0 __rust_alloc
 k_json 7.0 JsonParseCache::small
-k_json 7.0 Native::is_math_function
 k_json 7.0 StackGuard::drop
 k_json 5.8 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_json 4.0 __rust_no_alloc_shim_is_unstable_v2
@@ -705,7 +746,7 @@ k_str_build 17.5 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::JsString>::jo
 k_str_build 15.8 u32::fmt
 k_str_build 15.0 lane_concatenation
 k_str_build 14.9 QuenchAlloc::alloc_enabled
-k_str_build 13.4 __rust_dealloc
+k_str_build 13.5 __rust_dealloc
 k_str_build 13.0 Rc::new_uninit_slice
 k_str_build 11.8 AppendBuffer::made_of<core::iter::adapters::copied::Copied<core::slice::iter::Iter<u8>>, core::iter::adapters::copied::Copied<core::slice::iter::Iter<u8>>>
 k_str_build 11.7 rc_inner_layout_for_value_layout
@@ -718,7 +759,7 @@ k_str_build 4.1 FlatUnits::shared_ascii
 k_str_build 3.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
 k_str_build 3.5 Rc::drop_slow
 k_str_build 3.0 __rust_alloc
-k_str_build 2.4 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
+k_str_build 2.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 k_str_build 2.2 small_sort_network<u32, <u32 as core::cmp::PartialOrd>::lt>
 k_str_build 2.1 RecordSpace::load_free_word
 k_str_build 1.8 RecordSpace::claim_slow
@@ -817,7 +858,7 @@ num_to_str 1.1 AtomTable::len
 num_to_str 1.1 RecordSpace::load_free_word
 num_to_str 0.9 RecordSpace::claim_slow
 num_to_str 0.8 Vm::collect_inner
-num_to_str 0.6 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
+num_to_str 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 obj_spread 340.0 Vm::copy_plain_properties
 obj_spread 103.0 Object::set_properties
 obj_spread 93.0 Heap::property_set
@@ -921,7 +962,7 @@ str_concat 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure
 str_concat 1.1 RecordSpace::load_free_word
 str_concat 0.9 RecordSpace::claim_slow
 str_concat 0.8 Vm::collect_inner
-str_concat 0.6 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
+str_concat 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 str_concat_acc 113.0 Vm::intern_dynamic_concat
 str_concat_acc 101.0 lane_operator_constant_other<8>
 str_concat_acc 89.8 Heap::alloc_string_record
@@ -940,7 +981,22 @@ str_concat_acc 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{clo
 str_concat_acc 1.0 RecordSpace::load_free_word
 str_concat_acc 0.9 RecordSpace::claim_slow
 str_concat_acc 0.8 Vm::collect_inner
-str_concat_acc 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
+str_includes 180.0 Vm::pure_string_method_call
+str_includes 73.0 lane_native_value
+str_includes 71.0 find_ascii
+str_includes 64.0 lane_native_call
+str_includes 41.0 find_avx2
+str_includes 36.0 Units::find
+str_includes 27.0 lane_get_field_string_register
+str_includes 24.0 lane_inc_dec_loop<false, 4, true>
+str_includes 19.0 __memcmp_avx2_movbe
+str_includes 16.0 lane_row<63, 0, 1>
+str_includes 15.0 lane_jump_false<false>
+str_includes 12.0 FlatUnits::shared_ascii
+str_includes 7.0 ShortAscii::as_str
+str_includes 7.0 lane_row<69, 0, 0>
+str_includes 6.0 lane_row<3, 0, 0>
+str_includes 2.0 Units::len
 str_index 88.0 lane_jump_strict_constant_contents<false>
 str_index 80.0 lane_jump_strict_constant_false<false>
 str_index 79.0 Vm::string_element
@@ -955,6 +1011,31 @@ str_index 1.2 lane_row<63, 0, 1>
 str_length 40.0 lane_get_length_string
 str_length 24.0 lane_inc_dec_loop<false, 4, true>
 str_length 19.0 lane_operator<8>
+str_slice 195.0 Vm::pure_string_method_call
+str_slice 87.7 Heap::alloc_string_record
+str_slice 76.0 FlatUnits::substring
+str_slice 73.0 lane_native_value
+str_slice 64.0 lane_native_call
+str_slice 40.0 lane_get_length_string
+str_slice 38.6 {closure#0}
+str_slice 36.0 FlatUnits::ascii_with<<quench_runtime::vm::wtf16::FlatUnits>::ascii::{closure#0}>
+str_slice 27.0 lane_get_field_string_register
+str_slice 24.0 lane_inc_dec_loop<false, 4, true>
+str_slice 19.0 lane_operator<8>
+str_slice 17.0 substring_range
+str_slice 15.0 __memcpy_avx_unaligned_erms
+str_slice 14.6 RecordSpace::sweep_aging_word<<quench_runtime::heap::records::RecordSpace<quench_runtime::vm::wtf16::JsString, 134217728, 16777216>>::sweep<<quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>::{closure#0}, <quench_runtime::heap::StoppedStringSweep>::run::{closure#0}>
+str_slice 12.0 FlatUnits::shared_ascii
+str_slice 12.0 lane_row<3, 0, 0>
+str_slice 7.0 ShortAscii::as_str
+str_slice 7.0 lane_row<69, 0, 0>
+str_slice 4.1 drop_glue<quench_runtime::vm::wtf16::FlatUnits>
+str_slice 2.0 Units::len
+str_slice 1.9 Heap::mark_work<<quench_runtime::vm::Vm>::collect_inner::{closure#46}>
+str_slice 1.1 RecordSpace::load_free_word
+str_slice 0.9 RecordSpace::claim_slow
+str_slice 0.9 Vm::collect_inner
+str_slice 0.5 quicksort<u32, <u32 as core::cmp::PartialOrd>::lt>
 str_to_num 95.0 parse_number
 str_to_num 93.0 str::trim_matches<quench_runtime::vm::primitives::whitespace::is_ecma_whitespace_character>
 str_to_num 85.0 lane_unary

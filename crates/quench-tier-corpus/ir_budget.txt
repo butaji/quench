@@ -11,11 +11,13 @@ alloc_ctor 143 435 435
 alloc_literal 143 435 435
 arr_includes 247.2 747.6 1193.8
 arr_indexof 248.2 750.6 1194.3
+arr_isarray 4 18 211.1
 arr_length 4 18 75.1
 arr_load_dbl 5 21 86.1
 arr_load_int 5 21 72.1
 arr_load_obj 6 24 102.1
 arr_push 8 30 244
+arr_slice 144 438 1742.8
 arr_store_dbl 8 30 97.1
 arr_store_int 5 21 72.1
 arr_store_obj 3 15 86.1
@@ -72,7 +74,7 @@ k20_switch 169 513 3944.3
 k_dispatch 14 48 348.6
 k_dist2 12.9 44.7 252.7
 k_field_acc 3.9 17.7 63.3
-k_json 812 2442 4981.5
+k_json 812 2442 4961.8
 k_list_walk 6.9 26.7 151.2
 k_nbody_pair 21.1 70 1340.1
 k_regexp 40.2 127 1224.3
@@ -96,8 +98,10 @@ str_charcodeat 9 33 186.1
 str_compare 4 18 174.1
 str_concat 531.56 1601 1601
 str_concat_acc 7 27 530.1
+str_includes 99 303 600.1
 str_index 9.07 34 378.3
 str_length 4 18 83.1
+str_slice 166 504 779.2
 str_to_num 496 1494 1494
 to_uint32 20 66 197.2
 truthy_int 5.75 24 45.6
