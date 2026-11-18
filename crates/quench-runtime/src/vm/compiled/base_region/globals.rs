@@ -156,7 +156,7 @@ pub(super) fn global_holes(
     Some(padded_holes(match heap {
         Heap::GlobalRead => [dst_hole, id, decoded.hole],
         Heap::GlobalStore => [id, a_hole, decoded.hole],
-        Heap::LexicalRead | Heap::CalleeCapture => [dst_hole, decoded.hole, 0],
+        Heap::LexicalRead => [dst_hole, decoded.hole, 0],
         Heap::LexicalWrite => [0, a_hole, decoded.hole],
         Heap::Word => [dst_hole, decoded.hole, 0],
         _ => return None,

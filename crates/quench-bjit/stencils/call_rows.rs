@@ -21,9 +21,8 @@
 //! (a step that took its conditional jump) continues at TAKEN, the reloads of the registers live
 //! at the jump's target.
 //!
-//! Direct row `call_direct_a<N>_<strict|sloppy|lexical>`: hole V0 = the address of the site's
-//! `CallRecord`. It checks the callee word and (sloppy) the receiver (an arrow, lexical, binds
-//! none: its body finds its `this` in its environment, as `lane_body_call` passes it), admits the call with the
+//! Direct row `call_direct_a<N>_<strict|sloppy>`: hole V0 = the address of the site's
+//! `CallRecord`. It checks the callee word and (sloppy) the receiver, admits the call with the
 //! shared `admit_native` row (one validity compare, one room check) plus the shadow frame's
 //! room, writes `N` arguments and `undefined` for the rest into the callee's window at the lane
 //! stack's top, pushes the shadow frame, calls the cell's entry with the body ABI (context,
@@ -179,21 +178,12 @@ enum Entered {
     Left(u32, u64),
 }
 
-/// How a direct row binds the receiver (`bound_this`).
-const STRICT: u8 = 0;
-const SLOPPY: u8 = 1;
-const LEXICAL: u8 = 2;
-
 /// The receiver the callee binds: strict takes it as it is, sloppy binds an object to itself and
-/// `undefined` or `null` to the record's global object, any other receiver refused; an arrow
-/// (lexical) binds none, the deleted marker.
+/// `undefined` or `null` to the record's global object; any other receiver is refused.
 #[inline(always)]
-fn bound_this<const MODE: u8>(record: usize, this: u64) -> Option<u64> {
-    if MODE == STRICT {
+fn bound_this<const SLOPPY: bool>(record: usize, this: u64) -> Option<u64> {
+    if !SLOPPY {
         return Some(this);
-    }
-    if MODE == LEXICAL {
-        return Some(Value::DELETED.to_bits());
     }
     let object = value::is_direct_object(&mut StencilStage::from_hole(0), this);
     let nullish = this == Value::UNDEFINED.to_bits() || this == Value::NULL.to_bits();
@@ -310,7 +300,7 @@ unsafe fn finish(s: &S, record: usize, payload: usize, a: &Admitted, returned: B
 
 /// The direct call: the callee and receiver, admission, the push, the call, the pop.
 #[inline(always)]
-unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
+unsafe fn enter<const ARGC: usize, const SLOPPY: bool>(s: &S) -> Entered {
     // SAFETY: as `admit`.
     unsafe {
         let record = hole64::<HOLE_RECORD>() as usize;
@@ -318,7 +308,7 @@ unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
             return Entered::Refused;
         }
         let this = read_register(s, record, offset_of!(CallRecord, this_register));
-        let Some(this) = bound_this::<MODE>(record, this) else { return Entered::Refused };
+        let Some(this) = bound_this::<SLOPPY>(record, this) else { return Entered::Refused };
         let payload = payload(s);
         let Some(admitted) = admit(record, payload) else { return Entered::Refused };
         push::<ARGC>(s, record, payload, &admitted, this);
@@ -329,12 +319,12 @@ unsafe fn enter<const ARGC: usize, const MODE: u8>(s: &S) -> Entered {
 }
 
 macro_rules! direct_row {
-    ($name:ident, $argc:expr, $mode:expr) => {
+    ($name:ident, $argc:expr, $sloppy:expr) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "rust-preserve-none" fn $name(frame: usize, ctx: usize, p0: usize, p1: usize, p2: usize, p3: usize, f0: f64, f1: f64, f2: f64, f3: f64, f4: f64, f5: f64, f6: f64, f7: f64) -> usize {
             unsafe {
                 let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
-                match enter::<{ $argc }, { $mode }>(&s) {
+                match enter::<{ $argc }, { $sloppy }>(&s) {
                     Entered::Returned => go!(HOLE_TAKEN, dead(&s)),
                     Entered::Refused => {
                         core::hint::cold_path();
@@ -354,18 +344,14 @@ macro_rules! direct_row {
     };
 }
 
-direct_row!(call_direct_a0_strict, 0, STRICT);
-direct_row!(call_direct_a1_strict, 1, STRICT);
-direct_row!(call_direct_a2_strict, 2, STRICT);
-direct_row!(call_direct_a3_strict, 3, STRICT);
-direct_row!(call_direct_a0_sloppy, 0, SLOPPY);
-direct_row!(call_direct_a1_sloppy, 1, SLOPPY);
-direct_row!(call_direct_a2_sloppy, 2, SLOPPY);
-direct_row!(call_direct_a3_sloppy, 3, SLOPPY);
-direct_row!(call_direct_a0_lexical, 0, LEXICAL);
-direct_row!(call_direct_a1_lexical, 1, LEXICAL);
-direct_row!(call_direct_a2_lexical, 2, LEXICAL);
-direct_row!(call_direct_a3_lexical, 3, LEXICAL);
+direct_row!(call_direct_a0_strict, 0, false);
+direct_row!(call_direct_a1_strict, 1, false);
+direct_row!(call_direct_a2_strict, 2, false);
+direct_row!(call_direct_a3_strict, 3, false);
+direct_row!(call_direct_a0_sloppy, 0, true);
+direct_row!(call_direct_a1_sloppy, 1, true);
+direct_row!(call_direct_a2_sloppy, 2, true);
+direct_row!(call_direct_a3_sloppy, 3, true);
 
 /// The unconditional leave: every register is passed to the exit as it came.
 #[unsafe(no_mangle)]

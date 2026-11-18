@@ -40,7 +40,7 @@ use super::super::direct_callee::DirectCallee;
 use super::super::{FRAME_BYTES, LaneHelper, LaneHelpers};
 use crate::bytecode::{Class, ImmediateLayout, Register, WideInstruction};
 use crate::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
-use quench_bjit::call::{self, CallRow, ThisRow};
+use quench_bjit::call::{self, CallRow};
 use quench_bjit::call_record::{CallRecord, MAX_DIRECT_ARGC};
 use quench_bjit::numeric::{self, Kind, Place};
 use quench_bjit::{HOLES, Stencil, padded_holes};
@@ -145,8 +145,6 @@ pub(super) struct DirectFacts {
     pub(super) captures: u64,
     /// The global object a sloppy callee binds an `undefined` or `null` receiver to.
     pub(super) global_this: Option<u64>,
-    /// An arrow, which binds no receiver (`DirectCallee::lexical`).
-    pub(super) lexical: bool,
     pub(super) registers: u16,
     /// A construction site's forwarding record: not a plain call.
     pub(super) construction: bool,
@@ -169,7 +167,6 @@ impl DirectFacts {
             descriptor: std::ptr::from_ref(callee).addr(),
             captures: callee.capture_word(),
             global_this: callee.sloppy.map(|global| global.to_bits()),
-            lexical: callee.lexical,
             registers: callee.registers,
             construction: callee.forwarder.is_some(),
             frame_bytes: FRAME_BYTES as u64,
@@ -305,8 +302,7 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
         result_register: shape.result,
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
-    let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
-    let stencil = call::stencil(CallRow::Direct { argc, this })?;
+    let stencil = call::stencil(CallRow::Direct { argc, sloppy: facts.global_this.is_some() })?;
     Ok((part(stencil, quench_bjit::padded_holes([std::ptr::from_ref(&*record).addr() as u64, u64::from(shape.call_pc)]), vec![Exit::Status]), record))
 }
 
@@ -352,7 +348,7 @@ mod tests {
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32 }
+        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, registers, construction: false, frame_bytes: 32 }
     }
 
     /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
@@ -448,8 +444,8 @@ mod tests {
         let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
         let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
         assert_eq!(chain.record.expect("a record").global_this, 0xabc);
-        let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy }.name().expect("a row");
-        assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy }).expect(&name)));
+        let name = CallRow::Direct { argc: 2, sloppy: true }.name().expect("a row");
+        assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, sloppy: true }).expect(&name)));
     }
 
     /// The call protocol the stencils are compiled with (`quench_bjit::call_record`,

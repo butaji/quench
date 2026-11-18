@@ -118,11 +118,9 @@ impl Callees {
         let at = (*self.at.get(shape.call_pc as usize)?)?;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
-        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize], captures: (callee.capture_values.addr(), callee.capture_len) };
+        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize] };
         let mut trial = context.clone();
-        let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial)
-            .inspect_err(|why| super::note(|_, rejects| *rejects.entry(format!("inline refused: {why:?}")).or_default() += 1))
-            .ok()?;
+        let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial).ok()?;
         *context = trial;
         note_inlined();
         Some(site)

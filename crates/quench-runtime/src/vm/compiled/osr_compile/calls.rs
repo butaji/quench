@@ -69,7 +69,9 @@ impl CallCode {
     /// The calls of a region of a function with `caller_registers` registers: `inlined` as their
     /// callees' rows, `direct` by their entries (`records`: those its rows read).
     pub(super) fn of((inlined, direct, records): (Vec<InlinedCall>, Box<[DirectCallee]>, Vec<Box<CallRecord>>), caller_registers: u16, invalidation: Invalidation) -> Self {
-        let recovery = LaneRecoverySpace::inlined(&inlined);
+        // The windows start past the function's locals (`base_region::function::inline_base`): the
+        // room covers that reach as well as the activations a leave inside a callee pushes.
+        let recovery = LaneRecoverySpace::inlined(&inlined).reaching(window_width(&inlined, caller_registers));
         Self { inlined, direct, records, caller_registers, recovery, invalidation }
     }
 

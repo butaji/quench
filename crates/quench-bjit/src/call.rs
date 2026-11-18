@@ -18,7 +18,7 @@ pub enum CallRow {
     /// The direct call of `argc` arguments (at most `MAX_DIRECT_ARGC`) through an entry cell:
     /// value hole 0 is the `CallRecord`'s address; successors NEXT (refused: the helper row),
     /// TAKEN (completed), EXIT0 (a leave inside the callee, `LEAVE_STATUS`).
-    Direct { argc: u8, this: ThisRow },
+    Direct { argc: u8, sloppy: bool },
     /// The pinned register `Place::Pin` or `Place::PinF` back from the tagged word a spill wrote
     /// to the frame slot at hole 0; successor NEXT.
     Reload(Place),
@@ -26,11 +26,6 @@ pub enum CallRow {
     /// came (the exit stub writes the live pinned ones back).
     Here,
 }
-
-/// How a direct row binds the callee's `this`: the receiver as it is (strict), boxed or the
-/// global for nullish (sloppy), or none for an arrow, whose body reads its environment's (lexical).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ThisRow { Strict, Sloppy, Lexical }
 
 /// The routine a leave through a (status, word) pair ends in (`stencils/call_rows.rs`).
 pub const LEAVE_STATUS: &str = "leave_status";
@@ -41,8 +36,8 @@ impl CallRow {
         match self {
             CallRow::Helper => Ok("call_helper".to_string()),
             CallRow::Here => Ok("exit_here".to_string()),
-            CallRow::Direct { argc, this } if usize::from(argc) <= MAX_DIRECT_ARGC => {
-                Ok(format!("call_direct_a{argc}_{}", match this { ThisRow::Strict => "strict", ThisRow::Sloppy => "sloppy", ThisRow::Lexical => "lexical" }))
+            CallRow::Direct { argc, sloppy } if usize::from(argc) <= MAX_DIRECT_ARGC => {
+                Ok(format!("call_direct_a{argc}_{}", if sloppy { "sloppy" } else { "strict" }))
             }
             CallRow::Reload(place @ (Place::Pin(_) | Place::PinF(_))) => Ok(format!("reload_{}", place.code())),
             other => Err(format!("no call row {other:?}")),
@@ -70,7 +65,7 @@ mod tests {
     use crate::{EXIT, NEXT, TAKEN};
 
     fn rows() -> Vec<CallRow> {
-        let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [ThisRow::Strict, ThisRow::Sloppy, ThisRow::Lexical].map(|this| CallRow::Direct { argc, this }));
+        let direct = (0..=MAX_DIRECT_ARGC as u8).flat_map(|argc| [false, true].map(|sloppy| CallRow::Direct { argc, sloppy }));
         let pins = (0..crate::PINNED as u8).map(Place::Pin).chain((0..crate::PINNED_F as u8).map(Place::PinF)).map(CallRow::Reload);
         [CallRow::Helper, CallRow::Here].into_iter().chain(direct).chain(pins).collect()
     }
@@ -106,7 +101,7 @@ mod tests {
 
     #[test]
     fn rows_beyond_the_contract_do_not_exist() {
-        assert!(CallRow::Direct { argc: MAX_DIRECT_ARGC as u8 + 1, this: ThisRow::Strict }.name().is_err());
+        assert!(CallRow::Direct { argc: MAX_DIRECT_ARGC as u8 + 1, sloppy: false }.name().is_err());
         assert!(CallRow::Reload(Place::Mem).name().is_err());
     }
 }

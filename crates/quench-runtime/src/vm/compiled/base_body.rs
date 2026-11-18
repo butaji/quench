@@ -85,8 +85,6 @@ impl<H: Host> Vm<H> {
     /// callee register (`Vm::stable_callees`).
     pub(in crate::vm::compiled) fn stitch_callees(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], candidates: &[DirectCandidates]) -> Callees {
         let stable = self.stable_callees(program, function, code, &Callees::recorded(code, candidates));
-        // An arrow inlines as any callee does: a `this` read is no class a site admits (`Stitch::classes`), and a leave
-        // inside it makes its activation with its lexical `this` (`lane_call_this`).
         let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
         Callees::of(code, candidates, &inline_body, stable)
     }
@@ -112,9 +110,7 @@ impl<H: Host> Vm<H> {
     fn publish_base_body(&mut self, built: Body, (function, registers): (u32, u16), callees: Callees, (code, invalidation): (&[WideInstruction], Invalidation), caller: &super::super::dispatch_fast::LaneView) -> LaneBodyOutcome {
         let closed = callees.closed(code);
         let Some(method) = LaneMethod::of_base_body(self.programs.tiers(), built, function, registers, callees.owned, closed, invalidation) else { return LaneBodyOutcome::Declined };
-        // A body native callers call by its entry (`bind_callees`) pays for itself whatever its
-        // length, as a Cranelift body does (`start_lane_method`).
-        if !method.amortizes_entry() && !caller.called_by_bodies() { return LaneBodyOutcome::Short }
+        if !method.amortizes_entry() { return LaneBodyOutcome::Short }
         bind_callees(&method.direct, caller);
         self.programs.publish_lane_method(method, &mut self.heap, self.method_cache_atoms.readers()).map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }

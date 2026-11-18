@@ -137,9 +137,6 @@ pub const GLOBAL_STORE_ROW: u8 = 30;
 /// changes.
 pub const LEXICAL_READ_ROW: u8 = 49;
 pub const LEXICAL_WRITE_ROW: u8 = 50;
-/// The ordinary value at the address in hole 1 (an inlined callee's capture slot, `staged::environment::capture_at`)
-/// into the destination; an internal marker (a dead zone, a shared slot) leaves. A hit continues at NEXT.
-pub const CALLEE_CAPTURE_ROW: u8 = 25;
 /// The destination takes the tagged word of hole 1.
 pub const CONSTANT_ROW: u8 = 31;
 /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of

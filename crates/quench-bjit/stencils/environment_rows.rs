@@ -10,7 +10,7 @@ use crate::stage::StencilStage;
 use crate::staged::object::{self, Layout, Slots};
 use crate::staged::region::Region;
 use crate::staged::{Stage, RecordSpace, environment, lexical_read};
-use crate::codes::{CALLEE_CAPTURE_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
+use crate::codes::{CAPTURE_ROW, CAPTURE_SET_ROW, ENV_ROW, ENV_SET_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW};
 use crate::heap_rows::{hop, word_at};
 
 /// The depth-0 capture slot (holes 1 and 2) into the destination; a hit continues at TAKEN, as every row that may
@@ -117,14 +117,6 @@ fn lexical_read_row<const D: u8>(s: S) -> Out {
     deliver::<D>(s, need!(s, lexical_read(&mut stage, hole64::<HOLE_A>(), ())))
 }
 
-/// The capture slot of an inlined callee at the address in hole 1: the closure the site guards or holds is fixed, so its
-/// environment's slot is too, and the row is the staged read every capture row makes of its slot (`environment::capture_at`).
-#[inline(always)]
-fn callee_capture_row<const D: u8>(s: S) -> Out {
-    let mut stage = StencilStage::from_hole(0);
-    deliver::<D>(s, need!(s, environment::capture_at(&mut stage, hole64::<HOLE_A>(), ())))
-}
-
 /// The first operand (hole 1) stored to the initialized global lexical binding at the address in hole 2. No code holds the binding's value
 /// (the cell is `Mutable`) and the record is a root the collector scans whole, so the store is one write.
 #[inline(always)]
@@ -148,7 +140,6 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8>(s
         GLOBAL_STORE_ROW => global_store_row::<A, ENTRY>(s, payload),
         LEXICAL_READ_ROW => lexical_read_row::<D>(s),
         LEXICAL_WRITE_ROW => lexical_write_row::<A>(s),
-        CALLEE_CAPTURE_ROW => callee_capture_row::<D>(s),
         _ => env_define_row::<A>(s, payload),
     }
 }

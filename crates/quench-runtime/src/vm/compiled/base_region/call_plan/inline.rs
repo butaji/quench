@@ -33,7 +33,6 @@ use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Fr
 use super::super::super::osr_loop::{inlined_returning, renamed};
 use super::super::super::tier_policy::Stitch;
 use super::super::decode::{numeric_row, register_of, Decoded, Numbers, Source};
-use super::super::super::base_rows::Heap;
 use quench_bjit::numeric::Kind;
 
 /// A callee the stitcher may inline, as its function and the call site's records show it.
@@ -50,9 +49,6 @@ pub(in super::super) struct Callee<'f> {
     pub(in super::super) live: &'f RegisterMasks,
     /// The Stable fact the callee register's by-name read took: the global cell holding `identity`.
     pub(in super::super) stable: Option<GlobalFact>,
-    /// The address and length of the closure's own capture slots (its environment's dense run), which
-    /// the site's proof fixes with `identity`: a depth-0 capture read is a read of one slot's address.
-    pub(in super::super) captures: (usize, usize),
 }
 
 /// The activations around a call being planned, and what is left of the stitch's budget.
@@ -230,17 +226,6 @@ impl Emitter<'_> {
         }
     }
 
-    /// A depth-0 capture read of the closure's own environment: the slot's address, which the closure's
-    /// identity fixes (`Heap::CalleeCapture`). A slot past the run is the interpreter's.
-    fn capture_row(&self, instruction: WideInstruction) -> Option<Decoded> {
-        let (values, len) = self.callee.captures;
-        let slot = usize::from(instruction.capture_slot());
-        (instruction.op().class() == Class::LoadCapture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
-            hole: (values + slot * std::mem::size_of::<Value>()) as u64,
-            ..Decoded::heap(Heap::CalleeCapture, Some(instruction.result_register()), None, None)
-        })
-    }
-
     fn renamed(&self, pc: u32, instruction: WideInstruction) -> Result<WideInstruction, Refused> {
         let target = |target: u32| self.starts.get(target as usize).copied();
         renamed(instruction, &|register| self.register(register), 0, &target).ok_or(Refused::Row(pc))
@@ -261,7 +246,7 @@ impl Emitter<'_> {
             instruction
         };
         let renamed = self.renamed(pc, plain)?;
-        let row = numeric_row(self.callee.numbers, renamed).flatten().or_else(|| self.capture_row(renamed)).ok_or(Refused::Row(pc))?;
+        let row = numeric_row(self.callee.numbers, renamed).flatten().ok_or(Refused::Row(pc))?;
         // A leave between the computation and the return resumes at the instruction, which a row
         // reading what it wrote would apply twice.
         if returning && rereads(&row) {
@@ -374,7 +359,7 @@ mod tests {
 
     fn facts() -> DirectFacts {
         let cell = CellFacts { registers: 4, room: 4, params: 2, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, frame_bytes: 32 }
+        DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, registers: 4, construction: false, frame_bytes: 32 }
     }
 
     fn operand(register: Register) -> u16 {
@@ -396,7 +381,7 @@ mod tests {
     }
 
     fn callee<'f>(code: &'f [WideInstruction], homes: &'f [(u16, Register)], live: &'f RegisterMasks) -> Callee<'f> {
-        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None, captures: (0, 0) }
+        Callee { function: CALLEE, identity: Value::from_bits(IDENTITY), code, registers: 4, homes, numbers: &no_numbers, live, stable: None }
     }
 
     const HOMES: [(u16, Register); 2] = [(0, 0), (1, 1)];

@@ -171,7 +171,6 @@ impl EmitFrame<'_> {
 impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
     fn call_entry(&self, site: &Invocation) -> CallEntry {
         let Some(CallSite { callee: Some(callee), .. }) = self.call_site() else { return CallEntry::Helper };
-        if callee.lexical { return CallEntry::Helper; }
         let kind = if site.constructs() { CalleeKind::Class } else { CalleeKind::Script };
         let plan = DirectPlan { kind, identity: Identity::Guarded(callee.callee.to_bits()), sloppy: callee.sloppy.map(Value::to_bits),
             registers: callee.registers, returned: LANE_BODY_RETURNED, bound: None };

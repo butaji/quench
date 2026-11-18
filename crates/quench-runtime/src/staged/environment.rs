@@ -25,19 +25,11 @@ pub(crate) fn slot_address<S: Stage>(stage: &mut S, values: S::Word, len: S::Wor
 #[inline(always)]
 fn dense_slot<S: Stage>(stage: &mut S, values: S::Word, len: S::Word, slot: u16, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let address = slot_address(stage, values, len, slot, miss)?;
-    Some((address, capture_at(stage, address, miss)?))
-}
-
-/// The ordinary value of the environment slot at `address`, or `None` (leaving at `miss`) where it holds
-/// an internal marker: the read every capture access makes once it has its slot's address, which an
-/// inlined callee's capture (its closure fixed, so its slot's address too) makes alone.
-#[inline(always)]
-pub(crate) fn capture_at<S: Stage>(stage: &mut S, address: S::Word, miss: S::Miss) -> Option<S::Word> {
     let value = stage.load_u64(Region::Cells.mutable(), address, 0);
     let tag = stage.and_imm(value, ValueLayout::TAG_MASK);
     let ordinary = stage.ne_imm(tag, ValueLayout::INTERNAL_TAG);
     stage.guard(ordinary, miss)?;
-    Some(value)
+    Some((address, value))
 }
 
 /// Value `slot` of the dense run of `len` environment values at `values`: its ordinary
