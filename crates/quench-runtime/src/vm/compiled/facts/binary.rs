@@ -66,8 +66,12 @@ fn number_result(types: &mut [Type], instruction: WideInstruction, constants: &[
     }
     if NumberRelation::from_operator(operator).is_some() {
         // An equality decides operands of any type (`lane_region::relation`) and proves
-        // nothing of them; every other relation compares Numbers.
-        if super::super::super::operations::equality_operator(operator).is_none() { prove_number(types, operands); }
+        // nothing of them; so does a relation with an operand known to hold no Number (a
+        // string constant), which the lane decides by the interpreter's rule. Every other
+        // relation compares Numbers.
+        let numberless = operands.iter().filter_map(|operand| operand.register_index())
+            .any(|register| super::numberless(types.get(usize::from(register)).copied().unwrap_or(Type::ANY)));
+        if super::super::super::operations::equality_operator(operator).is_none() && !numberless { prove_number(types, operands); }
         return Some(Type::language(crate::ValueType::Boolean));
     }
     for register in written(instruction) { set(types, register, Type::ANY); }

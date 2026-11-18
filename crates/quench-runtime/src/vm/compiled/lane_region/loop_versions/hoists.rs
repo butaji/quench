@@ -8,7 +8,7 @@
 
 use super::super::*;
 use super::plan::{arithmetic_of, Nest};
-use super::Hoist;
+use super::{Decision, Hoist};
 use super::super::super::facts::Point;
 use super::super::super::operations::NumberArithmetic;
 
@@ -39,6 +39,32 @@ impl Lowering<'_, '_> {
         }).collect()
     }
 
+    /// The loop whose entry decides each relation of `candidates` (`Decision`): the outermost one
+    /// around it whose body writes neither source.
+    pub(in super::super) fn plan_decisions(&self, nest: Nest<'_>, candidates: &[usize]) -> Vec<Decision> {
+        candidates.iter().filter_map(|&pc| nest.around(pc).into_iter().filter(|&span| !self.generic.contains(&span.0))
+            .find_map(|span| {
+                let instruction = nest.instructions[pc];
+                let sources = [instruction.operand_b(), instruction.operand_c()].map(|operand| operand.register_index()
+                    .and_then(|register| self.loop_source(nest, span, pc, register)));
+                let [Some(left), Some(right)] = sources else { return None };
+                Some(Decision { pc, header: span.0, sources: [left, right] })
+            })).collect()
+    }
+
+    /// The register `register` holds at `pc` the same value of on each iteration of the loop `span`:
+    /// itself where the loop does not write it, else the register the one write of it, a copy in
+    /// `pc`'s own block before it, copies where the loop writes that one nowhere.
+    fn loop_source(&self, nest: Nest<'_>, span: (usize, usize), pc: usize, register: Register) -> Option<Register> {
+        if nest.unwritten(span, &[register]) { return Some(register); }
+        let writes = |at: &usize| nest.instructions[*at].written_registers().any(|written| written == register);
+        if (span.0..=span.1).filter(writes).count() != 1 { return None; }
+        // Back from the jump to its block's leader: the copy is there or nowhere.
+        let block = (span.0..pc).rev().take_while(|at| self.blocks.get(at + 1).is_none_or(Option::is_none));
+        let copy = nest.instructions[block.into_iter().find(writes)?];
+        copy.op().is_move().then(|| copy.register_b()).filter(|source| nest.unwritten(span, &[*source]))
+    }
+
     /// The operations whose loop is the one at `header`, evaluated on its entering edge from `state`.
     pub(super) fn hoist_pure(&mut self, state: &mut State, header: usize) {
         let pcs: Vec<usize> = self.ranges.hoisted().iter().filter(|hoist| hoist.header == header).map(|hoist| hoist.pc).collect();
@@ -54,6 +80,30 @@ impl Lowering<'_, '_> {
             self.builder.def_var(value, word);
             self.hoisted.insert(pc, LoopRead { value, ty: Type::int(super::super::index_math::held(range)),
                 representation: Representation::Int64, receiver: None, header: None, step: None });
+        }
+    }
+
+    /// The relations the VM decides (`Comparison::Decided`) whose loop is the one at `header`,
+    /// decided once on its entering edge from `state` by the pure `Decide` helper: their operands
+    /// are values the loop does not write (a string the loop compares with a constant, say), so
+    /// each iteration's decision is this one. A pair only the full step decides leaves at the
+    /// header, before the loop ran, as each iteration would have left at the test. The jump
+    /// reads the held word (`Lowering::decided_jump`).
+    pub(super) fn hoist_decisions(&mut self, state: &mut State, header: usize) {
+        let decisions: Vec<Decision> = self.ranges.decisions().iter().filter(|decision| decision.header == header).copied().collect();
+        if decisions.is_empty() { return; }
+        let exit = self.guard_exit(state, header as u32);
+        for Decision { pc, sources, .. } in decisions {
+            let instruction = self.unit.instructions[pc];
+            let [left, right] = sources.map(|register| self.tagged(state, register));
+            let operator = self.raw_const(Lane::I64, i64::from(instruction.binary_operator_field()));
+            let word = self.helper_call(LaneHelper::Decide, &[left, right, operator]);
+            let decided = self.raw_compare_imm(Relation::NotEqual, word, Value::DELETED.to_bits() as i64);
+            emit_js_guard(&mut self.builder, decided, exit);
+            let value = self.builder.declare_var(types::I64);
+            self.builder.def_var(value, word);
+            self.hoisted.insert(pc, LoopRead { value, ty: Type::language(crate::ValueType::Boolean),
+                representation: Representation::Tagged, receiver: None, header: None, step: None });
         }
     }
 }

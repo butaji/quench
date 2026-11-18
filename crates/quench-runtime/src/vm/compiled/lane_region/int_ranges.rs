@@ -11,7 +11,7 @@
 
 use super::*;
 use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
-use super::loop_versions::{Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::loop_versions::{Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
 
 /// The facts one analysis proves, by unit PC.
 pub(super) struct IntRanges {
@@ -22,6 +22,9 @@ pub(super) struct IntRanges {
     versioned: Vec<Version>,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
+    /// The relations of registers holding no Number that a loop's entry decides once
+    /// (`Lowering::hoist_decisions`), by PC (ascending).
+    decisions: Vec<Decision>,
     /// The products of a counter a loop's entry holds and advances (`Lowering::start_inductions`).
     inductions: Vec<Induction>,
     /// The arithmetic whose result leaves int32 within `IntRange::WORD`, by PC (ascending), with its range.
@@ -35,7 +38,7 @@ pub(super) struct IntRanges {
 impl IntRanges {
     pub(super) fn new(instructions: usize) -> Self {
         Self { overflow_free: CompoundBitSet::with_capacity(instructions), in_bounds: CompoundBitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
+            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: CompoundBitSet::with_capacity(instructions) }
     }
 
     /// Whether the product at `pc` may keep the int32 zero for a negative one: no operands make a
@@ -65,6 +68,9 @@ impl IntRanges {
 
     /// The pure integer operations hoisted to a loop's entry, by PC.
     pub(super) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
+
+    /// The relations decided once at a loop's entry, by PC.
+    pub(super) fn decisions(&self) -> &[Decision] { &self.decisions }
 
     /// The products an entry holds and advances.
     pub(super) fn inductions(&self) -> &[Induction] { &self.inductions }
@@ -171,12 +177,26 @@ impl Lowering<'_, '_> {
             if self.hoistable(pc, instruction, point) { seen.hoistable.push(pc); }
         }
         if point.zero_free(&self.program.constants, instruction) { proved.zero_free.insert(pc); }
+        if self.decidable(instruction, point) { seen.decisions.push(pc); }
+    }
+
+    /// Whether the jump `instruction` is a relation the VM decides from two registers one of which
+    /// holds no Number here (`Comparison::Decided`): a pure decision of values no loop changes
+    /// where no instruction of it writes them, so its entry may decide it once.
+    fn decidable(&self, instruction: WideInstruction, point: &Point) -> bool {
+        use super::super::operations::{equality_operator, NumberRelation};
+        let operator = instruction.binary_operator_field();
+        let registers = [instruction.operand_b(), instruction.operand_c()].map(Operand::register_index);
+        instruction.op().is_jump_binary_false() && !self.helpers.is_numeric()
+            && NumberRelation::from_operator(operator).is_some() && equality_operator(operator).is_none()
+            && registers.iter().all(Option::is_some) && registers.iter().flatten().any(|register| point.numberless(*register))
     }
 
     /// What the entries of `nest`'s loops prove of what `seen`: the operations each evaluates once, and
     /// the accesses each proves within their arrays.
     fn prove_loops(&self, proved: &mut IntRanges, model: &Model<'_>, nest: Nest<'_>, seen: &Seen) {
         proved.hoisted = self.plan_hoists(nest, &seen.hoistable);
+        proved.decisions = self.plan_decisions(nest, &seen.decisions);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
         for shape in &seen.shapes {
@@ -192,4 +212,5 @@ impl Lowering<'_, '_> {
 struct Seen {
     shapes: Vec<Shape>,
     hoistable: Vec<usize>,
+    decisions: Vec<usize>,
 }

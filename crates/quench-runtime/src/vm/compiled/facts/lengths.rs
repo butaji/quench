@@ -134,6 +134,11 @@ impl Point {
         self.relations.under.get(usize::from(register)).copied().flatten()
     }
 
+    /// Whether `register` holds no Number here (`facts::numberless`): a string constant, say.
+    pub(in crate::vm::compiled) fn numberless(&self, register: Register) -> bool {
+        self.types.get(usize::from(register)).copied().is_some_and(super::numberless)
+    }
+
     /// The range of the integer `register` holds here, if it is one.
     pub(in crate::vm::compiled) fn int_range(&self, register: Register) -> Option<IntRange> {
         self.types.get(usize::from(register)).copied().and_then(Type::int_range)
