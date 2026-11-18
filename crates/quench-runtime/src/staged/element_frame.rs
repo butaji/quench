@@ -5,9 +5,15 @@
 use super::element_rows::ElementView;
 use super::elements::DenseView;
 use super::{value, PropertyFrame, Stage};
-use crate::bytecode::Operand;
+use crate::bytecode::{Operand, Register};
 
 pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
+    /// The dense view of the array in base register `base` that the frame's array storage proofs
+    /// hold, its readable elements, or its writable ones where `writable` (a store replacing in
+    /// place). A frame that proves no storage answers `None`, and the access takes its own proof.
+    #[inline(always)]
+    fn proved_view(&mut self, _stage: &mut S, _base: Register, _writable: bool) -> Option<DenseView<S::Word>> { None }
+
     /// The VM's store of `value` to `base[key]` where no in-place replacement answers it: an
     /// added element, a typed array, a keyed property, a setter; a failure leaves at `miss`.
     #[inline(always)]

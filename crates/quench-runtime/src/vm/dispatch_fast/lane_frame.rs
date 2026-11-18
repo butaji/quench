@@ -125,6 +125,8 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The VM's element steps an element row's host path runs at its site, where the row is one
     /// that accesses an element (`ElementFrame::index_set_host`, `PropertyFrame::index_get_host`).
     elements: Option<ElementSteps>,
+    /// The run's array storage proofs, for a proved element row (`PROVED_SITE`); none elsewhere.
+    proofs: Option<*mut crate::heap::ArrayStorageProofs>,
 }
 
 /// The element steps of the running lane, erased of its host so the frame names no `H`: the
@@ -267,7 +269,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, proofs: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -291,7 +293,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, proofs: None }
     }
 }
 
@@ -559,6 +561,17 @@ impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn reads_any_backing(&self) -> bool { true }
 
+    /// The view the run's proof of `base`'s storage holds (`ArrayStorageProofs::dense`), at a proved
+    /// site only. Where the proof does not hold, a view of no element, so the access leaves at its
+    /// miss edge, which proves the array (`lane_proof_miss`) before the generic record runs.
+    #[inline(always)]
+    fn proved_view(&mut self, _stage: &mut Concrete, base: Register, writable: bool) -> Option<crate::staged::elements::DenseView<u64>> {
+        let proofs = self.proofs?;
+        // SAFETY: the run's proofs, live for the row's step; the frame holds no other reference to them.
+        let (values, length) = unsafe { (*proofs).dense(base, self.registers.get(base), writable) };
+        Some(crate::staged::elements::DenseView { values: values as u64, length: length as u64, packed: false, within: false })
+    }
+
     /// The array's write barrier admits `value` unlogged (`Heap::array_store_unlogged`).
     #[inline(always)]
     fn array_store_gate(&mut self, _stage: &mut Concrete, base: u64, value: u64, _miss: ()) -> Option<()> {
@@ -702,7 +715,11 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: 
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
         let script = view.memory.bytes.cast::<LaneContext<H>>();
         let heap: *const crate::heap::Heap = &unsafe { vm(script) }.heap;
-        return LaneFrame::<ACC> { heap: Some(heap), elements: Some(ElementSteps::of::<H>(script, ip)), ..LaneFrame::<ACC>::new(r, view) };
+        // A read's host path is its miss sibling (`row_index_read_miss`): a call inside the row
+        // would cost its fast path a stack frame.
+        let reads = const { matches!(LaneFields::<OP>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) };
+        let elements = if reads { None } else { Some(ElementSteps::of::<H>(script, ip)) };
+        return LaneFrame::<ACC> { heap: Some(heap), elements, ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
@@ -872,6 +889,13 @@ lane_handler! {
             Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap)
         } else { Concrete::new(property_values) };
         let mut frame = row_frame::<H, OP, ACC>(cx, r, view, ip);
+        if const { super::proved_site(FLAG) } {
+            // The run's proofs of the storage of the arrays its loop indexes (`specialize_proved_arrays`).
+            frame.proofs = Some(unsafe { &raw mut (*view.memory.bytes.cast::<LaneContext<H>>()).proofs });
+            // Past the proof the access leaves at its miss edge (`lane_proof_miss`), which proves
+            // the array for the next one; the host path would serve it without proving.
+            frame.elements = None;
+        }
         if store {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             // The live record table: a direct object receiver proves it reserved, and any other
@@ -987,7 +1011,7 @@ lane_handler! {
                         && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister)) } {
                     r.set(i.a, Value::from_bits(value));
                 }
-                if const { FLAG == super::ELEMENT_MOVE_SITE } {
+                if const { super::element_move_site(FLAG) } {
                     // The `Move` record after the store copies the stored value, and the pair
                     // continues past it (`produce!` at the copy's successor).
                     // SAFETY: the pair is two records, the second never the view's last.
@@ -1001,8 +1025,12 @@ lane_handler! {
             // activation resume (or the general path).
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                if const { super::proved_site(FLAG) } {
+                    // An access the run's proof does not answer: the array is proved, then the generic record runs.
+                    sibling!(super::lane_proof_miss::<H>, r, ip, Carried::script_in(script, view))
+                }
                 if const { matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } {
-                    sibling!(super::lane_get_index_getter::<H>, r, ip, Carried::script_in(script, view))
+                    sibling!(super::row_index_read_miss::<H>, r, ip, Carried::script_in(script, view))
                 }
                 sibling!(super::row_set_index_refused::<H>, r, ip, Carried::script_in(script, view))
             }

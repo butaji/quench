@@ -250,11 +250,11 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
         let fused_read = lane_update_get_index_operator_proved::<TestHost, false, ADDITION> as Handler as *const ();
         let kinds = [
-            ("read", lane_get_index_proved::<TestHost> as Handler as *const (), false),
+            ("read", element_proved_read_row::<TestHost>() as *const (), false),
             ("update_read", lane_update_get_index_proved::<TestHost, false> as Handler as *const (), false),
             ("update_read_add", fused_read, false),
-            ("store", lane_set_index_proved::<TestHost> as Handler as *const (), true),
-            ("store_move", lane_set_index_move_proved::<TestHost> as Handler as *const (), true),
+            ("store", element_proved_write_row::<TestHost>() as *const (), true),
+            ("store_move", element_proved_move_row::<TestHost>() as *const (), true),
         ];
         let mut counts = vec![0; kinds.len()];
         for record in view.records.iter() {

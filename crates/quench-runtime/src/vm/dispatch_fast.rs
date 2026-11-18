@@ -4426,8 +4426,8 @@ fn lane_own_handler<H: Host>(ip: Ip) -> *const () {
 }
 
 script_handler! {
-    /// A proved element read or store (`lane_get_index_proved`, `lane_set_index_proved`,
-    /// `lane_set_index_move_proved`) its proofs declined: proves its base
+    /// A proved element read or store (`element_proved_read_row`, `element_proved_write_row`,
+    /// `element_proved_move_row`) its proofs declined: proves its base
     /// (`lane_prove_array`), then runs the generic record. Apart, so the proved records' fast
     /// paths make no call.
     #[inline(never)]
@@ -4455,21 +4455,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `element_read_row` of a base its loop does not redefine
-    /// (`specialize_proved_arrays`): the element through the run's proof of the array's
-    /// storage (`ArrayStorageProofs`), with no decoding of the array; any other read takes
-    /// `lane_proof_miss`.
-    fn lane_get_index_proved<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { (*cx).proofs.element(i.b, r.get(i.b), proof_key(r.get(i.c))) }) else {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A register `Move` whose next record is a proved element read (`lane_get_index_proved`,
+    /// A register `Move` whose next record is a proved element read (`element_proved_read_row`,
     /// `specialize_moved_index_reads`), the key copy `x[t = i]` keeps for a store whose value
     /// then updates `i` (V8-v7 NavierStokes' `x[currentRow] = ... x[++currentRow] ...`): the
     /// copy and the read as one record. A read the proofs decline continues at the read's
@@ -4512,7 +4498,7 @@ macro_rules! proved_stepped_read {
     }};
 }
 
-/// The proved read (`lane_get_index_proved`) of `lane_update_get_index`'s pair at `ip`, of
+/// The proved read (`element_proved_read_row`) of `lane_update_get_index`'s pair at `ip`, of
 /// the integer update `index` of record `update`, which it writes first; a read the proofs
 /// decline takes `lane_updated_proof_miss`, as the pair's own fast path leaves it.
 macro_rules! proved_updated_read {
@@ -5713,6 +5699,20 @@ lane_handler! {
 }
 
 script_handler! {
+    /// The element row's read past its in-place arms (a hole, a string or symbol key, a typed or
+    /// string element): the VM's read at the site (`row_index_read`), else the getter's
+    /// activation (`lane_get_index_getter`). Apart, so the row's fast path makes no call.
+    #[inline(never)]
+    fn row_index_read_miss<>(cx, r, ip, i, view) {
+        let Some(value) = row_index_read::<H>(cx.cast(), ip, r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_getter::<H>, r, ip, Carried::script_in(cx, view))
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// The element row's refused read (`row_index_read` found nothing): an index getter's
     /// activation (`lane_index_getter_activation`), else the general path. Apart, since the
     /// activation's result is a stack temporary of the handler that makes it.
@@ -6025,79 +6025,6 @@ fn lane_index_getter_activation<H: Host>(
         return Err(exit(ip));
     };
     lane_activate_getter(cx, r, ip, getter, base, None)
-}
-
-/// The value the proved store of `SetIndex` record `i` (`ArrayStorageProofs::replace`) of a
-/// base its loop does not redefine (`specialize_proved_arrays`) wrote; `None` stores
-/// nothing.
-#[inline(always)]
-fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    let value = r.get(i.a);
-    let index = proof_key(r.get(i.c));
-    unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
-}
-
-/// `lane_proved_store` of a heap value (`arr[i] = o`): through the proof where the write
-/// barrier admits the store unlogged (`Heap::array_store_unlogged`). Out of line, so the
-/// immediate store keeps its few registers.
-#[inline(always)]
-fn lane_proved_heap_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> bool {
-    let (base, value) = (r.get(i.b), r.get(i.a));
-    value.heap_index().is_some()
-        && unsafe { vm(cx) }.heap.array_store_unlogged(base, value)
-        && unsafe { (*cx).proofs.replace_admitted(i.b, base, proof_key(r.get(i.c)), value) }
-}
-
-script_handler! {
-    /// `lane_set_index_proved` whose immediate store its proof declined: a heap value the
-    /// barrier admits unlogged through the proof (`lane_proved_heap_store`), else
-    /// `lane_proof_miss`. Apart, so the immediate store keeps its code.
-    #[inline(never)]
-    fn lane_set_index_proved_miss<>(cx, r, ip, i, view) {
-        if !lane_proved_heap_store(cx, r, i) {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        // A site that stores a heap value stores heap values: it tries that store first from now.
-        requicken::<H>(ip, lane_set_index_proved_heap::<H>);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index_proved` of a site whose stores are heap values (`arr[i] = o`), as
-    /// `lane_set_index_proved_miss` found: the admitted heap store first, then the immediate
-    /// one, else `lane_proof_miss`. One record, not the immediate store's miss and this.
-    fn lane_set_index_proved_heap<>(cx, r, ip, i, view) {
-        if !lane_proved_heap_store(cx, r, i) && lane_proved_store(cx, r, i).is_none() {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `element_write_row` of a base its loop does not redefine: the replacement through the
-    /// run's proof of the array's storage (`lane_proved_store`), else `lane_proof_miss`.
-    fn lane_set_index_proved<>(cx, r, ip, i, view) {
-        if lane_proved_store(cx, r, i).is_none() {
-            sibling!(lane_set_index_proved_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `element_move_row` of a base its loop does not redefine: the replacement through
-    /// the run's proof of the array's storage (`lane_proved_store`) and the copy, else
-    /// `lane_proof_miss`.
-    fn lane_set_index_move_proved<>(cx, r, ip, i, view) {
-        let Some(value) = lane_proved_store(cx, r, i) else {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: the pair is two records, the second never the view's last.
-        let copy = unsafe { &*following(ip) };
-        produce!(cx, r, following(ip), copy.a, value, Carried::script_in(cx, view))
-    }
 }
 
 script_handler! {
@@ -7469,6 +7396,30 @@ pub(super) const ELEMENT_MOVE_SITE: u8 = own_site(false, OWN_FORMS.len() + 11);
 
 /// The generated keyed write whose stored value the next record copies (`ELEMENT_MOVE_SITE`).
 const fn element_move_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, ACC_NONE, ELEMENT_MOVE_SITE> }
+
+/// The site fact of a keyed access whose base its loop does not redefine (`specialize_proved_arrays`):
+/// the row reads the element through the run's proof of the array's storage first
+/// (`ElementFrame::proved_view`), and an access the proof does not answer takes `lane_proof_miss`.
+pub(super) const PROVED_SITE: u8 = own_site(false, OWN_FORMS.len() + 12);
+
+/// `PROVED_SITE` of a keyed write whose stored value the next record, a register `Move`, copies
+/// (`specialize_store_moves`): as `ELEMENT_MOVE_SITE`, the copy after the proved store.
+pub(super) const PROVED_MOVE_SITE: u8 = own_site(false, OWN_FORMS.len() + 13);
+
+/// Whether element site `site` reads through the run's proofs (`PROVED_SITE`, `PROVED_MOVE_SITE`).
+pub(super) const fn proved_site(site: u8) -> bool { site == PROVED_SITE || site == PROVED_MOVE_SITE }
+
+/// Whether element site `site` is a keyed write whose stored value the next record copies.
+pub(super) const fn element_move_site(site: u8) -> bool { site == ELEMENT_MOVE_SITE || site == PROVED_MOVE_SITE }
+
+/// The generated proved keyed read (`lane_row` of `ELEMENT_READ`, `PROVED_SITE`).
+const fn element_proved_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, PROVED_SITE> }
+
+/// The generated proved keyed write (`lane_row` of `ELEMENT_WRITE`, `PROVED_SITE`).
+const fn element_proved_write_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, ACC_NONE, PROVED_SITE> }
+
+/// The generated proved keyed write whose stored value the next record copies (`PROVED_MOVE_SITE`).
+const fn element_proved_move_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, ACC_NONE, PROVED_MOVE_SITE> }
 
 /// The generated keyed read (`lane_row` of `ELEMENT_READ`) of a register base and key.
 const fn element_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
@@ -24246,12 +24197,11 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
         };
     }
     [
-        (element_read_row::<H>(), lane_get_index_proved::<H> as Handler, 0),
+        (element_read_row::<H>(), element_proved_read_row::<H>(), 0),
         (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
         (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
-        (element_write_row::<H>(), lane_set_index_proved::<H> as Handler, 0),
-        (element_write_row::<H>(), lane_set_index_proved_heap::<H> as Handler, 0),
-        (element_move_row::<H>(), lane_set_index_move_proved::<H> as Handler, 0),
+        (element_write_row::<H>(), element_proved_write_row::<H>(), 0),
+        (element_move_row::<H>(), element_proved_move_row::<H>(), 0),
     ]
     .into_iter()
     .chain(fused_arithmetic!(updated_operators))
@@ -24398,7 +24348,7 @@ fn specialize_value_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [L
 /// that enters it and for the pair's declined proofs.
 fn specialize_moved_index_reads<H: Host>(records: &mut [LaneInstruction]) {
     let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    let read = lane_get_index_proved::<H> as Handler as *const ();
+    let read = element_proved_read_row::<H>() as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == copy && records[pc + 1].handler == read {
             records[pc].handler = lane_move_get_index_proved::<H> as Handler as *const ();
