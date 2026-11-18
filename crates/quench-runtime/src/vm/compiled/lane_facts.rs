@@ -69,15 +69,64 @@ pub(super) fn each_once(mut targets: Vec<CallTarget>) -> Vec<CallTarget> {
 pub(super) fn amortizes_entry(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || !unit.frames.is_empty() || direct.iter().any(|callee| callee.target.function == function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
+    loops || !unit.frames.is_empty() || calls_itself(direct, function) || unit.instructions.len() >= tiers.amortizing_instructions(tier_policy::lane_body_tier())
 }
 
 /// Whether one entry of `unit` saves more interpreter time than the body's entry costs
-/// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does.
-pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit) -> bool {
+/// (`Priors::body_entry_ns`), its inlined callees' work included: a unit with a loop does, and
+/// so does one that calls itself (`calls_itself`).
+pub(super) fn entry_repays(tiers: &Tiers, unit: &lane_unit::Unit, function: u32, direct: &[DirectCallee]) -> bool {
     let loops = unit.instructions.iter().enumerate().any(|(pc, instruction)|
         instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget && (instruction.imm() as usize) <= pc);
-    loops || straight_line_repays(&tiers.priors, unit.instructions.len())
+    loops || calls_itself(direct, function) || straight_line_repays(&tiers.priors, unit.instructions.len())
+}
+
+/// The call depth `recursion_cycle` follows: a cycle through more functions than this is weighed as
+/// straight-line code.
+const RECURSION_DEPTH: usize = 4;
+
+/// The functions that call `function` back through the targets their call sites linked
+/// (`targets`), each within `RECURSION_DEPTH` calls of it: `function` itself where it recurses
+/// directly, and the other members of a mutual recursion (`f` calling `g` calling `f`). Empty
+/// where `function` does not recurse.
+pub(super) fn recursion_cycle(program: &ResidualProgram, function: u32, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> std::collections::BTreeSet<u32> {
+    let callees = |caller: u32| -> Vec<u32> {
+        let Some(body) = program.function_get(caller as usize) else { return Vec::new() };
+        (0..body.code.len() as u32).flat_map(|pc| targets(caller, pc)).map(|target| target.function).collect()
+    };
+    // The call graph out of `function`, as far as `RECURSION_DEPTH` calls.
+    let mut edges: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    let mut frontier = vec![function];
+    for _ in 0..RECURSION_DEPTH {
+        let mut next = Vec::new();
+        for caller in frontier {
+            if edges.contains_key(&caller) { continue; }
+            let out = callees(caller);
+            next.extend(out.iter().copied().filter(|callee| !edges.contains_key(callee)));
+            edges.insert(caller, out);
+        }
+        frontier = next;
+    }
+    // Those of its nodes from which `function` is reached again.
+    let mut cycle = std::collections::BTreeSet::new();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (caller, out) in &edges {
+            if !cycle.contains(caller) && out.iter().any(|callee| *callee == function || cycle.contains(callee)) {
+                cycle.insert(*caller);
+                changed = true;
+            }
+        }
+    }
+    cycle
+}
+
+/// Whether a body of `function` calls itself directly: one entry then runs a native call tree
+/// rather than one straight line, as a loop does. Recursion through other functions is
+/// `recursion_cycle`'s.
+fn calls_itself(direct: &[DirectCallee], function: u32) -> bool {
+    direct.iter().any(|callee| callee.target.function == function)
 }
 
 /// Whether a straight-line unit of `instructions` instructions repays its entry: the share of

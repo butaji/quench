@@ -12,7 +12,7 @@ use cranelift_codegen::{
     ir::{self, MemFlagsData},
     isa::TargetIsa,
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_frontend::FunctionBuilder;
 use std::{num::NonZeroUsize, ops::Range};
 
 #[path = "native_graph/object_parts.rs"]
@@ -423,7 +423,7 @@ fn lower_object_fallback(
 ) -> Result<ir::Function, String> {
     let count = u32::try_from(function.code.len()).map_err(|_| "native instruction count exceeds u32")?;
     let mut native = native_function(function_id, super::compiled::native_js_operation_signature(isa));
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut context);
     let params = enter_native_entry(&mut builder);
     let pc = params[1];
@@ -447,6 +447,7 @@ fn lower_object_fallback(
     builder.leave(&[status]);
     builder.seal_all();
     builder.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     Ok(native)
 }
 

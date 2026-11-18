@@ -141,13 +141,6 @@ pub(super) const LANE_BODY_CODE_BYTES_PER_INSTRUCTION: usize = 128;
 /// bodies (6.7 to 7.3), which a plan's size is judged by before it compiles.
 pub(super) const LANE_BODY_CODE_BYTES_PER_IR: usize = 8;
 
-thread_local! {
-    /// The SSA builder context of this thread's lowerings, reused as Cranelift means a
-    /// `FunctionBuilderContext` to be: a finished lowering's `finalize` empties it and keeps
-    /// its tables' capacity for the next.
-    static BUILDER_CONTEXT: std::cell::Cell<Option<FunctionBuilderContext>> = const { std::cell::Cell::new(None) };
-}
-
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RegisterFact {
@@ -757,6 +750,20 @@ pub(super) fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) 
     stage.raw_compare_imm(Relation::Equal, tag, (crate::value::ValueLayout::INT_TAG >> shift) as i64)
 }
 
+/// The tagged Boolean a predicate `holds` selects: the boxed `true` where it holds, else the boxed `false`.
+pub(super) fn boolean_word(builder: &mut FunctionBuilder<'_>, holds: ir::Value) -> ir::Value {
+    let yes = builder.ins().iconst(types::I64, Value::TRUE.to_bits() as i64);
+    let no = builder.ins().iconst(types::I64, Value::FALSE.to_bits() as i64);
+    builder.ins().select(holds, yes, no)
+}
+
+/// A block marked cold before any code is lowered into it, for the exits and slow paths the hot path leaves to.
+pub(super) fn cold_block(builder: &mut FunctionBuilder<'_>) -> ir::Block {
+    let block = builder.create_block();
+    builder.set_cold_block(block);
+    block
+}
+
 /// The registers an instruction writes, by its operand layouts.
 pub(super) fn writes(instruction: WideInstruction) -> Vec<Register> {
     instruction.written_registers().collect()
@@ -789,8 +796,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
 
     /// The tagged Boolean a predicate `holds` selects.
     fn boolean(&mut self, holds: ir::Value) -> ir::Value {
-        let (yes, no) = (self.raw_const(Lane::I64, Value::TRUE.to_bits() as i64), self.raw_const(Lane::I64, Value::FALSE.to_bits() as i64));
-        self.raw_select(holds, yes, no)
+        boolean_word(&mut self.builder, holds)
     }
 
     fn set_boolean(&mut self, state: &mut State, register: Register, boolean: ir::Value) {
@@ -869,7 +875,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn guard_exit(&mut self, state: &State, pc: u32) -> ir::Block {
         if self.proving_entry {
             let builder = &mut self.builder;
-            return *self.entry_exit.get_or_insert_with(|| { let block = builder.create_block(); builder.set_cold_block(block); block });
+            return *self.entry_exit.get_or_insert_with(|| cold_block(builder));
         }
         // A guard after another that leaves at the same PC from the same facts shares its
         // block: the leave it builds is the same, and SSA joins the variables' values.
@@ -877,8 +883,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed {
             return last.block;
         }
-        let block = self.builder.create_block();
-        self.builder.set_cold_block(block);
+        let block = cold_block(&mut self.builder);
         self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(),
             pc, line: std::panic::Location::caller().line() });
         block
@@ -1588,7 +1593,7 @@ pub(super) fn lower(
     super::regions::declare_regions(&mut native);
     // The SSA builder's tables come back from the last lowering that finished, which
     // `finalize` left empty; one that gave up drops its context with it.
-    let mut builder_context = BUILDER_CONTEXT.with(|held| held.take()).unwrap_or_default();
+    let mut builder_context = super::jit_backend::builder::take_context();
     let mut builder = FunctionBuilder::new(&mut native, &mut builder_context);
     let entry_block = builder.create_block();
     builder.append_block_params_for_function_params(entry_block);
@@ -1997,7 +2002,7 @@ pub(super) fn lower(
     let stable = lowering.stable.take();
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
-    BUILDER_CONTEXT.with(|held| held.set(Some(builder_context)));
+    super::jit_backend::builder::keep_context(builder_context);
     let decided = known_branches::decide(&mut native);
     if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
@@ -3277,8 +3282,9 @@ impl Lowering<'_, '_> {
         };
         let missed = self.guard_exit(state, pc as u32);
         self.home_written(state, pc);
-        let (completed, generic, raised, entered) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(raised);
+        let (completed, generic) = (self.builder.create_block(), self.builder.create_block());
+        let raised = cold_block(&mut self.builder);
+        let entered = self.builder.create_block();
         // The callee's exception block is filled before the call's blocks, from the state the call is made in.
         self.goto(entered, &[]);
         self.raised_call(state, pc, record, raised);
@@ -3812,8 +3818,8 @@ impl Lowering<'_, '_> {
     /// entry where it fails still.
     fn hoist_typed_view(&mut self, array: LoopArray, bits: ir::Value, variables: ArrayVariables, exit: ir::Block) {
         let access = ViewAccess { kind: array.views.observed_kind().and_then(NativeKind::new), writable: array.writable };
-        let (publish, done) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(publish);
+        let publish = cold_block(&mut self.builder);
+        let done = self.builder.create_block();
         self.prove_typed_view_into(variables, bits, access, publish);
         self.goto(done, &[]);
         self.builder.switch_to_block(publish);
@@ -3902,8 +3908,8 @@ impl Lowering<'_, '_> {
         let value = self.tagged(state, instruction.register_a());
         let base = self.tagged(state, instruction.register_b());
         let key = self.tagged(state, instruction.register_c());
-        let (slow, done) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(slow);
+        let slow = cold_block(&mut self.builder);
+        let done = self.builder.create_block();
         let view = super::DenseArrayView { values, length, writable: true, uncounted: true };
         // The view's backing counts no values (`hoist_arrays`): the store writes the element.
         self.index_write(state, index, value, view, slow, in_bounds);
@@ -4084,14 +4090,13 @@ impl Lowering<'_, '_> {
 
     fn array_length(&mut self, state: &mut State, register: Register, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let base = self.tagged(state, register);
-        let (generic, join) = (self.builder.create_block(), self.builder.create_block());
-        self.builder.set_cold_block(generic);
+        let generic = cold_block(&mut self.builder);
+        let join = self.builder.create_block();
         let length = self.builder.append_block_param(join, types::I32);
         let native = super::emit_array_length_read(&mut self.builder, self.payload, base, generic);
         self.goto(join, &[native]);
         self.builder.switch_to_block(generic);
-        let probe = self.builder.create_block();
-        self.builder.set_cold_block(probe);
+        let probe = cold_block(&mut self.builder);
         let string = self.string_length(base, probe);
         self.goto(join, &[string]);
         self.builder.switch_to_block(probe);

@@ -731,3 +731,7 @@ mod tests {
         }
     }
 }
+
+/// The uncounted entries other bodies make while one body's audit runs, after which that audit,
+/// if its body is no longer entered, gives way (`lane_body_audit`): a few audit epochs' worth.
+pub(in crate::vm) const AUDIT_LEASE_ENTRIES: u32 = 1 << 16;

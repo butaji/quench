@@ -26,6 +26,60 @@ pub(super) struct LanePlan {
     pub(super) tiers: &'static Tiers,
 }
 
+/// The VM's facts a lane body's lowering may ask (`OnlineFacts`), answered when it is planned for
+/// the identities, shapes and naming sites its unit names: the constructors its global reads
+/// and frames name (`Vm::instanceof_fact`), the shapes its field loads prove
+/// (`Vm::shape_is_stable`), and its `SetFunctionName` sites (`Vm::native_function_name`). A
+/// question outside them answers that no fact holds, which folds less and stays exact.
+#[derive(Default)]
+pub(super) struct FactTables {
+    instanceofs: std::collections::BTreeMap<u64, crate::code_dependencies::InstanceofFact>,
+    stable_shapes: std::collections::BTreeSet<u32>,
+    names: std::collections::BTreeMap<(u16, Atom), (crate::staged::add_plan::Transition, u64)>,
+}
+
+impl FactTables {
+    fn of<H: Host>(vm: &Vm<H>, unit: &lane_unit::Unit, fields: &[Option<Vec<NativeFieldLoad>>],
+        global_reads: &crate::vm::global_facts::GlobalReads) -> Self {
+        use crate::vm::global_facts::GlobalRead;
+        let mut tables = Self::default();
+        let read_values = (0..unit.instructions.len()).filter_map(|pc| match global_reads.get(&pc)? {
+            GlobalRead::Constant(value) | GlobalRead::Stable { value, .. } | GlobalRead::Frozen { value, .. }
+                | GlobalRead::NativeMember { value, .. } => Some(*value),
+            _ => None,
+        });
+        let frame_values = unit.frames.iter().filter_map(|frame| frame.target.identity());
+        for value in read_values.chain(frame_values) {
+            if tables.instanceofs.contains_key(&value.to_bits()) { continue; }
+            if let Some(fact) = vm.instanceof_fact(value) { tables.instanceofs.insert(value.to_bits(), fact); }
+        }
+        for load in fields.iter().flatten().flatten() {
+            for shape in std::iter::once(load.shape).chain(load.holder) {
+                if vm.shape_is_stable(shape) { tables.stable_shapes.insert(shape); }
+            }
+        }
+        for instruction in &unit.instructions {
+            if instruction.op() == crate::bytecode::Op::SetFunctionName {
+                let key = (instruction.cache_site_index(), instruction.atom_index());
+                if let Some(name) = vm.native_function_name(key.0, key.1) { tables.names.insert(key, name); }
+            }
+        }
+        tables
+    }
+
+    fn instanceof(&self, constructor: Value) -> Option<crate::code_dependencies::InstanceofFact> {
+        self.instanceofs.get(&constructor.to_bits()).copied()
+    }
+
+    fn shape_stable(&self, shape: u32) -> bool {
+        self.stable_shapes.contains(&shape)
+    }
+
+    fn name(&self, site: u16, atom: Atom) -> Option<(crate::staged::add_plan::Transition, u64)> {
+        self.names.get(&(site, atom)).copied()
+    }
+}
+
 /// A plan whose code compiles on the code generator's thread. It holds while the facts it
 /// took hold, under the lifecycle the published method has: `watch` subscribes to its slot
 /// types and Stable facts from the plan on, a collection that frees a callee it names
@@ -180,9 +234,12 @@ impl<H: Host> Vm<H> {
         let active = self.active_program;
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
             .map_or(&[][..], |_| self.programs.constants(active));
-        let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
-        let names = |site: u16, atom| self.native_function_name(site, atom);
-        let shape_stable = |shape: u32| self.shape_is_stable(shape);
+        // The VM's facts the lowering may ask, answered from tables taken now: a lowering that
+        // reads no VM state may run off the program's thread (`FactTables`).
+        let tables = FactTables::of(self, &unit, &fields, &global_reads);
+        let instanceofs = |constructor: Value| tables.instanceof(constructor);
+        let names = |site: u16, atom| tables.name(site, atom);
+        let shape_stable = |shape: u32| tables.shape_stable(shape);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
@@ -287,9 +344,23 @@ impl<H: Host> Vm<H> {
         let plan_started = std::time::Instant::now();
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
+        // A function that calls itself back through other functions runs a call tree per entry,
+        // as a loop does, before any of its calls is direct (`lane_facts::recursion_cycle`).
+        let cycle = super::lane_facts::recursion_cycle(program, function, targets);
+        let recursive = entry.is_none() && !cycle.is_empty();
+        // A member of the cycle is called, not inlined: inlined, its call back to `function`
+        // leaves the body (a direct call runs only from the body's own frame), while called it
+        // is a direct call of its own body once one exists, as `function`'s self calls are.
+        let others: Vec<u32> = cycle.iter().copied().filter(|member| *member != function).collect();
+        let cycle_targets = |caller: u32, pc: u32| -> Vec<CallTarget> {
+            let mut linked = targets(caller, pc);
+            linked.retain(|target| !others.contains(&target.function));
+            linked
+        };
+        let targets: &dyn Fn(u32, u32) -> Vec<CallTarget> = if others.is_empty() { targets } else { &cycle_targets };
         let stopped: std::cell::RefCell<Option<Unstarted>> = std::cell::RefCell::new(None);
         let gate = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectCallee]| {
-            if entry.is_none() && !called && !amortizes_entry(tiers, unit, function, direct) { *stopped.borrow_mut() = Some(Unstarted::Short); return false; }
+            if entry.is_none() && !called && !recursive && !amortizes_entry(tiers, unit, function, direct) { *stopped.borrow_mut() = Some(Unstarted::Short); return false; }
             let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), generic, entry, budget, arrays));
             if let Some(published) = vm.programs.installed_lane(&key) { *stopped.borrow_mut() = Some(Unstarted::Installed(published)); return false; }
             true
@@ -307,10 +378,10 @@ impl<H: Host> Vm<H> {
         // A body that cannot amortize a lane entry would serve native callers only
         // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
         // than compile code no caller may ever run.
-        if entry.is_none() && !called && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        if entry.is_none() && !called && !recursive && !amortizes_entry(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         // A recurrent compile (no observed entries to price) still repays only where one entry of
         // its unit, inlined callees included, saves more than the entry costs.
-        if entry.is_none() && observed.is_none() && looped.is_none() && !super::lane_facts::entry_repays(plan.tiers, &plan.unit) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
+        if entry.is_none() && observed.is_none() && looped.is_none() && !recursive && !super::lane_facts::entry_repays(plan.tiers, &plan.unit, function, &plan.direct) { plan_miss(self, Miss::PlanNotAmortized); return Err(Unstarted::Short); }
         bind_callees(&plan.direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&plan.unit, &plan.fields, plan.direct.len(), generic, entry, budget, arrays));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }

@@ -8,7 +8,7 @@ use std::task::Poll;
 use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, Variable};
 use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission};
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
@@ -115,17 +115,12 @@ struct Emit<'a, 'f> {
 }
 
 fn signature(isa: &dyn TargetIsa) -> ir::Signature {
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    for _ in 0..PARAMETERS {
-        signature.params.push(ir::AbiParam::new(types::I64));
-    }
-    signature.returns.push(ir::AbiParam::new(types::I64));
-    signature
+    crate::vm::compiled::call_signature::word_signature(isa.default_call_conv(), PARAMETERS, 1, types::I64)
 }
 
 fn emit(plan: &NativePlan, isa: &dyn TargetIsa) -> ir::Function {
     let mut function = ir::Function::with_name_signature(ir::UserFuncName::default(), signature(isa));
-    let mut context = FunctionBuilderContext::new();
+    let mut context = crate::vm::jit_backend::builder::take_context();
     let mut emit = Emit::start(plan, FunctionBuilder::new(&mut function, &mut context));
     for (pc, inst) in plan.insts.iter().enumerate() {
         emit.b.enter_open(emit.instructions[pc]);
@@ -134,6 +129,7 @@ fn emit(plan: &NativePlan, isa: &dyn TargetIsa) -> ir::Function {
     emit.finish();
     emit.b.seal_all();
     emit.b.finalize(isa.frontend_config());
+    crate::vm::jit_backend::builder::keep_context(context);
     function
 }
 

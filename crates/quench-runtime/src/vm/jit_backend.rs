@@ -19,6 +19,7 @@ pub(super) mod relocatable_code;
 #[cfg(any(feature = "jit", feature = "aot"))]
 pub(super) mod symbol_words;
 mod worker;
+pub(super) mod builder;
 pub(super) use worker::{Pending, run_in_background};
 
 type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;

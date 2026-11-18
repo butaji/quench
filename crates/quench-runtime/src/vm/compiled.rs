@@ -41,7 +41,9 @@ use crate::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, Variable};
+#[cfg(test)]
+use cranelift_frontend::FunctionBuilderContext;
 use cranelift_codegen::entity::{SecondaryMap, packed_option::PackedOption};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
@@ -55,6 +57,7 @@ pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::byteco
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
+pub(in crate::vm) mod call_signature;
 mod exit_protocol;
 mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
@@ -1252,9 +1255,7 @@ pub fn native_js_lane_helpers<H: Host>() -> *const () {
 
 #[cfg(feature = "aot")]
 pub(super) fn native_lane_helpers_signature(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Signature {
-    let mut signature = Signature::new(isa.default_call_conv());
-    signature.returns.push(AbiParam::new(isa.pointer_type()));
-    signature
+    call_signature::word_signature(isa.default_call_conv(), 0, 1, isa.pointer_type())
 }
 
 #[derive(Clone, Copy)]
@@ -2638,12 +2639,7 @@ pub(super) fn native_entry_signature(
     pointer: ir::Type,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for parameter in [pointer, types::I64, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I32));
-    signature
+    call_signature::typed_signature(call_conv, &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32])
 }
 
 /// The verified Number result's machine view in the common native result word.
@@ -4660,12 +4656,7 @@ pub(super) fn native_js_operation_signature(
     isa: &dyn cranelift_codegen::isa::TargetIsa,
 ) -> Signature {
     let pointer = isa.pointer_type();
-    let mut signature = Signature::new(isa.default_call_conv());
-    for parameter in [pointer, types::I64, pointer, pointer] {
-        signature.params.push(AbiParam::new(parameter));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    signature
+    call_signature::typed_signature(isa.default_call_conv(), &[pointer, types::I64, pointer, pointer], &[types::I64])
 }
 
 pub(super) use quench_bjit::call_record::NATIVE_JS_STOPPED;
@@ -5794,22 +5785,14 @@ fn internal_signature(
     result: Option<crate::WasmType>,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
-    let mut signature = Signature::new(call_conv);
-    for _ in 0..1 + memory.count() {
-        signature.params.push(AbiParam::new(types::I64));
-    }
-    for ty in plan_params {
-        signature
-            .params
-            .push(AbiParam::new(Kind::of(*ty).expect("planned").ir()));
-    }
-    signature.returns.push(AbiParam::new(types::I64));
-    if let Some(ty) = result {
-        signature
-            .returns
-            .push(AbiParam::new(Kind::of(ty).expect("planned").ir()));
-    }
-    signature
+    let params = (0..1 + memory.count())
+        .map(|_| types::I64)
+        .chain(plan_params.iter().map(|ty| Kind::of(*ty).expect("planned").ir()))
+        .collect::<Vec<_>>();
+    let returns = std::iter::once(types::I64)
+        .chain(result.map(|ty| Kind::of(ty).expect("planned").ir()))
+        .collect::<Vec<_>>();
+    call_signature::typed_signature(call_conv, &params, &returns)
 }
 
 /// Where a threaded copy continues once its path is done.
@@ -6581,11 +6564,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         let callout_signature = match self.callout_signature {
             Some(signature) => signature,
             None => {
-                let mut callout = Signature::new(self.call_conv);
-                for _ in 0..4 {
-                    callout.params.push(AbiParam::new(types::I64));
-                }
-                callout.returns.push(AbiParam::new(types::I64));
+                let callout = call_signature::word_signature(self.call_conv, 4, 1, types::I64);
                 let callout = self.body.core.builder.import_signature(callout);
                 self.callout_signature = Some(callout);
                 callout
@@ -6977,7 +6956,7 @@ impl<'a, H: Host> Analysis<'a, H> {
             internal_signature(memory, &plan.params, plan.result, call_conv),
         );
         use crate::staged::machine::{Lane, Relation};
-        let mut builder_context = FunctionBuilderContext::new();
+        let mut builder_context = crate::vm::jit_backend::builder::take_context();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
@@ -7139,6 +7118,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         emitter.finish_traps();
         emitter.body.core.builder.seal_all_blocks();
         emitter.body.into_builder().finalize(isa.frontend_config());
+        crate::vm::jit_backend::builder::keep_context(builder_context);
         #[cfg(test)]
         BUILT_BODIES.with(|built| built.borrow_mut().push((index, func.display().to_string())));
         Some(func)
@@ -7163,13 +7143,10 @@ impl<'a, H: Host> Analysis<'a, H> {
             UserFuncName::user(ENTRY_NAMESPACE, index as u32),
             signature,
         );
-        let mut builder_context = FunctionBuilderContext::new();
+        let mut builder_context = crate::vm::jit_backend::builder::take_context();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
-        let block = builder.create_block();
-        builder.append_block_params_for_function_params(block);
-        builder.switch_to_block(block);
+        let (block, parameters) = crate::vm::jit_backend::builder::enter(&mut builder);
         builder.seal_block(block);
-        let parameters = builder.block_params(block).to_vec();
         let (context, base, length, args, out) = (
             parameters[0],
             parameters[1],
@@ -7212,6 +7189,7 @@ impl<'a, H: Host> Analysis<'a, H> {
         let status = stage.raw_unary(Unary::Narrow(Lane::I32), results[0]);
         stage.leave(&[status]);
         builder.finalize(isa.frontend_config());
+        crate::vm::jit_backend::builder::keep_context(builder_context);
         func
     }
 }

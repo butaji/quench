@@ -242,7 +242,7 @@ impl Stage for Emit<'_, '_> {
     fn any(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
     fn all(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
     fn pick(&mut self, cond: ir::Value, then: ir::Value, otherwise: ir::Value) -> ir::Value {
-        self.select(cond, then, otherwise)
+        self.raw_select(cond, then, otherwise)
     }
     fn shape_in(&mut self, shape: ir::Value, shapes: &[u32]) -> ir::Value {
         let word = if self.raw_lane(shape) == Lane::I32 { shape } else { self.narrow(shape) };

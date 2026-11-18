@@ -67,9 +67,7 @@ fn specialize_interrupt_owner(function: &mut ir::Function, helpers: LaneHelpers,
     if let Some(inst) = after { cursor.goto_inst(inst); cursor.next_inst(); }
     else { cursor.goto_inst(cursor.func.layout.first_inst(entry).expect("entry instruction")); }
     let address = interrupt_owner_address(&mut cursor, helpers);
-    let mut signature = ir::Signature::new(isa.default_call_conv());
-    signature.params.push(ir::AbiParam::new(types::I64));
-    signature.returns.push(ir::AbiParam::new(types::I64));
+    let signature = crate::vm::compiled::call_signature::typed_signature(isa.default_call_conv(), &[types::I64], &[types::I64]);
     let signature = cursor.func.import_signature(signature);
     let call = cursor.ins().call_indirect(signature, address, &[context]);
     let exclusive = cursor.func.dfg.inst_results(call)[0];

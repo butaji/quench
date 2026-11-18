@@ -230,8 +230,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         // A callee that never entered and one that threw both pop the frame, once, in one
         // block; a leave keeps it pushed for the lane to link.
-        let popped = stage.builder.create_block();
-        stage.builder.set_cold_block(popped);
+        let popped = super::cold_block(&mut stage.builder);
         stage.builder.switch_to_block(entered.unfinished);
         let not_entered = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_NOT_ENTERED));
         let did_raise = stage.raw_compare_imm(Relation::Equal, entered.status, i64::from(LANE_BODY_THREW));

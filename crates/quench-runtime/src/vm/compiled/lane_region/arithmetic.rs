@@ -104,8 +104,7 @@ impl Lowering<'_, '_> {
     /// take ToInt32 of their double result, and both join as an int32.
     fn truncated_sum(&mut self, state: &mut State, pc: usize, (destination, [left, right]): Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) -> Option<()> {
-        let float = self.builder.create_block();
-        self.builder.set_cold_block(float);
+        let float = super::cold_block(&mut self.builder);
         let mut float_state = state.clone();
         let left_int = self.operand_int(state, left, float).expect("supported operand");
         let right_int = self.operand_int(state, right, float).expect("supported operand");
@@ -129,8 +128,7 @@ impl Lowering<'_, '_> {
     /// one (an overflow, or a product's negative zero, takes the binary64 arm), else binary64.
     fn checked_arithmetic(&mut self, state: &mut State, pc: usize, (destination, [left, right]): Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) -> Option<()> {
-        let float = self.builder.create_block();
-        self.builder.set_cold_block(float);
+        let float = super::cold_block(&mut self.builder);
         let mut float_state = state.clone();
         let left_int = self.operand_int(state, left, float).expect("supported operand");
         let right_int = self.operand_int(state, right, float).expect("supported operand");
