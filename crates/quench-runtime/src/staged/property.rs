@@ -333,7 +333,7 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
 
 /// The record of the direct object `object`; anything else leaves at `miss`.
 #[inline(always)]
-fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+pub(crate) fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);

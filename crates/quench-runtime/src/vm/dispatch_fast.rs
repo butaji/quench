@@ -3369,7 +3369,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, OtherRecord, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -7484,8 +7484,19 @@ const fn own_site(this: bool, form: usize) -> u8 { 1 + (form as u8) * 2 + this a
 pub(super) const HELD_SITE_THIS: u8 = own_site(true, OWN_FORMS.len());
 pub(super) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
 
+/// The site facts of the held read of a receiver other than a direct object (an array, function
+/// or ordinary builtin, as `a.push` or `f.call`), which a held site's miss takes: its object part
+/// is resolved out of line (`RecordPlan::other`).
+pub(super) const HELD_OTHER_THIS: u8 = own_site(true, OWN_FORMS.len() + 1);
+pub(super) const HELD_OTHER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 1);
+
 /// Whether site `site` is a read through a prototype hint.
-pub(super) const fn held_site(site: u8) -> bool { site == HELD_SITE_THIS || site == HELD_SITE_REGISTER }
+pub(super) const fn held_site(site: u8) -> bool {
+    site == HELD_SITE_THIS || site == HELD_SITE_REGISTER || held_other_site(site)
+}
+
+/// Whether held site `site` reads any receiver's object part, not a direct object's alone.
+pub(super) const fn held_other_site(site: u8) -> bool { site == HELD_OTHER_THIS || site == HELD_OTHER_REGISTER }
 
 /// Whether own-field or held site `site` reads `this`.
 pub(super) const fn own_site_this(site: u8) -> bool { site.wrapping_sub(1) & 1 == 1 }
@@ -7602,6 +7613,18 @@ fn holds_loop_site(ip: Ip) -> bool {
     (unsafe { i.operand.field.shape }) == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
 }
 
+/// The object part of a receiver other than a direct object, an array, function or ordinary
+/// builtin whose prototype a held read reads through (`RecordPlan::other`): its address, or 0.
+///
+/// # Safety
+/// `machine` is the live `Vm<H>` the lane runs.
+#[cold]
+#[inline(never)]
+unsafe fn held_other_record<H: Host>(machine: *const (), object: u64) -> u64 {
+    let machine = unsafe { &*machine.cast::<Vm<H>>() };
+    machine.hinted_receiver(Value::from_bits(object)).map_or(0, |record| record as *const crate::heap::Object as u64)
+}
+
 /// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
 /// `RETURNING_FIELD_POLYMORPHIC`): its hint, the last own entry that answered it, first, then
 /// the site's inline entries, whose own hit becomes the hint; with whether a prototype's entry
@@ -7681,22 +7704,6 @@ script_handler! {
             .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
         else {
             sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_holder` of a receiver other than a direct object: an array, function or
-    /// ordinary builtin (`Vm::holder_hint_hit`); any other read takes
-    /// `lane_get_field_holder_refresh`.
-    #[inline(never)]
-    fn lane_get_field_holder_other<THIS: bool>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).holder_hint_hit(i.call_link.get(), i.imm(), object))
-        else {
-            sibling!(lane_get_field_holder_refresh::<H, THIS>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))

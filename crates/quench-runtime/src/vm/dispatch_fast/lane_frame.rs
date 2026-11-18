@@ -125,7 +125,15 @@ pub(in crate::vm::dispatch_fast) struct RecordPlan {
     /// How many of `ops` the plan runs.
     len: usize,
     records: u64,
+    /// The object part of a receiver other than a direct object (an array, function or ordinary
+    /// builtin), out of line, for a plan any of them runs (`IcOp::Held`): its resolver and the
+    /// machine it reads; `None` where the plan runs over direct objects alone.
+    other: Option<(OtherRecord, *const ())>,
 }
+
+/// Resolves the object part of a receiver other than a direct object (`Vm::hinted_receiver`):
+/// its address, or 0 for no object part.
+pub(in crate::vm::dispatch_fast) type OtherRecord = unsafe fn(*const (), u64) -> u64;
 
 impl RecordPlan {
     /// The own-slot read of the hint `(word, slot)`, whose storage form is `form` where the site
@@ -137,16 +145,17 @@ impl RecordPlan {
         let word = match form { Some(form) => (word & !FORM_BITS) | form, None => word };
         let load = IcOp::LoadSlot { slot, form: crate::staged::Form::Either, storage_len: usize::from(slot) + 1,
             rep: crate::staged::object::Rep::Tagged };
-        Self { ops: [IcOp::GuardFormed(word), load], len: 2, records }
+        Self { ops: [IcOp::GuardFormed(word), load], len: 2, records, other: None }
     }
 
     /// The read through a prototype hint whose operands are `guard`, `watch` and `value`
     /// (`IcOp::Held`).
     #[inline(always)]
-    pub(in crate::vm::dispatch_fast) fn held(guard: u64, watch: u64, value: u64, records: u64) -> Self {
+    pub(in crate::vm::dispatch_fast) fn held(guard: u64, watch: u64, value: u64, records: u64,
+        other: Option<(OtherRecord, *const ())>) -> Self {
         use crate::staged::ic::IcOp;
         let held = IcOp::Held { guard, watch, value };
-        Self { ops: [held, held], len: 1, records }
+        Self { ops: [held, held], len: 1, records, other }
     }
 }
 
@@ -365,6 +374,22 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> { Some(self.this.to_bits()) }
 
+    /// A direct object's record in the table, or, where the plan runs over any object part
+    /// (`RecordPlan::other`), the object part of an array, function or builtin, out of line.
+    #[inline(always)]
+    fn receiver_record(&mut self, stage: &mut Concrete, _owner: crate::staged::property::Owner, object: u64, _readable: bool,
+        miss: ()) -> Option<crate::staged::ic::Reached<u64, bool>> {
+        let Some(RecordPlan { records, other: Some((resolve, machine)), .. }) = self.plan else {
+            return crate::staged::property::receiver(stage, self, object, miss);
+        };
+        if let Some(id) = Value::from_bits(object).direct_object_index() {
+            return Some(crate::staged::ic::Reached::bare(crate::staged::object::object_record_at(stage, records, u64::from(id))));
+        }
+        // SAFETY: the resolver was made for the machine the lane runs.
+        let record = unsafe { resolve(machine, object) };
+        (record != 0).then(|| crate::staged::ic::Reached::bare(record))
+    }
+
     #[inline(always)]
     fn delete_property(&mut self, _stage: &mut Concrete, base: u64, key: u64, _strict: bool, _miss: ()) -> Option<(u64, Boxing)> {
         let host = self.host?;
@@ -554,14 +579,21 @@ lane_handler! {
             sibling!(flagged, r, ip, view)
         }
         // Where a planned named read misses: the own read past its record's hint, which reads
-        // through the site's cache and rebinds the hint.
+        // through the site's cache and rebinds the hint; a held read, the site's holder entry.
         macro_rules! property_miss { () => {{
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
-            if const { super::held_site(FLAG) } {
+            if const { super::held_site(FLAG) && !super::held_other_site(FLAG) } {
+                // A direct object's miss; the read of any other receiver's object part.
                 if const { super::own_site_this(FLAG) } {
-                    sibling!(lane_get_field_holder_other::<H, true>, r, ip, Carried::script_in(script, view))
+                    sibling!(lane_row::<H, OP, ACC, { super::HELD_OTHER_THIS }>, r, ip, Carried::script_in(script, view))
                 }
-                sibling!(lane_get_field_holder_other::<H, false>, r, ip, Carried::script_in(script, view))
+                sibling!(lane_row::<H, OP, ACC, { super::HELD_OTHER_REGISTER }>, r, ip, Carried::script_in(script, view))
+            }
+            if const { super::held_other_site(FLAG) } {
+                if const { super::own_site_this(FLAG) } {
+                    sibling!(lane_get_field_holder_refresh::<H, true>, r, ip, Carried::script_in(script, view))
+                }
+                sibling!(lane_get_field_holder_refresh::<H, false>, r, ip, Carried::script_in(script, view))
             }
             if const { super::own_site_this(FLAG) } {
                 sibling!(lane_get_field_own_refresh::<H, true, true>, r, ip, Carried::script_in(script, view))
@@ -615,8 +647,12 @@ lane_handler! {
                 let machine = unsafe { vm(script) };
                 let Some((guard, watch, value)) = machine.holder_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
                 if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
-                // The receiver is proved a direct object before the table is addressed.
-                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64));
+                // A direct object's record is addressed in the table after its family test; at the
+                // held-other site, any other receiver's object part is resolved out of line.
+                let other: Option<(super::OtherRecord, *const ())> = if const { super::held_other_site(FLAG) } {
+                    Some((super::held_other_record::<H>, (machine as *const Vm<H>).cast()))
+                } else { None };
+                frame.plan = Some(RecordPlan::held(guard, watch, value, machine.heap.live_object_records() as u64, other));
             } else {
             let records = unsafe { (*script).binding.object_base } as u64;
             if const { super::own_site_form(FLAG) == HINTED_FORM } {

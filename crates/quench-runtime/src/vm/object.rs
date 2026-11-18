@@ -2450,7 +2450,7 @@ impl<H: Host> Vm<H> {
     /// The object part of a direct object, array, function or ordinary builtin, whose own
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
-    fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() { return Some(self.heap.object_record_by_id(record_id)); }
         if let Some(array) = self.heap.record_array(object) { return Some(array); }
         self.hinted_other_receiver(object)
