@@ -810,6 +810,12 @@ impl ArrayElements {
 /// (`ArrayObject`): the word an `ArrayElements` is, owned by whoever holds it.
 const _: () = assert!(size_of::<ArrayElements>() == size_of::<u64>());
 
+/// The raw word (`ArrayElements::into_raw`) of the shared empty header, which no array owns.
+#[inline(always)]
+pub(super) fn empty_header_word() -> u64 {
+    std::ptr::addr_of!(EMPTY) as usize as u64
+}
+
 impl ArrayElements {
     /// The header pointer as a raw word, which takes over this owner (`from_raw`). Its upper
     /// 16 bits are clear, so it is never an object's extras word (`EXTRAS_TAG`).

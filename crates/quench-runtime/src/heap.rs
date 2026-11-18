@@ -2846,6 +2846,10 @@ impl Heap {
                 // forgotten, as a young array whose elements its young cycle takes back is.
                 let sparse = self.sparse_arrays.is_some();
                 let dispose = |record_id: RecordId, array: &ArrayObject| {
+                    // An empty array without extras releases nothing (`ArrayObject::owns_nothing`).
+                    if !sparse && array.owns_nothing() && !cfg!(feature = "profile-memory") {
+                        return false;
+                    }
                     *payload_bytes = payload_bytes.saturating_sub(array_payload_bytes(array));
                     #[cfg(feature = "profile-memory")]
                     memory_profile.freed_record_cell(Value::direct_array(record_id), properties.len(array.properties()));

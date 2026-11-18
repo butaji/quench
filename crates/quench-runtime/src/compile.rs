@@ -74,6 +74,7 @@ mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
+mod rest_reads;
 pub(crate) mod regexp; mod regexp_memo; mod source_text;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
@@ -2263,13 +2264,14 @@ pub(crate) fn lower_settled<'a>(
     // passes read one set of blocks.
     let flow = crate::bytecode::initialization::FlowCell::new();
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
         }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
+    rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     if function
         .code
         .iter()
