@@ -423,7 +423,7 @@ pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject
 /// narrow backing's value decoded (`object::decode_narrow`); `None` (leaving at `miss`) for any
 /// other base, past the elements or at a hole.
 #[inline(always)]
-pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word,
+pub(crate) fn any_backing_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word,
     miss: S::Miss) -> Option<S::Word> {
     use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
     let Backing { values, length, .. } = flagged_backing(stage, record_base, base, miss)?;
@@ -457,11 +457,11 @@ pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base
     }, #[inline(always)] |stage| dense_element(stage, values, length, index, miss).map(|(_, value)| value))
 }
 
-/// `record_element` on `Concrete`: the interpreter's read of element `index` of `base`.
+/// `any_backing_element` on `Concrete`: the interpreter's read of element `index` of `base`.
 #[inline(always)]
 pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
     let mut stage = Concrete::new(std::ptr::null());
-    record_element(&mut stage, record_base as u64, base.to_bits(), index as u64, ()).map(crate::Value::from_bits)
+    any_backing_element(&mut stage, record_base as u64, base.to_bits(), index as u64, ()).map(crate::Value::from_bits)
 }
 
 #[cfg(test)]
