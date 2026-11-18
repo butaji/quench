@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2045
+# total 2023
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -226,14 +226,11 @@ vm/compiled/lane_region.rs is:is_load_const 2
 vm/compiled/lane_region.rs is:is_load_name 1
 vm/compiled/lane_region.rs is:is_load_name_call 1
 vm/compiled/lane_region.rs is:is_load_this 1
-vm/compiled/lane_region.rs is:is_move 9
-vm/compiled/lane_region.rs is:is_nop 3
 vm/compiled/lane_region.rs is:is_require_object_coercible 1
 vm/compiled/lane_region.rs is:is_return 2
 vm/compiled/lane_region.rs is:is_set_index 2
 vm/compiled/lane_region.rs is:is_throw 1
 vm/compiled/lane_region.rs is:is_to_numeric 1
-vm/compiled/lane_region.rs is:is_truthiness_jump 1
 vm/compiled/lane_region.rs is:is_unary 2
 vm/compiled/lane_region/call_outs.rs Class:ForInNext 1
 vm/compiled/lane_region/catches.rs Class:Call 1
@@ -345,14 +342,12 @@ vm/compiled/osr_loop.rs is:is_load_capture 2
 vm/compiled/osr_loop.rs is:is_load_const 4
 vm/compiled/osr_loop.rs is:is_load_env_local 1
 vm/compiled/osr_loop.rs is:is_load_name 1
-vm/compiled/osr_loop.rs is:is_move 6
 vm/compiled/osr_loop.rs is:is_ordinary_call 4
 vm/compiled/osr_loop.rs is:is_require_object_coercible 1
 vm/compiled/osr_loop.rs is:is_return 2
 vm/compiled/osr_loop.rs is:is_set_index 1
 vm/compiled/osr_loop.rs is:is_store_capture 2
 vm/compiled/osr_loop.rs is:is_to_numeric 1
-vm/compiled/osr_loop.rs is:is_truthiness_jump 3
 vm/compiled/osr_loop.rs is:is_unary 4
 vm/compiled/osr_loop.rs op:Call 1
 vm/compiled/osr_loop.rs op:GetField 4

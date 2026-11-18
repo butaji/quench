@@ -1141,10 +1141,10 @@ fn move_root(instructions: &[WideInstruction], leaders: &CompoundBitSet, (header
         if at + 1 < pc && leaders.contains(at + 1) { break; }
         let instruction = instructions[at];
         match instruction.op() {
-            opcode if opcode.is_move() && instruction.result_flags() == 0 => {
+            _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0 => {
                 if instruction.register_a() == register { register = instruction.register_b(); }
             }
-            opcode if opcode.is_nop() => {},
+            _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Nop)) => {},
             _ => break,
         }
     }
@@ -1285,7 +1285,7 @@ fn invariant_field_owner(unit: &super::lane_unit::Unit, header: usize, pc: usize
         if boundaries.contains(at + 1) || unit.markers.contains(&at)
             || instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { return None; }
         if writes(instruction).contains(&owner) {
-            if !instruction.op().is_move() || instruction.result_register() != owner { return None; }
+            if !matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) || instruction.result_register() != owner { return None; }
             owner = instruction.register_b();
         }
     }
@@ -1309,7 +1309,7 @@ fn invariant_callee_read(unit: &super::lane_unit::Unit, reads: impl IntoIterator
             if unit.markers.contains(&at)
                 || instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { return false; }
             if writes(instruction).contains(&source) {
-                if !instruction.op().is_move() || instruction.result_register() != source { return false; }
+                if !matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) || instruction.result_register() != source { return false; }
                 source = instruction.register_b();
             }
         }
@@ -1395,9 +1395,9 @@ fn loop_fields(program: &ResidualProgram, unit: &super::lane_unit::Unit,
                 };
                 stores.push((receiver.and_then(|register| aliases[usize::from(register)]), instruction.atom_index(), pc));
             }
-            let copied = (instruction.op().is_move()).then(|| aliases[usize::from(instruction.register_b())]).flatten();
+            let copied = (matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. }))).then(|| aliases[usize::from(instruction.register_b())]).flatten();
             for register in writes(instruction) { aliases[usize::from(register)] = None; }
-            if instruction.op().is_move() { aliases[usize::from(instruction.result_register())] = copied; }
+            if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) { aliases[usize::from(instruction.result_register())] = copied; }
             let targets = successors(pc, instruction).map(|target| target.filter(|target| *target > pc && *target <= back));
             let mut targets = targets.into_iter().flatten().peekable();
             while let Some(target) = targets.next() {
@@ -2311,7 +2311,7 @@ impl Lowering<'_, '_> {
                         calls.insert(frame);
                     }
                 }
-                let root = (instruction.op().is_move())
+                let root = (matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })))
                     .then(|| aliases[usize::from(instruction.register_b())]).flatten();
                 for register in writes(instruction) { aliases[usize::from(register)] = root; }
             }
@@ -2628,7 +2628,7 @@ impl Lowering<'_, '_> {
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
             _ if self.is_window_row(pc, instruction) => Some(self.window_step(state, pc, instruction)),
             opcode if (opcode.is_load_name() || opcode.is_load_name_call()) && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
-            opcode if opcode.is_nop() && plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
+            _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Nop)) && plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
             },
@@ -2665,7 +2665,7 @@ impl Lowering<'_, '_> {
             _ if plain && instruction.op().class().eq(Class::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_get(state, pc32, instruction),
             _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
-            _ if plain && instruction.op().is_truthiness_jump() => {
+            _ if plain && matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. })) => {
                 let target = instruction.jump_target() as usize;
                 let exit = self.guard_exit(state, pc32);
                 let taken_block = self.builder.create_block();
@@ -3381,10 +3381,10 @@ impl Lowering<'_, '_> {
             for pc in (header + 1..back).rev() {
                 let instruction = instructions[pc];
                 match instruction.op() {
-                    opcode if opcode.is_move() && instruction.result_flags() == 0 => {
+                    _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0 => {
                         if instruction.register_a() == required { required = instruction.register_b(); }
                     }
-                    opcode if opcode.is_nop() => {},
+                    _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Nop)) => {},
                     _ => { predicate = Some(pc); break; }
                 }
                 if leaders.contains(pc) { inputs.push((pc, required)); }
@@ -3495,7 +3495,7 @@ impl Lowering<'_, '_> {
             let instruction = self.unit.instructions[at];
             if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { return false; }
             if writes(instruction).contains(&register) {
-                if instruction.op().is_move() && instruction.result_register() == register {
+                if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_register() == register {
                     register = instruction.register_b();
                 } else {
                     return instruction.defined_register() == Some(register)
@@ -3538,7 +3538,7 @@ impl Lowering<'_, '_> {
                 }
             }
             if instruction.op().control_flow_layout() != ControlFlowLayout::Fallthrough { break; }
-            let copied = instruction.op().is_move() && aliases.contains(usize::from(instruction.register_b()));
+            let copied = matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && aliases.contains(usize::from(instruction.register_b()));
             for register in writes(instruction) { aliases.remove(usize::from(register)); }
             if copied { aliases.insert(usize::from(instruction.result_register())); }
             if aliases.is_empty() { break; }
