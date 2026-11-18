@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::step;
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_local, step_number, step_value, step_names, step_property, step_keyed};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;

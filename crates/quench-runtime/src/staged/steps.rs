@@ -115,3 +115,98 @@ fn require_object_coercible<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
         None => Step::Unresolved,
     }
 }
+
+/// The part of `step` a row of one opcode can reach (`row_step`): a tier instantiating one handler
+/// per opcode compiles only that part, chosen by an `if const` on the opcode, rather than every
+/// family of `step` in every instantiation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowStep {
+    /// Jumps, register moves and constants (`Decoder::Flow`).
+    Flow,
+    /// Plain local reads and writes (`Decoder::Local`).
+    Local,
+    /// The numeric operations (`NumberOperation`).
+    Number,
+    /// `this`, coercibility, `!` and `typeof` index.
+    Value,
+    /// The environment, global, capture and iteration operations (`names::step`).
+    Names,
+    /// Named property reads and writes.
+    Property,
+    /// Deletes and element accesses.
+    Keyed,
+    /// Any operation: the whole of `step`.
+    Full,
+}
+
+/// The part of `step` opcode `op`'s row reaches.
+pub(crate) const fn row_step(op: Op) -> RowStep {
+    match op.staged() {
+        Some(Decoder::Flow) => RowStep::Flow,
+        Some(Decoder::Local) => RowStep::Local,
+        Some(Decoder::Names) => RowStep::Names,
+        Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
+        Some(Decoder::Element) => RowStep::Keyed,
+        Some(Decoder::Value) => match op {
+            Op::LoadCapture | Op::StoreCapture => RowStep::Names,
+            Op::IncDec | Op::ToNumeric => RowStep::Number,
+            Op::LoadThis | Op::RequireObjectCoercible => RowStep::Value,
+            _ => RowStep::Full,
+        },
+        _ => RowStep::Full,
+    }
+}
+
+/// `step` of a flow row (`RowStep::Flow`); any other operation is unresolved.
+#[inline(always)]
+pub(crate) fn step_flow<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::Jump => Step::Control(frame.jump(stage)),
+        Operation::JumpIf { register, taken } => jump_if(stage, frame, register, taken),
+        Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Nop => register_step(stage, frame, operation),
+        _ => Step::Unresolved,
+    }
+}
+
+/// `step` of a local row (`RowStep::Local`).
+#[inline(always)]
+pub(crate) fn step_local<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    local_step(stage, frame, operation)
+}
+
+/// `step` of a numeric row (`RowStep::Number`).
+#[inline(always)]
+pub(crate) fn step_number<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::Number(operation) => numeric::step(stage, frame, operation),
+        _ => Step::Unresolved,
+    }
+}
+
+/// `step` of a value row (`RowStep::Value`).
+#[inline(always)]
+pub(crate) fn step_value<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::RequireObjectCoercible { register } => require_object_coercible(stage, frame, register),
+        Operation::LoadThis { destination } => load_this(stage, frame, destination, frame.miss()),
+        _ => Step::Unresolved,
+    }
+}
+
+/// `step` of a names row (`RowStep::Names`).
+#[inline(always)]
+pub(crate) fn step_names<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    super::names::step(stage, frame, operation)
+}
+
+/// `step` of a property row (`RowStep::Property`).
+#[inline(always)]
+pub(crate) fn step_property<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    super::property::property_step(stage, frame, operation)
+}
+
+/// `step` of a keyed row (`RowStep::Keyed`).
+#[inline(always)]
+pub(crate) fn step_keyed<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    keyed_step(stage, frame, operation)
+}

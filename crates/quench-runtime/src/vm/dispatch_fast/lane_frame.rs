@@ -653,6 +653,22 @@ fn is_row_flagged<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) ->
     rows.iter().any(|row| *row as *const () == handler)
 }
 
+/// `staged::step` of opcode `$op`'s row, compiled as only the part the row reaches
+/// (`staged::row_step`): each family is an `if const` branch, which rustc compiles only when taken.
+macro_rules! row_step {
+    ($op:expr, $stage:expr, $frame:expr, $operation:expr) => {{
+        use crate::staged::RowStep as R;
+        if const { matches!(crate::staged::row_step($op), R::Flow) } { crate::staged::step_flow($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Local) } { crate::staged::step_local($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Number) } { crate::staged::step_number($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Value) } { crate::staged::step_value($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Names) } { crate::staged::step_names($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Property) } { crate::staged::step_property($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Keyed) } { crate::staged::step_keyed($stage, $frame, $operation) }
+        else { crate::staged::step($stage, $frame, $operation) }
+    }};
+}
+
 /// Where opcode `op`'s jump row leaves when its words do not decide the edge: a truth test of a
 /// heap value asks its cell (`lane_jump_test_cell`); any other takes the VM's general step.
 const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
@@ -686,7 +702,7 @@ lane_handler! {
         };
         let mut stage = Concrete::new(std::ptr::null());
         let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-        match crate::staged::step(&mut stage, &mut frame, operation) {
+        match crate::staged::step_flow(&mut stage, &mut frame, operation) {
             Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, view, None)),
             Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), view),
             Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
@@ -708,13 +724,20 @@ lane_handler! {
         }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);
-        let decoded = match const { LaneFields::<OP, FLAG>::OPCODE.staged() } {
-            Some(crate::bytecode::Decoder::Flow) => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
-            Some(crate::bytecode::Decoder::Local) => Operation::decode_local(crate::staged::Fields::wide(fields)),
-            Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),
-            Some(crate::bytecode::Decoder::Generic) => Operation::decode_generic(crate::staged::Fields::wide(fields)),
-            Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
-            _ => None,
+        // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
+        // instantiation holds its one decoder (a `match` on a constant compiles every arm).
+        let decoded = if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Flow)) } {
+            Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY)
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) } {
+            Operation::decode_local(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
+            Operation::decode_value(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Generic)) } {
+            Operation::decode_generic(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+            Operation::decode_names(crate::staged::Fields::wide(fields))
+        } else {
+            None
         };
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) may read a slot of the property arena.
@@ -723,7 +746,7 @@ lane_handler! {
         } else { std::ptr::null() };
         let mut stage = Concrete::new(property_values);
         let mut frame = row_frame::<H, OP, ACC, FLAG>(cx, r, view);
-        match crate::staged::step(&mut stage, &mut frame, operation) {
+        match row_step!(LaneFields::<OP, FLAG>::OPCODE, &mut stage, &mut frame, operation) {
             Step::Value(value) => {
                 // A row that answers its value without writing its register (`row_writes_result`):
                 // the register is written here, as every producer writes it beside the carried value.

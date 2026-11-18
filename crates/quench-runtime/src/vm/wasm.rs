@@ -5322,6 +5322,8 @@ mod tests {
     fn compiled_wasm_loop_backedge_polls_execution_interrupt() {
         struct StartHost(std::sync::mpsc::Sender<()>);
         impl crate::Host for StartHost {
+            // Its test runs compiled Wasm only (`Host::RUNS_LANE`).
+            const RUNS_LANE: bool = false;
             fn write_line(&mut self, _: &str) {}
             fn clock_millis(&mut self) -> f64 {
                 0.0
