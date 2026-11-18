@@ -13,6 +13,7 @@ use quench_regexp::backtrack::CAPTURE_REGISTERS;
 use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission, AssertionTest};
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
+mod look;
 mod repeats;
 mod stage;
 
@@ -86,6 +87,9 @@ enum Resume {
     Greedy(u32),
     /// A lazy repeat that takes a unit, ceiling and position in the frame.
     Lazy(u32),
+    /// The mark of the lookahead at this pc, its position in the frame's first word: the
+    /// backtrack reached it, so the body found no match.
+    LookFail(u32),
 }
 
 struct Emit<'a, 'f> {
@@ -103,6 +107,8 @@ struct Emit<'a, 'f> {
     top: Variable,
     /// The start of the run, for a search that moves on by itself.
     start: Variable,
+    /// Each lookahead's mark, by the lookahead's pc: the stack address its body runs above.
+    marks: Vec<(u32, Variable)>,
     instructions: Vec<ir::Block>,
     backtrack: ir::Block,
     overflow: ir::Block,
@@ -146,7 +152,7 @@ impl<'a, 'f> Emit<'a, 'f> {
         b.def_var(top, stack);
         // A search that moves on by itself has no entry offset (`Program::native_restarts`).
         b.def_var(start, position_in);
-        let mut emit = Self { b, plan, bytes, length, registers, stack_end, last, found, position, top, start, instructions, backtrack, overflow, resumes: Vec::new() };
+        let mut emit = Self { b, plan, bytes, length, registers, stack_end, last, found, position, top, start, marks: Vec::new(), instructions, backtrack, overflow, resumes: Vec::new() };
         let barrier = emit.constant(BARRIER);
         let zero = emit.constant(0);
         emit.push_frame(barrier, zero, zero);
@@ -273,6 +279,8 @@ impl<'a, 'f> Emit<'a, 'f> {
                 let position = self.position();
                 self.b.leave(&[position]);
             }
+            NativeInst::Look { .. } => self.look(pc),
+            NativeInst::LookSucceed => self.look_succeed(pc),
             other => self.registers_instruction(pc, other),
         }
     }
@@ -411,9 +419,14 @@ impl<'a, 'f> Emit<'a, 'f> {
         let failed = self.constant(NATIVE_FAIL as i64);
         self.b.leave(&[failed]);
         self.b.enter_open(run);
+        self.run_from_start(admission, next);
+    }
+
+    /// Runs from the restart's start, `admission` having admitted it: past its leading
+    /// assertions, which fail on to `next` with no frame of their own to undo, and above a
+    /// new barrier.
+    fn run_from_start(&mut self, admission: Option<Admission<NativeTest>>, next: ir::Block) {
         let start = self.b.use_var(self.start);
-        // A leading assertion that fails fails the run with no frame of its own to undo: it
-        // is decided here, before the run's barrier.
         // The start set may say whether the unit at the start is a word unit, which leaves
         // `\b` and `\B` only the unit before it to read.
         let word = match admission {
@@ -465,13 +478,18 @@ impl<'a, 'f> Emit<'a, 'f> {
 
     /// A restore frame: its register gets its old value back, and the backtrack goes on.
     fn restore_frame(&mut self, frame: ir::Value) {
+        self.write_back(frame);
+        self.fail();
+    }
+
+    /// The register a restore entry at `frame` names gets its old value back.
+    fn write_back(&mut self, frame: ir::Value) {
         let flags = MemFlagsData::trusted();
         let register = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
         let value = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
         let offset = self.b.raw_binary_imm(Binary::ShiftLeft, register, REGISTER_SHIFT);
         let address = self.b.raw_binary(Binary::Add, self.registers, offset);
         self.b.raw_store(Lane::I64, flags, (value, false), address, 0);
-        self.fail();
     }
 }
 

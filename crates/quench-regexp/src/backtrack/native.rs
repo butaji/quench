@@ -38,6 +38,9 @@ pub enum NativeInst {
     LoopIterate { start: u32 },
     EmptyCheck { start: u32 },
     LoopTail { counter: u32, start: u32, min: u32, head: u32 },
+    /// A lookahead whose body follows, ending at its `LookSucceed`; matching goes on at `end`.
+    Look { negative: bool, end: u32 },
+    LookSucceed,
     Match,
 }
 
@@ -136,6 +139,18 @@ const INITIAL_STACK_FRAMES: usize = 1024;
 /// A full stack grows by this factor.
 const STACK_GROWTH: usize = 4;
 
+/// The loop instructions: counters, iteration starts and empty checks.
+fn native_loop_inst(inst: Inst) -> NativeInst {
+    match inst {
+        Inst::LoopInit { counter } => NativeInst::LoopInit { counter },
+        Inst::LoopHead { counter, min, max, greedy, exit } => NativeInst::LoopHead { counter, min, max, greedy, exit },
+        Inst::LoopIterate { start } => NativeInst::LoopIterate { start },
+        Inst::EmptyCheck { start } => NativeInst::EmptyCheck { start },
+        Inst::LoopTail { counter, start, min, head } => NativeInst::LoopTail { counter, start, min, head },
+        _ => unreachable!("`native_inst` takes the others"),
+    }
+}
+
 fn native_test(test: UnitTest, sets: &[MatchSet]) -> NativeTest {
     match test {
         UnitTest::Exact(unit) if unit < ASCII_UNITS => NativeTest::Exact(unit as u8),
@@ -186,8 +201,6 @@ impl Program {
             Inst::Dispatch { .. }
             | Inst::Backreference { .. }
             | Inst::BackreferenceBack { .. }
-            | Inst::Look { .. }
-            | Inst::LookSucceed
             | Inst::UnitBack(_)
             | Inst::UnitRepeatBack { .. }
             | Inst::CaptureCloseBack { .. }
@@ -202,12 +215,10 @@ impl Program {
             Inst::CaptureOpen { temporary, count, restores } => NativeInst::CaptureOpen { temporary, count, restores },
             Inst::CaptureClose { capture, temporary } => NativeInst::CaptureClose { capture, temporary },
             Inst::ResetCaptures { first, count } => NativeInst::ResetCaptures { captures: self.lists[first as usize..(first + count) as usize].to_vec() },
-            Inst::LoopInit { counter } => NativeInst::LoopInit { counter },
-            Inst::LoopHead { counter, min, max, greedy, exit } => NativeInst::LoopHead { counter, min, max, greedy, exit },
-            Inst::LoopIterate { start } => NativeInst::LoopIterate { start },
-            Inst::EmptyCheck { start } => NativeInst::EmptyCheck { start },
-            Inst::LoopTail { counter, start, min, head } => NativeInst::LoopTail { counter, start, min, head },
-            _ => unreachable!("`native_inst` takes the others"),
+            // A lookbehind's body is backward instructions, which keep the program interpreted.
+            Inst::Look { negative, end } => NativeInst::Look { negative, end },
+            Inst::LookSucceed => NativeInst::LookSucceed,
+            loops => native_loop_inst(loops),
         }
     }
 

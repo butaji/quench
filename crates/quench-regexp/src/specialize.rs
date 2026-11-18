@@ -166,6 +166,28 @@ pub(super) enum Replay {
     Exhausted,
 }
 
+/// A greedy repeat gives back a unit: down to the last one the next instruction takes,
+/// where that is one unit's test (a unit it refuses fails at once), and stays on the stack
+/// while it can give back more.
+#[inline(always)]
+fn replay_greedy<S: Stage>(stage: &mut S, pc: u32, floor: usize, position: usize) -> Replay {
+    let mut at = position - 1;
+    // A unit the next instruction refuses fails at once: give back down to the last
+    // one it takes, or past the floor, where the frame is spent.
+    if let Some(test) = stage.unit_follower(pc) {
+        while !{ let unit = stage.unit_at(at); stage.passes(unit, test) } {
+            if at == floor {
+                return Replay::Undone;
+            }
+            at -= 1;
+        }
+    }
+    if at > floor {
+        stage.keep(Frame::Greedy { pc, floor, position: at });
+    }
+    Replay::Resume(Cursor::at(pc, at))
+}
+
 /// Backtracks one entry: the same machine read backwards, with each entry's meaning written
 /// once over the stage. A greedy or lazy repeat that may still give or take a unit stays on the
 /// stack, one position on.
@@ -178,23 +200,7 @@ pub(super) fn replay<S: Stage>(stage: &mut S) -> Replay {
             Replay::Undone
         }
         Some(Frame::Choice { pc, position }) => Replay::Resume(Cursor::at(pc, position)),
-        Some(Frame::Greedy { pc, floor, position }) => {
-            let mut at = position - 1;
-            // A unit the next instruction refuses fails at once: give back down to the last
-            // one it takes, or past the floor, where the frame is spent.
-            if let Some(test) = stage.unit_follower(pc) {
-                while !{ let unit = stage.unit_at(at); stage.passes(unit, test) } {
-                    if at == floor {
-                        return Replay::Undone;
-                    }
-                    at -= 1;
-                }
-            }
-            if at > floor {
-                stage.keep(Frame::Greedy { pc, floor, position: at });
-            }
-            Replay::Resume(Cursor::at(pc, at))
-        }
+        Some(Frame::Greedy { pc, floor, position }) => replay_greedy(stage, pc, floor, position),
         Some(frame @ (Frame::GreedyBack { .. } | Frame::LazyBack { .. })) => backward::replay(stage, frame),
         Some(Frame::Lazy { pc, test, ceiling, position }) => {
             let unit = stage.unit_at(position);

@@ -3,6 +3,8 @@ use super::{Emit, Resume, FIRST_OPERAND, SECOND_OPERAND};
 use quench_regexp::backtrack::matcher::MatchStage;
 use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_codegen::ir::{self, MemFlagsData};
+/// The instruction after a repeat's one-unit follower, counted from the repeat.
+const FOLLOWER_NEXT: u32 = 2;
 use quench_regexp::backtrack::native::{NativeInst, NativeTest, NATIVE_NO_START as NO_START, NATIVE_UNBOUNDED as UNBOUNDED};
 
 impl Emit<'_, '_> {
@@ -143,6 +145,7 @@ impl Emit<'_, '_> {
             }
             Resume::Greedy(pc) => self.greedy_resume(pc, first, second),
             Resume::Lazy(pc) => self.lazy_resume(pc, first, second),
+            Resume::LookFail(pc) => self.look_failed(pc, first),
         }
     }
 
@@ -183,7 +186,8 @@ impl Emit<'_, '_> {
         self.push_resume_if(more, Resume::Greedy(pc), floor, at);
         let after = self.b.raw_binary_imm(Binary::Add, at, 1);
         self.set_position(after);
-        self.goto(pc + 2);
+        // The follower took the unit: on past it.
+        self.goto(pc + FOLLOWER_NEXT);
     }
 
     /// A lazy repeat takes a unit where its test passes, and keeps the frame below the ceiling.

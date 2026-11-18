@@ -10,10 +10,12 @@ use quench_regexp::backtrack::native::{NativeTest, NATIVE_ASCII_UNITS};
 /// The bits of a mask word, and the mask of a shift within one.
 const WORD_BITS: i64 = 64;
 const WORD_SHIFT_MASK: i64 = WORD_BITS - 1;
+/// The words of a mask of the ASCII units.
+const MASK_WORDS: usize = (NATIVE_ASCII_UNITS as i64 / WORD_BITS) as usize;
 
 impl Emit<'_, '_> {
     /// Bit `byte` of the 128-bit `mask`.
-    fn in_mask(&mut self, mask: [u64; 2], byte: ir::Value) -> ir::Value {
+    fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: ir::Value) -> ir::Value {
         let low = self.constant(mask[0] as i64);
         let high = self.constant(mask[1] as i64);
         let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
@@ -77,7 +79,7 @@ impl MatchStage for Emit<'_, '_> {
     fn in_ranges(&mut self, unit: ir::Value, ranges: &[(u32, u32)]) -> ir::Value {
         // Two or more ranges (`\w`, which `\b` reads twice) are one test of their mask.
         if ranges.len() > 1 {
-            let mut mask = [0u64; 2];
+            let mut mask = [0u64; MASK_WORDS];
             for &(first, last) in ranges.iter().filter(|(first, _)| *first < NATIVE_ASCII_UNITS) {
                 for unit in first..=last.min(NATIVE_ASCII_UNITS - 1) {
                     mask[(unit as i64 / WORD_BITS) as usize] |= 1 << (unit as i64 & WORD_SHIFT_MASK);
