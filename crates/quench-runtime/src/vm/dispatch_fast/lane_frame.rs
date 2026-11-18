@@ -576,7 +576,10 @@ lane_handler! {
         };
         let Some(operation) = decoded else { sibling!(lane_general_step::<H>, r, ip, view) };
         // A row that reads records in place (`Decoder::Names`) or a planned named read may read a slot of the property arena.
-        let property_values = if property || const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
+        let property_values = if property {
+            // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
+            unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap.arena_values_base()
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             unsafe { vm(cx) }.heap.arena_values_base()
         } else { std::ptr::null() };
         let mut stage = Concrete::new(property_values);
@@ -589,6 +592,16 @@ lane_handler! {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
             let records = unsafe { (*script).binding.object_base } as u64;
+            if const { super::own_site_form(FLAG) == HINTED_FORM } {
+                // The form of no particular hint is the row a site starts on, before the lane bound
+                // its object records: its first miss binds them.
+                if records == 0 {
+                    if const { super::own_site_this(FLAG) } {
+                        sibling!(lane_get_field_own_refresh::<H, true, false>, r, ip, Carried::script_in(script, view))
+                    }
+                    sibling!(lane_get_field_own_refresh::<H, false, false>, r, ip, Carried::script_in(script, view))
+                }
+            }
             debug_assert_ne!(records, 0, "an own-field row runs over bound object records");
             if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
             let hint = i.field_hint();

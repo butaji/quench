@@ -7366,19 +7366,6 @@ fn is_single_field_base(base: u16) -> bool {
 
 use crate::staged::HINTED_FORM;
 
-script_handler! {
-    /// `GetField` of a register or `this`: the site's primary own entry inline. Any other
-    /// read goes through `lane_get_field_miss`, which may move the record to a fitting
-    /// handler.
-    fn lane_get_field_own<THIS: bool>(cx, r, ip, i, view) {
-        if unsafe { (*cx).binding.object_base.is_null() } {
-            sibling!(lane_get_field_own_refresh::<H, THIS, false>, r, ip, Carried::script_in(cx, view))
-        }
-        requicken::<H>(ip, own_formed_handler::<H, THIS>(None));
-        sibling!(own_formed_handler::<H, THIS>(None), r, ip, Carried::script_in(cx, view))
-    }
-}
-
 /// The value the bound own-field read of record `i` answers (the own-field read the math call fusions make, `own_formed_handler`), `None`
 /// where its hint misses.
 #[inline(always)]
@@ -7422,7 +7409,7 @@ fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneCont
 }
 
 script_handler! {
-    /// `lane_get_field_own` past its record's hint: the site's primary own entry, whose hit
+    /// the own-field row (`own_formed_handler`) past its record's hint: the site's primary own entry, whose hit
     /// becomes the hint; any other read goes through `lane_get_field_miss`.
     #[inline(never)]
     fn lane_get_field_own_refresh<THIS: bool, BOUND: bool>(cx, r, ip, i, view) {
@@ -7767,7 +7754,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_own` for a receiver in a heap cell rather than the object records
+    /// the own-field row for a receiver in a heap cell rather than the object records
     /// (`Vm::cell_own_field_hit`): a function's own field, as `Strength.REQUIRED`. A miss
     /// moves the record on as `lane_get_field_miss` decides.
     fn lane_get_field_own_cell<>(cx, r, ip, i, view) {
@@ -7947,7 +7934,7 @@ script_handler! {
 script_handler! {
     /// A `GetField`'s first run: a read of `name` or `length` can enter prototype lookup
     /// mode (`Vm::reads_function_info`), which only `lane_get_field`'s general probe
-    /// prepares, so such a site keeps it; any other takes `lane_get_field_own`.
+    /// prepares, so such a site keeps it; any other takes the own-field row (`own_formed_handler`).
     #[inline(never)]
     fn lane_get_field_first<>(cx, r, ip, i, view) {
         if crate::bytecode::FieldBase(i.b).local_index().is_some() {
@@ -7980,11 +7967,9 @@ script_handler! {
             requicken::<H>(ip, handler);
             sibling!(handler, r, ip, Carried::script_in(cx, view))
         }
-        let (this, register): (Handler, Handler) = if unsafe { (*cx).binding.object_base.is_null() } {
-            (lane_get_field_own::<H, true>, lane_get_field_own::<H, false>)
-        } else {
-            (own_formed_handler::<H, true>(None), own_formed_handler::<H, false>(None))
-        };
+        // The generated own read of the form of no particular hint, which binds the lane's
+        // object records on its first miss where they are not yet bound.
+        let (this, register) = (own_formed_handler::<H, true>(None), own_formed_handler::<H, false>(None));
         let own = single_base_handler(i.b, this, register, lane_get_field_miss::<H>);
         requicken::<H>(ip, own);
         sibling!(own, r, ip, Carried::script_in(cx, view))
@@ -8060,11 +8045,7 @@ script_handler! {
                 // A site that read a plain object's own `length` mostly reads such objects: it
                 // takes the own-field handler, whose misses still reach the general read.
                 if crate::bytecode::FieldBase(i.b).register_index().is_some() && i.b != crate::bytecode::FieldBase::NESTED {
-                    let own: Handler = if unsafe { (*cx).binding.object_base.is_null() } {
-                        lane_get_field_own::<H, false>
-                    } else {
-                        own_formed_handler::<H, false>(None)
-                    };
+                    let own = own_formed_handler::<H, false>(None);
                     requicken::<H>(ip, own);
                 }
                 r.set(i.a, value);
@@ -8093,7 +8074,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A miss of a single-entry read (`lane_get_field_own`, `_holder`, `_inherited`): a nested record moves to
+    /// A miss of a single-entry read (the own-field row, `lane_get_field_holder`, `_inherited`): a nested record moves to
     /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
     /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
     /// an inherited entry to `lane_get_field_inherited`; the read itself takes
@@ -11039,7 +11020,7 @@ fn lane_region_field<H: Host>(
         super::compiled::FieldReceiver::Capture(slot) => lane_capture_value(cx, 0, slot)?,
         super::compiled::FieldReceiver::Field(index) => earlier(index),
     };
-    // The site's primary entry first, as the lane's own reads take it (`lane_get_field_own`).
+    // The site's primary entry first, as the lane's own reads take it (`own_formed_handler`).
     if let Some(value) = vm.record_field_entry_hit(vm.field_cache_entry(field.cache_site), receiver) {
         return Some(value);
     }
@@ -20026,7 +20007,7 @@ impl ReadArguments {
 }
 
 /// The hit a field record of a read body answers with: its quickened primary entry, own or
-/// held by a record prototype (`lane_get_field_own`, `lane_get_field_holder`). Each hit is
+/// held by a record prototype (`own_formed_handler`, `lane_get_field_holder`). Each hit is
 /// its cache's own validated read, whatever the record's state when it runs.
 #[derive(Clone, Copy)]
 enum FieldHit {
@@ -20045,9 +20026,7 @@ impl FieldHit {
     #[inline(always)]
     fn of<H: Host>(record: &LaneInstruction) -> Option<Self> {
         let handler = record.handler;
-        if handler == lane_get_field_own::<H, true> as *const ()
-            || handler == lane_get_field_own::<H, false> as *const ()
-            || own_bound_handlers::<H>().contains(&handler)
+        if own_bound_handlers::<H>().contains(&handler)
             || math_field_call_handlers::<H>().contains(&handler)
         {
             Some(Self::Own(record.c))
