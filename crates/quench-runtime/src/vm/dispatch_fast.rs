@@ -5099,12 +5099,36 @@ script_handler! {
 }
 
 
+/// A lane record's register field as a staged operand: a lane field names a register of the
+/// running function, below `Operand::PAYLOAD_MASK`, so the operand's kind test folds away.
+#[inline(always)]
+fn record_register_operand(register: u16) -> crate::bytecode::Operand {
+    // SAFETY: a register is at most `bytecode::REGISTER_MASK` (the bits above are the result
+    // field's flags, which an operand field never carries), and that mask is the payload's.
+    unsafe { std::hint::assert_unchecked(register <= crate::bytecode::Operand::PAYLOAD_MASK) };
+    crate::bytecode::Operand::register(register)
+}
+
 script_handler! {
     /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
     /// when the view was derived (`specialize_register_operands`): the fields hold the
     /// operand registers themselves. Integers take the fast path here, which saves no
     /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
+        // An arithmetic operator is its staged Number row in the int32 domain, widening as the
+        // operator's Number result does; operands other than two int32 are the row's miss.
+        if let Some(operation) = super::operations::NumberArithmetic::from_operator(OP) {
+            let mut stage = crate::staged::Concrete::new(std::ptr::null());
+            let mut frame = lane_frame::LaneFrame::<ACC_NONE>::new(r, Carried::script_in(cx, view));
+            let row = crate::staged::Operation::Number(crate::staged::NumberOperation::Arithmetic {
+                destination: i.a, left: record_register_operand(i.b), right: record_register_operand(i.c),
+                operation, domain: crate::staged::Domain::Int32, overflow: crate::staged::Overflow::Widen,
+                zero: crate::staged::NegativeZero::Exit });
+            match crate::staged::step(&mut stage, &mut frame, row) {
+                crate::staged::Step::Value(_) => next!(cx, r, following(ip), Carried::script_in(cx, view)),
+                _ => sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view)),
+            }
+        }
         let (Some(left), Some(right)) = (r.int(i.b), r.int(i.c)) else {
             sibling!(lane_operator_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
         };

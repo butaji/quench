@@ -90,7 +90,7 @@ impl Decisions {
 
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
-struct LaneFrame<const ACC: u8> {
+pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     registers: Registers,
     view: Carried,
     /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
@@ -113,7 +113,7 @@ struct LaneFrame<const ACC: u8> {
 impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
-    fn new(registers: Registers, view: Carried) -> Self {
+    pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
             capture_slots: None, reads: Reads::NONE }
     }
@@ -143,12 +143,21 @@ impl<const ACC: u8> LaneFrame<ACC> {
     }
 }
 
+/// The lane frame's fact about a word: how it becomes a register's `Value`. Staged rows hand an
+/// int32 result already boxed (`NumericFrame::int_result`) and a binary64 result as its raw bits
+/// (`number_fact`), which the write boxes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::vm::dispatch_fast) enum Boxing {
+    Value,
+    Double,
+}
+
 impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
-    type Fact = ();
+    type Fact = Boxing;
     type Control = Edge;
 
     #[inline(always)]
-    fn fact(&self, _register: Register) -> Self::Fact {}
+    fn fact(&self, _register: Register) -> Self::Fact { Boxing::Value }
 
     #[inline(always)]
     fn read(&mut self, _stage: &mut Concrete, register: Register) -> u64 {
@@ -156,8 +165,12 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, _fact: Self::Fact) {
-        self.registers.set(register, Value::from_bits(value));
+    fn write(&mut self, _stage: &mut Concrete, register: Register, value: u64, fact: Self::Fact) {
+        let value = match fact {
+            Boxing::Value => Value::from_bits(value),
+            Boxing::Double => Value::number(f64::from_bits(value)),
+        };
+        self.registers.set(register, value);
     }
 
     #[inline(always)]
@@ -172,7 +185,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
 
     #[inline(always)]
     fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Self::Fact) {
-        (constant.value.to_bits(), ())
+        (constant.value.to_bits(), Boxing::Value)
     }
 
     #[inline(always)]
@@ -191,17 +204,17 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
-        (Value::boolean(condition).to_bits(), ())
+    fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Boxing) {
+        (Value::boolean(condition).to_bits(), Boxing::Value)
     }
 
     #[inline(always)]
     fn load_local(&mut self, _stage: &mut Concrete, slot: u16, _miss: Option<()>)
-        -> Option<(u64, ())> {
+        -> Option<(u64, Boxing)> {
         let (locals, len) = self.locals?;
         (usize::from(slot) < len).then(|| {
             // SAFETY: `slot` is inside the activation's live local slots.
-            (unsafe { *locals.add(usize::from(slot)) }.to_bits(), ())
+            (unsafe { *locals.add(usize::from(slot)) }.to_bits(), Boxing::Value)
         })
     }
 
@@ -224,21 +237,21 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
     }
 
     #[inline(always)]
-    fn vm_step(&mut self, stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
+    fn vm_step(&mut self, stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, Boxing)> {
         let CallOut::Decide { left, right, operator } = operation else { return None };
         let Decisions { context, decide, .. } = self.decisions?;
         let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
-        decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), ()))
+        decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
-    fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, ())> {
+    fn capture_slot(&mut self, _stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Boxing)> {
         let own = self.capture_slots.filter(|_| depth == 0 && !root);
         // SAFETY: null or the running function's dense storage, found this run
         // (`LaneContext::capture`); the scoped read retains the bounds and marker checks.
         let value = own.and_then(|slots| unsafe { crate::heap::EnvironmentSlots::read_storage(slots, slot) })
             .or_else(|| self.reads.capture(depth, slot, root))?;
-        Some((value.to_bits(), ()))
+        Some((value.to_bits(), Boxing::Value))
     }
 
     #[inline(always)]
@@ -284,11 +297,11 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     fn plans(&self) -> crate::staged::NoPlans { crate::staged::NoPlans }
 
     #[inline(always)]
-    fn delete_property(&mut self, _stage: &mut Concrete, base: u64, key: u64, _strict: bool, _miss: ()) -> Option<(u64, ())> {
+    fn delete_property(&mut self, _stage: &mut Concrete, base: u64, key: u64, _strict: bool, _miss: ()) -> Option<(u64, Boxing)> {
         let host = self.host?;
         // SAFETY: the deleter was made for the lane context this frame runs in.
         let deleted = unsafe { (host.delete)(host.cx, Value::from_bits(base), Value::from_bits(key)) }?;
-        Some((deleted.to_bits(), ()))
+        Some((deleted.to_bits(), Boxing::Value))
     }
 
     /// The live object record table, which an `instanceof` walk addresses.
@@ -310,7 +323,13 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         }
     }
 
+    #[inline(always)]
     fn int_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        // A register no accumulator stands for: its tag half-word tested in memory
+        // (`Registers::int`), not the whole word loaded and masked.
+        if ACC == ACC_NONE && let Some(register) = operand.register_index() {
+            return self.registers.int(register).map(|int| u64::from(int as u32));
+        }
         let word = self.operand_word(stage, operand)?;
         Value::from_bits(word).as_int().map(|int| u64::from(int as u32))
     }
@@ -346,9 +365,9 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn miss(&self) {}
     #[inline(always)]
-    fn int_fact(&self) {}
+    fn int_fact(&self) -> Boxing { Boxing::Value }
     #[inline(always)]
-    fn number_fact(&self) {}
+    fn number_fact(&self) -> Boxing { Boxing::Double }
 }
 
 #[path = "lane_frame/staged_ops.rs"]
