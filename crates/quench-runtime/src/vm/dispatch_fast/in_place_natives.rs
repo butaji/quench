@@ -92,7 +92,8 @@ const fn in_place_families(native: Native) -> u16 {
         families |= COLLECTION;
     }
     if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
-        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArraySlice | Native::ArrayConcat)
+        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArraySlice | Native::ArrayConcat | Native::ArrayFill
+        | Native::ArrayFrom | Native::ArrayOf | Native::ArrayJoin)
     {
         families |= ARRAY;
     }
@@ -290,6 +291,10 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
         Native::ArrayIteratorNext => vm.plain_array_iterator_next(callee, receiver),
         Native::ArraySlice => vm.plain_array_slice(receiver, args),
         Native::ArrayConcat => vm.array_concat_dense(receiver, args),
+        Native::ArrayFill => vm.plain_array_fill(receiver, args),
+        Native::ArrayFrom => vm.plain_array_from(receiver, args),
+        Native::ArrayOf => vm.plain_array_of(receiver, args),
+        Native::ArrayJoin => vm.plain_array_join(receiver, args),
         _ => None,
     }
 }
