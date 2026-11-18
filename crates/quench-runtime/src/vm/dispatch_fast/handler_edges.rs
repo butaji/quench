@@ -13,6 +13,7 @@ pub(super) fn drop_environment_caches<H: Host>(cx: *mut LaneContext<H>) {
     unsafe {
         (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
+        (*cx).root_walk = NO_OUTER_WALK;
         (*cx).frame_storage = NO_FRAME_STORAGE;
     }
 }
