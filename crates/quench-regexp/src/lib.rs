@@ -1694,9 +1694,7 @@ fn is_tag_units(units: &[Unit]) -> bool {
 /// recommended.
 fn is_zwj_units(units: &[Unit]) -> bool {
     units.iter().any(|unit| unit.value == 0x200D)
-        && emoji_zwj::RGI_EMOJI_ZWJ_SEQUENCES
-            .binary_search_by(|sequence| sequence.iter().copied().cmp(units.iter().map(|unit| unit.value)))
-            .is_ok()
+        && emoji_zwj::is_rgi_zwj_sequence(units.iter().map(|unit| unit.value))
 }
 
 fn is_basic_emoji_units(units: &[Unit]) -> bool {
