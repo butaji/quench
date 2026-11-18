@@ -242,7 +242,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 36] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 42] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -258,6 +258,13 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 36] = [
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load16U as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load32S as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load32U as u16, FUSED_PLAIN),
+    // Two i32 adds: a strided loop's pointer and counter updates (the second may be the loop's step and test).
+    (Op::WasmI32Add as u16, Op::WasmI32AddImmediateJumpNonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32Add as u16, Op::WasmI32AddImmediate as u16, FUSED_PLAIN),
+    (Op::WasmI32Add as u16, Op::WasmI32Add as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32AddImmediateJumpNonZero as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32AddImmediate as u16, FUSED_PLAIN),
+    (Op::WasmI32AddImmediate as u16, Op::WasmI32Add as u16, FUSED_PLAIN),
     // A constant then the direct Wasm store of it (the store reads the constant's register).
     (Op::LoadConst as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
     (Op::LoadConst as u16, Op::WasmI64Store as u16, FUSED_PLAIN),

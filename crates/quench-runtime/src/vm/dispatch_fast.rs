@@ -11174,77 +11174,6 @@ fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u
 }
 
 lane_handler! {
-    /// Two i32 adds (`FIRST`, reading through field `ACC`, then `SECOND`), each of a register
-    /// or a constant, or an add and a counted loop's step and test (`SECOND` is
-    /// `WasmI32AddImmediateJumpNonZero`): a strided loop's pointer and counter updates. The
-    /// first result is written before the second reads its operands, as two records do.
-    fn lane_add_pair<FIRST: u16, SECOND: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
-        let first_immediate = const {
-            match opcode(FIRST).class() {
-                Class::WasmI32AddRegister => false,
-                Class::WasmI32AddImmediate => true,
-                _ => panic!("not an i32 add"),
-            }
-        };
-        let right = if first_immediate { i.imm() as i32 } else { read_i32::<ACC, ACC_C>(r, i.c, view) };
-        let first = view.integers.encode(read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(right));
-        r.set(i.a, first);
-        let second_ip = following(ip);
-        // SAFETY: the view fuses an add only with a following add or loop step.
-        let second = unsafe { &*second_ip };
-        let view = Carried { acc: Slot::of(first), ..view };
-        match const { opcode(SECOND).class() } {
-            Class::WasmI32AddJump => {
-                let sum = r.i32(second.b).wrapping_add(i32::from(second.c as i16));
-                let encoded = view.integers.encode(sum);
-                if sum != 0 {
-                    resume!(cx, lane_jump::<H>(cx, r, second_ip, BACKWARD, view, Some((second.a, encoded))));
-                }
-                produce!(cx, r, second_ip, second.a, encoded, view)
-            }
-            Class::WasmI32AddImmediate => {
-                let sum = r.i32(second.b).wrapping_add(second.imm() as i32);
-                produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
-            }
-            _ => {
-                let sum = r.i32(second.b).wrapping_add(r.i32(second.c));
-                produce!(cx, r, second_ip, second.a, view.integers.encode(sum), view)
-            }
-        }
-    }
-}
-
-/// The add-pair handler for add `first` read through field `acc`, then `second`.
-fn add_pair_handler<H: Host>(first: Op, second: Op, backward: bool, acc: u8) -> Option<Handler> {
-    macro_rules! accs {
-        ($first:ident, $second:ident, $backward:literal) => {
-            match acc {
-                ACC_NONE => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_NONE> as Handler),
-                ACC_B => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_B> as Handler),
-                ACC_C => Some(lane_add_pair::<H, { opc::$first }, { opc::$second }, $backward, ACC_C> as Handler),
-                _ => None,
-            }
-        };
-    }
-    macro_rules! seconds {
-        ($first:ident) => {
-            match (second.class(), backward) {
-                (Class::WasmI32AddRegister, _) => accs!($first, WasmI32Add, false),
-                (Class::WasmI32AddImmediate, _) => accs!($first, WasmI32AddImmediate, false),
-                (Class::WasmI32AddJump, false) => accs!($first, WasmI32AddImmediateJumpNonZero, false),
-                (Class::WasmI32AddJump, true) => accs!($first, WasmI32AddImmediateJumpNonZero, true),
-                _ => None,
-            }
-        };
-    }
-    match first.class() {
-        Class::WasmI32AddRegister => seconds!(WasmI32Add),
-        Class::WasmI32AddImmediate => seconds!(WasmI32AddImmediate),
-        _ => None,
-    }
-}
-
-lane_handler! {
     /// An i32 operator of a constant (`FIRST`) and the register comparison jump `JUMP` reading
     /// its result as either operand (`(x & mask) == y`): two records run here, the result
     /// written as its own record writes it.
@@ -20895,26 +20824,6 @@ fn derive_lane_view<'live, H: Host>(
                 records[pc].handler = fused as *const ();
             }
         }
-        // Two i32 adds, or an add and a counted loop's step and test, run as one record; other
-        // fusions take their records first.
-        for pc in 0..records.len().saturating_sub(1) {
-            let (first, second) = (decoded[pc], decoded[pc + 1]);
-            let Some(acc) = [ACC_NONE, ACC_B, ACC_C].into_iter().find(|&acc| serves(records[pc].handler, first.op() as u16, acc))
-            else {
-                continue;
-            };
-            if !matches!(first.op().class(), Class::WasmI32AddRegister | Class::WasmI32AddImmediate) {
-                continue;
-            }
-            let Some((backward, _)) = plain_served(records[pc + 1].handler, second.op() as u16, &[ACC_NONE, ACC_B, ACC_C])
-            else {
-                continue;
-            };
-            if let Some(fused) = add_pair_handler::<H>(first.op(), second.op(), backward, acc) {
-                records[pc].handler = fused as *const ();
-            }
-        }
-    }
     specialize_register_operands::<H>(&decoded, kind, constants, &mut records);
     specialize_updated_index_reads::<H>(&mut records);
     specialize_updated_index_operators::<H>(&mut records);
