@@ -19,6 +19,35 @@ pub(super) fn declared_return(program: &ResidualProgram, function: u32) -> Optio
     checkable_declared(signature.returns)
 }
 
+/// The checkable type of program function `function`'s `this` parameter (`DeclaredSignature::this`).
+/// An arrow's `this` is its environment's and a derived constructor's is bound by `super()`, so
+/// neither declares one here.
+pub(super) fn declared_this(program: &ResidualProgram, function: &crate::bytecode::Function) -> Option<Type> {
+    if function.is_arrow || function.derived_constructor { return None; }
+    let start = function.source_span?.start;
+    let signature = program.declared_types.as_deref()?.declared_signature(start)?;
+    checkable_declared(signature.this)
+}
+
+/// The checkable element type of program function `function`'s annotated rest parameter
+/// (`DeclaredSignature::rest`). The rest array's elements hold it; the array itself is not typed.
+pub(super) fn declared_rest_element(program: &ResidualProgram, function: &crate::bytecode::Function) -> Option<Type> {
+    if !function.rest { return None; }
+    let start = function.source_span?.start;
+    let signature = program.declared_types.as_deref()?.declared_signature(start)?;
+    checkable_declared(signature.rest)
+}
+
+/// The rest parameter's register and its checkable element type, where the function never writes
+/// the register (`written`, the unit's written registers): its element reads are then reads of the
+/// array the activation made. The rest parameter is the last of the function's `params`.
+pub(super) fn declared_rest_read(program: &ResidualProgram, function: &crate::bytecode::Function,
+    written: &CompoundBitSet) -> Option<(Register, Type)> {
+    let ty = declared_rest_element(program, function)?;
+    let register = scalar::parameter_register(function, usize::from(function.params.checked_sub(1)?))?;
+    (!written.contains(usize::from(register))).then_some((register, ty))
+}
+
 /// The annotated locals of `function` (`Function::local_registers`, named by `local_atoms`) that
 /// `DeclaredTypes::declared_local` types checkably, as the register each lives in and its type.
 /// Parameters are checked at entry instead (`scalar::declared_entry_types`). The top level keys
@@ -59,10 +88,24 @@ impl Lowering<'_, '_> {
     /// Conforms each annotated local the entry function's own instruction at `pc` defines
     /// (`declared_local_types`) where it is written: the local's annotation is checked once there.
     pub(super) fn conform_declared_definitions(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) {
-        if self.declared_definitions.is_empty() || !self.caller_record(pc) || !self.resumes_after(pc) { return; }
+        if !self.caller_record(pc) || !self.resumes_after(pc) { return; }
+        // The entry function's own `this` read (`LoadThis`) enters its destination with the declared type.
+        if let Some(ty) = self.declared_this && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::LoadThis { .. })) {
+            self.conform_register(state, pc + 1, instruction.result_register(), ty);
+        }
+        if self.declared_definitions.is_empty() { return; }
         for register in instruction.written_registers() {
             let Some(ty) = self.declared_definitions.iter().find(|(local, _)| *local == register).map(|(_, ty)| *ty) else { continue };
             self.conform_register(state, pc + 1, register, ty);
         }
+    }
+
+    /// Conforms the element an element read of the entry function's rest parameter (`declared_rest`,
+    /// the register `base`) yields: the result register holds the declared element type, checked
+    /// once where the read completes. Any other base is left alone.
+    pub(super) fn conform_declared_rest_read(&mut self, state: &mut State, pc: usize, base: Register, result: Register) {
+        let Some((rest, ty)) = self.declared_rest else { return };
+        if base != rest || !self.caller_record(pc) || !self.resumes_after(pc) { return; }
+        self.conform_register(state, pc + 1, result, ty);
     }
 }

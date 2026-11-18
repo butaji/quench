@@ -237,7 +237,7 @@ pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written
 }
 
 /// The register parameter `index` enters in.
-fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
+pub(super) fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
     let index = u16::try_from(index).ok().filter(|index| *index < function.params)?;
     match function.parameter_registers {
         Some(base) => base.checked_add(index),

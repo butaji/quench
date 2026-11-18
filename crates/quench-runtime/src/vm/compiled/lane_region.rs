@@ -480,6 +480,10 @@ struct Lowering<'a, 'f> {
     /// The entry function's annotated locals: the register each lives in and the language type its
     /// annotation seeds (`declared::declared_local_types`).
     declared_definitions: Vec<(Register, Type)>,
+    /// The entry function's declared `this` type, which its `LoadThis` checks where it enters the destination.
+    declared_this: Option<Type>,
+    /// The entry function's unwritten rest parameter register and its declared element type (`declared::declared_rest_read`).
+    declared_rest: Option<(Register, Type)>,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a FieldSites,
@@ -1747,6 +1751,8 @@ pub(super) fn lower(
         entry_words: (entry_this, entry_captures),
         callee_slots: Vec::new(),
         declared_definitions: Vec::new(),
+        declared_this: None,
+        declared_rest: None,
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -1805,6 +1811,8 @@ pub(super) fn lower(
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
         scalar::declared_entry_types(function, &lowering.written, &mut initial);
         lowering.declared_definitions = declared::declared_local_types(program, function);
+        lowering.declared_this = declared::declared_this(program, function);
+        lowering.declared_rest = declared::declared_rest_read(program, function, &lowering.written);
     }
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
