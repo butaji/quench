@@ -1030,6 +1030,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_math(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let math = self.object();
         self.install_builtin_to_string_tag(math, "Math")?;
+        // Functions, then value properties: the order Node's `Math` lists them in.
+        for (name, native) in MATH_FUNCTIONS {
+            self.set_builtin_named(program, math, name, *native)?;
+        }
         for (name, value) in [
             ("E", std::f64::consts::E),
             ("LN10", std::f64::consts::LN_10),
@@ -1041,9 +1045,6 @@ impl<H: Host> Vm<H> {
             ("SQRT2", std::f64::consts::SQRT_2),
         ] {
             self.set_named_constant(program, math, name, Value::number(value))?;
-        }
-        for (name, native) in MATH_FUNCTIONS {
-            self.set_builtin_named(program, math, name, *native)?;
         }
         self.seal_initialized_intrinsic(math);
         self.global(program, "Math", math)
