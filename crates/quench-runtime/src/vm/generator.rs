@@ -59,6 +59,8 @@ impl GeneratorResume {
 /// delegate's result on), or a return.
 pub(super) enum MaterializedStop {
     Yielded { destination: crate::bytecode::Register, delegated_result: Option<Value> },
+    /// An async generator's frame awaiting in place (`Completion::AsyncRequest`).
+    Awaited { destination: crate::bytecode::Register },
     Returned,
 }
 
@@ -88,6 +90,7 @@ impl<H: Host> Vm<H> {
                 }
                 false
             }
+            MaterializedStop::Awaited { .. } => unreachable!("only an async generator's frame awaits in place"),
             MaterializedStop::Returned => {
                 self.finish_frame_scopes(&frame);
                 self.pool_frame(frame);

@@ -36,7 +36,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// An async activation of `resume` ran its `frame` to `outcome`.
-    fn settle_outcome(
+    pub(super) fn settle_outcome(
         &mut self,
         p: &ResidualProgram,
         resume: AwaitResume,

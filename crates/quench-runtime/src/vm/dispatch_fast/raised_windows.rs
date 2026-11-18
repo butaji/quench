@@ -18,7 +18,8 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     }
     let depth = vm.lane_stack.activation_count().checked_sub(1)?;
     let activation = *vm.lane_stack.activations().last()?;
-    let script = *activation.script().filter(|script| script.completion.is_windowed())?;
+    // An in-place request's throw fails it where its frame unwinds (`fail_materialized_request`).
+    let script = *activation.script().filter(|script| script.completion.is_windowed() && script.completion != Completion::AsyncRequest)?;
     if vm.lane_stack.iterators.last().is_some_and(|(owner, _)| *owner == depth) {
         return None;
     }

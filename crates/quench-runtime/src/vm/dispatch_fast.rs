@@ -1865,6 +1865,12 @@ enum Completion {
     /// the entry frame of the general loop that finishes it, which no pending call names. The
     /// activation's callee is its owner.
     ResumesJob,
+    /// An async generator a `next` call resumed over its record's register file
+    /// (`async_requests`): its `await` or `yield` suspends it back into its record, which
+    /// awaits, and its return completes it; the call yields the request's promise, which
+    /// `LaneStack::settling` keeps. The activation's callee is the generator. Made a frame, its
+    /// pending call settles the request (`CallCompletion::AsyncRequest`).
+    AsyncRequest,
 }
 
 /// A JavaScript-backed import's call facts, fixed by its wrapper (`Cell::WasmHostFunction`):
@@ -1931,7 +1937,7 @@ impl Completion {
     /// Whether the activation runs over the register file of a heap record's frame, a
     /// generator's or a job's, which names its owner as its callee.
     #[inline] fn is_windowed(self) -> bool {
-        self.is_generator() || self == Self::ResumesJob
+        self.is_generator() || matches!(self, Self::ResumesJob | Self::AsyncRequest)
     }
 
     /// Whether the activation's return makes the caller's program the lane's again.
@@ -14103,6 +14109,8 @@ impl<H: Host> Vm<H> {
                 Some(completion) if completion.constructs() => CallCompletion::Constructor(state.this),
                 Some(Completion::SettlesPromise) => CallCompletion::Promise(
                     self.settling_root(settling.next().expect("each settling activation has its entry"))),
+                Some(Completion::AsyncRequest) => CallCompletion::AsyncRequest(
+                    self.settling_root(settling.next().expect("each request activation has its entry"))),
                 Some(Completion::ArrayStep) => {
                     let step = steps.next().expect("each array step activation has its entry");
                     CallCompletion::ArrayStep(Box::new(self.array_step_call(step.iteration, step.element, step.index)))
@@ -16411,6 +16419,11 @@ script_handler! {
         if native == Native::ReflectGet {
             sibling!(reflect_get_call_handler::<H>(), r, ip, Carried::script_in(cx, view))
         }
+        if native == Native::AsyncGeneratorNext
+            && let Some(resumed) = async_requests::lane_async_generator_next(cx, r, ip, i)
+        {
+            resume!(cx, resumed)
+        }
         if native == Native::WasmExportedFunction
             && let Some(resumed) = lane_wasm_export_frame(cx, r, ip, i)
         {
@@ -16735,6 +16748,7 @@ mod lane_eval;
 mod root_windows;
 use lane_roots::{LaneRoot, LaneStart};
 pub(in crate::vm) use lane_roots::{JobEnd, ParkedLane};
+mod async_requests;
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step}; pub(in crate::vm) use generator_windows::WindowPlan;
 mod raised_windows;
 mod array_steps;
@@ -20280,6 +20294,9 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             }
             if script.completion.is_generator() {
                 return Some(lane_generator_returned(cx, &activation, caller_memory, value));
+            }
+            if script.completion == Completion::AsyncRequest {
+                return Some(async_requests::lane_request_returned(cx, &activation, caller_memory, value));
             }
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns

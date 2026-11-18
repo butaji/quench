@@ -4,6 +4,7 @@
 //! frame's, takes the general path, which suspends the frame back into its generator.
 use super::*;
 use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
+use super::async_requests::running_request;
 use super::super::activation::{JobRoot, SuspendKind};
 
 script_handler! {
@@ -18,6 +19,9 @@ script_handler! {
     fn lane_yield<>(cx, r, ip, i, view) {
         if running_generator(unsafe { vm(cx) }) {
             resume!(cx, lane_yield_in_window(cx, r, ip, i))
+        }
+        if running_request(unsafe { vm(cx) }) {
+            resume!(cx, super::async_requests::lane_suspend_request(cx, r, ip, i, true))
         }
         if let LaneRoot::Job(job) = unsafe { (*cx).root }
             && matches!(job.kind, SuspendKind::Generator | SuspendKind::AsyncGenerator)
@@ -35,7 +39,7 @@ script_handler! {
                 };
                 value = source;
                 note_allocation(vm);
-                vm.suspend_async_generator_yield(job, pc + 1, destination, value);
+                vm.suspend_async_generator_yield(job, pc + 1, destination, value, 0);
             } else {
                 vm.suspend_job_window(job, pc + 1, destination, value, 0);
             }
@@ -63,7 +67,7 @@ impl<H: Host> Vm<H> {
     /// where that observes nothing: a non-object as it is, an object by `lane_promise_resolve`.
     /// `None` leaves a conversion that could run guest code, or throw into the frame's
     /// handlers, to the general path.
-    fn lane_await_source(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
+    pub(super) fn lane_await_source(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
         if self.is_object_like(awaited) {
             return self.lane_promise_resolve(code, self.intrinsic_promise_constructor(), awaited);
         }
@@ -99,6 +103,9 @@ script_handler! {
         let completion = vm.lane_stack.activations().last().and_then(Activation::script).map(|script| script.completion);
         if completion == Some(Completion::SettlesPromise) {
             resume!(cx, lane_await_settling(cx, r, ip, i))
+        }
+        if completion == Some(Completion::AsyncRequest) {
+            resume!(cx, super::async_requests::lane_suspend_request(cx, r, ip, i, false))
         }
         // Only the job's own activation suspends into its owner.
         let (LaneRoot::Job(job), Some(Completion::ResumesJob)) = (unsafe { (*cx).root }, completion) else {
