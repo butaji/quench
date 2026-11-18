@@ -1,4 +1,4 @@
-use super::promise::PromiseState;
+use super::promise::{PromiseState, ThenCapability};
 use super::property_key::PropertyKey;
 
 const ENTRIES: &str = "\0quench:disposable-stack:entries";
@@ -954,16 +954,11 @@ impl<H: Host> Vm<H> {
                     }
                     Ok(value) if await_result => {
                         let promise = self.promise_for_value(p, value)?;
-                        let fulfilled = self
-                            .native_with_env(Native::DisposableStackAsyncDisposalFulfilled, state);
-                        let rejected = self
-                            .native_with_env(Native::DisposableStackAsyncDisposalRejected, state);
-                        let _ = self.call_promise_native(
-                            p,
-                            Native::PromiseThen,
-                            promise,
-                            &[fulfilled, rejected],
-                        )?;
+                        let natives = [
+                            Native::DisposableStackAsyncDisposalFulfilled,
+                            Native::DisposableStackAsyncDisposalRejected,
+                        ];
+                        self.then_with_natives(p, promise, natives, state, ThenCapability::Species)?;
                         return Ok(Value::UNDEFINED);
                     }
                     Ok(_) => {}

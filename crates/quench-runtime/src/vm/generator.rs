@@ -4,7 +4,7 @@ use super::activation::{
 };
 use super::dispatch_fast::JobEnd;
 use crate::heap::AwaitKind;
-use super::promise::{PromiseReaction, PromiseState};
+use super::promise::{PromiseState, ThenCapability};
 use super::*;
 mod job_windows;
 mod window_steps;
@@ -46,6 +46,10 @@ pub(super) enum GeneratorStep {
 pub(crate) struct GeneratorResume {
     reuses_result: bool,
 }
+
+/// The reaction natives a `yield*` delegation hands the awaited result's `then`.
+const ASYNC_GENERATOR_DELEGATE_REACTIONS: [Native; 2] =
+    [Native::AsyncGeneratorDelegateFulfilled, Native::AsyncGeneratorDelegateRejected];
 
 impl GeneratorResume {
     /// The resume of a step whose result is the reused iteration object or a fresh one.
@@ -425,9 +429,8 @@ impl<H: Host> Vm<H> {
                     vec![generator, promise],
                 ),
             });
-            let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
-            let rejected = vm.native_with_env(Native::AsyncGeneratorReturnRejected, environment);
-            vm.promise_then_intrinsic(p, awaited, fulfilled, rejected)?;
+            let natives = [Native::AsyncGeneratorReturnFulfilled, Native::AsyncGeneratorReturnRejected];
+            vm.then_with_natives(p, awaited, natives, environment, ThenCapability::Resolving)?;
             Ok(())
         })
     }
@@ -559,25 +562,10 @@ impl<H: Host> Vm<H> {
         source: Value,
         target: Value,
     ) -> Result<(), JsError> {
-        let record = self
-            .promise_record(source)
-            .cloned()
-            .ok_or_else(|| JsError("async generator request result is not a Promise".into()))?;
-        self.observe_promise_rejection(source);
-        let reaction = PromiseReaction {
-            on_fulfilled: Value::UNDEFINED,
-            on_rejected: Value::UNDEFINED,
-            next: target,
-            execution_context: self.host.capture_job_context(self.promise_record(target).and_then(|record| record.host_context().get())).into(),
-        };
-        if record.state() == PromiseState::Pending {
-            self.promise_record_mut(source)
-                .expect("source Promise record exists")
-                .push_reaction(reaction);
-        } else {
-            self.enqueue_promise_reaction(p, reaction, record.state(), record.result());
+        if !self.is_promise(source) {
+            return Err(JsError("async generator request result is not a Promise".into()));
         }
-        Ok(())
+        self.attach_promise_reaction(p, source, Value::UNDEFINED, Value::UNDEFINED, target)
     }
 
     pub(super) fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
@@ -806,9 +794,7 @@ impl<H: Host> Vm<H> {
                 ],
             ),
         });
-        let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
-        let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
-        self.promise_then(p, unwrapped, fulfilled, rejected)
+        self.then_with_natives(p, unwrapped, ASYNC_GENERATOR_DELEGATE_REACTIONS, env, ThenCapability::Species)
     }
 
     fn close_suspended_iterators(
@@ -1001,9 +987,7 @@ impl<H: Host> Vm<H> {
                     ],
                 ),
             });
-            let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
-            let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
-            self.promise_then(p, promise, fulfilled, rejected)
+            self.then_with_natives(p, promise, ASYNC_GENERATOR_DELEGATE_REACTIONS, env, ThenCapability::Species)
         })();
         match operation {
             Ok(promise) => Ok(promise),

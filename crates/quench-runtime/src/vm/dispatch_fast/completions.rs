@@ -338,7 +338,7 @@ pub(super) fn lane_settle_promise<H: Host>(cx: *mut LaneContext<H>, value: Value
     let promise = vm.release_settled_call_root(root);
     // SAFETY: the context's program, the caller's, outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let settled = vm.resolve_fresh_promise_plainly(code, promise, value, then);
+    let settled = vm.resolve_promise_with_then(code, promise, value, then).is_ok();
     debug_assert!(settled, "a settling call's promise is a promise record");
     promise
 }

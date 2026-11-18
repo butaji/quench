@@ -1,4 +1,5 @@
 use super::*;
+use super::promise::ThenCapability;
 use crate::heap::{ArrayFromAsyncAwait, ArrayFromAsyncState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -606,9 +607,8 @@ impl<H: Host> Vm<H> {
                     .heap
                     .root_value(state_root)
                     .expect("rooted Array.fromAsync continuation remains live");
-                let fulfilled = vm.native_with_env(Native::ArrayFromAsyncFulfilled, state_value);
-                let rejected = vm.native_with_env(Native::ArrayFromAsyncRejected, state_value);
-                vm.promise_then(p, promise, fulfilled, rejected)?;
+                let natives = [Native::ArrayFromAsyncFulfilled, Native::ArrayFromAsyncRejected];
+                vm.then_with_natives(p, promise, natives, state_value, ThenCapability::Species)?;
                 Ok(())
             })
         })();

@@ -1,5 +1,5 @@
 use super::activation::{Completion, Continuation};
-use super::promise::{PromiseReaction, PromiseState};
+use super::promise::PromiseState;
 use super::*;
 use crate::heap::{AwaitKind, AwaitRole, AwaitState};
 
@@ -319,8 +319,7 @@ impl<H: Host> Vm<H> {
             && !self.is_object_like(source)
         {
             self.with_call_roots([source, promise, generator.unwrap_or(Value::UNDEFINED)], |vm| {
-                let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
-                let awaited = vm.promise_object_with_parent(parent)?;
+                let awaited = vm.fresh_derived_promise(promise)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
                 Ok(awaited)
             })?
@@ -331,38 +330,13 @@ impl<H: Host> Vm<H> {
         // observation, even though the continuation consumes no result value.
         // The observer read above stands: without one, nothing above ran guest code.
         let next = if observes {
-            self.with_call_roots([source], |vm| {
-                vm.promise_object_with_parent(
-                    vm.promise_record(source).and_then(|record| record.host_context().get()),
-                )
-            })?
+            self.with_call_roots([source], |vm| vm.fresh_derived_promise(source))?
         } else {
             Value::UNDEFINED
         };
-        // Init observers can settle the source reentrantly; read its state only
-        // after creating the reaction's observable resource.
-        // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
-        // never materializes.
-        let (source_state, result) = match self.promise_record(source) {
-            Some(record) => (record.state(), record.result()),
-            None if !self.is_object_like(source) => (PromiseState::Fulfilled, source),
-            None => return Err(JsError("await source is not a Promise".into())),
-        };
-        self.observe_promise_rejection(source);
-        let reaction = PromiseReaction {
-            on_fulfilled: state,
-            on_rejected: state,
-            next,
-            execution_context: self.host.capture_job_context(self.promise_record(next).and_then(|record| record.host_context().get())).into(),
-        };
-        if source_state == PromiseState::Pending {
-            self.promise_record_mut(source)
-                .expect("await source Promise record exists")
-                .push_reaction(reaction);
-        } else {
-            self.enqueue_promise_reaction(p, reaction, source_state, result);
-        }
-        Ok(())
+        // Init observers can settle the source reentrantly: the reaction reads its state
+        // only once the reaction's observable resource exists.
+        self.attach_promise_reaction(p, source, state, state, next)
     }
 }
 
