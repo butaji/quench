@@ -1,7 +1,7 @@
 //! How a value is held in machine form.
 #![allow(dead_code)]
 
-use super::{IntRange, Type};
+use crate::typed_ir::{IntRange, Type};
 
 /// How a value is held in machine form. It is also how the word of an arena slot encodes its
 /// value: a static projection of the slot owner's type (`SlotType::rep`), not a fact stored apart
