@@ -98,7 +98,7 @@ fn loop_of(directory: &Path, dumps: &[Dump], site: impl Fn(Site) -> bool) -> Res
     let Some(dump) = dumps.iter().rfind(|dump| site(dump.site)) else {
         return Ok(None);
     };
-    Ok(flow::hottest(&code(directory, dump)?).map(measured))
+    Ok(flow::hottest(&code(directory, dump)?).map(|body| measured(&body)))
 }
 
 /// What the machine code of `body` spends: every residual class where the architecture's

@@ -75,22 +75,51 @@ fn innermost(loops: &[Loop]) -> impl Iterator<Item = &Loop> {
     loops.iter().filter(|inner| !loops.iter().any(|other| other != *inner && inner.header <= other.header && other.branch <= inner.branch))
 }
 
+/// One instruction's address path through a loop: from its header to the back edge along the
+/// hot path — the fall-through of every conditional branch (the path its checks expect) and the
+/// target of every unconditional jump — so the cold blocks a region keeps between the header and
+/// the back edge (each guard's miss stub) are not counted as per-iteration work. Each instruction
+/// is counted once; the walk stops at the back edge or where the path leaves the loop.
+fn iteration(code: &[Instruction], found: &Loop) -> Vec<(usize, Instruction)> {
+    let mut visited = Visited::new(code.len());
+    let mut path = Vec::new();
+    let mut at = found.header;
+    while visited.insert(at) {
+        path.push((at, code[at].clone()));
+        if at == found.branch {
+            break;
+        }
+        let next = if code[at].is_conditional_jump() {
+            (code[at].falls_through() && at + 1 <= found.branch).then_some(at + 1)
+        } else if code[at].falls_through() {
+            (at + 1 <= found.branch).then_some(at + 1)
+        } else {
+            target_index(code, at).filter(|next| (found.header..=found.branch).contains(next))
+        };
+        match next {
+            Some(next) => at = next,
+            None => break,
+        }
+    }
+    path
+}
+
 /// The instructions of an iteration of the hottest loop of `code`: the smallest innermost loop
 /// (alignment padding not counted), which is the specialized version a region runs once its
 /// entry checks pass, where the larger ones are the general versions it falls back to.
-pub fn hottest(code: &[Instruction]) -> Option<&[Instruction]> {
+pub fn hottest(code: &[Instruction]) -> Option<Vec<Instruction>> {
     let all = loops(code);
-    innermost(&all)
-        .map(|found| &code[found.header..=found.branch])
-        .min_by_key(|body| body.iter().filter(|instruction| !instruction.is_nop()).count())
+    let found = innermost(&all).min_by_key(|found| found.branch - found.header)?;
+    let path: Vec<Instruction> = iteration(code, found).into_iter().map(|(_, instruction)| instruction).collect();
+    Some(path)
 }
 
 /// The instructions of the largest innermost loop of `code`: a C twin's work loop, where the
 /// smallest can be a generator's.
-pub fn largest_innermost(code: &[Instruction]) -> Option<&[Instruction]> {
+pub fn largest_innermost(code: &[Instruction]) -> Option<Vec<Instruction>> {
     let all = loops(code);
-    innermost(&all).max_by_key(|found| found.branch - found.header)
-        .map(|found| &code[found.header..=found.branch])
+    let found = innermost(&all).max_by_key(|found| found.branch - found.header)?;
+    Some(iteration(code, found).into_iter().map(|(_, instruction)| instruction).collect())
 }
 
 /// The instructions one call runs through a scalar entry at `entry` (a byte offset): from the

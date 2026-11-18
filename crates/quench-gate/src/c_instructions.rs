@@ -113,7 +113,7 @@ fn hottest(object: &Path) -> Result<usize, String> {
     let kernel = functions.iter().filter(|(name, _)| !name.ends_with("main"))
         .max_by_key(|(_, code)| code.len())
         .ok_or_else(|| format!("{}: no kernel function", object.display()))?;
-    let body = flow::largest_innermost(&kernel.1).unwrap_or(&kernel.1);
+    let body = flow::largest_innermost(&kernel.1).unwrap_or_else(|| kernel.1.clone());
     Ok(body.iter().filter(|instruction| !instruction.is_nop()).count())
 }
 

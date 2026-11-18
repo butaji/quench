@@ -8,10 +8,10 @@ fib u-jit 21 - - - - - - -
 matmul b-jit none
 matmul u-jit 13 - - - - - - -
 nbody b-jit none
-nbody u-jit 267 - - - - - - -
+nbody u-jit 13 - - - - - - -
 qsort b-jit none
 qsort u-jit 14 - - - - - - -
 structs b-jit none
-structs u-jit 310 - - - - - - -
+structs u-jit 12 - - - - - - -
 sum b-jit kernel
 sum u-jit 7 - - - - - - -

@@ -6,13 +6,13 @@
 # callout, which C does in place.
 # op u-jit C budget calls
 arr_length 6 4 18 0
-arr_load_dbl 41 5 21 0
+arr_load_dbl 23 5 21 0
 arr_load_int 21 5 21 0
-arr_load_obj 89 6 24 0
+arr_load_obj 10 6 24 0
 arr_push - 8 30 -
 arr_store_dbl 54 8 30 0
 arr_store_int 40 5 21 0
-arr_store_obj 52 3 15 1
+arr_store_obj 19 3 15 0
 bitwise - 8 30 -
 call_closure - 11 39 -
 call_direct 8 8 30 0
@@ -22,7 +22,7 @@ dbl_add - 4 18 -
 dbl_div - 8 30 -
 dbl_mul - 4 18 -
 empty - 3 15 -
-eq_str 115 67 207 2
+eq_str 100 67 207 2
 eq_undef_null 29 5 21 0
 field_read 8 3 15 0
 field_store 23 3 15 1
@@ -32,8 +32,8 @@ int_add_noor - 8 30 -
 int_div - 7 27 -
 int_mod - 16 54 -
 int_mod_var - 7 27 -
-int_mul 61 5 21 0
-int_mul_ovf 42 18 60 0
+int_mul 52 5 21 0
+int_mul_ovf 2 18 60 0
 int_sub - 4 18 -
 math_abs - 8 30 -
 math_floor - 22 72 -
@@ -47,14 +47,14 @@ num_to_str - 569 1713 -
 parse_int - 196 594 -
 shl_shr - 7 27 -
 str_charcodeat - 9 33 -
-str_compare 23 4 18 0
+str_compare 16 4 18 0
 str_concat_acc - 7 27 -
 str_length - 4 18 -
 str_to_num 8 496 1494 0
-to_uint32 55 20 66 1
-truthy_obj 22 4 18 0
-truthy_str 22 4 18 0
+to_uint32 9 20 66 0
+truthy_obj 21 4 18 0
+truthy_str 21 4 18 0
 typed_load 11 5 21 0
 typed_store_f64 13 8 30 0
-typeof_op 36 4 18 1
+typeof_op 27 4 18 0
 ushr - 5 21 -
