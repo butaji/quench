@@ -30,8 +30,7 @@ pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16
         return frame_root_environment(cx, depth);
     }
     for _ in 0..depth {
-        // SAFETY: the register file roots its closure environment, which roots its parents.
-        let Some(crate::heap::EnvironmentRecord { parent, .. }) = (unsafe { vm.heap.reachable_environment(env) }) else { return None };
+        let Some(crate::heap::EnvironmentRecord { parent, .. }) = vm.heap.reachable_environment(env) else { return None };
         env = *parent;
     }
     Some(env)

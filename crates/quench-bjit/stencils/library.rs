@@ -18,7 +18,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD | NOT | NEG => (dst, a, MEM),
+        GUARD | NOT | NEG | SQRT => (dst, a, MEM),
         JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
@@ -144,7 +144,7 @@ fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
     }
     let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
     let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
-    product(rows, &[NEG], &dsts, &srcs, &[true]);
+    product(rows, &[NEG, SQRT], &dsts, &srcs, &[true]);
 }
 
 /// Every row the library holds, canonical, once.
@@ -187,7 +187,7 @@ const fn uses(entry: Entry, dst: bool, a: bool, b: bool) -> Uses {
 const HEAP_USES: &[(Uses, &[std::ops::RangeInclusive<u8>])] = &[
     (uses(Entry::Never, true, false, false), &[CAPTURE_ROW..=CAPTURE_ROW, ENV_ROW..=ENV_ROW, FIELD_ROW..=FIELD_ROW, LENGTH_ROW..=LENGTH_ROW, THIS_ROW..=THIS_ROW,
         LOAD_LOCAL_ROW..=LOAD_LOCAL_ROW, LOAD_CHECKED_ROW..=LOAD_CHECKED_ROW, GLOBAL_READ_ROW..=GLOBAL_READ_ROW, LEXICAL_READ_ROW..=LEXICAL_READ_ROW,
-        CONSTANT_ROW..=CONSTANT_ROW]),
+        CONSTANT_ROW..=CONSTANT_ROW, CALLEE_CAPTURE_ROW..=CALLEE_CAPTURE_ROW]),
     (uses(Entry::Kept, false, true, false), &[GLOBAL_STORE_ROW..=GLOBAL_STORE_ROW, SITE_STORE_ROW..=SITE_STORE_ROW, THIS_STORE_ROW..=THIS_STORE_ROW,
         IC_SET_ROW..=IC_SET_ROW, IC_SET_INT_ROW..=IC_SET_INT_ROW]),
     (uses(Entry::Kept, true, false, false), &[SITE_ROW..=SITE_ROW, THIS_SITE_ROW..=THIS_SITE_ROW, HELD_ROW..=HELD_ROW, IC_GET_ROW..=IC_GET_ROW, IC_GET_HOLDER_ROW..=IC_GET_HOLDER_ROW]),
@@ -268,7 +268,7 @@ pub fn heap_library() -> Vec<HeapCode> {
     }
     typed_rows(&dsts, &srcs, &mut rows);
     for &dst in &dsts {
-        rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
+        rows.extend([THIS_ROW, LOAD_LOCAL_ROW, LOAD_CHECKED_ROW, ENV_ROW, LEXICAL_READ_ROW, CALLEE_CAPTURE_ROW].map(|heap| heap_canonical((heap, false, dst, MEM, MEM))));
     }
     for heap in [STORE_LOCAL_ROW, STORE_CHECKED_ROW, CAPTURE_SET_ROW, ENV_SET_ROW, ENV_DEFINE_ROW, APPEND_ROW, LEXICAL_WRITE_ROW] {
         rows.extend(srcs.iter().map(|&a| heap_canonical((heap, false, MEM, a, MEM))));

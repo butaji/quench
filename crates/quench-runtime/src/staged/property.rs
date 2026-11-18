@@ -30,6 +30,7 @@ pub(crate) enum Owner {
 
 impl Owner {
     /// The owner of a field base: `this` or a register; any other base is the tier's own.
+    #[inline(always)]
     pub(crate) fn of(base: FieldBase) -> Option<Self> {
         if base == FieldBase::THIS { return Some(Self::This); }
         base.register_index().map(Self::Register)
@@ -332,7 +333,7 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
 
 /// The record of the direct object `object`; anything else leaves at `miss`.
 #[inline(always)]
-fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+pub(crate) fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);
@@ -400,13 +401,14 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 
 /// `ops` over the record `at` reached, where a leading shape guard is the owner's proof: its
 /// own-slot load reads through the layout the frame kept, or proves and keeps it.
+#[inline(always)]
 fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
-    if let [IcOp::GuardFormed(word), IcOp::LoadSlot { slot, storage_len, .. }] = ops {
+    if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, .. }] = ops {
         return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
-    if let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
+    if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
         && frame.proven_shape(stage, owner) != Some(*shape)
         && frame.kept_layout(owner, *shape).is_none() {
         return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
@@ -458,6 +460,13 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let plans = frame.plans();
     let plan = plans.field_plan(lookup)?;
     let object = base_word(stage, frame, base, miss)?;
+    // A plan of ops over the receiver's own record, the one a lane record's hint holds, inline;
+    // every other plan through `read_with`, which recurses through nested plans.
+    if let FieldPlan::Ops(ops) = plan {
+        let at = frame.receiver_record(stage, owner, object, false, miss)?;
+        let records = frame.object_records(stage);
+        return run_owned(stage, frame, (owner, true), ops, (at, records), miss);
+    }
     read_with(stage, frame, (owner, false), object, plan, miss)
 }
 

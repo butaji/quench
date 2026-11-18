@@ -86,6 +86,8 @@ pub enum Kind {
     Neg,
     /// `%`, the staged Number remainder.
     Rem,
+    /// `Math.sqrt` of a Number (`codes::SQRT`).
+    Sqrt,
 }
 
 impl Kind {

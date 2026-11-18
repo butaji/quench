@@ -76,6 +76,7 @@ impl<H: Host> Vm<H> {
     /// calls (`staged::wasm_call::indirect_target`): a validation error where the program has
     /// no such type, or where a reference whose id is not the expected one cannot be compared,
     /// which the rule meets only after the element checks.
+    #[inline(always)]
     fn wasm_indirect_element(
         &self,
         caller: ProgramId,

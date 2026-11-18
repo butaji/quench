@@ -59,7 +59,7 @@ fn lane_value_query<H: Host>(vm: &mut Vm<H>, operator: u32, operand: Value) -> O
         return Some(vm.typeof_index_value(operand));
     }
     if let Some(elements) = crate::bytecode::array_pattern_test(operator) {
-        return Some(Value::boolean(vm.array_pattern_reads_elements(operand, elements)));
+        return Some(Value::boolean(vm.array_pattern_fits(operand, elements)));
     }
     if operator == super::coercion::TYPEOF {
         let name = vm.typeof_value(operand);

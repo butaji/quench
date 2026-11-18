@@ -85,6 +85,27 @@ impl<H: Host> Vm<H> {
         Ok(frame.original_arguments.get(fixed..).unwrap_or_default().to_vec())
     }
 
+    /// `RestLength` (`get` false) or `RestGet` of a rest view (`Protocol::RestView`) at `site`:
+    /// while the rest register holds `undefined` (`held`), the values its activation kept
+    /// (`kept_rest_values`) answer the length and an index they hold; any other key makes the
+    /// rest array, stored into the rest register, which then answers as any array does.
+    pub(super) fn rest_view_step(&mut self, p: &ResidualProgram, site: super::call_out::CallSite,
+        (get, _fixed, rest): (bool, usize, crate::bytecode::Register), key: Option<Value>, mut held: Value) -> Result<Value, JsError> {
+        let key = key.unwrap_or(Value::UNDEFINED);
+        if held == Value::UNDEFINED {
+            let passed = self.kept_rest_values(p, site)?;
+            if !get {
+                return Ok(Value::length(passed.len()));
+            }
+            if let Some(value) = key.as_int().and_then(|index| usize::try_from(index).ok()).and_then(|index| passed.get(index)) {
+                return Ok(*value);
+            }
+            held = self.rest_parameter_array(&passed);
+            self.set_owner_register(site.owner, rest, held);
+        }
+        if get { self.get_index(p, held, key) } else { self.get_property(p, held, self.length_atom) }
+    }
+
     /// The arguments a super construction applies from the array in `list`'s one register.
     fn super_argument_list(&mut self, p: &ResidualProgram, list: &[Value]) -> Result<Vec<Value>, JsError> {
         let array = list.first().copied().expect("an applied super construction names its array register");

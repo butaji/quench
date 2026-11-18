@@ -14,6 +14,24 @@ pub const MOVE: u8 = 3;
 pub const CONSTANT: u8 = 4;
 /// Continues at the taken successor.
 pub const GOTO: u8 = 5;
+/// `D = memory[A + B]`, the access the operator code indexes in `ACCESSES`; traps out of bounds.
+pub const LOAD: u8 = 6;
+/// `memory[A + B] = D`, likewise.
+pub const STORE: u8 = 7;
+
+/// The value types of an access.
+pub const T_I32: u8 = 0;
+pub const T_I64: u8 = 1;
+pub const T_F32: u8 = 2;
+pub const T_F64: u8 = 3;
+
+/// The scalar accesses (`staged::wasm_memory::Access`): type, bytes, sign-extending. Every load
+/// is one; a store is one that does not sign-extend.
+pub const ACCESSES: [(u8, usize, bool); 14] = [
+    (T_I32, 4, false), (T_I32, 1, true), (T_I32, 1, false), (T_I32, 2, true), (T_I32, 2, false),
+    (T_I64, 8, false), (T_I64, 1, true), (T_I64, 1, false), (T_I64, 2, true), (T_I64, 2, false),
+    (T_I64, 4, true), (T_I64, 4, false), (T_F32, 4, false), (T_F64, 8, false),
+];
 
 /// The width an integer row runs at.
 pub const W32: u8 = 0;

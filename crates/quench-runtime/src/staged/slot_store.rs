@@ -14,28 +14,34 @@ use crate::typed_ir::Type;
 /// are plain (no extras, no narrow run); `None` (leaving at `miss`) otherwise. The word tells
 /// the storage form by its form bits (`object::storage_form`).
 ///
-/// A `hinted` store's `shape` is a lane record's hint, a whole auxiliary word
-/// (`Object::hint_shape`): the word equals it without its extras bit, so one compare also
-/// proves the values plain. Any other `shape` is a recorded one, which the word equals
-/// without its form bits, and the extras bit is tested apart.
+/// A `hinted` store's `shape` is a lane record's hint, a layout id (`Object::hint_shape`):
+/// one compare of the record's own word proves the shape and the form, which the id names, so
+/// the values are plain with no test, and the word is the id. Any other `shape` is a recorded
+/// one, which the word equals without its form bits, and the extras bit is tested apart.
 #[inline(always)]
 fn admitted_word<S: Stage>(stage: &mut S, record: S::Word, shape: u32, hinted: bool, miss: S::Miss) -> Option<S::Word> {
-    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     if hinted {
-        // A hint of extras or a narrow run admits no store here: the word then never matches.
-        let shape = stage.site(u64::from(shape & !(OBJECT.extras_form | OBJECT.narrow_form)));
-        let same = stage.eq_imm(word, shape);
+        let id = super::ic::layout_id(stage, record);
+        let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(id, shape) };
         stage.guard(same, miss)?;
-    } else {
-        let exact = recorded_shape(stage, word);
-        let shape = stage.site(u64::from(shape));
-        let same = stage.eq_imm(exact, shape);
-        stage.guard(same, miss)?;
-        // Neither extras nor a narrow run: the payload is a packed word or a wide run's start.
-        let displaced = storage_form(stage, word, OBJECT.extras_form | OBJECT.narrow_form);
-        let plain = stage.not(displaced);
-        stage.guard(plain, miss)?;
+        // A hint of extras or a narrow run admits no store here: the form is the id's fact,
+        // read once the id matched (a cleared hint names no layout).
+        if super::ic::layout_form(shape) & (OBJECT.extras_form | OBJECT.narrow_form) != 0 {
+            let never = stage.constant(0);
+            let refused = stage.ne_imm(never, 0u32);
+            stage.guard(refused, miss)?;
+        }
+        return Some(id);
     }
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let exact = recorded_shape(stage, word);
+    let shape = stage.site(u64::from(shape));
+    let same = stage.eq_imm(exact, shape);
+    stage.guard(same, miss)?;
+    // Neither extras nor a narrow run: the payload is a packed word or a wide run's start.
+    let displaced = storage_form(stage, word, OBJECT.extras_form | OBJECT.narrow_form);
+    let plain = stage.not(displaced);
+    stage.guard(plain, miss)?;
     Some(word)
 }
 
@@ -80,14 +86,14 @@ pub(crate) fn store_flat<S: Stage>(stage: &mut S, payload: S::Word, slot: u16, (
 }
 
 /// `own_store` for a record whose values are a flat run (`Form::Arena`): the guards of
-/// `admitted_payload`, then the run's slot; `None` (leaving at `miss`) where the record keeps
+/// `admitted_payload` (the gate passes a `fact` proved immediate), then the run's slot; `None` (leaving at `miss`) where the record keeps
 /// its values inline, changing nothing.
 #[inline(always)]
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`), which includes this file
 pub(crate) fn own_flat_store<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, shape: u32, slot: u16,
-    (value, rep): (S::Word, Rep), miss: S::Miss) -> Option<()> {
+    (value, rep, fact): (S::Word, Rep, Type), miss: S::Miss) -> Option<()> {
     let word = admitted_word(stage, record, shape, false, miss)?;
-    let payload = gated_payload(stage, record, record_id, (value, Type::ANY), miss)?;
+    let payload = gated_payload(stage, record, record_id, (value, fact), miss)?;
     let inline = storage_form(stage, word, OBJECT.inline_form);
     let flat = stage.not(inline);
     stage.guard(flat, miss)?;

@@ -189,7 +189,7 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
         && ImmediateLayout::call_window_base(call.imm()) == copy.a;
     let copies = copy.handler == lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let reads_callee = field.a == call.b
-        && (field.handler == lane_get_field_own::<H, false> as *const () || own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler));
+        && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
         requicken::<H>(field_ip, fused);
     }
@@ -207,7 +207,7 @@ fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
     let shaped = first.handler == copy && (second.handler == copy || constant_second)
         && first.a == window && second.a == window + 1;
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
-        && (field.handler == lane_get_field_own::<H, false> as *const () || own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler));
+        && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if shaped && reads_callee && let Some(fused) = math_field_call2_handler::<H>(native, constant_second) {
         requicken::<H>(field_ip, fused);
     }

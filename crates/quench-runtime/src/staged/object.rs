@@ -110,7 +110,7 @@ pub(crate) fn header_u32<S: Stage>(stage: &mut S, at: super::region::Access, rec
 /// The record's inline-storage flag (`Object::meta`), true where its values are inline.
 #[inline(always)]
 pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
-    let meta = header_u32(stage, Region::Records.mutable(), record, OBJECT.meta_offset);
+    let meta = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.meta_offset);
     let inline = stage.and_imm(meta, u64::from(OBJECT.inline_storage_mask));
     stage.ne_imm(inline, 0u32)
 }
@@ -162,7 +162,7 @@ pub(crate) fn storage_form<S: Stage>(stage: &mut S, word: S::Word, bit: u32) -> 
 /// The record's encoded prototype link (`Object::proto_link`).
 #[inline(always)]
 pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
-    let meta = header_u32(stage, Region::Records.mutable(), record, OBJECT.meta_offset);
+    let meta = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.meta_offset);
     stage.and_imm(meta, u64::from(OBJECT.proto_mask))
 }
 

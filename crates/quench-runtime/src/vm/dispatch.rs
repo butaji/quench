@@ -928,10 +928,6 @@ impl<H: Host> Vm<H> {
             Op::SetFunctionDebugName => {
                 self.set_function_debug_name(self.read(f, i.register_a()), i.atom_index());
             }
-            Op::RestLength | Op::RestGet => {
-                let value = self.read_rest_view(p, f, i)?;
-                self.write(f, i.result_register(), value);
-            }
             Op::ArgumentsLength | Op::ArgumentGet => {
                 let binding = self.load_local_binding(p, VarOwner::Frame(f), i.local_slot(), None)?;
                 let key = (i.op() == Op::ArgumentGet).then(|| self.read(f, i.register_b()));
@@ -1248,7 +1244,7 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::Call | Op::CallArray | Op::CallSpread | Op::CallRest | Op::CallForwardingArguments => {
+            Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
                 if i.op() == Op::CallForwardingArguments
                     && let Some(result) =
                         self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
@@ -1260,15 +1256,7 @@ impl<H: Host> Vm<H> {
                 // A spread argument array is read before any call state changes, since
                 // reading it can fail; register windows are copied only on the paths that
                 // need an owned argument list.
-                if i.op() == Op::CallRest && self.read(f, window.base) == Value::UNDEFINED {
-                    // A rest view's entry kept the values passed (`Function::rest_view`): the
-                    // rest array they make is the one an entry that gathers would have made.
-                    let fixed = usize::from(p.function(self.frames[f].function as usize).params) - 1;
-                    let passed = self.frames[f].original_arguments.get(fixed..).unwrap_or_default().to_vec();
-                    let rest = self.rest_parameter_array(&passed);
-                    self.write(f, window.base, rest);
-                }
-                if matches!(i.op(), Op::CallSpread | Op::CallRest) {
+                if i.op() == Op::CallSpread {
                     // ArgumentListEvaluation of the one spread: its values, as the argument
                     // array a `CallArray` reads, in the window it reads them from.
                     let iterable = self.read(f, window.base);
@@ -1276,7 +1264,7 @@ impl<H: Host> Vm<H> {
                     self.write(f, window.base, array);
                     self.spread_into_array(p, array, iterable)?;
                 }
-                let spread_arguments = if matches!(i.op(), Op::CallArray | Op::CallSpread | Op::CallRest) {
+                let spread_arguments = if matches!(i.op(), Op::CallArray | Op::CallSpread) {
                     let array = self.read(f, window.base);
                     Some(CallArguments::from_values(self.array_values(array)?))
                 } else {

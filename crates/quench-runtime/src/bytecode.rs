@@ -2,6 +2,8 @@ use smallvec::SmallVec;
 
 mod internal_bindings;
 mod module_records;
+mod declared_types;
+pub(crate) use declared_types::{Declared, DeclaredKind, DeclaredTypes, EnumConstant};
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
 pub(crate) use internal_bindings::*;
@@ -825,7 +827,7 @@ const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
 opcodes!($;
-    Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop; class Nop; traits LEAF_VALUE SCALAR_REGION FRAME_ONLY, @ Register, @ fields(Unused, Unused, Unused),
+    Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop; class Nop; staged Flow; traits LEAF_VALUE SCALAR_REGION FRAME_ONLY, @ Register, @ fields(Unused, Unused, Unused),
     CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex; class CloneEnv; step Body; traits NAME_OPERATION, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
     LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst; class LoadConst; staged Flow; step Body; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION LIFETIME_SAFE, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -844,7 +846,7 @@ opcodes!($;
     DeleteName => READ_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; step Body; traits NAME_OPERATION, @ Register, @ fields(Register, Register, BooleanFlag),
-    LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex; class MakeClosure; step Body; traits MAKES_CLOSURE, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -1015,6 +1017,7 @@ opcodes!($;
     WasmJumpI32GreaterEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator; class WasmI32Unary, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64Binary, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64BinaryImmediate => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediate, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator; class WasmI64Unary, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator; class WasmScalarConvert, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator; class WasmFloatBinary32, @ Register, @ fields(ResultRegister, Register, Register),
@@ -1121,8 +1124,8 @@ opcodes!($;
     // A key other than an index those values hold makes the rest array and reads it.
     // The rest register (`b` of `RestLength`, `c` of `RestGet`) holds `undefined` where the
     // entry kept the values, else the array an entry made, which they then read.
-    RestLength => Effect::READS_HEAP; layout Scalar; meaning ArrayLength; class RestLength, @ Register, @ fields(ResultRegister, Register, Unused),
-    RestGet => READ_THROW; layout Scalar; meaning ArrayLength; class RestGet, @ Register, @ fields(ResultRegister, Register, Register),
+    RestLength => Effect::READS_HEAP; layout Scalar; meaning ArrayLength; class RestLength; staged Names; step Lane; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
+    RestGet => READ_THROW; layout Scalar; meaning ArrayLength; class RestGet; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
     // `CallSpread` of a rest parameter `compile::rest_reads` keeps as a view: its window holds
     // the rest register, `undefined` where the entry kept the values passed, which it spreads.
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
@@ -1995,6 +1998,34 @@ impl Function {
             .filter_map(|(slot, _)| u16::try_from(slot).ok())
     }
 
+    /// The local slots of a Script's or eval's root that the realm and later code address by
+    /// slot: a Script's every global declaration (`GlobalDeclarations`); a sloppy eval's var
+    /// and function names, which are the global object's; none of a strict eval's, whose
+    /// declarations are all its own (`ResidualProgram::root_variables_are_local`).
+    pub(crate) fn global_declaration_slots(&self, eval: bool) -> impl Iterator<Item = u16> + '_ {
+        // A set, once: a bundle's thousands of locals against its declarations was quadratic.
+        let declared: rustc_hash::FxHashSet<Atom> = self
+            .global_declarations_or_none()
+            .filter(|_| !(eval && self.strict))
+            .into_iter()
+            .flat_map(|declarations| {
+                let lexical: &[Atom] = if eval { &[] } else { &declarations.lexical };
+                let immutable: &[Atom] = if eval { &[] } else { &declarations.immutable };
+                lexical.iter()
+                    .chain(&declarations.var)
+                    .chain(&declarations.function)
+                    .chain(&declarations.annex_b_var)
+                    .chain(immutable)
+                    .copied()
+            })
+            .collect();
+        self.local_atoms
+            .iter()
+            .enumerate()
+            .filter(move |(_, atom)| declared.contains(*atom))
+            .filter_map(|(slot, _)| u16::try_from(slot).ok())
+    }
+
     pub fn global_immutable_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
@@ -2243,9 +2274,7 @@ impl Function {
     }
 
     fn derive_activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
-        // A suspending kind keeps its `this` in its frame record across suspensions; only what
-        // its body reads keeps the implicit bindings.
-        self.is_class_constructor || self.body_binding_reads(tables)
+        self.activation_binding_reads(tables)
             || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
                 tables
                         .function_is_arrow(instruction.closure_function_index() as usize)
@@ -3914,6 +3943,8 @@ pub struct ResidualProgram {
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,
     pub(crate) module_link_plan: Option<ModuleLinkPlan>,
+    /// The TypeScript declared environment (`DeclaredTypes`); none for JavaScript.
+    pub(crate) declared_types: Option<Box<DeclaredTypes>>,
     pub(crate) source_name: String,
     pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,

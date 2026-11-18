@@ -72,6 +72,26 @@ impl SlotType {
         }
     }
 
+    /// Whether this representation already holds `value`'s class: `join(of(value)) == self`
+    /// with no class computed or joined, so a store into a slot that holds its class pays one
+    /// test, and only a widening store joins (`ValueArena::note_exact_slot_word`).
+    #[inline(always)]
+    pub(crate) fn admits(self, value: Value) -> bool {
+        match self {
+            Self::Tagged => true,
+            Self::None => false,
+            Self::Int32 => value.as_int().is_some(),
+            Self::Number => value.as_number().is_some(),
+            Self::Null => value.is_null(),
+            Self::Undefined => value.is_undefined(),
+            Self::Nullish => value.is_null() || value.is_undefined(),
+            Self::DirectObject => value.direct_object_index().is_some(),
+            Self::DirectObjectOrNull => value.is_null() || value.direct_object_index().is_some(),
+            Self::DirectObjectOrUndefined => value.is_undefined() || value.direct_object_index().is_some(),
+            Self::DirectObjectOrNullish => value.is_null() || value.is_undefined() || value.direct_object_index().is_some(),
+        }
+    }
+
     /// The join of `ty()`s, as a union of value classes (`CLASSES`): numbers mix with
     /// nothing else.
     #[inline(always)]
