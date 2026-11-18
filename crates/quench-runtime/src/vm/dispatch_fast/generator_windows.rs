@@ -4,7 +4,7 @@
 //! copies no register. A `yield` suspends the frame in place and pops the activation, and a
 //! return completes the generator.
 use super::*;
-use super::super::activation::FrameRecord;
+use super::super::activation::{FrameRecord, GeneratorRecord};
 
 impl Activation {
     /// What its caller's frame resumes with when the activation becomes a frame, as the register
@@ -111,6 +111,8 @@ pub(in crate::vm) struct WindowPlan {
     pub(super) parent: Value,
     pub(super) locals: Option<WindowLocals>,
     pub(super) capture: *const usize,
+    /// Whether the window carries an environment after the registers (`Vm::window_layout`).
+    pub(super) environment: bool,
 }
 
 /// The plan a windowed resume of `frame`, laid out with an environment window when
@@ -126,7 +128,18 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
     let view = vm.lane_view_any(program, function)?;
     let (parent, locals) = window_environments(vm, view, env, captured, environment)?;
     let capture = vm.target_capture(code, program, parent);
-    Some(WindowPlan { key, view, parent, locals, capture })
+    Some(WindowPlan { key, view, parent, locals, capture, environment })
+}
+
+/// `window_plan` of a generator's suspended `frame`, of the active program: its record's own
+/// while it holds, laid out as its function's plan says (`Vm::window_layout`) otherwise.
+fn generator_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<WindowPlan> {
+    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
+    if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
+        return Some(plan);
+    }
+    let environment = vm.window_layout(frame, code)?;
+    window_plan(vm, code, frame, environment)
 }
 
 /// The environment a generator's closures and captures run under, and its window's locals when
@@ -159,7 +172,7 @@ pub(super) fn window_environments<H: Host>(
 }
 
 /// The activation of `generator`, a suspended generator the lane admits
-/// (`Vm::generator_window_frame`) that `method` steps (`steps_as_generator`), made over its
+/// (`Vm::window_layout`) that `method` steps (`steps_as_generator`), made over its
 /// record's register file for the call record at `ip` of the running function, whose registers
 /// are `r`: `sent` is the value its `yield` evaluates to, `completion` how its caller takes the
 /// step. The window's registers, and for a generator with locals the environment window after
@@ -178,13 +191,12 @@ fn lane_resume_generator<H: Host>(
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let (frame, environment) = vm.generator_window_frame(generator, code)?;
+    let (record, frame) = resumable_generator_frame(vm, generator)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
     let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
-    // SAFETY: the record holds the frame, which nothing moves before the resume below.
-    let plan = window_plan(vm, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
-    let WindowPlan { view, parent, locals, capture, .. } = plan;
-    let frame = vm.resume_generator_window(method, generator, sent, depth)?;
+    let plan = generator_window_plan(vm, code, frame)?;
+    let WindowPlan { view, parent, locals, capture, environment, .. } = plan;
+    let frame = vm.resume_generator_window((generator, record), method, sent, depth)?;
     unsafe { (*frame).window_plan = Some(plan) };
     if let Some(locals) = locals {
         open_window_locals(vm, frame, locals);
@@ -197,6 +209,16 @@ fn lane_resume_generator<H: Host>(
     // and `pc` is where the frame resumes in its function's view.
     let start = unsafe { lane_enter_suspended(cx, &entry, window, pc) };
     Some((Registers(window), start))
+}
+
+/// `generator`'s record and its suspended frame, when the frame resumes in this realm and program.
+/// SAFETY of the result: the generator's cell keeps its record, and the record its frame, boxed:
+/// nothing moves or frees either before the resume.
+fn resumable_generator_frame<'a, H: Host>(vm: &mut Vm<H>, generator: Value) -> Option<(*mut GeneratorRecord, &'a FrameRecord)> {
+    let record = std::ptr::from_mut(vm.generator_record_mut(generator)?);
+    let frame = unsafe { &*std::ptr::from_ref(&*(*record).suspended_continuation()?.frame) };
+    let resumable = unsafe { (*record).realm } == vm.realm.globals && frame.program == vm.active_program;
+    resumable.then_some((record, frame))
 }
 
 /// Lays `frame`'s environment window after its registers (`FrameRecord::open_environment_window`).
