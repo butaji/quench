@@ -865,7 +865,7 @@ opcodes!($;
     IteratorClose => READ_THROW; layout Scalar; meaning Unused; class IteratorClose; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
-    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class AppendArray; staged Names; step LaneResult, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
+    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class AppendArray; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; class RequireObjectCoercible; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE, @ Register, @ fields(Unused, Register, Unused),
     RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused; class RequireIteratorResult; step Lane, @ Register, @ fields(Unused, Register, Unused),
     SuperCallCheck => READ_THROW; layout Scalar; meaning Unused; step Body; traits NAME_OPERATION CALL_LINK, @ Register, @ fields(Unused, Unused, Unused),

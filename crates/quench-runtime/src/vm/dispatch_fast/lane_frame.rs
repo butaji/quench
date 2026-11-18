@@ -911,12 +911,22 @@ unsafe fn lane_delete_value<H: Host>(cx: *mut (), base: Value, key: Value) -> Op
 /// `cx` is the running lane's context. Called through `LaneFrame::names`, a constant function pointer
 /// in the inlined frame `row_frame` builds, so the call inlines.
 #[inline(always)]
-unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [_, second]: [Option<Value>; 2]) -> Option<Value> {
+unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: [Option<Value>; 2]) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     match call {
         // A built-in iterator whose chain lacks `return` closes with `undefined`.
         CallOut::Protocol { step: Protocol::IteratorClose, .. } => {
             vm.iterator_close_absent(second?).then_some(Value::UNDEFINED)
+        }
+        // A spread onto the literal's array with no elisions before it, from a source whose
+        // iteration runs no guest code: the append defines no register, so its value is unused.
+        CallOut::Protocol { step: Protocol::AppendArray { length: 0, spread: true }, .. } => {
+            let (array, source) = (first?, second?);
+            if !vm.spread_intact_in_place(array, source) {
+                return None;
+            }
+            note_allocation(vm);
+            Some(Value::UNDEFINED)
         }
         _ => None,
     }
