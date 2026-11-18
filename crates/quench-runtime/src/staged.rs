@@ -242,7 +242,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 21] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 22] = [
     // A constant then the direct Wasm store of it (the store reads the constant's register).
     (Op::LoadConst as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
     (Op::LoadConst as u16, Op::WasmI64Store as u16, FUSED_PLAIN),
@@ -261,6 +261,10 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 21] = [
     (Op::IncDec as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::Binary as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     (Op::Binary as u16, Op::JumpTrue as u16, FUSED_PLAIN),
+    // Two arithmetic or bitwise operators, the second reading the first's result: `(a + b) * c`,
+    // `(a + b) | 0`. Both rows run in full (`FUSED_PLAIN`); the hand pair's dead-write skip and its
+    // raw result are dropped.
+    (Op::Binary as u16, Op::Binary as u16, FUSED_PLAIN),
     // `!(x instanceof C)` tests also take the `Binary` then `JumpTrue` pair above.
     // `c = c + 1` of a capture: the store, then the read of the same capture.
     (Op::StoreCapture as u16, Op::LoadCapture as u16, FUSED_PLAIN),
