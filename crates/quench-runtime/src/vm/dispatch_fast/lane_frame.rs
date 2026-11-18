@@ -724,7 +724,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
             // reach the same accessor and decline it.
             // A getter the lane cannot answer in place is the activation's to call
             // (`lane_getter_activation`); only a virtual field may still answer.
-            probe => match unsafe { lane_getter_read(cx, object, atom, site) } {
+            probe => match unsafe { super::AccessorCall::of(cx).getter_read(object, atom, site) } {
                 Some(Some(value)) => Some(value),
                 Some(None) => unsafe { vm(cx) }.pure_virtual_field(object, atom),
                 // SAFETY: the context outlives the lane run.
@@ -1577,7 +1577,7 @@ lane_handler! {
             }
             if const { super::getter_site(FLAG) } {
                 // The getter's refresh makes the hint, or reads through the getter's activation.
-                sibling!(super::getters::lane_get_field_getter_refresh::<H>, r, ip, Carried::script_in(script, view))
+                sibling!(super::getters::row_get_field_getter_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
             if const { super::inherited_site(FLAG) && !super::inherited_other_site(FLAG) } {
                 // A direct object's miss; the read of any other receiver's object part.

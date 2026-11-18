@@ -669,10 +669,10 @@ use super::lane_activations::LaneActivations;
 mod this_binding;
 use this_binding::ThisBinding;
 mod loop_fields; use loop_fields::lane_loop_field_stores;
-mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod completions; use completions::*;
+mod construct_plan; mod super_chain; use super_chain::lane_super_construction; mod setters; mod proxy_traps; mod accessor_protocol; mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, lane_initialize_stores, lane_add_stores, lane_return_constructed, lane_planned_construction, planned_construction, lane_planned_inline_quick, planned_inline_quick, lane_construct_argument, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution};
 pub(in crate::vm) use construct_plan::{lane_body_construction, lane_body_receiver, lane_context_constructs, scalar_construct_plan, construct_plan_holds};
-use getters::{lane_getter_read, lane_read_getter};
+use accessor_protocol::AccessorCall;
 mod list_calls;
 mod loop_runs;
 mod unary_values;
@@ -1822,16 +1822,16 @@ enum Completion {
     /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
     /// pending call settles it (`PendingGeneralCall::completion`).
     SettlesPromise,
-    /// A store's setter (`setters::lane_store_setter`): the assignment yields the value
+    /// A store's setter (`AccessorCall::store_setter`): the assignment yields the value
     /// stored, which its record's register still holds, whatever the setter returns. Made a
     /// frame, its pending call yields it the same way (`CallCompletion::Assigned`).
     Assigns,
-    /// A proxy `get` trap (`proxy_traps::lane_read_get_trap`): the read's value, once the
+    /// A proxy `get` trap (`AccessorCall::read_get_trap`): the read's value, once the
     /// target's invariants have checked it (`LaneStack::trap_checks`); a read the target's
     /// changed shape now constrains returns from the trap's frame, whose pending call checks
     /// it in full (`CallCompletion::Trapped`).
     ReadsTrapped,
-    /// A proxy `set` trap (`proxy_traps::lane_store_set_trap`): `Assigns` for a trap whose
+    /// A proxy `set` trap (`AccessorCall::store_set_trap`): `Assigns` for a trap whose
     /// result the target and a strict store accept, checked as `ReadsTrapped` is.
     AssignsTrapped,
     /// An array callback method's callback the lane runs for one element
@@ -6099,7 +6099,7 @@ script_handler! {
     #[inline(never)]
     fn row_index_getter_miss<>(cx, r, ip, i, view) {
         let (base, key) = (r.get(i.b), r.get(i.c));
-        match proxy_traps::lane_keyed_get_trap(cx, r, ip, base, key) {
+        match AccessorCall::of(cx).keyed_get_trap(r, ip, base, key) {
             Some(Ok((registers, base))) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Some(Err(next)) => return next,
             None => {}
@@ -7737,7 +7737,7 @@ pub(super) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
 
 /// The site facts of a read that met a getter whose hint returns an own field of the receiver
 /// (`IcOp::GetterOwn`, `Vm::getter_hint_operands`), of `this` and of a register; a miss takes the
-/// getter's refresh, which makes the hint (`lane_get_field_getter_refresh`).
+/// getter's refresh, which makes the hint (`row_get_field_getter_refresh`).
 pub(super) const GETTER_THIS: u8 = own_site(true, OWN_FORMS.len() + 15);
 pub(super) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
 pub(super) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
@@ -8745,7 +8745,7 @@ script_handler! {
         });
         let Some(value) = quick.or_else(|| unsafe { lane_field_value(cx, r, i) }) else {
             if let Some(base) = lane_field_read_beside_activations(cx, r, i) {
-                // A proxy's trap runs as an activation beside the others (`lane_read_get_trap`);
+                // A proxy's trap runs as an activation beside the others (`AccessorCall::read_get_trap`);
                 // the in-place general read would call it across the native boundary.
                 if unsafe { vm(cx) }.proxy_parts(base).is_some() {
                     match lane_getter_activation(cx, r, ip, i) {
@@ -8886,9 +8886,9 @@ fn lane_getter_activation<H: Host>(
     let Some((base, getter)) = read.and_then(|(base, atom, cache)| {
         Some((base, vm.cached_field_getter(base, atom, vm.field_cache_index(cache))?))
     }) else {
-        return proxy_traps::lane_read_get_trap(cx, r, ip, read.map(|(base, atom, _)| (base, atom)));
+        return AccessorCall::of(cx).read_get_trap(r, ip, read.map(|(base, atom, _)| (base, atom)));
     };
-    lane_read_getter(cx, r, ip, i, getter, base)
+    AccessorCall::of(cx).read_getter(r, ip, i, getter, base)
 }
 
 /// The activation of `getter` with receiver `base` and no arguments for the read record at
@@ -9071,14 +9071,14 @@ fn row_set_field_in_place<H: Host>(
     // The running function decides the store's strictness: a running leaf's is its
     // materialized activation's.
     lane_materialize_running_leaf(cx);
-    if let Some(resumed) = setters::lane_store_setter(cx, r, ip, i, object) {
+    if let Some(resumed) = AccessorCall::of(cx).store_setter(r, ip, i, object) {
         return resumed;
     }
     let Some(strict) = lane_store_is_strict(cx, ip) else {
         return Resumed::Exit(exit(ip));
     };
     let (atom, value, site) = (i.imm(), r.get(i.a), i.c);
-    if let Some(resumed) = proxy_traps::lane_store_set_trap(cx, r, ip, object, atom, value, strict) {
+    if let Some(resumed) = AccessorCall::of(cx).store_set_trap(r, ip, object, atom, value, strict) {
         return resumed;
     }
     if lane_in_place(cx, ip, |vm, code| vm.set_field_cached(code, object, atom, value, site, strict)).is_none() {
@@ -19092,9 +19092,9 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const
 }
 
 /// The frameless target of another program's function `callee` a native calls from the
-/// lane (`Vm::lane_native_callback`), as a trap's (`proxy_traps::lane_trap_target`).
+/// lane (`Vm::lane_native_callback`), as a trap's (`AccessorCall::trap_target`).
 fn lane_cross_callback_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<(ScriptCallTarget, bool)> {
-    proxy_traps::lane_trap_target(cx, callee).filter(|&(_, crosses)| crosses)
+    AccessorCall::of(cx).trap_target(callee).filter(|&(_, crosses)| crosses)
 }
 
 /// The activation of a native's call of `target` with `args` from the lane's running
@@ -19920,7 +19920,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             // [[Construct]] of an ordinary constructor yields its returned object,
             // otherwise the receiver it allocated. A skipped forwarding constructor returns
             // `undefined` after the method, so its construction yields the receiver.
-            // A trap of another program (`proxy_traps::lane_trap_target`) completes as a
+            // A trap of another program (`AccessorCall::trap_target`) completes as a
             // trap, not as `Completion::Cross`, and leaves its program the same way.
             if script.completion.crosses() || activation.caller_program() != unsafe { (*cx).program } {
                 lane_enter_program(cx, activation.caller_program());
