@@ -67,7 +67,7 @@ pub(super) fn value_fact(place: Place) -> Type {
 /// The row of the by-name access at `pc`, where the table (`Known::globals`) holds one a row takes.
 pub(super) fn global_row(known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
     match *known.globals?.get(&(pc as usize))? {
-        GlobalRead::Constant(value) if instruction.op().loads_name() => {
+        GlobalRead::Constant(value) if super::super::meaning_compiled::loads_name(instruction) => {
             Some(word_row(instruction, value))
         }
         GlobalRead::Slot(slot) => slot_row(known, instruction, Access::of(slot)?),

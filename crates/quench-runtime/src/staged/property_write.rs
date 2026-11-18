@@ -95,6 +95,22 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
                 })?;
             return Some(source.answer());
         }
+        StorePlan::Hinted { id, slot, narrow, join } => {
+            let base = base.map_or(FieldBase::THIS, FieldBase::register);
+            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
+            let tagged = source.tagged(stage, frame);
+            if frame.field_store_hinted(stage, at.1, atom, site, tagged, (id, slot), narrow).is_none() {
+                vm_store(stage, frame, join, at, (atom, site), (tagged, fact), miss)?;
+            }
+            return Some(source.answer());
+        }
+        StorePlan::Polymorphic { id, slot } => {
+            let base = base.map_or(FieldBase::THIS, FieldBase::register);
+            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
+            let tagged = source.tagged(stage, frame);
+            frame.field_store_polymorphic(stage, at.1, atom, site, tagged, (id, slot))?;
+            return Some(source.answer());
+        }
         StorePlan::Add => (&[][..], StoreJoin::Add),
         StorePlan::Host => (&[][..], StoreJoin::Host),
         StorePlan::Bound => (&[][..], StoreJoin::Bound),

@@ -358,12 +358,19 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
 /// The heap instructions that name a field or a global: a recorded or cached field read or store, a
 /// membership test, and a global name's access (`globals`).
 fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    match staged_of(instruction) {
-        Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
-        // derivation debt: no staged::Operation for a Binary with a Number constant operand (`Operation::Binary` takes registers only)
-        _ if instruction.op().class() == Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
-        _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
-        _ => None,
+    use crate::staged::Operation;
+    match crate::vm::compiled::decoded(instruction) {
+        Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() =>
+            return field_row(region, facts, known, pc, instruction),
+        Some(Operation::SetField { .. }) => return field_store_row(known, instruction),
+        _ => {}
+    }
+    if super::super::meaning_compiled::is_binary(instruction) {
+        membership_row(known, pc, instruction, instruction.result_register())
+    } else if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) {
+        global_row(known, pc, instruction)
+    } else {
+        None
     }
 }
 
@@ -410,21 +417,32 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Some(Operation::Move { .. }) => plain.then(copy),
         // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
         // it, and a function's row proves it itself (`checked`).
-        Some(Operation::Number(NumberOperation::ToNumeric { .. })) => plain.then(|| Decoded { checked: true, ..copy() }),
-        Some(Operation::Number(NumberOperation::IncDec { .. })) => inc_dec(instruction).ok().filter(|_| plain),
-        Some(Operation::CompareJump { .. }) => jump_binary(numbers, instruction).ok(),
-        Some(Operation::Jump) => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
-        Some(Operation::JumpIf { .. }) => Some(truthiness_jump(instruction)),
-        // A Number constant is its own word, as the region's numbers hold it.
-        Some(Operation::LoadConst { destination, constant }) => plain.then(|| Decoded::number(Kind::Move, Some(destination),
-            Some(Source::Constant(constant.value.to_bits())), None, None)),
-        // derivation debt: no staged::Operation for a Binary with a Number constant operand, nor for NumericAdd or
-        // NumericMultiply (no decoder)
-        _ if matches!(instruction.op().class(), Class::Binary | Class::NumericAdd | Class::NumericMultiply) => binary(numbers, instruction).ok().filter(|_| plain),
-        // derivation debt: no staged::Operation for unary `-` or `+`
-        _ if instruction.op().class() == Class::Unary => unary_row(instruction).filter(|_| plain),
-        _ => return None,
-    })
+        Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
+        Some(Operation::Jump) => return Some(Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target())))),
+        Some(Operation::JumpIf { register, taken }) => return Some(Some(truthiness_jump(instruction, register, taken))),
+        // A comparison jump (`JumpBinaryFalse`): a Number relation, or `==`/`===` (`!=`/`!==`)
+        // of Numbers, which the loop's entry guards and its rows prove its operands are.
+        Some(Operation::CompareJump { comparison, left, right, negate: true }) => return Some(relation_jump(numbers, instruction, comparison, (left, right)).ok()),
+        // `!x`: the boolean of its truthiness.
+        Some(Operation::LogicalNot { destination, source }) =>
+            return Some(plain.then(|| Decoded::number(Kind::Not, Some(destination), Some(Source::Register(source)), None, None))),
+        // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
+        Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
+            if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
+            Some(Source::Constant(Value::integer(1).to_bits())), None))),
+        _ => {}
+    }
+    // `-x` and `+x`: the Number unary the interpreter's operations name (`NumberUnary`).
+    if let Some(operation) = crate::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.unary_operator()) {
+        return Some(unary_row(instruction, operation).filter(|_| plain));
+    }
+    if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
+        return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
+    }
+    if !super::super::meaning_compiled::is_binary_arithmetic(instruction) {
+        return None;
+    }
+    Some(binary(numbers, instruction).ok().filter(|_| plain))
 }
 
 /// A jump on a register's truthiness: taken where it is truthy (`JumpTrue`) or falsy.

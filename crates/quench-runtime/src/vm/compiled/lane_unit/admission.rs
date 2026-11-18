@@ -9,12 +9,12 @@ use crate::bytecode::Traits;
 /// only one it inlines in turn.
 pub(super) fn inlinable(instruction: WideInstruction) -> bool {
     let plain = instruction.result_flags() == 0 || super::super::osr_loop::inlined_returning(instruction);
-    inlinable_pure(instruction, plain).unwrap_or_else(|| match instruction.op() {
+    inlinable_pure(instruction, plain).unwrap_or_else(|| match () {
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
         // global name's read, a construction and a throw, typically a callee's error path.
         _ if crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() || throws(instruction) => instruction.result_flags() == 0,
-        opcode if opcode.is_construct() => instruction.result_flags() == 0,
-        opcode if opcode.is_call() => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
+        _ if super::super::meaning_compiled::is_construct(instruction) => instruction.result_flags() == 0,
+        _ if super::super::meaning_compiled::is_call(instruction) => returns_or_keeps(instruction) && !instruction.direct_eval() && !instruction.parameter_eval(),
         _ => plain && instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary,
     })
 }
@@ -22,7 +22,7 @@ pub(super) fn inlinable(instruction: WideInstruction) -> bool {
 /// Whether `instruction` is inlinable where it is a scalar, element, `this`, capture, field or unary
 /// operation, given whether it is `plain`; `None` for the other instructions.
 fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
-    Some(match instruction.op() {
+    Some(match () {
         _ if instruction.op().traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
@@ -38,7 +38,7 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => plain,
         // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
         // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
-        opcode if opcode.is_unary() => plain,
+        _ if super::super::meaning_compiled::is_unary(instruction) => plain,
         _ => return None,
     })
 }
@@ -47,9 +47,9 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
 /// leaf. A miss may restart that call without replaying effects.
 pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::super::lane_region::restartable_numeric_function(program, function, code) { return true; }
-    code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
+    code.iter().enumerate().all(|(pc, instruction)| match () {
         _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => false,
-        opcode if opcode.is_call() => false,
+        _ if super::super::meaning_compiled::is_call(*instruction) => false,
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => false,
         _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => true,
         // An IncDec with a numeric local target decodes apart: its result stays a local.

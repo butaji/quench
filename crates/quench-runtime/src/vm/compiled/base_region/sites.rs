@@ -10,10 +10,12 @@ use crate::vm::in_presence::InPresence;
 /// The operator of a comparison that is a `Binary`, which writes a boolean to a register, or a `JumpBinaryFalse`, which branches
 /// where the comparison fails.
 fn comparison_operator(instruction: WideInstruction) -> Option<u32> {
-    match instruction.op().class() {
-        Class::Binary => Some(instruction.binary_operator()),
-        Class::JumpBinaryFalse => Some(instruction.binary_operator_field()),
-        _ => None,
+    if super::super::meaning_compiled::is_binary(instruction) {
+        Some(instruction.binary_operator())
+    } else if super::super::meaning_compiled::is_jump_binary_false(instruction) {
+        Some(instruction.binary_operator_field())
+    } else {
+        None
     }
 }
 

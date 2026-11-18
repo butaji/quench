@@ -180,6 +180,19 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
             _ => None,
         },
     }
+    if super::super::meaning_compiled::is_unary(instruction) {
+        typeof_arm(instruction.unary_operator())
+    } else {
+        None
+    }
+}
+
+/// Whether an `AppendArray` is one element (not a spread, not elisions) defined at the literal's
+/// length: the case a capacity word decides.
+fn appends_one(instruction: WideInstruction) -> bool {
+    instruction.array_length() == 0
+        && instruction.optional_register_b().is_some()
+        && instruction.boolean_field(InstructionField::C) == Some(false)
 }
 
 /// The registers a fast arm reads: its operand in `a`, and for an append the array it writes

@@ -178,7 +178,7 @@ impl LoopRegion {
         self.instructions
             .iter()
             .enumerate()
-            .filter(|(_, instruction)| instruction.op().is_ordinary_call())
+            .filter(|(_, instruction)| super::meaning_compiled::is_ordinary_call(**instruction))
             .map(|(offset, _)| self.header.saturating_add(offset as u32))
             .collect()
     }
@@ -617,7 +617,7 @@ fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<O
     }
     // A type test reads its operand's tag, and the VM's cell of a heap value
     // (the type-name index exits for one instead).
-    if op.is_unary() && reads_type(instruction) {
+    if super::meaning_compiled::is_unary(instruction) && reads_type(instruction) {
         return Ok(Some(instruction.register_b()));
     }
     Err(format!("unsupported_tagged_definition op={op:?}"))
@@ -627,7 +627,7 @@ fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<O
 /// capture, a cached field, a global binding, an element, a fresh allocation or a comparison.
 fn carries_boxed(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    op.boxes_result() || op.allocates() || (op.is_binary() && number_comparison(instruction).is_some())
+    op.boxes_result() || op.allocates() || (super::meaning_compiled::is_binary(instruction) && number_comparison(instruction).is_some())
 }
 
 /// The registers of an ordinary call at `offset` that stay boxed: its callee and the arguments
@@ -636,11 +636,11 @@ fn carries_boxed(instruction: WideInstruction) -> bool {
 /// direct calls leave at this exact PC, so their input window must remain boxed through
 /// preceding Moves.
 fn call_window_tagged(instructions: &[WideInstruction], numeric_uses: &std::collections::BTreeSet<Register>, offset: usize, instruction: &WideInstruction) -> Vec<Register> {
-    if !instruction.op().is_ordinary_call() || callee_read_by_field(instructions, offset, instruction) {
+    if !super::meaning_compiled::is_ordinary_call(*instruction) || callee_read_by_field(instructions, offset, instruction) {
         return Vec::new();
     }
     let base = ImmediateLayout::call_window_base(instruction.imm());
-    let count = if instruction.op().is_call_array() {
+    let count = if super::meaning_compiled::is_call_array(*instruction) {
         1
     } else {
         usize::from(ImmediateLayout::argument_count(instruction.imm()))
@@ -886,7 +886,7 @@ pub(super) fn renamed(
         ImmediateRole::JumpTarget => target(instruction.imm())?,
         // A call's argument window renames as one block: each of its registers to the one
         // after the base's rename.
-        _ if op.is_call() => {
+        _ if super::meaning_compiled::is_call(instruction) => {
             let imm = instruction.imm();
             let base = ImmediateLayout::call_window_base(imm);
             let count = ImmediateLayout::argument_count(imm);
@@ -1023,7 +1023,7 @@ pub(super) fn inline_region<'a>(
     let mut checked_reads = inlining::PcMap::new(header, caller.len());
     let captured = receivers::captured(caller, mask(header)?);
     for (offset, instruction) in caller.iter().copied().enumerate() {
-        if !instruction.op().is_call() {
+        if !super::meaning_compiled::is_call(instruction) {
             continue;
         }
         let pc = header + offset as u32;
@@ -1401,14 +1401,14 @@ enum Arithmetic {
     Remainder,
 }
 
-fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if instruction.is_binary() && operator == super::super::operations::REMAINDER {
+fn arithmetic(instruction: WideInstruction, operator: u32) -> Option<Arithmetic> {
+    if super::meaning_compiled::is_binary(instruction) && operator == super::super::operations::REMAINDER {
         return Some(Arithmetic::Remainder);
     }
-    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
+    if let Some(operation) = NumberArithmetic::from_js_instruction(instruction.op(), operator) {
         return Some(Arithmetic::Float(operation));
     }
-    super::super::operations::NumberBitwise::from_js_instruction(instruction, operator)
+    super::super::operations::NumberBitwise::from_js_instruction(instruction.op(), operator)
         .map(Arithmetic::Int32)
 }
 
@@ -1421,7 +1421,7 @@ fn bitwise_condition(instruction: WideInstruction) -> Option<NumberBitwise> {
 }
 
 fn number_comparison(instruction: WideInstruction) -> Option<super::super::operations::NumberRelation> {
-    (instruction.op().is_binary())
+    super::meaning_compiled::is_binary(instruction)
         .then(|| super::super::operations::NumberRelation::from_operator(instruction.binary_operator()))
         .flatten()
 }
@@ -1434,11 +1434,11 @@ enum Unary {
     BitwiseNot,
 }
 
-fn unary(instruction: Op, operator: u32) -> Option<Unary> {
-    if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
+fn unary(instruction: WideInstruction, operator: u32) -> Option<Unary> {
+    if let Some(operation) = NumberUnary::from_js_instruction(instruction.op(), operator) {
         return Some(Unary::Number(operation));
     }
-    (instruction.is_unary() && operator == UnaryOperator::BitwiseNot as u32)
+    (super::meaning_compiled::is_unary(instruction) && operator == UnaryOperator::BitwiseNot as u32)
         .then_some(Unary::BitwiseNot)
 }
 
@@ -1776,7 +1776,7 @@ fn admit_register_roles(
         .collect();
     // A call the region continues past may write any field, so a read through a receiver the
     // region never rewrites reads its current slot, as one of the region's own stored names does.
-    let calls = instructions.iter().any(|instruction| instruction.op().is_ordinary_call());
+    let calls = instructions.iter().any(|instruction| super::meaning_compiled::is_ordinary_call(*instruction));
     let mut dynamic_field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers: std::collections::BTreeSet<Register> = instructions
@@ -1863,7 +1863,7 @@ fn admit_register_roles(
         }
         // A field-resolved method call is the inliner's (`MethodCalls::inlined`), unless the
         // inliner declined it. Dynamic/direct calls have no such owner.
-        if method_calls.inlined(objects) && instruction.op().is_ordinary_call() {
+        if method_calls.inlined(objects) && super::meaning_compiled::is_ordinary_call(instruction) {
             let callee_register = instruction.register_b();
             if instructions[..offset]
                 .iter()
@@ -2060,7 +2060,7 @@ fn admit(
     defined_registers: &std::collections::BTreeSet<Register>,
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
-    match instruction.op() {
+    match () {
         _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() => {
             let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
@@ -2088,12 +2088,12 @@ fn admit(
                 admission.captures.push(slot);
             }
         }
-        opcode if opcode.is_binary_arithmetic() => {
+        _ if super::meaning_compiled::is_binary_arithmetic(instruction) => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
             } else {
-                arithmetic(instruction.op(), instruction.binary_operator())?;
+                arithmetic(instruction, instruction.binary_operator())?;
                 admission.result(instruction)?;
             }
             admission.source(instruction.operand_b())?;
@@ -2110,13 +2110,13 @@ fn admit(
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        opcode if opcode.is_unary() => {
+        _ if super::meaning_compiled::is_unary(instruction) => {
             if reads_type(instruction) && tagged.contains(&instruction.result_register())
             {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
             } else {
-                unary(instruction.op(), instruction.unary_operator())?;
+                unary(instruction, instruction.unary_operator())?;
                 admission.result(instruction)?;
                 admission.number(instruction.register_b())?;
             }
@@ -2182,7 +2182,7 @@ fn admit(
         // Its literal's allocation writes it (`Allocation::ArrayOf`).
         _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Protocol {
             step: crate::staged::Protocol::Literal(crate::staged::protocol_literals::LiteralStep::DefineArrayElement { .. }), .. })) => {}
-        opcode if opcode.is_load_env_local() => {
+        _ if super::meaning_compiled::is_load_env_local(instruction) => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
                 || instruction.numeric_local_target().is_some()
@@ -2445,7 +2445,7 @@ fn boxed(instructions: &[WideInstruction]) -> std::collections::BTreeSet<Registe
 
 /// A `typeof` of its operand: the type-name index or a fused test (`bytecode::typeof_test`).
 fn reads_type(instruction: WideInstruction) -> bool {
-    instruction.op().is_unary() && (instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+    super::meaning_compiled::is_unary(instruction) && (instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
         || crate::bytecode::typeof_test(instruction.unary_operator()).is_some())
 }
 

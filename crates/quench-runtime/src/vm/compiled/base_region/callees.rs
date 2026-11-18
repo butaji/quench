@@ -46,10 +46,10 @@ impl InlineBody {
 
 /// The constant-pool indexes `instruction` may name: a loaded constant and its constant operands.
 fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> {
-    use crate::bytecode::{Class, OperandKind};
+    use crate::bytecode::OperandKind;
     let loaded = crate::staged::Operation::<(), ()>::decode_constant_load(instruction).map(|(_, index)| index);
     let operand = |operand: crate::bytecode::Operand| (operand.kind() == Some(OperandKind::Constant)).then(|| usize::from(operand.payload()));
-    let binary = matches!(instruction.op().class(), Class::Binary | Class::NumericAdd | Class::NumericMultiply)
+    let binary = super::super::meaning_compiled::is_binary_arithmetic(instruction)
         || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }));
     let operands = binary.then(|| [operand(instruction.operand_b()), operand(instruction.operand_c())]).into_iter().flatten().flatten();
     loaded.into_iter().chain(operands)
@@ -110,7 +110,7 @@ impl Callees {
 
     /// Whether every call of `code` is a direct one (`LaneMethod::closed`).
     pub(in crate::vm::compiled) fn closed(&self, code: &[WideInstruction]) -> bool {
-        code.iter().zip(&self.at).all(|(instruction, callee)| !instruction.op().is_call() || callee.is_some())
+        code.iter().zip(&self.at).all(|(instruction, callee)| !super::super::meaning_compiled::is_call(*instruction) || callee.is_some())
     }
 
     /// What each call site recorded of its callee, by PC.

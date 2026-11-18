@@ -76,6 +76,10 @@ pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::byte
     } else { instruction };
     decoded(plain)
 }
+/// What an instruction means to the compiled tiers, classified from the shared decode (`staged/meaning_compiled.rs`).
+#[allow(dead_code)] // each classification is asked by the tier that needs it
+#[path = "../staged/meaning_compiled.rs"]
+pub(in crate::vm) mod meaning_compiled;
 
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
@@ -3837,7 +3841,7 @@ unsafe fn cached_field_read<H: Host>(vm: u64, residual: u64, receiver: u64, read
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
     if let Some(value) = vm.cached_string_field_hit(residual, Value::from_bits(receiver), atom, site) { return value.to_bits(); }
-    // A typed array's geometry, which no field cache records, as the lane's (`lane_cached_field`).
+    // A typed array's geometry, which no field cache records, as the lane's (`LaneFrame::cached_read`).
     if vm.atom_class(atom).contains(super::object::AtomClass::VIRTUAL_FIELD)
         && let Some(value) = vm.typed_array_geometry_read(Value::from_bits(receiver), atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved

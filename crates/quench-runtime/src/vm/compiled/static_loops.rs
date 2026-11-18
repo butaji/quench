@@ -55,10 +55,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
     let decoded = crate::vm::compiled::decoded(instruction);
     if !scalar_body(instruction) {
         // A plain local load decodes; `LoadLocal` and a plain slot past u16 do not.
-        if (matches!(decoded, Some(crate::staged::Operation::LoadLocalPlain { .. }
-                | crate::staged::Operation::Protocol {
-                    step: crate::staged::Protocol::Owned(crate::staged::protocol_owned::OwnedVarStep::LoadLocal { .. }), .. }))
-            || (instruction.op().loads_frame_local() && decoded.is_none())) && instruction.numeric_local_target().is_none() {
+        if super::meaning_compiled::loads_frame_local(instruction) && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
@@ -67,8 +64,8 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         }
         return;
     }
-    let value = match instruction.op() {
-        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
+    let value = match () {
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =
             program.constants.get(instruction.constant_index()).and_then(facts::immediate),
         _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
         _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => {
@@ -218,7 +215,7 @@ mod tests {
             .is_some_and(|atom| &program.atoms[atom as usize] == "step")).unwrap();
         let body = program.function(caller);
         let unit = lane_unit::unit(&program, caller as u32, body, &|owner, pc|
-            (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| op.op().is_call()))
+            (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| super::meaning_compiled::is_call(op)))
                 .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -266,7 +263,7 @@ mod tests {
         let program = crate::Engine::specialize("function one(){return 1;}function two(){return 2;}function pipe(fn){let count=fn();let value=0;for(let i=0;i<count;i=(i+1)|0)value=(value+1)|0;return value;}", "static-alternatives.js").unwrap();
         let body = program.function(3);
         let unit = lane_unit::unit(&program, 3, body, &|owner, pc| {
-            if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| op.op().is_call()) {
+            if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| super::meaning_compiled::is_call(op)) {
                 [1, 2].map(|function| CallTarget { function, callee: CalleeBinding::Function }).to_vec()
             } else { Vec::new() }
         }, &|id| program.function_get(id as usize)).unwrap();

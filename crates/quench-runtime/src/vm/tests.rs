@@ -23497,7 +23497,7 @@ fn lane_leaf_calls_read_globals_as_they_change() {
 #[test]
 fn lane_leaf_calls_share_captures_and_store_their_own_receiver() {
     // Closures sharing a capture see each other's stores through leaf calls, and a leaf whose
-    // read stores to `this` (`lane_get_field_sink`) makes its receiver its own, not its
+    // read stores to `this` (`row_get_field_sink`) makes its receiver its own, not its
     // caller's (expected values from Node).
     let source = r#"
       function make() {
