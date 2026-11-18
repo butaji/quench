@@ -1171,15 +1171,8 @@ impl<H: Host> Vm<H> {
                 None => *pc = i.jump_target() as usize,
             },
             Op::JumpBinaryFalse => {
-                let operator = i.binary_operator_field();
-                let left_operand = i.operand_b();
-                let right_operand = i.operand_c();
-                self.profile
-                    .binary(operator as usize, left_operand.0, right_operand.0);
-                let left = self.resolve_operand(p, f, left_operand)?;
-                let right = self.resolve_operand(p, f, right_operand)?;
-                if !self.binary_truthy(p, operator, left, right)? {
-                    *pc = i.jump_target() as usize;
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.jump_binary_false_miss(p, f, i, pc);
                 }
             }
             Op::Call | Op::CallArray | Op::CallSpread | Op::CallForwardingArguments => {
@@ -1657,6 +1650,21 @@ impl<H: Host> Vm<H> {
             return Ok(StepResult::Return(v));
         }
         self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn jump_binary_false_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize) -> Result<StepResult, JsError> {
+        let operator = i.binary_operator_field();
+        let left_operand = i.operand_b();
+        let right_operand = i.operand_c();
+        self.profile
+            .binary(operator as usize, left_operand.0, right_operand.0);
+        let left = self.resolve_operand(p, f, left_operand)?;
+        let right = self.resolve_operand(p, f, right_operand)?;
+        if !self.binary_truthy(p, operator, left, right)? {
+            *pc = i.jump_target() as usize;
+        }
         Ok(StepResult::Continue)
     }
 
