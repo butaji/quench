@@ -306,15 +306,18 @@ fn store_local_row(instruction: WideInstruction) -> Option<Decoded> {
 /// The heap instructions: a capture, a dense element read or store, the proof that a base is an
 /// array, the activation's `this` and its local slots, and the named ones (`named_row`).
 pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
-    match instruction.op().class() {
-        Class::LoadCapture => capture_load_row(facts, instruction),
-        Class::StoreCapture => capture_store_row(facts, instruction),
-        Class::GetIndex => index_read_row(region, facts, instruction),
-        Class::SetIndex => Some(index_write_row(region, facts, instruction)),
-        Class::RequireObjectCoercible => Some(Decoded::heap(Heap::Array, None, Some(Source::Register(instruction.register_b())), None)),
-        Class::LoadThis => this_row(instruction),
-        Class::LoadLocalPlain => load_local_row(instruction),
-        Class::StoreLocalPlain => store_local_row(instruction),
+    use crate::staged::Operation;
+    // The staged operation the instruction denotes (`Operation::decode`) names its row: the one
+    // decode every tier reads, so this tier names no opcode of its own.
+    match Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY) {
+        Some(Operation::LoadCapture { .. }) => capture_load_row(facts, instruction),
+        Some(Operation::StoreCapture { .. }) => capture_store_row(facts, instruction),
+        Some(Operation::ElementRead { .. }) => index_read_row(region, facts, instruction),
+        Some(Operation::ElementWrite { .. }) => Some(index_write_row(region, facts, instruction)),
+        Some(Operation::RequireObjectCoercible { register }) => Some(Decoded::heap(Heap::Array, None, Some(Source::Register(register)), None)),
+        Some(Operation::LoadThis { .. }) => this_row(instruction),
+        Some(Operation::LoadLocalPlain { .. }) => load_local_row(instruction),
+        Some(Operation::StoreLocalPlain { .. }) => store_local_row(instruction),
         _ => named_row(region, facts, known, pc, instruction),
     }
 }
@@ -366,28 +369,33 @@ fn names(known: Known, row: Decoded) -> Decoded {
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
 pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Option<Option<Decoded>> {
+    use crate::staged::{NumberOperation, Operation};
     let copy = || Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Register(instruction.register_b())), None, None);
     let plain = instruction.result_flags() == 0;
-    Some(match instruction.op().class() {
-        Class::Move => plain.then(copy),
+    // The moves and jumps by the staged operation the instruction denotes (`Operation::decode`).
+    match Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::EMPTY) {
+        Some(Operation::Move { .. }) => return Some(plain.then(copy)),
         // A Number operand is its own numeric value: the loop's entry guards and its own rows prove
         // it, and a function's row proves it itself (`checked`).
-        Class::ToNumeric => plain.then(|| Decoded { checked: true, ..copy() }),
+        Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
+        Some(Operation::Jump) => return Some(Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target())))),
+        Some(Operation::JumpIf { register, taken }) => return Some(Some(truthiness_jump(instruction, register, taken))),
+        _ => {}
+    }
+    Some(match instruction.op().class() {
         Class::LoadConst => load_const(numbers, instruction).ok().filter(|_| plain),
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
         Class::IncDec => inc_dec(instruction).ok().filter(|_| plain),
         Class::JumpBinaryFalse => jump_binary(numbers, instruction).ok(),
-        Class::Jump => Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target()))),
-        Class::JumpTrue | Class::JumpFalse => Some(truthiness_jump(instruction)),
         Class::Unary => unary_row(instruction).filter(|_| plain),
         _ => return None,
     })
 }
 
-/// A jump on a register's truthiness: taken where it is truthy (`JumpTrue`) or falsy.
-fn truthiness_jump(instruction: WideInstruction) -> Decoded {
-    let kind = if instruction.op().class() == Class::JumpTrue { Kind::JumpTrue } else { Kind::JumpFalse };
-    Decoded::number(kind, None, Some(Source::Register(instruction.register_a())), None, Some(instruction.jump_target()))
+/// A jump on `register`'s truthiness: taken where it is truthy (`taken`, `JumpTrue`) or falsy.
+fn truthiness_jump(instruction: WideInstruction, register: crate::bytecode::Register, taken: bool) -> Decoded {
+    let kind = if taken { Kind::JumpTrue } else { Kind::JumpFalse };
+    Decoded::number(kind, None, Some(Source::Register(register)), None, Some(instruction.jump_target()))
 }
 
 /// The row of a unary operator over a register: `!` is the boolean of its truthiness, `-` the
