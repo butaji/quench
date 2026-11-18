@@ -235,7 +235,10 @@ impl Emitter<'_> {
     fn capture_row(&self, instruction: WideInstruction) -> Option<Decoded> {
         let (values, len) = self.callee.captures;
         let slot = usize::from(instruction.capture_slot());
-        (instruction.op().class() == Class::LoadCapture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
+        let decoded = crate::vm::compiled::decoded(instruction);
+        let capture = matches!(decoded, Some(crate::staged::Operation::LoadCapture { .. }))
+            || (instruction.op().class() == Class::LoadCapture && decoded.is_none());
+        (capture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
             hole: (values + slot * std::mem::size_of::<Value>()) as u64,
             ..Decoded::heap(Heap::CalleeCapture, Some(instruction.result_register()), None, None)
         })
@@ -247,7 +250,7 @@ impl Emitter<'_> {
     }
 
     fn instruction(&mut self, pc: u32, instruction: WideInstruction) -> Result<(), Refused> {
-        if instruction.op().class() == Class::Return {
+        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
             if instruction.result_flags() != 0 {
                 return Err(Refused::Row(pc));
             }
@@ -286,7 +289,7 @@ fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Reg
         let completion = |value: Register| u32::from(value != shape.result) + u32::from(reached_after(reached, pc, callee.code.len()));
         at += if !reached.contains(pc) {
             0
-        } else if instruction.op().class() == Class::Return {
+        } else if matches!(crate::vm::compiled::decoded(*instruction), Some(crate::staged::Operation::Return { .. })) {
             completion(register(instruction.register_a()))
         } else if inlined_returning(*instruction) {
             1 + completion(register(instruction.result_register()))

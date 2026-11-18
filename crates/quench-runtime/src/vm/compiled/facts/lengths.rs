@@ -114,11 +114,17 @@ impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
     pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
-        let class = instruction.op().class();
-        let quiet = matches!(class, Class::Move | Class::LoadConst | Class::Nop | Class::Jump | Class::JumpTrue
-                | Class::JumpFalse | Class::JumpBinaryFalse | Class::IncDec)
-            || instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            || (matches!(class, Class::GetIndex) && (self.dense)(pc));
+        use crate::staged::Operation as Staged;
+        let op = instruction.op();
+        let decoded = crate::vm::compiled::decoded(instruction);
+        let quiet = matches!(op.class(), Class::JumpBinaryFalse)
+            || matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
+                | Staged::Number(crate::staged::NumberOperation::IncDec { .. })))
+            || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
+            || (op.class() == Class::IncDec && decoded.is_none())
+            || op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary
+            || ((matches!(decoded, Some(Staged::ElementRead { .. })) || (op.class() == Class::GetIndex && decoded.is_none()))
+                && (self.dense)(pc));
         !quiet || self.generic.contains(&pc)
     }
 }
@@ -155,9 +161,13 @@ impl Point {
     /// access reads or writes a hoisted view and its index is non-negative, and below the array's
     /// length (`Proven`) or below another register's value (`Versioned`).
     pub(in crate::vm::compiled) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> IndexProof {
-        let (array, index) = match instruction.op().class() {
-            Class::GetIndex => (instruction.operand_b().register_index(), instruction.operand_c().register_index()),
-            Class::SetIndex => (Some(instruction.register_b()), Some(instruction.register_c())),
+        let (array, index) = match crate::vm::compiled::decoded(instruction) {
+            Some(crate::staged::Operation::ElementRead { base, key }) => (Some(base), key.register_index()),
+            Some(crate::staged::Operation::ElementWrite { base, key, .. }) => (Some(base), Some(key)),
+            // Where the decode rejects an access (a result flag, or an operand that is no register),
+            // its operands are read as the opcode reads them.
+            None if instruction.op().class() == Class::GetIndex => (instruction.operand_b().register_index(), instruction.operand_c().register_index()),
+            None if instruction.op().class() == Class::SetIndex => (Some(instruction.register_b()), Some(instruction.register_c())),
             _ => return IndexProof::Check,
         };
         let Some((array, index)) = array.zip(index) else { return IndexProof::Check };

@@ -26,9 +26,13 @@ fn observed(parameters: &[Value]) -> (Vec<Register>, Vec<Register>) {
 /// Whether `code` indexes a register an entry's parameter holds a typed array in: a body has no row of a typed
 /// element (its loop regions do), so its first access of one would leave, and every entry after it.
 fn indexes_typed_parameter(code: &[WideInstruction], is_typed: impl Fn(Register) -> bool) -> bool {
-    code.iter().any(|instruction| match instruction.op().class() {
-        Class::GetIndex => instruction.operand_b().register_index().is_some_and(&is_typed),
-        Class::SetIndex => is_typed(instruction.register_b()),
+    code.iter().any(|instruction| match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::ElementRead { base, .. }) => is_typed(base),
+        Some(crate::staged::Operation::ElementWrite { base, .. }) => is_typed(base),
+        // Where the decode rejects an access (a result flag, or an operand that is no register), its
+        // operands are read as the opcode reads them.
+        None if instruction.op().class() == Class::GetIndex => instruction.operand_b().register_index().is_some_and(&is_typed),
+        None if instruction.op().class() == Class::SetIndex => is_typed(instruction.register_b()),
         _ => false,
     })
 }

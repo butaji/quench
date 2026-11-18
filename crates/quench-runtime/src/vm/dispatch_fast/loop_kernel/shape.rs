@@ -308,17 +308,29 @@ impl<'a> Graph<'a> {
         if writes_local(instruction) {
             return Err(());
         }
-        let value = match instruction.op().class() {
-            Class::LoadConst => self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const),
-            Class::Move => file.get(usize::from(instruction.register_b())).copied(),
-            Class::LoadCapture => Some(Sym::Capture(instruction.imm())),
-            Class::GetField => self.field(instruction),
-            Class::IncDec => self.inc_dec(instruction, file),
-            Class::GetIndex => self.get_index(instruction, file),
-            Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
-            Class::SetIndex => return self.set_index(instruction, file).map(|()| None).ok_or(()),
-            Class::Nop => return Ok(None),
-            _ => None,
+        use crate::staged::{NumberOperation, Operation};
+        let decoded = crate::vm::compiled::decoded(instruction);
+        let value = match decoded {
+            Some(Operation::Move { source, .. }) => file.get(usize::from(source)).copied(),
+            Some(Operation::LoadCapture { .. }) => Some(Sym::Capture(instruction.imm())),
+            Some(Operation::GetField { .. }) => self.field(instruction),
+            Some(Operation::Number(NumberOperation::IncDec { .. })) => self.inc_dec(instruction, file),
+            Some(Operation::ElementRead { .. }) => self.get_index(instruction, file),
+            Some(Operation::ElementWrite { .. }) => return self.set_index(instruction, file).map(|()| None).ok_or(()),
+            Some(Operation::Nop) => return Ok(None),
+            _ => match Operation::<(), ()>::decode_constant_load(instruction) {
+                Some((_, index)) => self.constants.get(index).and_then(|v| v.as_number()).map(Sym::Const),
+                // A record the decode rejects (a flagged read or write) keeps the path its opcode took.
+                None => match instruction.op().class() {
+                    Class::LoadCapture => Some(Sym::Capture(instruction.imm())),
+                    Class::GetField => self.field(instruction),
+                    Class::IncDec => self.inc_dec(instruction, file),
+                    Class::GetIndex => self.get_index(instruction, file),
+                    Class::SetIndex => return self.set_index(instruction, file).map(|()| None).ok_or(()),
+                    Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
+                    _ => None,
+                },
+            },
         };
         value.map(Some).ok_or(())
     }
@@ -358,7 +370,17 @@ fn shifted(kind: SymOp, a: Sym, b: Sym) -> Option<Sym> {
 
 /// Whether `instruction` writes a numeric local besides its result, which no kernel models.
 fn writes_local(instruction: WideInstruction) -> bool {
-    !matches!(instruction.op().class(), Class::SetIndex | Class::Nop) && instruction.numeric_local_target().is_some()
+    !is_element_write_or_nop(instruction) && instruction.numeric_local_target().is_some()
+}
+
+/// Whether `instruction` decodes as an element store or a `Nop`; a store the decode rejects keeps
+/// the opcode test.
+fn is_element_write_or_nop(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::Nop) => true,
+        Some(_) => false,
+        None => matches!(instruction.op().class(), Class::SetIndex | Class::Nop),
+    }
 }
 
 /// The registers `body` writes.

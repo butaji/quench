@@ -251,18 +251,21 @@ fn transfer(
     native_calls: bool,
 ) -> Flow {
     let op = instruction.op();
+    let decoded = crate::vm::compiled::decoded(instruction);
     match op.class() {
-        Class::LoadConst => {
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() => {
             let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
             set(types, instruction.result_register(), ty);
             Flow::Next
         }
-        Class::Move => {
+        _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             set(types, instruction.result_register(), source);
             Flow::Next
         }
-        Class::IncDec if instruction.numeric_local_target().is_none() => {
+        _ if instruction.numeric_local_target().is_none() && (matches!(decoded,
+            Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))
+            || (op.class() == Class::IncDec && decoded.is_none())) => {
             // The operand is proved int32 or the instruction leaves.
             ranges::step(types, instruction);
             Flow::Next
@@ -299,14 +302,30 @@ fn transfer(
                 // An instruction the analysis does not model continues with the registers it
                 // writes unknown, and with no object shape kept unless it cannot change one: the
                 // code after it is typed whether the lowering runs it natively or leaves at it.
-                ControlFlowLayout::Fallthrough => forget_shapes(types, !matches!((op.is_named_field_access(), op.class()),
-                    (true, _) | (_, Class::Nop | Class::LoadThis | Class::LoadCapture | Class::GetIndex | Class::SetIndex))),
+                ControlFlowLayout::Fallthrough => forget_shapes(types, !keeps_shapes(instruction, decoded)),
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
                 _ => Flow::Leaves,
             }
         }
+    }
+}
+
+/// Whether an instruction the analysis does not model keeps every object's shape: a named field
+/// read or store, a Nop, a `this` load, a capture read or an element access, by its staged
+/// operation `decoded`. Where the decode rejects a field read, a capture read or an element access
+/// (a result flag, or an operand that is no register), the opcode decides as before.
+fn keeps_shapes(instruction: WideInstruction, decoded: Option<crate::staged::Operation<(), ()>>) -> bool {
+    use crate::staged::Operation as Staged;
+    match decoded {
+        Some(Staged::GetField { .. } | Staged::SetField { .. } | Staged::Nop | Staged::LoadThis { .. }
+            | Staged::LoadCapture { .. } | Staged::ElementRead { .. } | Staged::ElementWrite { .. }) => true,
+        None => {
+            let op = instruction.op();
+            op.is_named_field_access() || matches!(op.class(), Class::LoadCapture | Class::GetIndex | Class::SetIndex)
+        }
+        Some(_) => false,
     }
 }
 
@@ -321,9 +340,11 @@ fn forget_shapes(types: &mut [Type], forget: bool) -> Flow {
 /// instruction leaves (`Lowering::instruction`, `Lowering::unary`); `None` for any other.
 fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Flow> {
     let op = instruction.op();
+    let decoded = crate::vm::compiled::decoded(instruction);
     match op.class() {
         // A Number is its own ToNumeric; an untyped operand is taken for an int32 and tested once.
-        Class::ToNumeric if !instruction.returns_from_frame() => {
+        _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. })))
+            && !instruction.returns_from_frame() => {
             let source = types.get(usize::from(instruction.register_b())).copied().unwrap_or(Type::ANY);
             let ty = if source.is_subtype(Type::NUMBER) { source } else { Type::INT32 };
             set(types, instruction.register_b(), ty);
@@ -339,7 +360,7 @@ fn unary_transfer(types: &mut [Type], instruction: WideInstruction) -> Option<Fl
             Some(Flow::Next)
         }
         // A null or undefined operand leaves; the operand's type is unchanged.
-        Class::RequireObjectCoercible => Some(Flow::Next),
+        _ if matches!(decoded, Some(crate::staged::Operation::RequireObjectCoercible { .. })) => Some(Flow::Next),
         _ => None,
     }
 }

@@ -294,7 +294,14 @@ impl OsrFacts {
 pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
     let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
-        .filter(|(pc, instruction)| instruction.op().is_get_index() && !abandoned.contains(pc))
+        .filter(|(pc, instruction)| {
+            let decoded = crate::vm::compiled::decoded(*instruction);
+            // Where the decode rejects a GetIndex (a result flag, or an operand that is no register),
+            // the opcode decides as before.
+            let read = matches!(decoded, Some(crate::staged::Operation::ElementRead { .. }))
+                || (instruction.op().is_get_index() && decoded.is_none());
+            read && !abandoned.contains(pc)
+        })
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
             let ty = number_arrays.iter().find(|(array, _)| *array == register)?.1;

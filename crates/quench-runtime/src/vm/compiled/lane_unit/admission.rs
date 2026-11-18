@@ -33,7 +33,7 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
             Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
         },
-        _ if instruction.op().is_field_store() => plain,
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => plain,
         // A fused `typeof` test (`Lowering::typeof_test`), a `typeof` switch's index
         // (`Lowering::typeof_index`); any other unary leaves where the lowering has none.
         opcode if opcode.is_unary() => plain,
@@ -47,7 +47,7 @@ pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function,
     if super::super::lane_region::restartable_numeric_function(program, function, code) { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
         opcode if opcode.is_set_index() || opcode.is_call() => false,
-        _ if instruction.op().is_field_store() => false,
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => false,
         opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
         opcode if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: false, .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: true, .. })) || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.

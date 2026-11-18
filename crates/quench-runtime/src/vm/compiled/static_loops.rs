@@ -62,9 +62,11 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         }
         return;
     }
+    let decoded = crate::vm::compiled::decoded(instruction);
     let value = match instruction.op().class() {
-        Class::LoadConst => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
-        Class::Move => values.get(usize::from(instruction.register_b())).copied().flatten(),
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
+            program.constants.get(instruction.constant_index()).and_then(facts::immediate),
+        _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
         Class::IncDec if instruction.numeric_local_target().is_none() => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
                 .zip(instruction.boolean_flag()).map(|(value, decrement)| Value::number(if decrement { value - 1.0 } else { value + 1.0 }))
@@ -94,7 +96,9 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
 
 fn scalar_body(instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
-        && (matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::IncDec)
+        && (crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
+            || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. }))
+            || matches!(instruction.op().class(), Class::IncDec)
             || (instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
                 && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
                     || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()

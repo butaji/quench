@@ -37,13 +37,24 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
     WindowRecord::Local(match op.class() {
         Class::MakeClosure => instruction.imm(),
         Class::CloneEnv => 0,
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
+        Class::LoadLocal | Class::LoadEnvLocal | Class::StoreLocal
         | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
         // A function's Annex B store to its `var` binding is a store to the slot
         // (`Function::window_reads_locals`).
         Class::StoreVarBinding if function.parent.is_some() => instruction.local_slot() as u32,
+        _ if is_plain_local(instruction) => instruction.local_slot() as u32,
         _ => return WindowRecord::Keeps,
     })
+}
+
+/// Whether `instruction` decodes as a plain local load or store; a record the decode rejects (a slot
+/// past u16) keeps the opcode test.
+fn is_plain_local(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::LoadLocalPlain { .. } | crate::staged::Operation::StoreLocalPlain { .. }) => true,
+        Some(_) => false,
+        None => matches!(instruction.op().class(), Class::LoadLocalPlain | Class::StoreLocalPlain),
+    }
 }
 
 /// The handler of the window record of `op` on local slot `own`: the mapped parameter's, the program

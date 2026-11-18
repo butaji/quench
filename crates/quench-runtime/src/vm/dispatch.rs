@@ -1224,7 +1224,11 @@ impl<H: Host> Vm<H> {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile
                     .branch_value(value.profile_kind() as usize, truthy);
-                if truthy == (i.op() == Op::JumpTrue) {
+                let jumps_when_truthy = matches!(
+                    crate::vm::compiled::decoded(i),
+                    Some(crate::staged::Operation::JumpIf { taken: true, .. })
+                );
+                if truthy == jumps_when_truthy {
                     *pc = i.jump_target() as usize;
                 }
             }
@@ -1680,6 +1684,7 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "native-execution")]
     pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
+        let decoded = crate::vm::compiled::decoded(i);
         match i.op() {
             Op::Construct => {
                 let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
@@ -1688,7 +1693,11 @@ impl<H: Host> Vm<H> {
                 (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
             }
             // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-            Op::GetField => (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value),
+            _ if matches!(decoded, Some(crate::staged::Operation::GetField { .. }))
+                || (decoded.is_none() && i.op() == Op::GetField) =>
+            {
+                (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
+            }
             _ => (self.read(caller, i.register_b()), i.call_window(), self.read(caller, i.register_c()), CallCompletion::Value),
         }
     }

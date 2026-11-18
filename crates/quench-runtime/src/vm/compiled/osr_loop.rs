@@ -286,7 +286,7 @@ fn field_path(
     sites: &[FieldSite],
     held: &std::collections::BTreeMap<Register, FieldPath>,
 ) -> Option<FieldPath> {
-    (instruction.op().is_get_field() && instruction.result_flags() == 0).then_some(())?;
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::GetField { .. })).then_some(())?;
     let from = |base: FieldBase| -> Option<FieldPath> {
         if base == FieldBase::THIS {
             return Some(FieldPath { root: FieldReceiver::This, steps: Vec::new() });
@@ -501,14 +501,12 @@ fn tagged_registers_with_failure(
             .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| call_window_tagged(instructions, &numeric_uses, offset, instruction)))
         .chain(instructions.iter().filter_map(|instruction| {
-            if !instruction.op().is_load_const() {
-                return None;
-            }
+            let (destination, index) = crate::staged::Operation::<(), ()>::decode_constant_load(*instruction)?;
             constants
-                .get(instruction.constant_index())?
+                .get(index)?
                 .as_number()
                 .is_none()
-                .then_some(instruction.result_register())
+                .then_some(destination)
         }))
         .chain(held.iter().copied())
         // A field receiver the region's field or element reads give holds an object.
@@ -584,8 +582,8 @@ fn tag_definition(instruction: WideInstruction, offset: usize, (constants, heade
 /// reason it cannot be admitted: only a definition that may carry a boxed value can be tagged.
 fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<Option<Register>, String> {
     let op = instruction.op();
-    if op.is_load_const() {
-        return constants.get(instruction.constant_index()).map(|_| None).ok_or_else(|| "missing_constant".to_owned());
+    if let Some((_, index)) = crate::staged::Operation::<(), ()>::decode_constant_load(instruction) {
+        return constants.get(index).map(|_| None).ok_or_else(|| "missing_constant".to_owned());
     }
     if carries_boxed(instruction) {
         return Ok(None);
@@ -1033,8 +1031,7 @@ pub(super) fn inline_region<'a>(
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
         let definition = caller[read_offset];
-        let capture = (definition.op().is_load_capture()
-            && definition.capture_depth() == 0 && definition.result_flags() == 0)
+        let capture = matches!(crate::vm::compiled::decoded(definition), Some(crate::staged::Operation::LoadCapture { depth: 0, .. }))
             .then(|| definition.capture_slot());
         let mut callee_path = if capture.is_some() { None } else {
             Some(field_path(definition, sites, &std::collections::BTreeMap::new())?)
@@ -1851,8 +1848,8 @@ fn admit_register_roles(
         }
         if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays).is_none() {
             if crate::trace::Channel::OsrReject.on() {
-                let constant = (instruction.op().is_load_const())
-                    .then(|| constants.get(instruction.constant_index()).copied());
+                let constant = crate::staged::Operation::<(), ()>::decode_constant_load(instruction)
+                    .map(|(_, index)| constants.get(index).copied());
                 let result = instruction.defined_register();
                 eprintln!(
                     "QUENCH_JS_JIT_OSR_REJECT header={header} offset={offset} op={:?} a={} b={} c={} imm={} constants_len={} result={result:?} tagged_result={} result_role={:?} constant={:?}",
@@ -1981,7 +1978,7 @@ fn admit_register_roles(
         return Err(RegionAnalysisFailure { reason: RegionRejection::ArrayLimit, pc: backedge });
     }
     let stored: std::collections::BTreeSet<u16> = instructions.iter()
-        .filter(|instruction| instruction.op().is_store_capture() && instruction.capture_depth() == 0)
+        .filter(|instruction| matches!(crate::vm::compiled::decoded(**instruction), Some(crate::staged::Operation::StoreCapture { depth: 0, .. })))
         .map(|instruction| instruction.capture_slot())
         .collect();
     let (stored_captures, captures) = admission.captures.into_iter().partition(|slot| stored.contains(slot));
@@ -2034,7 +2031,7 @@ fn admit(
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
-        opcode if opcode.is_load_const() => {
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() => {
             let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
                 admission.any_constant(index)?;
@@ -2134,7 +2131,7 @@ fn admit(
         }
         // The lane stores through the binding's own store, and a binding it does not take
         // leaves; the entry snapshot holds no slot the region stores (`stored_captures`).
-        opcode if opcode.is_store_capture() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::StoreCapture { .. })) => {
             let value = instruction.register_a();
             admit_stored(admission, value, tagged, defined_registers)?;
         }

@@ -6175,7 +6175,7 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
     let instruction = body.widened(body.code[pc]);
-    if !instruction.op().is_set_index() {
+    if !decoded_element_write(instruction) {
         return Resumed::Exit(exit(ip));
     }
     let strict = body.strict || instruction.boolean_flag().unwrap_or(false);
@@ -10569,10 +10569,12 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
     let counted = machine.programs.get(machine.active_program).as_deref().and_then(|program| {
         let body = program.function(site.function() as usize);
         body.code.get(pc as usize).and_then(|packed| {
-            let op = body.widened(*packed).op();
+            let instruction = body.widened(*packed);
+            let op = instruction.op();
             super::compiled::base_region::leave(site.function(), pc, op);
-            (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || op.is_field_store() || matches!(op.class(), Class::LoadCapture)).then(|| (op.is_get_index(), op.is_field_store()))
+            (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || decoded_element_read(instruction)
+                || op.stores_element() || decoded_field_store(instruction) || decoded_capture_load(instruction))
+                .then(|| (decoded_element_read(instruction), decoded_field_store(instruction)))
         })
     });
     match counted {
@@ -10895,7 +10897,7 @@ fn lane_loop_trace_exit<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &L
             let body = unsafe { &*(*cx).code }.function_get(site.function as usize);
             if let Some((body, packed)) = body.and_then(|body| body.code.get(pc as usize).map(|packed| (body, *packed))) {
                 let instruction = body.widened(packed);
-                if instruction.op().is_set_index() {
+                if decoded_element_write(instruction) {
                     let key = r.get(instruction.register_c());
                     let base = r.get(instruction.register_b());
                     if let Some(array) = unsafe { vm(cx) }.heap.record_array(base) {
@@ -19628,14 +19630,16 @@ const LANE_SCRIPT_WINDOW: usize = 4 * ACTIVATION_FILL_BLOCK;
 /// A Wasm view's handler for `op` where it differs from a JavaScript view's: a reference call
 /// enters Wasm functions and a return completes a Wasm activation; a capture store's handler
 /// reads the context a Wasm view lacks.
-fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
+fn wasm_lane_handler<H: Host>(instruction: WideInstruction) -> Option<Option<LaneHandler>> {
     let call = LaneHandler { handler: reference_call_handler::<H>(), produces: false };
     let ret = LaneHandler { handler: lane_return_wasm::<H>, produces: false };
-    match op.class() {
-        Class::Call => Some(Some(call)),
-        Class::StoreCapture => Some(None),
-        Class::Return => Some(Some(ret)),
-        _ => None,
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::StoreCapture { .. }) => Some(None),
+        Some(crate::staged::Operation::Return { .. }) => Some(Some(ret)),
+        _ => match instruction.op().class() {
+            Class::Call => Some(Some(call)),
+            _ => None,
+        },
     }
 }
 
@@ -22023,7 +22027,7 @@ fn lane_operand(
         ImmediateRole::ConstantIndex => LaneOperand {
             constant: *constants.get(instruction.imm() as usize)?,
         },
-        _ if holds_field_hint(instruction.op()) => LaneOperand {
+        _ if holds_field_hint(instruction) => LaneOperand {
             field: FieldOperand { imm: instruction.imm(), shape: super::NO_FIELD_RECEIVER },
         },
         _ if instruction.op().makes_script_call() => LaneOperand {
@@ -22052,7 +22056,7 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
                 && !instruction.is_super_construct()
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
-        Class::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
+        _ if decoded_field_read(instruction) => lane_returns(instruction) || lane_sinks_field(instruction),
         Class::Unary | Class::MakeObject2 | Class::SuperConstArrayObject2 | Class::MakeObjectLiteral => {
             lane_returns(instruction)
         }
@@ -22181,19 +22185,22 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
-        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
+        record(offset).is_some_and(|read| decoded_field_read(read) && read.result_flags() == 0 && read.b() == result)
     };
     record(FOR_OF_REQUIRE_RESULT).filter(|require| require.op().class() == Class::RequireIteratorResult)?;
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
-    let form = match test.op().class() {
-        Class::JumpFalse => ForOfTest::Emitted,
-        Class::JumpTrue => ForOfTest::Threaded,
+    let form = match crate::vm::compiled::decoded(test) {
+        Some(crate::staged::Operation::JumpIf { taken: false, .. }) => ForOfTest::Emitted,
+        Some(crate::staged::Operation::JumpIf { taken: true, .. }) => ForOfTest::Threaded,
         _ => return None,
     };
     let exit = record(form.exit())?;
-    let leaves = exit.op().class().eq(if form == ForOfTest::Emitted { Class::Jump } else { Class::JumpTrue })
-        && exit.jump_target() as usize > pc + form.value_read();
+    let leaves = match crate::vm::compiled::decoded(exit) {
+        Some(crate::staged::Operation::Jump) => form == ForOfTest::Emitted,
+        Some(crate::staged::Operation::JumpIf { taken: true, .. }) => form == ForOfTest::Threaded,
+        _ => false,
+    } && exit.jump_target() as usize > pc + form.value_read();
     let enters = form == ForOfTest::Threaded || test.jump_target() as usize == pc + form.value_read();
     (leaves && enters && reads_result(form.value_read())).then_some(form)
 }
@@ -22215,7 +22222,7 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
     let result = decoded[pc].result_register();
     let record = |offset: usize| decoded.get(pc + offset).copied();
     let reads_result = |offset: usize| {
-        record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
+        record(offset).is_some_and(|read| decoded_field_read(read) && read.result_flags() == 0 && read.b() == result)
     };
     let (Some(done), Some(flag), Some(test), Some(value)) =
         (record(BINDING_DONE_READ), record(BINDING_DONE_MOVE), record(BINDING_DONE_TEST), record(BINDING_VALUE_READ))
@@ -22225,17 +22232,72 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
     let done = done.result_register();
     reads_result(BINDING_DONE_READ)
         && reads_result(BINDING_VALUE_READ)
-        && flag.op().is_move()
+        && matches!(crate::vm::compiled::decoded(flag), Some(crate::staged::Operation::Move { .. }))
         && flag.result_flags() == 0
         && flag.b() == done
         && flag.a() != done
         && flag.a() != result
-        && test.op().class().eq(Class::JumpTrue)
+        && matches!(crate::vm::compiled::decoded(test), Some(crate::staged::Operation::JumpIf { taken: true, .. }))
         && test.a() == done
         && test.jump_target() as usize > pc + BINDING_VALUE_READ
         && value.result_register() != done
         && value.result_register() != flag.a()
         && pc + BINDING_VALUE_READ + 1 < decoded.len()
+}
+
+/// Whether `instruction` is an element read the decoder takes as `ElementRead`. Where it
+/// rejects the record (`decoded` is `None`), the opcode test keeps the read the lane always made.
+fn decoded_element_read(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::ElementRead { .. }) => true,
+        Some(_) => false,
+        None => instruction.op().is_get_index(),
+    }
+}
+
+/// Whether `instruction` is an element store the decoder takes as `ElementWrite`. Where it
+/// rejects the record (`decoded` is `None`), the opcode test keeps the store the lane always made.
+fn decoded_element_write(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::ElementWrite { .. }) => true,
+        Some(_) => false,
+        None => instruction.op().is_set_index(),
+    }
+}
+
+/// Whether `instruction` is a named field read the decoder takes as `GetField`. Where it
+/// rejects the record (`decoded` is `None`: no field lookup), the opcode test keeps the read.
+fn decoded_field_read(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::GetField { .. }) => true,
+        Some(_) => false,
+        None => instruction.op().is_get_field(),
+    }
+}
+
+/// Whether `instruction` is a named field store (`SetField`, the decoder takes every one).
+fn decoded_field_store(instruction: WideInstruction) -> bool {
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
+}
+
+/// Whether `instruction` is a capture read the decoder takes as `LoadCapture`. Where it rejects
+/// the record (`decoded` is `None`), the opcode test keeps the read the lane always made.
+fn decoded_capture_load(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::LoadCapture { .. }) => true,
+        Some(_) => false,
+        None => instruction.op().class() == Class::LoadCapture,
+    }
+}
+
+/// Whether `instruction` is a plain local load the decoder takes as `LoadLocalPlain`. Where it
+/// rejects the record (`decoded` is `None`: a slot past `u16`), the opcode test keeps the load.
+fn decoded_local_plain_load(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::LoadLocalPlain { .. }) => true,
+        Some(_) => false,
+        None => instruction.op().class() == Class::LoadLocalPlain,
+    }
 }
 
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
@@ -22434,7 +22496,8 @@ fn derive_lane_view<'live, H: Host>(
             {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| LaneHandler::producer(handler))
-            } else if matches!(op.class(), Class::LoadLocal | Class::LoadLocalPlain | Class::ArgumentsLength | Class::ArgumentGet)
+            } else if (matches!(op.class(), Class::LoadLocal | Class::ArgumentsLength | Class::ArgumentGet)
+                || decoded_local_plain_load(instruction))
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
@@ -22476,14 +22539,14 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op.is_store_env_local() && resolves_names {
                 None
-            } else if op.is_get_field() && lane_sinks_field(instruction) {
+            } else if decoded_field_read(instruction) && lane_sinks_field(instruction) {
                 Some(LaneHandler {
                     handler: lane_get_field_sink_first::<H> as Handler,
                     produces: false,
                 })
             } else if let Some(kind) = returning_kind(instruction) {
                 Some(LaneHandler { handler: returning_handler::<H>(kind), produces: false })
-            } else if let Some(handler) = wasm.then(|| wasm_lane_handler::<H>(op)).flatten() {
+            } else if let Some(handler) = wasm.then(|| wasm_lane_handler::<H>(instruction)).flatten() {
                 handler
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)]
@@ -22818,7 +22881,7 @@ fn derive_lane_view<'live, H: Host>(
                 || ![ACC_NONE, ACC_B, ACC_C, ACC_PAIR]
                     .into_iter()
                     .any(|acc| serves(records[pc + 2].handler, opc::WasmSelect, acc))
-                || !constant.op().is_load_const()
+                || crate::staged::Operation::<(), ()>::decode_constant_load(constant).is_none()
             {
                 continue;
             }
@@ -22867,7 +22930,7 @@ fn derive_lane_view<'live, H: Host>(
     let record_bytes = size_of::<LaneInstruction>() as isize;
     for (pc, &instruction) in decoded.iter().enumerate() {
         let target = instruction.imm() as usize;
-        if !instruction.op().is_jump()
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump))
             || jump_direction(records[pc].handler).is_none()
             || entry_jumps.contains(pc)
             || target + 1 >= records.len()
@@ -23143,7 +23206,8 @@ fn derive_lane_view<'live, H: Host>(
                 if carrying_zero_jump(records[pc].handler).is_some() {
                     continue;
                 }
-                if !instruction.op().is_jump() || entry_jumps.contains(pc) || entries.contains(pc) || pc == 0 {
+                if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump))
+                    || entry_jumps.contains(pc) || entries.contains(pc) || pc == 0 {
                     return None;
                 }
                 let then = JumpFusions::<H>::THEN
@@ -23249,7 +23313,7 @@ fn derive_lane_view<'live, H: Host>(
                     && !entries.contains(pc + 1)
                     && !entries.contains(pc + 2)
                     && !entries.contains(pc + 3)
-                    && decoded[pc + 3].op().is_move()
+                    && matches!(crate::vm::compiled::decoded(decoded[pc + 3]), Some(crate::staged::Operation::Move { .. }))
                     && let Some(store_op) = Some(decoded[pc + 2].op())
                     && let Some(fused) = store_move_handler::<H>(store_op, ACC_NONE)
                     && records[pc + 2].handler == fused as *const ()
@@ -23439,7 +23503,7 @@ fn derive_lane_view<'live, H: Host>(
             .iter()
             .enumerate()
             .filter(|&(pc, instruction)| {
-                holds_field_hint(instruction.op())
+                holds_field_hint(*instruction)
                     && is_global_name_access(instruction.op()) == names
                     && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
             })
@@ -23484,7 +23548,7 @@ fn derive_lane_view<'live, H: Host>(
         plain_backward_jump_sites: decoded
             .iter()
             .enumerate()
-            .filter(|(pc, instruction)| instruction.op().is_jump() && instruction.jump_target() <= *pc as u32)
+            .filter(|(pc, instruction)| matches!(crate::vm::compiled::decoded(**instruction), Some(crate::staged::Operation::Jump)) && instruction.jump_target() <= *pc as u32)
             .count(),
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
@@ -23496,8 +23560,9 @@ fn derive_lane_view<'live, H: Host>(
 /// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
 /// operand: every field read or store's of its receiver, and a global name access's or top-level
 /// `var` capture read's of the global object (`lane_load_name_bound`, `lane_load_root_var`).
-fn holds_field_hint(op: Op) -> bool {
-    op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
+fn holds_field_hint(instruction: WideInstruction) -> bool {
+    decoded_field_store(instruction) || decoded_field_read(instruction) || decoded_capture_load(instruction)
+        || is_global_name_access(instruction.op())
 }
 
 /// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
@@ -23552,7 +23617,7 @@ fn install_loop_sites<'live, H: Host>(
     let live = || *masks.get_or_init(live);
     let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
-        .filter(|pc| records[*pc].handler == backward && decoded[*pc].op().is_jump() && !fused_into(*pc))
+        .filter(|pc| records[*pc].handler == backward && matches!(crate::vm::compiled::decoded(decoded[*pc]), Some(crate::staged::Operation::Jump)) && !fused_into(*pc))
         .map(|pc| {
             let header = decoded[pc].jump_target();
             let (region, promotion_only, analysis_failure, call_boundary_pcs) = match super::compiled::analyze_osr_region_detailed(
@@ -25042,8 +25107,8 @@ fn may_loop(function: &Function) -> bool {
 /// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
 /// without the general loop (`Vm::lane_stop_awaits`), so a short run to it repays its entry.
 fn lane_runs_ahead(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
-    let next = |pc: usize| match decoded[pc].op().class() {
-        Class::Jump if follows_jumps => decoded[pc].imm() as usize,
+    let next = |pc: usize| match crate::vm::compiled::decoded(decoded[pc]) {
+        Some(crate::staged::Operation::Jump) if follows_jumps => decoded[pc].imm() as usize,
         _ => pc + 1,
     };
     let mut runs = vec![0usize; exits.len()];
@@ -25075,9 +25140,10 @@ fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
         if exits.get(pc).is_none_or(|exits| *exits) {
             return false;
         }
-        match decoded[pc].op().class() {
-            Class::Return => return true, _ if decoded[pc].returns_from_frame() => return true, // fused with its return
-            Class::Jump => pc = decoded[pc].imm() as usize,
+        match crate::vm::compiled::decoded(decoded[pc]) {
+            Some(crate::staged::Operation::Return { .. }) => return true,
+            _ if decoded[pc].returns_from_frame() => return true, // fused with its return
+            Some(crate::staged::Operation::Jump) => pc = decoded[pc].imm() as usize,
             _ => pc += 1,
         }
     }

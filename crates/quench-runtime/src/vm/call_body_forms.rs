@@ -67,7 +67,7 @@ fn forwarding_read_body(body: &Function) -> bool {
 /// A `GetField` of `this` or a parameter, into a register past the parameters that the
 /// call's copies leave.
 fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    field.op().is_get_field()
+    matches!(crate::vm::compiled::decoded(field), Some(crate::staged::Operation::GetField { .. }))
         && field.result_flags() == 0
         && field.result_register() >= body.params
         && survives_copies(field.result_register())
@@ -77,7 +77,7 @@ fn reads_receiver_field(field: WideInstruction, body: &Function, survives_copies
 /// A `GetField` of `field`'s value, into another register past the parameters that the
 /// call's copies leave.
 fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function, survives_copies: impl Fn(u16) -> bool) -> bool {
-    method.op().is_get_field()
+    matches!(crate::vm::compiled::decoded(method), Some(crate::staged::Operation::GetField { .. }))
         && method.result_flags() == 0
         && method.result_register() >= body.params
         && method.result_register() != field.result_register()
@@ -89,7 +89,7 @@ fn reads_method(method: WideInstruction, field: WideInstruction, body: &Function
 fn moves_parameters(body: &Function, moves: &[crate::bytecode::Instr], window: u16) -> bool {
     moves.iter().zip(0..body.params).all(|(&packed, parameter)| {
         let moved = body.widened(packed);
-        moved.op().is_move() && moved.b() == parameter && moved.a() == window + parameter
+        matches!(crate::vm::compiled::decoded(moved), Some(crate::staged::Operation::Move { .. })) && moved.b() == parameter && moved.a() == window + parameter
     })
 }
 
@@ -116,7 +116,7 @@ fn element_read_body(body: &Function) -> bool {
         && element.op().is_get_index()
         && element.b() == field.a()
         && element.c() < body.params
-        && done.op().is_return()
+        && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
         && done.a() == element.a()
 }
 
@@ -132,7 +132,9 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
 /// `() => binding` compiles.
 fn capture_read_body(body: &Function) -> bool {
     leading_pair(body).is_some_and(|[load, done]| {
-        load.op().is_load_capture() && !load.returns_from_frame() && done.op().is_return() && done.a() == load.a()
+        load.op().is_load_capture() && !load.returns_from_frame()
+            && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
+            && done.a() == load.a()
     })
 }
 
@@ -142,7 +144,10 @@ fn this_read_body(body: &Function) -> bool {
     !body.is_arrow
         && !body.is_class_constructor
         && leading_pair(body).is_some_and(|[load, done]| {
-            load.op().is_load_this() && !load.returns_from_frame() && done.op().is_return() && done.a() == load.a()
+            matches!(crate::vm::compiled::decoded(load), Some(crate::staged::Operation::LoadThis { .. }))
+                && !load.returns_from_frame()
+                && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
+                && done.a() == load.a()
         })
 }
 
@@ -204,7 +209,9 @@ fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProg
         // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
         // place (`lane_set_field_in_place`) or on the general path, either of which makes
         // the leaf an activation first.
-        op if op.is_field_store() => return store_leaf(instruction, private),
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => {
+            return store_leaf(instruction, private)
+        }
         // A global name's first load finds the running function (`lane_name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,

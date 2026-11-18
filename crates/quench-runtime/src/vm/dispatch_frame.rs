@@ -1627,7 +1627,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let returned = match self.lane_completion.take_returned() {
             Some(value) => Some(value),
-            None if instruction.op().is_return() => Some(self.read(frame, instruction.register_a())),
+            None if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) => Some(self.read(frame, instruction.register_a())),
             None => None,
         };
         if let Some(value) = returned {
@@ -1920,13 +1920,14 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op() as u16, index::CloneEnv | index::Return | index::GetField | index::GetIndex | index::SetIndex | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse) || instruction.op().is_field_store() {
+                    if matches!(instruction.op() as u16, index::CloneEnv | index::GetField | index::GetIndex | index::SetIndex | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse)
+                        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. } | crate::staged::Operation::SetField { .. })) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         // A store names its cache site and field, which tell a shared overflow site
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
-                        let store = instruction.op().is_field_store()
+                        let store = matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
                             .or_else(|| {
                                 instruction.op().is_throwing_name_load()
@@ -1937,7 +1938,7 @@ impl<H: Host> Vm<H> {
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
-                    if instruction.op().is_return() && pending_calls.is_empty() {
+                    if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) && pending_calls.is_empty() {
                         let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
                         let described = match starter.and_then(|callable| self.heap.function(callable)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
@@ -2186,7 +2187,7 @@ impl<H: Host> Vm<H> {
                     #[cfg(feature = "profile-aggregate")]
                     self.profile
                         .branch_value(value.profile_kind() as usize, truthy);
-                    if truthy == (ins.op().is_jump_true()) {
+                    if truthy == matches!(crate::vm::compiled::decoded(ins), Some(crate::staged::Operation::JumpIf { taken: true, .. })) {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);

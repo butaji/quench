@@ -410,7 +410,7 @@ pub(super) fn typed_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> 
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = loop_tier::lane_loop_function(cx, code) else { return Vec::new() };
     let mut slots: Vec<u16> = function.instructions()
-        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .filter(|instruction| is_capture_load(instruction) && instruction.capture_depth() == 0)
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
@@ -426,12 +426,21 @@ pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
     let code = unsafe { &*(*cx).code };
     let Some((_, function, _, _)) = lane_loop_function(cx, code) else { return Vec::new() };
     let mut slots: Vec<u16> = function.instructions()
-        .filter(|instruction| instruction.op().is_load_capture() && instruction.capture_depth() == 0)
+        .filter(|instruction| is_capture_load(instruction) && instruction.capture_depth() == 0)
         .map(|instruction| crate::bytecode::ImmediateLayout::capture_slot(instruction.imm())).collect();
     slots.sort_unstable();
     slots.dedup();
     slots.retain(|slot| super::lane_read_capture_value::<H, true>(cx, 0, *slot).0.is_some_and(|value| value.as_int().is_some()));
     slots
+}
+
+/// Whether `instruction` is a `LoadCapture`: the shared decode's answer, where the decode
+/// rejects the record (a nonzero result flag), the opcode test it always made.
+fn is_capture_load(instruction: &crate::bytecode::WideInstruction) -> bool {
+    match crate::vm::compiled::decoded(instruction) {
+        Some(operation) => matches!(operation, crate::staged::Operation::LoadCapture { .. }),
+        None => instruction.op().is_load_capture(),
+    }
 }
 
 /// How many elements of an entry array are sampled for Numbers.

@@ -123,10 +123,12 @@ impl Hints {
 
     /// What `instruction` of function `id` defines its result as.
     fn definition(&self, id: usize, instruction: WideInstruction, definitions: &[Option<Definition>]) -> Option<Definition> {
+        let decoded = crate::vm::compiled::decoded(instruction);
         match instruction.op().class() {
             Class::MakeClosure => Some(Definition::Closure(instruction.closure_function_index())),
-            Class::LoadConst => self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
-            Class::Move => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
+            _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
+                self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
+            _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
             _ if instruction.op().loads_name() => single(self.named.get(instruction.atom_index() as usize)),
             _ if instruction.op().addresses_capture() => single(self.captured(id, instruction)),
             _ => None,
@@ -149,6 +151,7 @@ impl Hints {
     fn targets(&self, id: usize, function: &Function) -> Vec<StaticTargets> {
         let mut methods_by_register = vec![None::<Candidates>; usize::from(function.registers)];
         function.instructions().map(|instruction| {
+            let decoded = crate::vm::compiled::decoded(instruction);
             let target = (instruction.op().is_call()).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
                 .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
             let method = match instruction.op().class() {
@@ -158,7 +161,7 @@ impl Hints {
                 },
                 Class::MakeClosure => Some(vec![instruction.closure_function_index()]),
                 Class::LoadCapture => self.captured(id, instruction).cloned(),
-                Class::Move => methods_by_register[usize::from(instruction.register_b())].clone(),
+                _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => methods_by_register[usize::from(instruction.register_b())].clone(),
                 _ => None,
             };
             clear_written_hints(&mut methods_by_register, instruction);
