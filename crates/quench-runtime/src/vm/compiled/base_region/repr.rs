@@ -98,9 +98,10 @@ fn read_doubles(row: &Decoded) -> bool {
 /// The representation a non-heap row of `kind` writes, given the greatest representation of its `operands`.
 fn kind_repr(kind: Kind, operands: Option<Representation>, widened: bool) -> Option<Representation> {
     match kind {
-        Kind::Not => Some(Representation::Tagged),
-        _ if operands == Some(Representation::Tagged) => Some(Representation::Tagged),
-        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round => Some(Representation::Float64),
+        Kind::Not => Repr::Tagged,
+        _ if operands == Repr::Tagged => Repr::Tagged,
+        Kind::Neg | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round | Kind::Min | Kind::Max => Repr::Double,
+        Kind::Imul => Repr::Int,
         Kind::Move | Kind::Const => operands,
         Kind::Div => Some(Representation::Float64),
         Kind::Add | Kind::Sub | Kind::Mul | Kind::Rem => if widened || operands == Some(Representation::Float64) { Some(Representation::Float64) } else { Some(Representation::Int32) },

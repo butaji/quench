@@ -45,6 +45,7 @@ use crate::typed_ir::Representation as Rep;
 
 use crate::typed_ir::Representation;
 use crate::staged::slot_store::{own_flat_known, own_flat_store, proved_flat_store};
+use crate::staged::value::direct_object_id;
 use crate::staged::Stage;
 use crate::typed_ir::Type;
 use crate::words::{hole, hole64};
@@ -153,7 +154,7 @@ fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) ->
     let offset = if H == GET_RECEIVER { (hole64::<0>() >> SITE_OBJECT_AT) as usize } else { hole::<H>() };
     let bits = word_at(s.frame, offset);
     let records = word_at(payload, JS_STEP_OBJECT_RECORD_BASE);
-    let id = stage.and_imm(bits, u64::from(u32::MAX));
+    let id = direct_object_id(stage, bits);
     object_record_at(stage, records, id)
 }
 

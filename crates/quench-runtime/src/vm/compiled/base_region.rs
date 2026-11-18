@@ -62,6 +62,7 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
+pub(in crate::vm::compiled) use link::rows_entry_offset;
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;

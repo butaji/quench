@@ -61,7 +61,9 @@ fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> 
 #[derive(Default)]
 pub(in crate::vm::compiled) struct Callees {
     pub(in crate::vm::compiled) owned: Box<[DirectCallee]>,
-    at: Vec<Option<usize>>,
+    /// By PC, the owned callees its call site recorded, latest first (`DirectCandidates`): the first is
+    /// the one a stitch may inline, every one a direct row of the call's chain calls.
+    at: Vec<Option<std::ops::Range<usize>>>,
     bodies: Vec<Option<InlineBody>>,
     /// By PC, the Stable fact holding the callee its call site recorded: the global cell its
     /// callee register is read from (`Vm::stable_callees`).
@@ -81,6 +83,11 @@ fn called<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> Optio
     site.first().filter(|_| chains(instruction))
 }
 
+/// Every callee the call site `instruction` reached, latest first, if its body's call chain makes it.
+fn reached<'a>(instruction: WideInstruction, site: &'a DirectCandidates) -> &'a [DirectCallee] {
+    if chains(instruction) { site } else { &[] }
+}
+
 impl Callees {
     /// The function each call site of `code` was recorded calling (`candidates`, by PC).
     pub(in crate::vm::compiled) fn recorded(code: &[WideInstruction], candidates: &[DirectCandidates]) -> Vec<Option<crate::value::Value>> {
@@ -92,8 +99,10 @@ impl Callees {
     pub(in crate::vm::compiled) fn of(code: &[WideInstruction], candidates: &[DirectCandidates], body_of: &dyn Fn(&DirectCallee) -> Option<InlineBody>, stable: Vec<Option<GlobalFact>>) -> Self {
         let mut owned = Vec::new();
         let at = code.iter().zip(candidates).map(|(instruction, site)| {
-            owned.push(called(*instruction, site)?.clone());
-            Some(owned.len() - 1)
+            let callees = reached(*instruction, site);
+            let start = owned.len();
+            owned.extend(callees.iter().cloned());
+            (!callees.is_empty()).then_some(start..owned.len())
         }).collect();
         let bodies = owned.iter().map(body_of).collect();
         Self { owned: owned.into_boxed_slice(), at, bodies, stable }
@@ -110,13 +119,23 @@ impl Callees {
     /// Each owned callee's `cell` is the address of its function's live entry cell.
     pub(super) unsafe fn facts(&self) -> Vec<Option<DirectFacts>> {
         // SAFETY: the caller's contract.
-        self.at.iter().map(|callee| callee.map(|at| unsafe { DirectFacts::of(&self.owned[at]) })).collect()
+        self.at.iter().map(|callees| callees.as_ref().map(|at| unsafe { DirectFacts::of(&self.owned[at.start]) })).collect()
+    }
+
+    /// What each call site recorded of every callee it reached, latest first, by PC: the targets of its
+    /// chain's direct rows.
+    ///
+    /// # Safety
+    /// As `facts`.
+    pub(super) unsafe fn targets(&self) -> Vec<Vec<DirectFacts>> {
+        // SAFETY: the caller's contract.
+        self.at.iter().map(|callees| callees.clone().into_iter().flatten().map(|at| unsafe { DirectFacts::of(&self.owned[at]) }).collect()).collect()
     }
 
     /// The call `shape` planned as its callee's rows (`facts`: what each site recorded), in
     /// `context`, which it spends from; none where the callee stays a call.
     pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
-        let at = (*self.at.get(shape.call_pc as usize)?)?;
+        let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
         let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize], captures: (callee.capture_values.addr(), callee.capture_len) };

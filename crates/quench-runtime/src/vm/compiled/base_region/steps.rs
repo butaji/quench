@@ -55,8 +55,10 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::callees::chains;
+use super::decode::staged_of;
 use super::super::{LaneHelper, LaneHelpers};
-use crate::bytecode::{InstructionField, Op};
+use crate::staged::{Operation, Protocol};
+use crate::bytecode::Op;
 use quench_bjit::HOLES;
 use quench_bjit::call::{self, CallRow};
 
@@ -149,13 +151,11 @@ fn steps_in_place(instruction: WideInstruction) -> bool {
         && instruction.written_registers().count() <= STEP_WRITES
 }
 
-/// The heap row that is the fast arm of a `Unary` that is a `typeof` string, index or test
-/// (`staged::value::immediate_typeof_index`), where the test's name index fits its hole.
+/// The heap row that is the fast arm of a `Unary` that is a `typeof` string or test (the index form is
+/// `Operation::TypeofIndex`), where the test's name index fits its hole.
 fn typeof_arm(operator: u32) -> Option<Heap> {
-    match operator {
-        crate::bytecode::UNARY_TYPEOF_INDEX => return Some(Heap::TypeofIndex),
-        crate::vm::coercion::TYPEOF => return Some(Heap::TypeofString),
-        _ => {}
+    if operator == crate::vm::coercion::TYPEOF {
+        return Some(Heap::TypeofString);
     }
     let (index, negated) = crate::bytecode::typeof_test(operator)?;
     Some(Heap::TypeofIs { index: u8::try_from(index).ok()?, negated })
@@ -165,30 +165,21 @@ fn typeof_arm(operator: u32) -> Option<Heap> {
 /// word (`staged::iteration`, `staged::value`) or the backing's own layout words
 /// (`elements::append_in_room`) decide.
 fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
-    use crate::staged::Operation;
-    // The staged operation the instruction denotes names the arm where it has one.
-    match crate::vm::compiled::decoded(instruction) {
-        Some(Operation::PropertyKey { .. }) => return Some(Heap::Key),
-        Some(Operation::ForInNext { .. }) => return Some(Heap::ForIn),
-        Some(Operation::Protocol { step: crate::staged::Protocol::AppendArray { .. }, .. }) => return appends_one(instruction).then_some(Heap::Append),
-        Some(Operation::Protocol { step: crate::staged::Protocol::Class(crate::staged::protocol_classes::ClassStep::SetFunctionName { .. }), .. }) =>
-            return names::of(known, instruction).map(names::Name::heap),
-        Some(Operation::Protocol { step: crate::staged::Protocol::Value(crate::staged::protocol_values::ValueStep::RequireIteratorResult), .. }) =>
-            return Some(Heap::Object),
-        _ => {}
+    match staged_of(instruction) {
+        Some(Operation::PropertyKey { .. }) => Some(Heap::Key),
+        // One element (not a spread, not elisions) defined at the literal's length: the case a capacity word decides.
+        Some(Operation::Protocol { step: Protocol::AppendArray { length: 0, spread: false }, operands: [_, Some(_)], .. }) => Some(Heap::Append),
+        Some(Operation::ForInNext { .. }) => Some(Heap::ForIn),
+        Some(Operation::TypeofIndex { .. }) => Some(Heap::TypeofIndex),
+        Some(Operation::RequireIteratorResult { .. }) => Some(Heap::Object),
+        _ => match instruction.op().class() {
+            // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
+            Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
+            // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
+            Class::Unary => typeof_arm(instruction.unary_operator()),
+            _ => None,
+        },
     }
-    match instruction.op().class() {
-        Class::Unary => typeof_arm(instruction.unary_operator()),
-        _ => None,
-    }
-}
-
-/// Whether an `AppendArray` is one element (not a spread, not elisions) defined at the literal's
-/// length: the case a capacity word decides.
-fn appends_one(instruction: WideInstruction) -> bool {
-    instruction.array_length() == 0
-        && instruction.optional_register_b().is_some()
-        && instruction.boolean_field(InstructionField::C) == Some(false)
 }
 
 /// The registers a fast arm reads: its operand in `a`, and for an append the array it writes
@@ -248,8 +239,8 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 /// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+    match staged_of(instruction) {
+        Some(Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, known, helpers) };
             let helped = step.runs_helper();
@@ -299,7 +290,7 @@ impl Planned {
 
 /// A chain as one planned row: the row after the `spills` that lead it is the row itself, the
 /// spills run before it and the rest after it, all at the same PC.
-fn chained(parts: Vec<CallPart>, spills: usize, owned: Option<Box<quench_bjit::call_record::CallRecord>>) -> Result<Planned, String> {
+fn chained(parts: Vec<CallPart>, spills: usize, owned: Vec<Box<quench_bjit::call_record::CallRecord>>) -> Result<Planned, String> {
     let mut parts = parts.into_iter().map(Planned::of_part);
     let before: Vec<Planned> = parts.by_ref().take(spills).collect();
     let mut row = parts.next().ok_or("chain: no row")?;
@@ -356,7 +347,7 @@ pub(super) fn leave(pc: u32) -> Result<Planned, String> {
 fn helper_chain(layout: &Layout, pc: u32, reloads: &[(Place, Register)], (helper, helpers): (LaneHelper, LaneHelpers)) -> Result<Planned, String> {
     let address = call_plan::helper_address(helpers, helper).ok_or("step: no helper address")?;
     let (spills, record) = (layout.spills(pc), layout.record(pc));
-    chained(call_plan::plan_step(record, address, &spills, reloads)?, spills.len(), None)
+    chained(call_plan::plan_step(record, address, &spills, reloads)?, spills.len(), Vec::new())
 }
 
 /// The pinned registers a row at `pc` reloads before it continues: those live at the next
@@ -468,7 +459,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
 /// parts that name another part of their run are renumbered past it.
 pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
     let (lead, tail) = (std::mem::take(&mut slow.pre), std::mem::take(&mut slow.post));
-    fast.owned = slow.owned.take();
+    fast.owned = std::mem::take(&mut slow.owned);
     fast.post = lead.into_iter().chain(std::iter::once(slow)).chain(tail).map(|mut part| {
         part.branch = part.branch.map(|branch| match branch {
             Branch::Part(index) => Branch::Part(index + 1),
@@ -487,8 +478,8 @@ fn plan_call(layout: &Layout, shape: CallShape, pc: u32, helpers: LaneHelpers) -
     let helper = if shape.form == CallForm::Plain { layout.ending.call_helper() } else { shape.form.helper() };
     let helper = call_plan::helper_address(helpers, helper).ok_or("call: no helper address")?;
     let (spills, reloads) = (layout.spills(pc), if shape.returning { Vec::new() } else { layout.spills(pc + 1) });
-    let plan = CallPlan { shape, direct: layout.callee(shape.call_pc), helper, spills: &spills, reloads: &reloads };
-    let CallChain { parts, record, choice } = call_plan::plan_call(&plan)?;
+    let plan = CallPlan { shape, direct: layout.callees(shape.call_pc), helper, spills: &spills, reloads: &reloads };
+    let CallChain { parts, records: record, choice } = call_plan::plan_call(&plan)?;
     note(|totals, _| if choice == Choice::Direct { totals.direct_calls += 1 } else { totals.helper_calls += 1 });
     #[cfg(test)]
     if choice == Choice::Direct {

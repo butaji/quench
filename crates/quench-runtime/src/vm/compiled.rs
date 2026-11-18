@@ -229,7 +229,7 @@ mod general_store;
 pub(super) use frameless::ChainFrame;
 pub(super) use frameless::Frameless;
 use direct_call::direct_call;
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 mod guard_aarch64;
 #[cfg(feature = "aot")]
 #[path = "compiled/ahead_entry.rs"]
@@ -3630,6 +3630,9 @@ pub(super) struct LaneMethod {
     /// Where its scalar entry lies in the same code (`lane_region::scalar`), which a native call
     /// that proves its numeric arguments calls by the entry cell's `scalar` word.
     scalar: Option<usize>,
+    /// Where its row entry lies in the same code (`entry_rows`, a b-jit body's), which a b-jit direct
+    /// call calls by the entry cell's `rows` word; none for a Cranelift body.
+    rows: Option<usize>,
     recovery_space: super::dispatch_fast::LaneRecoverySpace,
     /// The lowering requires an owned, resumable poll-page capability.
     fault_poll: bool,
@@ -3693,6 +3696,11 @@ impl LaneMethod {
     /// The address of its scalar entry, if it has one (`EntryCell::scalar`).
     pub(super) fn scalar_address(&self) -> Option<usize> {
         self.scalar
+    }
+
+    /// The address of its row entry, if it has one (`EntryCell::rows`).
+    pub(super) fn rows_address(&self) -> Option<usize> {
+        self.rows
     }
 
     /// Whether an entry, which costs a few hundred instructions the lane's own run of a
@@ -7377,16 +7385,17 @@ type Trampoline =
 struct GuardSupport {
     _code: Option<CodeMemory>,
     trampoline: Trampoline,
-    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     landing: usize,
     /// Where a fault on the poll page resumes: the terminated status.
-    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+    #[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
     termination: usize,
 }
 
 /// The host ABI can recover owned guard/poll faults through a native entry.
 const FAULT_POLL_SUPPORTED: bool = cfg!(any(
     all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "linux"),
     all(target_arch = "aarch64", target_os = "macos"),
 ));
 
@@ -7474,7 +7483,7 @@ const TRAMPOLINE_TERMINATION: usize = 49;
 static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
 
 /// Publish forwarding before a handler can run; revoke partial installations.
-#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
 fn install_guard_signals(signals: &[(i32, &std::sync::OnceLock<libc::sigaction>)],
     handler: usize, flags: i32) -> Option<()> {
     for (index, (signal, saved)) in signals.iter().enumerate() {
@@ -7505,7 +7514,7 @@ fn install_guard_signals(signals: &[(i32, &std::sync::OnceLock<libc::sigaction>)
     Some(())
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
 unsafe fn forward_guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void,
     previous: &libc::sigaction) {
     // SAFETY: forwarding the original signal ABI to its published disposition.
@@ -7562,10 +7571,10 @@ fn guard_support() -> Option<&'static GuardSupport> {
         .as_ref()
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(any(all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos")))]
 fn guard_support() -> Option<&'static GuardSupport> { guard_aarch64::support() }
 
-#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
+#[cfg(not(any(all(target_arch = "x86_64", target_os = "linux"), all(target_arch = "aarch64", target_os = "linux"), all(target_arch = "aarch64", target_os = "macos"))))]
 fn guard_support() -> Option<&'static GuardSupport> {
     None
 }

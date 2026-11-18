@@ -3,8 +3,7 @@
 //! tail call (`become`) through a hole (`HOLE_NEXT`, `HOLE_TAKEN`, `HOLE_EXIT0`); no row saves
 //! or restores a register. The row ABI below is the register map, assigned by LLVM and never
 //! named in a row: x86-64 frame r12, context r13, pinned ints r14, r15, rdi, rsi; AArch64 frame
-//! x0, context x1, pinned ints x2..x5 (`preserve_none` has no callee-saved registers, so x19-x28
-//! are free scratch, not a home for the pins); pinned doubles xmm0..7 / d0..d7. `HOLE_V<n>` are
+//! x20, context x21, pinned ints x22..x25 (`CC_AArch64_Preserve_None` assigns x20..x28 first); pinned doubles xmm0..7 / d0..d7. `HOLE_V<n>` are
 //! the value holes the stitcher patches (`words.rs` `hole_word!` says how each target spells one).
 //! `build.rs` compiles this file once per shard, each appending
 //! its own slice of the generated instances (one row per kind, places and speculation); the
@@ -24,7 +23,7 @@ macro_rules! need {
     };
 }
 
-#[cfg(all(fixed_rows, target_arch = "x86_64"))]
+#[cfg(fixed_rows)]
 mod call_rows;
 mod codes;
 #[cfg(all(fixed_rows, target_arch = "x86_64"))]

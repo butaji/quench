@@ -12,7 +12,7 @@ pub(in crate::vm) use quench_bjit::call_record::LANE_BODY_NOT_ENTERED;
 /// once, per function, at a stable address (`LaneView::entry_cell`).
 ///
 /// One 64-byte line whose every offset is the designed cell's (`staged::call::ENTRY_CELL`, asserted
-/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48.
+/// below): `entry` 0, `body` 8, `facts` 16, `validity` 24, `recovery` 32, `counters` 40, `scalar` 48, `rows` 56.
 /// Writers: `entry`, `scalar`, `recovery` and `body` by `publish`/`withdraw`; `facts` once per function
 /// (`set_facts`); `counters` only on cold paths (completion evidence).
 #[repr(C, align(64))]
@@ -37,6 +37,9 @@ pub(in crate::vm) struct EntryCell {
     /// caller whose arguments are proved numbers calls instead of `entry`: it takes the numbers in
     /// registers and pushes no frame. The stub where the body has none or retired.
     pub(in crate::vm) scalar: std::cell::Cell<usize>,
+    /// The address of the published b-jit body's row entry (`LaneMethod::rows_address`), which a
+    /// b-jit direct call row calls instead of `entry`; 0 where the body has none or retired.
+    pub(in crate::vm) rows: std::cell::Cell<usize>,
 }
 
 const _: () = {
@@ -49,6 +52,7 @@ const _: () = {
     assert!(std::mem::offset_of!(EntryCell, recovery) as i32 == ENTRY_CELL.recovery_offset);
     assert!(std::mem::offset_of!(EntryCell, counters) as i32 == ENTRY_CELL.counters_offset);
     assert!(std::mem::offset_of!(EntryCell, scalar) as i32 == ENTRY_CELL.scalar_offset);
+    assert!(std::mem::offset_of!(EntryCell, rows) as i32 == ENTRY_CELL.rows_offset);
 };
 
 /// The halves of a cell's counters word.
@@ -99,7 +103,7 @@ impl EntryCell {
     pub(in crate::vm) fn scalar_stub() -> usize { scalar_entry_stub as ScalarEntry as usize }
 
     pub(in crate::vm) fn new() -> Self {
-        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()) }
+        Self { entry: std::cell::Cell::new(Self::stub()), recovery: std::cell::Cell::new(std::ptr::addr_of!(NO_RECOVERY).addr()), body: Default::default(), facts: Default::default(), validity: Default::default(), counters: Default::default(), scalar: std::cell::Cell::new(Self::scalar_stub()), rows: Default::default() }
     }
 
     /// Publishes `method`'s entry and recovery space; it takes the cell back when it retires: the
@@ -111,6 +115,11 @@ impl EntryCell {
         method.on_retire(&self.body, Rc::as_ptr(&body).addr(), 0);
         self.entry.set(body.entry_address());
         method.on_retire(&self.entry, body.entry_address(), Self::stub());
+        self.rows.set(0);
+        if let Some(rows) = body.rows_address() {
+            self.rows.set(rows);
+            method.on_retire(&self.rows, rows, 0);
+        }
         self.scalar.set(Self::scalar_stub());
         if let Some(scalar) = body.scalar_address() {
             self.scalar.set(scalar);
@@ -149,6 +158,7 @@ impl EntryCell {
 
     pub(in crate::vm) fn withdraw(&self) {
         self.entry.set(Self::stub());
+        self.rows.set(0);
         self.scalar.set(Self::scalar_stub());
         self.recovery.set(std::ptr::addr_of!(NO_RECOVERY).addr());
         self.body.set(0);

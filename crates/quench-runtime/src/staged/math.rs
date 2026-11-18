@@ -135,7 +135,7 @@ fn round_half_up(value: f64) -> f64 {
 #[inline(always)]
 pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
     if left.is_nan() || right.is_nan() {
-        return f64::NAN;
+        return machine::constant(f64::NAN);
     }
     if left == 0.0 && right == 0.0 {
         let negative = if maximum {
@@ -143,7 +143,7 @@ pub(crate) fn float_extreme(maximum: bool, left: f64, right: f64) -> f64 {
         } else {
             left.is_sign_negative() || right.is_sign_negative()
         };
-        return if negative { -0.0 } else { 0.0 };
+        return if negative { machine::constant(-0.0) } else { machine::constant(0.0) };
     }
     if maximum { left.max(right) } else { left.min(right) }
 }

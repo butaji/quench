@@ -167,6 +167,8 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
+    Nop,
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -190,8 +192,6 @@ pub(crate) enum Operation<W, P> {
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
-    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
-    Nop,
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
@@ -351,8 +351,8 @@ impl<W, P> Operation<W, P> {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: instruction.constant(context)? },
-            Op::Jump => Self::Jump,
             Op::Nop => Self::Nop,
+            Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
@@ -413,6 +413,8 @@ impl<W, P> Operation<W, P> {
             Op::LoadThis => Self::LoadThis {
                 destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
+                register: instruction.register_b() },
+            Op::RequireIteratorResult => Self::RequireIteratorResult {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),

@@ -111,11 +111,11 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
     let bitwise: Vec<u8> = (AND..=USHR).collect();
     let compare: Vec<u8> = (LT..=NE).collect();
     let copy: Vec<u8> = (MOVE..=COPY).collect();
-    for kinds in [&arith, &bitwise, &compare, &copy, &vec![REM]] {
+    for kinds in [&arith, &bitwise, &compare, &copy, &vec![REM], &vec![IMUL]] {
         product(rows, kinds, &places.ints_dst, &places.ints_src, &[true, false]);
     }
     let double_arith: Vec<u8> = (ADD..=DIV).collect();
-    for kinds in [&double_arith, &compare, &copy] {
+    for kinds in [&double_arith, &compare, &copy, &vec![MIN, MAX]] {
         product(rows, kinds, &places.floats_dst, &places.floats_src, &[false]);
     }
 }

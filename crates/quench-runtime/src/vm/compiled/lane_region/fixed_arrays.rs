@@ -25,6 +25,8 @@ impl Lowering<'_, '_> {
             match decoded {
                 Some(Operation::Binary { left, right, .. } | Operation::Equality { left, right, .. }) =>
                     number(pc, left) && number(pc, right),
+                // Undecoded until now, so the unit has always taken it as a may-move instruction: kept as it was.
+                Some(Operation::RequireIteratorResult { .. }) => false,
                 Some(operation) => !operation.moves_arrays(),
                 None => false,
             }

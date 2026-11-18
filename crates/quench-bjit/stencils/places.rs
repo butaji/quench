@@ -191,15 +191,9 @@ fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
 fn truthy<const P: u8, const H: u8>(s: &S) -> Option<bool> {
     let word = read_place::<P, H>(s);
     match rep_of(P) {
-        Representation::Int32 | Representation::Int64 => Some(word as u32 != 0),
-        Representation::Float64 => Some(stage().number_truthy(word)),
-        // A boolean, what every comparison and type test gives, decides on one compare; a direct
-        // record on one family test; any other word takes the staged rule.
-        Representation::Tagged if word == crate::layout::words::TRUE => Some(true),
-        Representation::Tagged if word == crate::layout::words::FALSE => Some(false),
-        // A direct object or array, what a `while (node)` walk tests, is truthy on one family test.
-        Representation::Tagged if value::is_direct_object(&mut stage(), word) || value::is_direct_array(&mut stage(), word) => Some(true),
-        Representation::Tagged => {
+        Rep::Int32 => Some(word as u32 != 0),
+        Rep::Float64 => Some(stage().number_truthy(word)),
+        Rep::Tagged => {
             let (undecided, truthy) = value::tagged_truthiness(&mut stage(), word);
             (!undecided).then_some(truthy)
         }

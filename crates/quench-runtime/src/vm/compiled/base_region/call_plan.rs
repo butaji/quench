@@ -236,10 +236,11 @@ pub(super) struct CallPart {
     pub(super) exits: Vec<Exit>,
 }
 
-/// A planned call: its parts, the record the direct row reads, and the choice that made them.
+/// A planned call: its parts, the records its direct rows read (one per callee the site reached), and
+/// the choice that made them.
 pub(super) struct CallChain {
     pub(super) parts: Vec<CallPart>,
-    pub(super) record: Option<Box<CallRecord>>,
+    pub(super) records: Vec<Box<CallRecord>>,
     pub(super) choice: Choice,
 }
 
@@ -247,7 +248,8 @@ pub(super) struct CallChain {
 /// and live after it (reloaded after it), each with the register whose frame slot it uses.
 pub(super) struct CallPlan<'a> {
     pub(super) shape: CallShape,
-    pub(super) direct: Option<&'a DirectFacts>,
+    /// Each callee the site reached, latest first (`Layout::callees`).
+    pub(super) direct: &'a [DirectFacts],
     /// The address of `lane_body_call` (`helper_address`).
     pub(super) helper: usize,
     pub(super) spills: &'a [(Place, Register)],
@@ -286,8 +288,6 @@ fn helper_part(call_pc: u32, helper: usize) -> Result<CallPart, String> {
     Ok(part(call::stencil(CallRow::Helper)?, padded_holes([u64::from(call_pc), helper as u64]), vec![Exit::At(call_pc), Exit::Status]))
 }
 
-/// Rows a direct row's `taken` skips: itself and the helper row after it.
-const ROWS_PAST_DIRECT: usize = 2;
 
 /// The direct row and the record it reads, whose address is its hole 0.
 fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<CallRecord>), String> {
@@ -321,26 +321,32 @@ pub(super) fn plan_step(pc: u32, helper: usize, spills: &[(Place, Register)], re
     Ok(parts)
 }
 
-/// The chain of a call (see the module doc for its layout and successors).
+/// The chain of a call (see the module doc for its layout and successors). A polymorphic site's chain
+/// holds one direct row per callee it reached, latest first: each refuses another callee to the next
+/// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
+/// entry, as the interpreter's own link does, and only an unknown one takes the helper.
 pub(super) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {
     let mut parts = plan.spills.iter().map(|&(place, register)| spill_part(place, register)).collect::<Result<Vec<_>, _>>()?;
-    let choice = choose(&plan.shape, plan.direct);
-    let direct = match (choice, plan.direct) {
-        (Choice::Direct, Some(facts)) => Some(direct_part(&plan.shape, facts)?),
-        _ => None,
-    };
-    let mut record = None;
-    if let Some((mut row, owned)) = direct {
-        // Past the direct row and the helper row that follows it: the first reload, or the next instruction.
-        row.taken = Some(parts.len() + ROWS_PAST_DIRECT);
+    let choices: Vec<(Choice, &DirectFacts)> = plan.direct.iter().map(|facts| (choose(&plan.shape, Some(facts)), facts)).collect();
+    let choice = choices.iter().map(|(choice, _)| *choice).find(|choice| *choice == Choice::Direct)
+        .unwrap_or_else(|| choices.first().map_or_else(|| choose(&plan.shape, None), |(choice, _)| *choice));
+    let mut directs = Vec::new();
+    for (_, facts) in choices.into_iter().filter(|(choice, _)| *choice == Choice::Direct) {
+        directs.push(direct_part(&plan.shape, facts)?);
+    }
+    // Past every direct row and the helper row that follows them: the first reload, or the next instruction.
+    let past = parts.len() + directs.len() + 1;
+    let mut records = Vec::new();
+    for (mut row, owned) in directs {
+        row.taken = Some(past);
         parts.push(row);
-        record = Some(owned);
+        records.push(owned);
     }
     parts.push(helper_part(plan.shape.call_pc, plan.helper)?);
     for &(place, register) in plan.reloads {
         parts.push(reload_part(place, register)?);
     }
-    Ok(CallChain { parts, record, choice })
+    Ok(CallChain { parts, records, choice })
 }
 
 #[cfg(test)]
@@ -351,7 +357,7 @@ mod tests {
     const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain };
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
-        let cell = CellFacts { registers, room: registers, params, entry: ENTRY_ACTIVATES as u8 };
+        let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
         DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32 }
     }
 
@@ -400,6 +406,7 @@ mod tests {
     }
 
     fn plan<'a>(direct: Option<&'a DirectFacts>, spills: &'a [(Place, Register)], reloads: &'a [(Place, Register)]) -> CallPlan<'a> {
+        let direct = direct.map_or(&[][..], std::slice::from_ref);
         CallPlan { shape: SHAPE, direct, helper: 0x4000, spills, reloads }
     }
 
@@ -416,7 +423,7 @@ mod tests {
         assert_eq!(chain.parts[direct_at].exits, [Exit::Status]);
         assert_eq!(chain.parts[helper_at].exits, [Exit::At(SHAPE.call_pc), Exit::Status]);
         assert_eq!(chain.parts[helper_at].holes[..2], [u64::from(SHAPE.call_pc), 0x4000]);
-        let record = chain.record.expect("the direct row's record");
+        let record = chain.records.into_iter().next().expect("the direct row's record");
         assert_eq!(chain.parts[direct_at].holes[0], std::ptr::from_ref(&*record).addr() as u64);
         assert_eq!((record.callee, record.cell, record.expected, record.result_register), (7, 0x1000, 5, 6));
         assert_eq!(chain.parts[spills.len() + 2].holes[0], SLOT);
@@ -426,7 +433,7 @@ mod tests {
     #[test]
     fn a_helper_chain_has_no_record_and_its_helper_row_is_last_before_the_reloads() {
         let chain = plan_call(&plan(None, &[], &[(Place::PinF(0), 3)])).expect("a plan");
-        assert_eq!((chain.choice, chain.record.is_none(), chain.parts.len()), (Choice::Helper(Declined::NoTarget), true, 2));
+        assert_eq!((chain.choice, chain.records.is_empty(), chain.parts.len()), (Choice::Helper(Declined::NoTarget), true, 2));
         assert!(chain.parts.iter().all(|part| part.taken.is_none()));
         let nowhere = CallPlan { helper: 0, ..plan(None, &[], &[]) };
         assert!(plan_call(&nowhere).is_err(), "a helper row needs its address");
@@ -447,7 +454,7 @@ mod tests {
     fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
         let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
         let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
-        assert_eq!(chain.record.expect("a record").global_this, 0xabc);
+        assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
         let name = CallRow::Direct { argc: 2, this: ThisRow::Sloppy }.name().expect("a row");
         assert!(std::ptr::eq(chain.parts[0].stencil, call::stencil(CallRow::Direct { argc: 2, this: ThisRow::Sloppy }).expect(&name)));
     }
