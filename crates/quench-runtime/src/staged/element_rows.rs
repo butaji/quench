@@ -35,7 +35,11 @@ impl<W, P> Operation<W, P> {
     pub(crate) fn decode_element(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
-            Op::GetIndex => Self::ElementRead { base: instruction.operand_b().register_index()?, key: instruction.operand_c() },
+            Op::GetIndex => match instruction.operand_b().register_index() {
+                Some(base) => Self::ElementRead { base, key: instruction.operand_c() },
+                None => Self::ElementReadOperand { destination: instruction.result_register(),
+                    base: instruction.operand_b(), key: instruction.operand_c() },
+            },
             Op::SetIndex => Self::ElementWrite { value: instruction.register_a(), base: instruction.register_b(),
                 key: instruction.register_c() },
             _ => return None,

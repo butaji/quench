@@ -4120,7 +4120,8 @@ impl Lowering<'_, '_> {
             .map(|_| self.int(state, source, exit));
         let ty = state.values[usize::from(source)].value.ty;
         let operation = crate::staged::Operation::SetField { value: source, base: register,
-            atom: instruction.atom_index(), site: instruction.cache_site_index() };
+            atom: instruction.atom_index(), site: instruction.cache_site_index(),
+            strict: matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { strict: true, .. })) };
         // A store a previous body left at may add its property (`compiled::lane_field_add`),
         // which changes the object's shape and may move the property arena: every proof of
         // an object retires, as another register may name it, and `this`'s facts are read

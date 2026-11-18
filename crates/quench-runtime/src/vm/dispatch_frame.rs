@@ -1920,7 +1920,9 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op() as u16, index::CloneEnv | index::GetField | index::GetIndex | index::SetIndex | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse)
+                    if matches!(instruction.op() as u16, index::CloneEnv | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse)
+                        || matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. } | crate::staged::Operation::ElementWrite { .. }))
+                        || is_element_read(instruction)
                         || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. } | crate::staged::Operation::SetField { .. })) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
@@ -1953,7 +1955,7 @@ impl<H: Host> Vm<H> {
                         };
                         super::lane_exits::record_detail(format!("Return nested run started by {described}"));
                     }
-                    if instruction.op().is_get_field()
+                    if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
                         && let Some(lookup) = instruction.field_lookup()
                     {
                         let (base, atoms) = match lookup {
@@ -1968,10 +1970,11 @@ impl<H: Host> Vm<H> {
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
-                    if matches!(instruction.op() as u16, index::GetIndex | index::SetIndex | index::DefineArrayElement) {
-                        let (base, key) = match instruction.op() as u16 {
-                            index::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
-                            index::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                    let element = crate::vm::compiled::decoded_completed(instruction);
+                    if is_element_read(instruction) || matches!(element, Some(crate::staged::Operation::ElementWrite { .. })) || instruction.op() as u16 == index::DefineArrayElement {
+                        let (base, key) = match element {
+                            _ if is_element_read(instruction) => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
+                            Some(crate::staged::Operation::ElementWrite { .. }) => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
                             _ => {
                                 let registers = &self.frames[frame].registers;
                                 (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
@@ -2924,6 +2927,16 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(slot) = value;
         }
     }
+}
+
+/// Whether a lane-exit diagnostic reads an element of `instruction`: its decoded element read,
+/// of a register base or of a frame local.
+#[cfg(feature = "profile-lane-exits")]
+fn is_element_read(instruction: WideInstruction) -> bool {
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementReadOperand { .. })
+    )
 }
 
 /// The slots of the environment a promotion makes of `locals`: those the `selective` capture list

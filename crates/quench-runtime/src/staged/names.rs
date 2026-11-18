@@ -28,6 +28,16 @@ pub(crate) enum Protocol {
     /// parameters while the rest register (`rest`, the second operand) holds `undefined`,
     /// else the array there. A key no kept value answers makes the rest array, into `rest`.
     RestView { get: bool, fixed: usize, rest: Register },
+    /// A literal, template, closure or object-construction step (`protocol_literals`).
+    Literal(super::protocol_literals::LiteralStep),
+    /// A class, private-name or function-naming step (`protocol_classes`).
+    Class(super::protocol_classes::ClassStep),
+    /// A by-name, environment, string or iteration-cleanup step (`protocol_values`).
+    Value(super::protocol_values::ValueStep),
+    /// An activation-variable step: a local, a `var` binding, TDZ, an argument (`protocol_owned`).
+    Owned(super::protocol_owned::OwnedVarStep),
+    /// A Wasm GC, reference, table, memory-init, atomic or exception step (`protocol_wasm`).
+    Wasm(super::protocol_wasm::WasmHostStep),
 }
 
 /// The staged operation `instruction` denotes among the name, environment and iteration
@@ -81,7 +91,13 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
             Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::RestGet => (Protocol::RestView { get: true, fixed: instruction.array_length(), rest: instruction.register_c() },
             Some(instruction.result_register()), [Some(instruction.register_b()), Some(instruction.register_c())]),
-        _ => return super::spread::decode(instruction),
+        _ => return super::protocol_literals::decode(instruction)
+            .or_else(|| super::protocol_classes::decode(instruction))
+            .or_else(|| super::protocol_values::decode(instruction))
+            .or_else(|| super::protocol_owned::decode(instruction))
+            .or_else(|| super::protocol_wasm::decode(instruction))
+            .map(|(step, destination, operands)| Operation::Protocol { step, destination, operands })
+            .or_else(|| super::spread::decode(instruction)),
     };
     Some(Operation::Protocol { step, destination, operands })
 }

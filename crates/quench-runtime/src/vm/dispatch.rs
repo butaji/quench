@@ -617,41 +617,7 @@ impl<H: Host> Vm<H> {
             Op::CallFirstChunk => self.call_first_chunk(p, f, i, *pc)?,
             Op::LoadImportMeta => {
                 let program = self.frames[f].program;
-                let import_meta = if let Some(value) = self.programs.import_meta(program) {
-                    value
-                } else {
-                    let value = self
-                        .heap
-                        .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
-                    {
-                        let url = self.host.import_meta_url(&source_name);
-                        let url = self.heap.alloc_string(url.into());
-                        let url_atom = self.intern_atom("url");
-                        self.set_property(value, url_atom, url)?;
-                        if let Some(filename) = self.host.import_meta_filename(&source_name) {
-                            let filename_value = self.heap.alloc_string(filename.as_str().into());
-                            let filename_atom = self.intern_atom("filename");
-                            self.set_property(value, filename_atom, filename_value)?;
-                            let dirname = std::path::Path::new(&filename)
-                                .parent()
-                                .and_then(|path| path.to_str());
-                            if let Some(dirname) = dirname {
-                                let dirname_value = self.heap.alloc_string(dirname.into());
-                                let dirname_atom = self.intern_atom("dirname");
-                                self.set_property(value, dirname_atom, dirname_value)?;
-                            }
-                        }
-                        if self.host.initializes_import_meta() {
-                            let mut context = crate::NativeContext::new(self);
-                            let import_meta = context.scoped_value(value);
-                            H::initialize_import_meta(&mut context, &source_name, import_meta)
-                                .map_err(|error| context.finish_error(error))?;
-                        }
-                    }
-                    self.programs.set_import_meta(program, value);
-                    value
-                };
+                let import_meta = self.load_import_meta(program)?;
                 self.write(f, i.result_register(), import_meta);
             }
             Op::InitializeThis => {
@@ -689,24 +655,7 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeClosure => {
                 let env = with_binding_site_pc!(self, VarOwner::Frame(f), *pc, self.capture_binding_environment(VarOwner::Frame(f)))?;
-                let module_root = p.is_module()
-                    && self.frames[f].function == super::ROOT_FUNCTION_ID
-                    && self.programs.module_environment(self.frames[f].program) == Some(env);
-                let v = if module_root {
-                    let cached = self
-                        .cached_functions_in_environment(
-                            self.frames[f].program,
-                            i.closure_function_index(),
-                            env,
-                        )
-                        .next();
-                    match cached {
-                        Some(function) => function,
-                        None => self.closure(p, i.closure_function_index(), env)?,
-                    }
-                } else {
-                    self.closure(p, i.closure_function_index(), env)?
-                };
+                let v = self.closure_over_environment(p, VarOwner::Frame(f), i.closure_function_index(), env)?;
                 self.write(f, i.result_register(), v);
             }
             Op::MakeObject => {
@@ -1684,7 +1633,7 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "native-execution")]
     pub(super) fn pushed_frame(&self, caller: usize, i: WideInstruction, getter: Value, this: Value)
         -> (Value, crate::bytecode::RegisterWindow, Value, CallCompletion) {
-        let decoded = crate::vm::compiled::decoded(i);
+        let decoded = crate::vm::compiled::decoded_completed(i);
         match i.op() {
             Op::Construct => {
                 let crate::bytecode::ConstructArguments::Registers(window) = i.construct_arguments() else {
@@ -1693,8 +1642,7 @@ impl<H: Host> Vm<H> {
                 (self.read(caller, i.register_b()), window, this, CallCompletion::Constructor(this))
             }
             // A getter's activation: its receiver bound as passed, no arguments (`general_getter`).
-            _ if matches!(decoded, Some(crate::staged::Operation::GetField { .. }))
-                || (decoded.is_none() && i.op() == Op::GetField) =>
+            _ if matches!(decoded, Some(crate::staged::Operation::GetField { .. })) =>
             {
                 (getter, crate::bytecode::RegisterWindow { base: 0, count: 0 }, this, CallCompletion::Value)
             }

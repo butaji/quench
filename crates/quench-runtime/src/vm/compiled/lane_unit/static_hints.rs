@@ -2,7 +2,7 @@
 //! per-PC call targets (`static_call_targets`). A hint is never a proof: replacement and
 //! aliasing are handled by call-edge admission, which tries each target a site names behind
 //! its own body guard.
-use crate::bytecode::{Atom, Class, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, PropertyDefinitionMode, StoreReceiver, WideInstruction};
+use crate::bytecode::{Atom, Class, Constant, ControlFlowLayout, FieldLookup, Function, InstructionField, PropertyDefinitionMode, WideInstruction};
 
 /// The bodies a call site's callee may name statically: a superset of the callees it meets,
 /// which the unit's inlining budgets choose among, each behind its own body guard. A name,
@@ -111,7 +111,10 @@ impl Hints {
     /// result remains dynamic.
     fn note_method(&mut self, instruction: WideInstruction, target: u32, definitions: &[Option<Definition>]) {
         let op = instruction.op();
-        let atom = if op.field_store().map_or_else(|| op.class().eq(Class::DefineField), |store| store.receiver == StoreReceiver::Register) {
+        let atom = if let Some(crate::staged::Operation::SetField { base, .. }) = crate::vm::compiled::decoded(instruction) {
+            // A store to a register receiver names its atom; a store to `this` names none.
+            base.map(|_| instruction.atom_index())
+        } else if op.class().eq(Class::DefineField) {
             Some(instruction.atom_index())
         } else if op.class().eq(Class::DefinePropertyRecord)
             && matches!(instruction.property_definition_mode(), Some(PropertyDefinitionMode::Method | PropertyDefinitionMode::ReadonlyMethod))
@@ -130,7 +133,9 @@ impl Hints {
                 self.constant_names.get(instruction.constant_index()).copied().flatten().map(Definition::Name),
             _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => definitions.get(usize::from(instruction.register_b())).copied().flatten(),
             _ if instruction.op().loads_name() => single(self.named.get(instruction.atom_index() as usize)),
-            _ if instruction.op().addresses_capture() => single(self.captured(id, instruction)),
+            // A store's definition defines no register, so only a load's reaches `definitions`.
+            _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) =>
+                single(self.captured(id, instruction)),
             _ => None,
         }
     }
@@ -152,15 +157,16 @@ impl Hints {
         let mut methods_by_register = vec![None::<Candidates>; usize::from(function.registers)];
         function.instructions().map(|instruction| {
             let decoded = crate::vm::compiled::decoded(instruction);
+            let completed = crate::vm::compiled::decoded_completed(instruction);
             let target = (instruction.op().is_call()).then(|| methods_by_register[usize::from(instruction.register_b())].as_deref()
                 .map(|candidates| self.narrow(candidates, instruction.call_window().count))).flatten().unwrap_or_default();
             let method = match instruction.op().class() {
-                Class::GetField => match instruction.field_lookup() {
+                Class::MakeClosure => Some(vec![instruction.closure_function_index()]),
+                _ if matches!(completed, Some(crate::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
                     Some(FieldLookup::Atom { atom, .. }) => self.methods.get(atom as usize).cloned(),
                     _ => None,
                 },
-                Class::MakeClosure => Some(vec![instruction.closure_function_index()]),
-                Class::LoadCapture => self.captured(id, instruction).cloned(),
+                _ if matches!(completed, Some(crate::staged::Operation::LoadCapture { .. })) => self.captured(id, instruction).cloned(),
                 _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => methods_by_register[usize::from(instruction.register_b())].clone(),
                 _ => None,
             };

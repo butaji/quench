@@ -4,7 +4,7 @@
 //! read what it proves; this file is the one meaning of a range.
 
 use super::{immediate, operand_type, set};
-use crate::bytecode::{Class, Constant, JsDenotation, Operand, WideInstruction};
+use crate::bytecode::{Constant, JsDenotation, Operand, WideInstruction};
 use crate::typed_ir::{IntRange, Type};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -58,8 +58,8 @@ fn stepped(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange>
 pub(in crate::vm::compiled) fn exact(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
     let decoded = crate::vm::compiled::decoded(instruction);
-    if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))
-        || (instruction.op().class().eq(Class::IncDec) && decoded.is_none()) { return stepped(lookup, instruction); }
+    if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })
+        | crate::staged::Operation::IncDecLocal { .. })) { return stepped(lookup, instruction); }
     let (operation, left, right) = operation(lookup, instruction)?;
     arithmetic(operation, left, right)
 }

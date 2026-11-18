@@ -978,9 +978,11 @@ impl<H: Host> Vm<H> {
         // names dynamically.
         let mut captures = metadata
             .instructions()
-            .filter(|instruction| match crate::vm::compiled::decoded(instruction) {
-                Some(operation) => matches!(operation, crate::staged::Operation::LoadCapture { .. }),
-                None => instruction.op().is_load_capture(),
+            .filter(|instruction| {
+                matches!(
+                    crate::vm::compiled::decoded_completed(instruction),
+                    Some(crate::staged::Operation::LoadCapture { .. })
+                )
             });
         let load = captures.next()?;
         if captures.next().is_some() {

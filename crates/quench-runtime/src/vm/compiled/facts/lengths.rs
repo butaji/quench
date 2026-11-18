@@ -117,14 +117,14 @@ impl Model<'_> {
         use crate::staged::Operation as Staged;
         let op = instruction.op();
         let decoded = crate::vm::compiled::decoded(instruction);
+        let completed = crate::vm::compiled::decoded_completed(instruction);
         let quiet = matches!(op.class(), Class::JumpBinaryFalse)
             || matches!(decoded, Some(Staged::Move { .. } | Staged::Jump | Staged::Nop | Staged::JumpIf { .. }
-                | Staged::Number(crate::staged::NumberOperation::IncDec { .. })))
+                | Staged::Number(crate::staged::NumberOperation::IncDec { .. })
+                | Staged::IncDecLocal { .. }))
             || crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
-            || (op.class() == Class::IncDec && decoded.is_none())
             || op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-            || ((matches!(decoded, Some(Staged::ElementRead { .. })) || (op.class() == Class::GetIndex && decoded.is_none()))
-                && (self.dense)(pc));
+            || (matches!(completed, Some(Staged::ElementRead { .. } | Staged::ElementReadOperand { .. })) && (self.dense)(pc));
         !quiet || self.generic.contains(&pc)
     }
 }
@@ -161,13 +161,10 @@ impl Point {
     /// access reads or writes a hoisted view and its index is non-negative, and below the array's
     /// length (`Proven`) or below another register's value (`Versioned`).
     pub(in crate::vm::compiled) fn index_proof(&self, model: &Model<'_>, pc: usize, instruction: WideInstruction) -> IndexProof {
-        let (array, index) = match crate::vm::compiled::decoded(instruction) {
+        // An element read of a frame local's base (`ElementReadOperand`) has no register array to prove.
+        let (array, index) = match crate::vm::compiled::decoded_completed(instruction) {
             Some(crate::staged::Operation::ElementRead { base, key }) => (Some(base), key.register_index()),
             Some(crate::staged::Operation::ElementWrite { base, key, .. }) => (Some(base), Some(key)),
-            // Where the decode rejects an access (a result flag, or an operand that is no register),
-            // its operands are read as the opcode reads them.
-            None if instruction.op().class() == Class::GetIndex => (instruction.operand_b().register_index(), instruction.operand_c().register_index()),
-            None if instruction.op().class() == Class::SetIndex => (Some(instruction.register_b()), Some(instruction.register_c())),
             _ => return IndexProof::Check,
         };
         let Some((array, index)) = array.zip(index) else { return IndexProof::Check };

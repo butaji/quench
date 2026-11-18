@@ -270,10 +270,10 @@ impl<H: Host> Vm<H> {
             instruction,
             self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
             instruction
-                .filter(|instruction| match crate::vm::compiled::decoded(instruction) {
+                .filter(|instruction| match crate::vm::compiled::decoded_completed(instruction) {
                     Some(crate::staged::Operation::GetField { .. }) => true,
                     Some(_) => false,
-                    // A read the decode rejects (a flagged or lookup-less one) keeps the opcode test.
+                    // A field read the decode rejects (one with no lookup) keeps the opcode test.
                     None => instruction.op().is_get_field(),
                 })
                 .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),

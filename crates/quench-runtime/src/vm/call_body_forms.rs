@@ -110,11 +110,11 @@ fn element_read_body(body: &Function) -> bool {
         return false;
     };
     let [field, element, done] = [field, element, done].map(|packed| body.widened(*packed));
-    field.op().is_get_field()
+    // A lookup-less `GetField` has the nested base, which `reads_this_or_parameter` refuses.
+    matches!(crate::vm::compiled::decoded_completed(field), Some(crate::staged::Operation::GetField { .. }))
         && !field.returns_from_frame()
         && reads_this_or_parameter(FieldBase(field.b()), body)
-        && element.op().is_get_index()
-        && element.b() == field.a()
+        && matches!(crate::vm::compiled::decoded_completed(element), Some(crate::staged::Operation::ElementRead { base, .. }) if base == field.a())
         && element.c() < body.params
         && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
         && done.a() == element.a()
@@ -132,7 +132,8 @@ fn leading_pair(body: &Function) -> Option<[WideInstruction; 2]> {
 /// `() => binding` compiles.
 fn capture_read_body(body: &Function) -> bool {
     leading_pair(body).is_some_and(|[load, done]| {
-        load.op().is_load_capture() && !load.returns_from_frame()
+        matches!(crate::vm::compiled::decoded_completed(load), Some(crate::staged::Operation::LoadCapture { .. }))
+            && !load.returns_from_frame()
             && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
             && done.a() == load.a()
     })
@@ -201,22 +202,37 @@ pub(super) fn leaf_body(body: &Function, code: &ResidualProgram, private: impl F
 /// when no leaf runs it.
 fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProgram,
     private: &impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
+    use crate::staged::{NumberOperation, Operation};
+    // The decoded records of the staged table decide their own leaf form first.
+    match crate::vm::compiled::decoded_completed(instruction) {
+        // A register move, a jump, a return, an increment or a nop of registers and constants.
+        Some(Operation::Move { .. } | Operation::Jump | Operation::JumpIf { .. } | Operation::Return { .. } | Operation::Nop
+            | Operation::Number(NumberOperation::IncDec { .. }) | Operation::IncDecLocal { .. }) => return Some(PLAIN_LEAF),
+        Some(Operation::LoadThis { .. }) => return Some(CONTEXT_LEAF),
+        Some(Operation::LoadCapture { .. } | Operation::StoreCapture { .. }) => return Some(CAPTURE_LEAF),
+        // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
+        // place (`lane_set_field_in_place`) or on the general path, either of which makes
+        // the leaf an activation first.
+        Some(Operation::SetField { .. }) => return store_leaf(instruction, private),
+        // A returning read requickens by its site's tier in its leaf form
+        // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
+        Some(Operation::GetField { .. }) => return field_leaf(instruction, code, private),
+        _ => {}
+    }
+    // A constant load (the decode of an empty context has none) is a plain leaf record.
+    if Operation::<(), ()>::decode_constant_load(instruction).is_some() {
+        return Some(PLAIN_LEAF);
+    }
+    // Records the decode leaves to the opcode: the other threads' opcodes (a number operation
+    // with a binary form, a unary, a name, a call) and a record the decode rejects.
     Some(match instruction.op() {
         op if op.is_leaf_value() || op.is_leaf_jump() => PLAIN_LEAF,
         op if op.is_leaf_binary() => return binary_leaf(instruction),
         op if op.traits().has(Traits::THIS_LEAF) => CONTEXT_LEAF,
         op if op.addresses_capture() => CAPTURE_LEAF,
-        // A store past its caches (a setter, a proxy's trap, a frozen target) runs in
-        // place (`lane_set_field_in_place`) or on the general path, either of which makes
-        // the leaf an activation first.
-        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => {
-            return store_leaf(instruction, private)
-        }
         // A global name's first load finds the running function (`lane_name_resolution`),
         // which makes the leaf an activation first; its later loads read the realm alone.
         op if op.traits().has(Traits::NAME_LEAF) && body.names_resolve_statically(code) => PLAIN_LEAF,
-        // A returning read requickens by its site's tier in its leaf form
-        // (`lane_returning_field_first`, `LaneView::specialize_leaf_returns`).
         op if op.traits().has(Traits::FIELD_LEAF) => field_leaf(instruction, code, private)?,
         _ => return None,
     })

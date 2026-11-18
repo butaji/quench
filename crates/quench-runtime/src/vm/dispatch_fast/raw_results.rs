@@ -126,43 +126,38 @@ fn raw_result_reaches(decoded: &[WideInstruction], live: &RegisterMasks, produce
 /// constant, a copy or a capture read. Calls, windows and jumps stop the search.
 fn passes_raw(instruction: WideInstruction) -> bool {
     use crate::staged::{NumberOperation, Operation};
-    let decoded = crate::vm::compiled::decoded(instruction);
-    let class = instruction.op().class();
+    let decoded = crate::vm::compiled::decoded_completed(instruction);
     instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
         || matches!(
             decoded,
             Some(
                 Operation::ElementRead { .. }
+                    | Operation::ElementReadOperand { .. }
                     | Operation::Number(NumberOperation::IncDec { .. })
+                    | Operation::IncDecLocal { .. }
                     | Operation::Move { .. }
                     | Operation::GetField { .. }
                     | Operation::LoadCapture { .. }
             )
         )
-        // A record the decode rejects (a flagged read, an IncDec with a numeric local target) keeps its opcode's pass.
-        || (decoded.is_none() && matches!(class, Class::GetIndex | Class::IncDec | Class::GetField | Class::LoadCapture))
         || Operation::<(), ()>::decode_constant_load(instruction).is_some()
-        || class == Class::Binary
+        || instruction.op().class() == Class::Binary
 }
 
-/// Whether `instruction` decodes as an element read (`GetIndex`); a record the decode rejects keeps
-/// the opcode test.
+/// Whether `instruction` decodes as an element read, of a register base or of a frame local.
 fn is_get_index(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::ElementRead { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_get_index(),
-    }
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementReadOperand { .. })
+    )
 }
 
-/// Whether `instruction` decodes as an increment or decrement (`IncDec`); a record the decode
-/// rejects (a numeric local target) keeps the class test.
+/// Whether `instruction` decodes as an increment or decrement, of a register or of a numeric local.
 fn is_inc_dec(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })) => true,
-        Some(_) => false,
-        None => instruction.op().class() == Class::IncDec,
-    }
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }) | crate::staged::Operation::IncDecLocal { .. })
+    )
 }
 
 /// Whether the arithmetic at `operation` writes a plain register that only the next

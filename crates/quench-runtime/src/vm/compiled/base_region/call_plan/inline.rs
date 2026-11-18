@@ -235,9 +235,7 @@ impl Emitter<'_> {
     fn capture_row(&self, instruction: WideInstruction) -> Option<Decoded> {
         let (values, len) = self.callee.captures;
         let slot = usize::from(instruction.capture_slot());
-        let decoded = crate::vm::compiled::decoded(instruction);
-        let capture = matches!(decoded, Some(crate::staged::Operation::LoadCapture { .. }))
-            || (instruction.op().class() == Class::LoadCapture && decoded.is_none());
+        let capture = matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. }));
         (capture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
             hole: (values + slot * std::mem::size_of::<Value>()) as u64,
             ..Decoded::heap(Heap::CalleeCapture, Some(instruction.result_register()), None, None)

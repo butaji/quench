@@ -5,6 +5,7 @@
 //! handlers serve. A root in a frame's run has no window scope and takes them too.
 use super::*;
 use super::scoped_names::window_scope;
+use super::window_records::{is_local_load, is_local_store};
 use super::super::root_bindings::RootBinding;
 
 script_handler! {
@@ -47,15 +48,15 @@ script_handler! {
     }
 }
 
-/// The handler a root body's local load or store takes: `class` is a load, a store or an
+/// The handler a root body's local load or store takes: `instruction` is a load, a store or an
 /// initialization of the environment window of a function laid out as a program's root, which
 /// resolves its slots through `Vm::root_binding`; `None` for any other record.
-pub(super) fn root_local_handler<H: Host>(class: Class, environment: bool) -> Option<Handler> {
-    match (class, environment) {
-        (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, true) => Some(lane_load_root_local::<H, true>),
-        (Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal, false) => Some(lane_load_root_local::<H, false>),
-        (Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal, true) => Some(lane_store_root_local::<H, true>),
-        (Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal, false) => Some(lane_store_root_local::<H, false>),
+pub(super) fn root_local_handler<H: Host>(instruction: WideInstruction, environment: bool) -> Option<Handler> {
+    match (is_local_load(instruction), is_local_store(instruction), environment) {
+        (true, _, true) => Some(lane_load_root_local::<H, true>),
+        (true, _, false) => Some(lane_load_root_local::<H, false>),
+        (_, true, true) => Some(lane_store_root_local::<H, true>),
+        (_, true, false) => Some(lane_store_root_local::<H, false>),
         _ => None,
     }
 }

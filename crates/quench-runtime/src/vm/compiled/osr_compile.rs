@@ -295,11 +295,8 @@ pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, 
     abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
     let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
         .filter(|(pc, instruction)| {
-            let decoded = crate::vm::compiled::decoded(*instruction);
-            // Where the decode rejects a GetIndex (a result flag, or an operand that is no register),
-            // the opcode decides as before.
-            let read = matches!(decoded, Some(crate::staged::Operation::ElementRead { .. }))
-                || (instruction.op().is_get_index() && decoded.is_none());
+            // A read of a frame local's base (`ElementReadOperand`) has no register array to type.
+            let read = matches!(crate::vm::compiled::decoded_completed(*instruction), Some(crate::staged::Operation::ElementRead { .. }));
             read && !abandoned.contains(pc)
         })
         .filter_map(|(pc, instruction)| {

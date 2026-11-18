@@ -9,21 +9,19 @@
 //! `arguments` object does.
 use super::*;
 
-/// The handler of `class`'s record of parameter `slot` when the parameter is one a mapped
+/// The handler of `instruction`'s record of parameter `slot` when the parameter is one a mapped
 /// `arguments` object aliases in a suspended function's window; `None` for any other record.
 pub(super) fn mapped_parameter_handler<H: Host>(
     function: &Function,
-    class: Class,
+    instruction: WideInstruction,
     slot: usize,
 ) -> Option<Handler> {
-    let handler: Handler = match class {
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => {
-            lane_load_mapped_parameter::<H>
-        }
-        Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal => {
-            lane_store_mapped_parameter::<H>
-        }
-        _ => return None,
+    let handler: Handler = if super::window_records::is_local_load(instruction) {
+        lane_load_mapped_parameter::<H>
+    } else if super::window_records::is_local_store(instruction) {
+        lane_store_mapped_parameter::<H>
+    } else {
+        return None;
     };
     (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some()
         && function.arguments_ride_window())

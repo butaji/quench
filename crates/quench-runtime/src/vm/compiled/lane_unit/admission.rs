@@ -25,10 +25,11 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
         _ if instruction.op().traits().has(Traits::SCALAR_REGION.union(Traits::ELEMENT_ACCESS).union(Traits::THIS_LEAF)) => plain,
         // The callee's own captures, which its frame reads from its environment
         // (`Lowering::frame_captures`).
-        opcode if opcode.is_load_capture() => plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
+        _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) =>
+            plain && ImmediateLayout::capture_depth(instruction.imm()) == 0,
         // A nested lookup's chain names its base by the function's registers; the lowering
         // renames it through the frame (`Lowering::get_field`), and its sink stores to `this`.
-        opcode if opcode.is_get_field() => match instruction.field_lookup() {
+        _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
             Some(FieldLookup::Atom { .. }) => plain,
             Some(FieldLookup::Site(_)) => plain || instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER,
             None => false,
@@ -46,10 +47,13 @@ fn inlinable_pure(instruction: WideInstruction, plain: bool) -> Option<bool> {
 pub(super) fn restartable(program: &crate::ResidualProgram, function: &Function, code: &[WideInstruction]) -> bool {
     if super::super::lane_region::restartable_numeric_function(program, function, code) { return true; }
     code.iter().enumerate().all(|(pc, instruction)| match instruction.op() {
-        opcode if opcode.is_set_index() || opcode.is_call() => false,
+        _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => false,
+        opcode if opcode.is_call() => false,
         _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. })) => false,
-        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
-        opcode if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: false, .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::JumpIf { taken: true, .. })) || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
+        _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => true,
+        // An IncDec with a numeric local target decodes apart: its result stays a local.
+        _ if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::IncDecLocal { .. })) => false,
+        opcode if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump | crate::staged::Operation::JumpIf { .. })) || opcode.is_jump_binary_false() => instruction.jump_target() as usize > pc,
         _ => true, // `inlinable` owns the supported instruction/effect set.
     })
 }

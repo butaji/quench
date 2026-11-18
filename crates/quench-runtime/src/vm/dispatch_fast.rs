@@ -9057,7 +9057,14 @@ fn field_store_at<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Option<FieldStore
     // innermost activation's view.
     let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
     let body = code.function(function as usize);
-    body.widened(body.code[pc]).op().field_store()
+    match crate::vm::compiled::decoded(body.widened(body.code[pc])) {
+        // A store to `this` has no base register (`SetThisField`).
+        Some(crate::staged::Operation::SetField { base, strict, .. }) => Some(FieldStore {
+            receiver: if base.is_some() { StoreReceiver::Register } else { StoreReceiver::This },
+            strict,
+        }),
+        _ => None,
+    }
 }
 
 /// The brand of private name `atom` at the record `ip`, whose home follows the running
@@ -10573,7 +10580,7 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
             let op = instruction.op();
             super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || decoded_element_read(instruction)
-                || op.stores_element() || decoded_field_store(instruction) || decoded_capture_load(instruction))
+                || decoded_element_write(instruction) || decoded_field_store(instruction) || decoded_capture_load(instruction))
                 .then(|| (decoded_element_read(instruction), decoded_field_store(instruction)))
         })
     });
@@ -22245,33 +22252,27 @@ fn lane_binding_step(decoded: &[WideInstruction], pc: usize) -> bool {
         && pc + BINDING_VALUE_READ + 1 < decoded.len()
 }
 
-/// Whether `instruction` is an element read the decoder takes as `ElementRead`. Where it
-/// rejects the record (`decoded` is `None`), the opcode test keeps the read the lane always made.
+/// Whether `instruction` is an element read: the decoder's `ElementRead` for a register base, or
+/// its `ElementReadOperand` for a frame local base.
 fn decoded_element_read(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::ElementRead { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_get_index(),
-    }
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementReadOperand { .. })
+    )
 }
 
-/// Whether `instruction` is an element store the decoder takes as `ElementWrite`. Where it
-/// rejects the record (`decoded` is `None`), the opcode test keeps the store the lane always made.
+/// Whether `instruction` is an element store the decoder takes as `ElementWrite`.
 fn decoded_element_write(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::ElementWrite { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_set_index(),
-    }
+    matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::ElementWrite { .. }))
 }
 
 /// Whether `instruction` is a named field read the decoder takes as `GetField`. Where it
-/// rejects the record (`decoded` is `None`: no field lookup), the opcode test keeps the read.
+/// rejects the record (`decoded_completed` is `None`: no field lookup), the opcode test keeps
+/// the read.
 fn decoded_field_read(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
+    match crate::vm::compiled::decoded_completed(instruction) {
         Some(crate::staged::Operation::GetField { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().is_get_field(),
+        _ => false,
     }
 }
 
@@ -22280,23 +22281,26 @@ fn decoded_field_store(instruction: WideInstruction) -> bool {
     matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
 }
 
-/// Whether `instruction` is a capture read the decoder takes as `LoadCapture`. Where it rejects
-/// the record (`decoded` is `None`), the opcode test keeps the read the lane always made.
+/// Whether `instruction` is a capture read the decoder takes as `LoadCapture`.
 fn decoded_capture_load(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::LoadCapture { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().class() == Class::LoadCapture,
+    matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. }))
+}
+
+/// Whether `instruction` is a plain local load the decoder takes as `LoadLocalPlain`. The decode
+/// rejects only a slot past `u16`, which the class test keeps as the load the lane always made.
+fn decoded_local_plain_load(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded_completed(instruction) {
+        Some(crate::staged::Operation::LoadLocalPlain { .. }) => true,
+        _ => false,
     }
 }
 
-/// Whether `instruction` is a plain local load the decoder takes as `LoadLocalPlain`. Where it
-/// rejects the record (`decoded` is `None`: a slot past `u16`), the opcode test keeps the load.
-fn decoded_local_plain_load(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::LoadLocalPlain { .. }) => true,
-        Some(_) => false,
-        None => instruction.op().class() == Class::LoadLocalPlain,
+/// Whether `instruction` is a plain local store the decoder takes as `StoreLocalPlain`. As
+/// `decoded_local_plain_load`, the class test keeps a slot past `u16`.
+fn decoded_local_plain_store(instruction: WideInstruction) -> bool {
+    match crate::vm::compiled::decoded_completed(instruction) {
+        Some(crate::staged::Operation::StoreLocalPlain { .. }) => true,
+        _ => false,
     }
 }
 
@@ -22939,13 +22943,15 @@ fn derive_lane_view<'live, H: Host>(
         }
         let absorbed = decoded[target];
         let plain = |op: u16| absorbed.op() as u16 == op && serves(records[target].handler, op, ACC_NONE);
+        let plain_move = matches!(crate::vm::compiled::decoded(absorbed), Some(crate::staged::Operation::Move { .. }))
+            && serves(records[target].handler, opc::Move, ACC_NONE);
         let backward = target <= pc;
         // In compiled mode an OSR site's backedge must remain a standalone jump record.
         // The lane's `THROUGH` fusion would replace both its handler and jump distance.
         if loop_tier && backward {
             continue;
         }
-        let (handler, c) = if plain(opc::Move) {
+        let (handler, c) = if plain_move {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
         } else if plain(opc::WasmI32AddImmediate)
             && let Ok(step) = i16::try_from(absorbed.imm() as i32)
@@ -24664,7 +24670,7 @@ fn specialize_environment_window<H: Host>(
                 if own > ENVIRONMENT_WINDOW_FIELD || !(row || plain.iter().any(|plain| *plain as *const () == handler)) {
                     return None;
                 }
-                let handler = window_local_handler::<H>(function, instruction.op(), own as usize, scoped);
+                let handler = window_local_handler::<H>(function, instruction, own as usize, scoped);
                 replacements.push((pc, handler, own | u32::from(registers) << ENVIRONMENT_WINDOW_SHIFT));
             }
         }

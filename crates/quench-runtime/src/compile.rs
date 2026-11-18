@@ -4544,8 +4544,9 @@ impl<'a> Compiler<'a> {
         let plain_slots = function.plain_local_slots_in(superinstructions, flow);
         for instruction in &mut function.code {
             match instruction.op() {
+                // A plain local's slot fits the staged row's u16 (`Operation::LoadLocalPlain`).
                 Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.contains(instruction.local_slot()) =>
+                    if plain_slots.contains(instruction.local_slot()) && u16::try_from(instruction.local_slot()).is_ok() =>
                 {
                     instruction.set_op(if instruction.op() == Op::LoadLocal {
                         Op::LoadLocalPlain
@@ -4558,8 +4559,9 @@ impl<'a> Compiler<'a> {
         }
         for instruction in &mut function.wide {
             match instruction.op() {
+                // A plain local's slot fits the staged row's u16 (`Operation::LoadLocalPlain`).
                 Op::LoadLocal | Op::StoreLocal
-                    if plain_slots.contains(instruction.local_slot()) =>
+                    if plain_slots.contains(instruction.local_slot()) && u16::try_from(instruction.local_slot()).is_ok() =>
                 {
                     instruction.set_op(if instruction.op() == Op::LoadLocal {
                         Op::LoadLocalPlain

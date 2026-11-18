@@ -264,8 +264,7 @@ fn transfer(
             Flow::Next
         }
         _ if instruction.numeric_local_target().is_none() && (matches!(decoded,
-            Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))
-            || (op.class() == Class::IncDec && decoded.is_none())) => {
+            Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))) => {
             // The operand is proved int32 or the instruction leaves.
             ranges::step(types, instruction);
             Flow::Next
@@ -302,7 +301,7 @@ fn transfer(
                 // An instruction the analysis does not model continues with the registers it
                 // writes unknown, and with no object shape kept unless it cannot change one: the
                 // code after it is typed whether the lowering runs it natively or leaves at it.
-                ControlFlowLayout::Fallthrough => forget_shapes(types, !keeps_shapes(instruction, decoded)),
+                ControlFlowLayout::Fallthrough => forget_shapes(types, !keeps_shapes(instruction)),
                 ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump => {
                     Flow::To(instruction.jump_target() as usize)
                 }
@@ -314,18 +313,15 @@ fn transfer(
 
 /// Whether an instruction the analysis does not model keeps every object's shape: a named field
 /// read or store, a Nop, a `this` load, a capture read or an element access, by its staged
-/// operation `decoded`. Where the decode rejects a field read, a capture read or an element access
-/// (a result flag, or an operand that is no register), the opcode decides as before.
-fn keeps_shapes(instruction: WideInstruction, decoded: Option<crate::staged::Operation<(), ()>>) -> bool {
+/// operation with its result flags completed (`decoded_completed`). The one read the decode
+/// rejects is a named read with no field lookup, which the opcode decides.
+fn keeps_shapes(instruction: WideInstruction) -> bool {
     use crate::staged::Operation as Staged;
-    match decoded {
+    match crate::vm::compiled::decoded_completed(instruction) {
         Some(Staged::GetField { .. } | Staged::SetField { .. } | Staged::Nop | Staged::LoadThis { .. }
-            | Staged::LoadCapture { .. } | Staged::ElementRead { .. } | Staged::ElementWrite { .. }) => true,
-        None => {
-            let op = instruction.op();
-            op.is_named_field_access() || matches!(op.class(), Class::LoadCapture | Class::GetIndex | Class::SetIndex)
-        }
-        Some(_) => false,
+            | Staged::LoadCapture { .. } | Staged::ElementRead { .. } | Staged::ElementReadOperand { .. }
+            | Staged::ElementWrite { .. }) => true,
+        _ => false,
     }
 }
 

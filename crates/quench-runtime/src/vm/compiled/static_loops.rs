@@ -3,7 +3,7 @@
 //! Instructions keep their original unit PCs, origins and recovery homes.
 
 use super::{facts, lane_unit::Unit};
-use crate::{Value, bytecode::{Class, ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
+use crate::{Value, bytecode::{ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
 use cranelift_codegen::bitset::CompoundBitSet;
 
@@ -52,22 +52,24 @@ fn operand(program: &ResidualProgram, values: &[Option<Value>], operand: Operand
 /// Static evaluation uses the interpreter's Number denotations. Unknown operands
 /// remain dynamic; no guest conversion or effect is executed by the compiler.
 fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: WideInstruction) {
+    let decoded = crate::vm::compiled::decoded(instruction);
     if !scalar_body(instruction) {
-        if instruction.op().loads_frame_local() && instruction.numeric_local_target().is_none() {
+        // A plain local load decodes; `LoadLocal` and a plain slot past u16 do not.
+        if (matches!(decoded, Some(crate::staged::Operation::LoadLocalPlain { .. }))
+            || instruction.op().loads_frame_local()) && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
-        } else if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Nop)) && !instruction.op().control_flow_layout().jumps() {
+        } else if !matches!(decoded, Some(crate::staged::Operation::Nop)) && !instruction.op().control_flow_layout().jumps() {
             values.fill(None);
         }
         return;
     }
-    let decoded = crate::vm::compiled::decoded(instruction);
-    let value = match instruction.op().class() {
+    let value = match instruction.op() {
         _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =>
             program.constants.get(instruction.constant_index()).and_then(facts::immediate),
         _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
-        Class::IncDec if instruction.numeric_local_target().is_none() => {
+        _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
                 .zip(instruction.boolean_flag()).map(|(value, decrement)| Value::number(if decrement { value - 1.0 } else { value + 1.0 }))
         }
@@ -98,7 +100,7 @@ fn scalar_body(instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
         && (crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
             || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. }))
-            || matches!(instruction.op().class(), Class::IncDec)
+            || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))
             || (instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
                 && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
                     || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
@@ -228,9 +230,9 @@ mod tests {
         let changed: Vec<_> = residual.iter().zip(&unit.instructions).enumerate()
             .filter(|(_, (after, before))| after.imm() != before.imm()).collect();
         assert_eq!(changed.len(), 2);
-        assert_eq!(changed[0].1.0.op(), Op::Nop);
+        assert!(matches!(crate::vm::compiled::decoded(changed[0].1.0), Some(crate::staged::Operation::Nop)));
         let (pc, (after, before)) = changed[1];
-        assert_eq!(after.op(), Op::Jump);
+        assert!(matches!(crate::vm::compiled::decoded(after), Some(crate::staged::Operation::Jump)));
         assert!((before.jump_target() as usize) < pc && after.jump_target() as usize > pc);
         assert!(matches!(unit.origins[pc], lane_unit::Origin::Inlined { .. }));
     }

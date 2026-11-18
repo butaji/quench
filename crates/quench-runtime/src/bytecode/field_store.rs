@@ -40,6 +40,12 @@ impl Op {
         Some(FieldStore { receiver, strict })
     }
 
+    /// Whether this is a strict named field store (`SetFieldStrict`, `SetThisFieldStrict`).
+    #[inline(always)]
+    pub(crate) const fn is_strict_field_store(self) -> bool {
+        matches!(self.field_store(), Some(FieldStore { strict: true, .. }))
+    }
+
     #[inline(always)]
     pub(crate) const fn is_field_store(self) -> bool {
         self.field_store().is_some()

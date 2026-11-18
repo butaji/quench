@@ -53,6 +53,14 @@ pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::byteco
     crate::staged::Operation::decode(*instruction.borrow(), crate::staged::DecodeContext::EMPTY)
 }
 
+/// The staged operation a record makes apart from how its result completes the frame (its result
+/// flags), with no constants or sites resolved (`Operation::decode_completed`): what a tier that
+/// completes the result itself asks instead of naming the opcode.
+#[inline]
+pub(in crate::vm) fn decoded_completed(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    crate::staged::Operation::decode_completed(*instruction.borrow(), crate::staged::DecodeContext::EMPTY).map(|(operation, _)| operation)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;

@@ -309,8 +309,7 @@ impl<'a> Graph<'a> {
             return Err(());
         }
         use crate::staged::{NumberOperation, Operation};
-        let decoded = crate::vm::compiled::decoded(instruction);
-        let value = match decoded {
+        let value = match crate::vm::compiled::decoded_completed(instruction) {
             Some(Operation::Move { source, .. }) => file.get(usize::from(source)).copied(),
             Some(Operation::LoadCapture { .. }) => Some(Sym::Capture(instruction.imm())),
             Some(Operation::GetField { .. }) => self.field(instruction),
@@ -320,13 +319,8 @@ impl<'a> Graph<'a> {
             Some(Operation::Nop) => return Ok(None),
             _ => match Operation::<(), ()>::decode_constant_load(instruction) {
                 Some((_, index)) => self.constants.get(index).and_then(|v| v.as_number()).map(Sym::Const),
-                // A record the decode rejects (a flagged read or write) keeps the path its opcode took.
+                // The binary operators are not in the decoder's table yet: they keep their class test.
                 None => match instruction.op().class() {
-                    Class::LoadCapture => Some(Sym::Capture(instruction.imm())),
-                    Class::GetField => self.field(instruction),
-                    Class::IncDec => self.inc_dec(instruction, file),
-                    Class::GetIndex => self.get_index(instruction, file),
-                    Class::SetIndex => return self.set_index(instruction, file).map(|()| None).ok_or(()),
                     Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
                     _ => None,
                 },
@@ -373,14 +367,12 @@ fn writes_local(instruction: WideInstruction) -> bool {
     !is_element_write_or_nop(instruction) && instruction.numeric_local_target().is_some()
 }
 
-/// Whether `instruction` decodes as an element store or a `Nop`; a store the decode rejects keeps
-/// the opcode test.
+/// Whether `instruction` decodes as an element store or a `Nop`.
 fn is_element_write_or_nop(instruction: WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::Nop) => true,
-        Some(_) => false,
-        None => matches!(instruction.op().class(), Class::SetIndex | Class::Nop),
-    }
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::ElementWrite { .. } | crate::staged::Operation::Nop)
+    )
 }
 
 /// The registers `body` writes.

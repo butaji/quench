@@ -484,7 +484,7 @@ pub(super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, 
     let miss = frame.miss();
     let word = match operation {
         Operation::GetField { base, lookup } => get_field(stage, frame, base, lookup, miss),
-        Operation::SetField { value, base, atom, site } => super::property_write::set_field(stage, frame, (value, base), (atom, site), miss),
+        Operation::SetField { value, base, atom, site, .. } => super::property_write::set_field(stage, frame, (value, base), (atom, site), miss),
         Operation::StoreField { base, value, fact, atom, site } =>
             super::property_write::store_word(stage, frame, base, (value, fact), (atom, site), miss),
         Operation::FieldGetHost { object, atom, site } => frame.field_probe(stage, Owner::Temporary, object, atom, site, miss),

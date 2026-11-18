@@ -47,10 +47,8 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
     vm.execute(&program).unwrap();
     let read_name = vm.lookup_atom("read").unwrap();
     let function = program.functions.iter().find(|f| f.name == Some(read_name)).unwrap();
-    let instruction = function.instructions().find(|i| match crate::vm::compiled::decoded(i) {
-        Some(operation) => matches!(operation, crate::staged::Operation::GetField { .. }),
-        None => i.op().is_get_field(),
-    }).unwrap();
+    let instruction = function.instructions()
+        .find(|i| matches!(crate::vm::compiled::decoded_completed(i), Some(crate::staged::Operation::GetField { .. }))).unwrap();
     let field = match instruction.field_lookup().unwrap() {
         FieldLookup::Atom { atom, base, cache_site } => FieldSite {
             base, first: (atom, cache_site), second: None,

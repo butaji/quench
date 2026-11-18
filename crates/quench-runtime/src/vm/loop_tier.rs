@@ -434,13 +434,13 @@ pub(super) fn int_capture_slots<H: Host>(cx: *mut LaneContext<H>) -> Vec<u16> {
     slots
 }
 
-/// Whether `instruction` is a `LoadCapture`: the shared decode's answer, where the decode
-/// rejects the record (a nonzero result flag), the opcode test it always made.
+/// Whether `instruction` is a `LoadCapture`: the shared decode's answer, with its result flags
+/// set aside.
 fn is_capture_load(instruction: &crate::bytecode::WideInstruction) -> bool {
-    match crate::vm::compiled::decoded(instruction) {
-        Some(operation) => matches!(operation, crate::staged::Operation::LoadCapture { .. }),
-        None => instruction.op().is_load_capture(),
-    }
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::LoadCapture { .. })
+    )
 }
 
 /// How many elements of an entry array are sampled for Numbers.
