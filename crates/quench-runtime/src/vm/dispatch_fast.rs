@@ -21167,7 +21167,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
-        Class::ForInStart => Some(for_in_steps::for_in_start_handler::<H>()),
         // A loop exit's own step before the general one its catalog row also names: an
         // earlier arm here shadowed it, so every `ForInNext` key took the general step.
         _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),

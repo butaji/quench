@@ -929,6 +929,15 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
             note_allocation(vm);
             Some(iterator)
         }
+        // The loop's state over the snapshot of an object whose keys the for-in memo lists.
+        CallOut::Protocol { step: Protocol::ForInStart, .. } => {
+            let source = second?;
+            let keys = vm.listed_for_in_keys(source)?;
+            let state = vm.lane_for_in_state(source, keys);
+            // A state may be allocated; a due collection runs at the lane's next safepoint.
+            note_allocation(vm);
+            Some(state)
+        }
         // A spread onto the literal's array with no elisions before it, from a source whose
         // iteration runs no guest code: the append defines no register, so its value is unused.
         CallOut::Protocol { step: Protocol::AppendArray { length: 0, spread: true }, .. } => {
