@@ -147,19 +147,23 @@ pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram
     shared_window_plan(vm, code, frame, key).map(|plan| (plan, true))
 }
 
+/// Plans `shared_window_plan` keeps, one slot per function index modulo this.
+pub(in crate::vm) const SHARED_PLANS: usize = 8;
+
 /// `cached_window_plan` of a frame whose record holds no plan under `key`.
 #[inline(never)]
 fn shared_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, key: (u64, u64, Value, bool)) -> Option<WindowPlan> {
     let shared = (vm.active_program, frame.function);
+    let slot = frame.function as usize % SHARED_PLANS;
     if frame.program == vm.active_program
-        && let Some((.., plan)) = vm.lane_stack.last_window_plan.filter(|(program, function, plan)| (*program, *function) == shared && plan.key == key)
+        && let Some((.., plan)) = vm.lane_stack.last_window_plan[slot].filter(|(program, function, plan)| (*program, *function) == shared && plan.key == key)
     {
         return Some(plan);
     }
     let environment = vm.window_layout(frame, code)?;
     let plan = window_plan(vm, code, frame, environment)?;
     if !frame.captured {
-        vm.lane_stack.last_window_plan = Some((shared.0, shared.1, plan));
+        vm.lane_stack.last_window_plan[slot] = Some((shared.0, shared.1, plan));
     }
     Some(plan)
 }

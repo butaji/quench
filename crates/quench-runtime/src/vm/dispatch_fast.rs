@@ -2269,10 +2269,11 @@ pub(super) struct LaneStack {
     /// The exported Wasm function a JavaScript call last entered (`Vm::wasm_export_frame_call`),
     /// so the next call of it reads its closure and signature once. A collection forgets it.
     pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
-    /// The window plan last derived for a frame that made no environment of its own
-    /// (`generator_windows::cached_window_plan`): every new activation of the same function
-    /// under the same environment, as each call of an async function is, shares it.
-    pub(super) last_window_plan: Option<(ProgramId, u32, generator_windows::WindowPlan)>,
+    /// The window plans last derived for frames that made no environment of their own
+    /// (`generator_windows::cached_window_plan`), one slot per function index modulo
+    /// `SHARED_PLANS`: every new activation of the same function under the same environment,
+    /// as each call of an async function is, shares it.
+    pub(super) last_window_plan: [Option<(ProgramId, u32, generator_windows::WindowPlan)>; generator_windows::SHARED_PLANS],
     /// The record of the generator the lane last resumed as a window, under the collection
     /// epoch of the resume (`Vm::windowed_generator_record`): its yield finds the record without
     /// a heap lookup. A collection, the only way a generator's cell is freed and its index
@@ -2337,7 +2338,7 @@ impl Default for LaneStack {
             body_boundary: None,
             boundary_frames: None,
             wasm_export: None,
-            last_window_plan: None,
+            last_window_plan: [None; generator_windows::SHARED_PLANS],
             last_generator: (Value::UNDEFINED, u64::MAX, std::ptr::null_mut()),
         }
     }
