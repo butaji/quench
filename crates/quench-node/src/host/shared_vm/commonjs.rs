@@ -166,6 +166,12 @@ fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
 }
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
+///
+/// Detection-first on purpose, for the callers that need the goal before any VM exists: the
+/// entry (`shared_run`) chooses between two different programs (an ES module main or the
+/// CommonJS entry), and the ESM graph (`module_source`) chooses between the module's own
+/// source and a CommonJS facade. Compile-first would change which program runs there. The
+/// CommonJS loader itself is compile-first (`execute_module`, `failed_wrapper_goal`).
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     let path = real_path_for_kind(path)?;
     source_kind_of_real(&path)
@@ -374,11 +380,19 @@ fn detected_kind_of(bytes: &[u8]) -> Option<quench_runtime::SourceKind> {
 }
 
 /// Node's syntax detection of `text`: the CommonJS wrapper first, then ES module syntax.
+/// Parses the text up to twice (the wrapper, then `module_syntax_kind`); callers that
+/// already hold a failed wrapper compile use `goal_after_wrapper_syntax_error` instead.
 fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
     let wrapper = [WRAPPER_PREFIX, text, WRAPPER_SUFFIX].concat();
     if valid_source(&wrapper, oxc_span::SourceType::cjs()) {
         return quench_runtime::SourceKind::Script;
     }
+    module_syntax_kind(text)
+}
+
+/// The module-syntax step of Node's detection, once the CommonJS wrapper is ruled out:
+/// `text` is an ES module when it parses as one (unambiguous) or is valid as `.mjs`.
+fn module_syntax_kind(text: &str) -> quench_runtime::SourceKind {
     let allocator = oxc_allocator::Allocator::default();
     let parsed =
         oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::unambiguous()).parse();
@@ -386,6 +400,38 @@ fn detect_text_kind(text: &str) -> quench_runtime::SourceKind {
         quench_runtime::SourceKind::Module
     } else {
         quench_runtime::SourceKind::Script
+    }
+}
+
+/// The goal of `path` (text `text`, without the wrapper) after its CommonJS wrapper compile
+/// failed with a syntax error. That compile already parsed the wrapper, so the wrapper is not
+/// parsed again: only the module-syntax step decides. A `.ts` file's own module syntax decides
+/// it instead (`typescript_has_module_syntax`): none known is a Script, anything else a Module,
+/// since the wrapper just failed to compile.
+/// Single parse order for a rejected wrapper: compile (`execute_module`) -> this step.
+fn goal_after_wrapper_syntax_error(path: &Path, text: &str) -> quench_runtime::SourceKind {
+    if path.extension().is_some_and(|extension| extension == "ts") {
+        return match quench_runtime::Engine::typescript_has_module_syntax(text) {
+            None => quench_runtime::SourceKind::Script,
+            Some(_) => quench_runtime::SourceKind::Module,
+        };
+    }
+    let kind = module_syntax_kind(text);
+    if let Some(entry) = text_facts_cache().entry(DETECTED_KIND_NAME, &[text]) {
+        entry.store(&[detected_kind_byte(kind)]);
+    }
+    kind
+}
+
+/// The goal a failed CommonJS wrapper compile (`error`) leaves for `path` with body `text`:
+/// a syntax failure decides by module syntax alone (`goal_after_wrapper_syntax_error`); an
+/// unsupported compile keeps its error, so it is no ES module; a failure that is not a compile
+/// diagnostic (a stack exhaustion, a host failure) decides by full detection, as before.
+fn failed_wrapper_goal(error: &RootedError, path: &Path, text: &str) -> quench_runtime::SourceKind {
+    match error.compile_failure() {
+        Some(quench_runtime::CompileFailureKind::Syntax) => goal_after_wrapper_syntax_error(path, text),
+        Some(quench_runtime::CompileFailureKind::Unsupported) => quench_runtime::SourceKind::Script,
+        None => detect_source_kind_for_path(path, text),
     }
 }
 
@@ -2964,6 +3010,11 @@ pub(crate) fn execute_user_module(context: &mut Context<'_>, module: RootId, fil
 }
 
 /// Compile and run one module's file into `module` by its kind and extension.
+///
+/// Single parse order for an undeclared `.js`/`.ts` file: its CommonJS wrapper compiles once
+/// (`evaluate_wrapper`, which the program keeps); only a syntax failure of that compile asks
+/// the module-syntax step whether the file is an ES module (`failed_wrapper_goal`). Undeclared
+/// text whose goal the compile cache already knows as a module skips the wrapper compile.
 fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result<RootId, RootedError> {
     let ModuleSource { key, module, filename, parent, declared, is_main } = source;
     if declared == Some(quench_runtime::SourceKind::Module) {
@@ -3069,10 +3120,12 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     }
                     // The compiled program keeps the wrapper it compiled, shared with this call.
                     let wrapper_source = std::rc::Rc::new(wrapper_source);
+                    // Single parse order: this compile is the wrapper's parse. A syntax failure of it
+                    // asks only the module-syntax step (`failed_wrapper_goal`), never the wrapper again.
                     let wrapper = match evaluate_wrapper(context, prefix, std::rc::Rc::clone(&wrapper_source), key, is_main, typescript) {
                         Ok(wrapper) => wrapper,
-                        Err(_) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
-                            && detect_source_kind_for_path(filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
+                        Err(error) if !quench_runtime::NATIVE_SUPPORT_IS_EXECUTION_ONLY && declared.is_none()
+                            && failed_wrapper_goal(&error, filename, &wrapper_source[prefix.len()..wrapper_source.len() - suffix.len()])
                                 == quench_runtime::SourceKind::Module =>
                         {
                             drop(wrapper_source);

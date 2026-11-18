@@ -675,16 +675,22 @@ function.plain_local_slots(&self.superinstructions)
                 return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
-            let positions = function.source_positions.iter();
-            if positions
-                .clone()
-                .zip(positions.clone().skip(1))
-                .any(|(first, second)| first.pc >= second.pc)
-                || positions.clone().any(|position| {
-                    position.pc >= code_len || position.line == 0 || position.column == 0
-                })
-                || positions.clone().last() != function.source_positions.last()
-            {
+            // One decoding pass: entries strictly increase in pc, lie within the code and
+            // have a line and column, and the last decoded entry is the table's last.
+            let mut previous_pc = None;
+            let mut decoded_last = None;
+            for position in function.source_positions.iter() {
+                if previous_pc.is_some_and(|pc| pc >= position.pc)
+                    || position.pc >= code_len
+                    || position.line == 0
+                    || position.column == 0
+                {
+                    return Err(format!("function {index} has invalid source positions"));
+                }
+                previous_pc = Some(position.pc);
+                decoded_last = Some(position);
+            }
+            if decoded_last != function.source_positions.last() {
                 return Err(format!("function {index} has invalid source positions"));
             }
             if function

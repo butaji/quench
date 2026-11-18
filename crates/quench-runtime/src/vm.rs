@@ -302,7 +302,7 @@ mod typed_array_construct;
 mod typed_array_install;
 mod vm_init;
 pub(crate) mod wtf16;
-pub use error::JsError;
+pub use error::{CompileFailureKind, JsError};
 pub use value_serializer::{
     write_double, write_raw_bytes, write_uint32, write_uint64, HostObjectRead, SerializedValue, SharedWireInput, ValueDeserializer,
     ValueSerializer, WireInput, WireOutput, WIRE_FORMAT_VERSION,

@@ -2002,8 +2002,9 @@ struct Compiler<'a> {
     /// The instructions of the functions whose rewrites the load left to their first compile
     /// (`Compiler::defers_rewrites`), which bound the sites those add.
     deferred_rewrite_code: usize,
-    /// Some kept record's rewrites wait for its first read.
-    kept_rewrites_pending: bool,
+    /// The kept functions whose rewrites wait for their first read, in id order
+    /// (`Compiler::defers_kept_rewrites`); the program's `RewriteRanges::deferred`.
+    kept_rewrites: Vec<u32>,
 }
 
 /// Whether a compilation may parse a data script's literal as an empty one
@@ -2416,14 +2417,15 @@ impl<'a> Compiler<'a> {
         let mut visible = FxHashSet::default();
         let mut bindings = Vec::new();
         for (marker, slot) in scope.iter() {
-            let text = self.atoms[marker as usize].to_owned();
+            // Only a capture-prefixed name is copied: most scope entries are not captures.
             let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
-                text.strip_prefix(kind.capture_prefix())
-                    .map(|name| (kind, name))
+                self.atoms[marker as usize]
+                    .strip_prefix(kind.capture_prefix())
+                    .map(|name| (kind, name.to_owned()))
             }) else {
                 continue;
             };
-            let atom = self.atom(name);
+            let atom = self.atom(&name);
             if !visible.insert(atom) {
                 continue;
             }
@@ -2492,7 +2494,7 @@ impl<'a> Compiler<'a> {
         source_line_starts: std::borrow::Cow<'a, [usize]>,
         source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
     ) -> Self {
-        let atoms = CompilerAtoms::new(atom_prefix);
+        let atoms = CompilerAtoms::new(atom_prefix, source.len() / 32);
         Self {
             source,
             text,
@@ -2529,7 +2531,7 @@ impl<'a> Compiler<'a> {
             private_name_overrides: FxHashMap::default(),
             constants: SiteTable::default(),
             constant_index: replay::ConstantIndex::default(),
-            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites_pending: false,
+            functions: replay::FunctionTable::default(), deferred_rewrite_code: 0, kept_rewrites: Vec::new(),
             errors: vec![],
             cache_sites: 0,
             name_shared_sites: NameSharedSites::default(),
@@ -3588,15 +3590,12 @@ impl<'a> Compiler<'a> {
         let rewrites_pend = self.rewrites_pend(&room);
         let code = self.deferred_rewrite_code + room.code();
         let cache_capacity = room.cache_capacity(self.cache_sites);
-        let (mut method_sites, mut method_arguments) =
-            Self::flatten_method_sites(self.method_sites.into_vec());
+        // `AppendVec::with_headroom` takes each table's exact length, so these need no shrinking first.
+        let (method_sites, method_arguments) = Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
         let replay_atoms = self.first_call.keep_replay(replays.is_empty())
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
-        let mut constants = self.constants.into_vec();
-        constants.shrink_to_fit();
-        method_sites.shrink_to_fit();
-        method_arguments.shrink_to_fit();
+        let constants = self.constants.into_vec();
         let field_sites = self.field_sites.into_vec();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
@@ -3647,7 +3646,7 @@ impl<'a> Compiler<'a> {
             regexp_literal_sites: crate::bytecode::append_vec::AppendVec::with_headroom(self.regexp_literal_sites.into_vec(), room.regexp_literal_sites()),
             literal_templates: crate::bytecode::append_vec::AppendVec::with_headroom(self.literal_templates.into_vec(), room.literal_templates()),
             superinstructions: crate::bytecode::append_vec::AppendVec::with_headroom(self.superinstructions.into_vec(), code / SUPERINSTRUCTION_WINDOW + 1),
-            rewrite_ranges: replay::RewriteRanges { kept_pending: rewrites_pend, ..Default::default() },
+            rewrite_ranges: replay::RewriteRanges::new(rewrites_pend, std::mem::take(&mut self.kept_rewrites)),
             replay: replay_atoms.map(|atoms| {
                 std::rc::Rc::new(replay::ProgramReplay {
                     source_type: self.source_type,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::bytecode::{
-    ControlFlowLayout, FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction, widen,
+    ControlFlowLayout, FieldLayout, ImmediateRole, InstructionField, Superinstruction, Traits, WideInstruction, widen,
 };
 use super::liveness::{RegisterSet, register_bit};
 mod copies;
@@ -61,10 +61,9 @@ fusion_recipes! {
             second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
             Some(second)
         };
-    // Listed, not derived: `StoreLocal` and `StoreEnvLocal` have the same row fields and
-    // `LocalSlot` meaning, but env stores name a different slot space, so no row states
-    // "frame local store". The recipe's slot check is the only thing that separates them.
-    StoreLoadLocal: [StoreLocal, LoadLocal] =>
+    // Derived: a `FRAME_LOCAL_STORE` op, then a `FRAME_LOCAL_LOAD` op of the same slot. The slot
+    // check stays here, a per-instruction condition.
+    StoreLoadLocal: [] =>
         |mut first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.optional_register_b().is_some() || first.local_slot() != second.local_slot() { return None; }
             first.set_optional_register_b(Some(second.result_register()));
@@ -93,10 +92,9 @@ fusion_recipes! {
         first.set_result_register(second.result_register());
         Some(first)
     };
-    // Listed, not derived: the fused op jumps when the comparison is false, which is `JumpFalse`'s
-    // identity. `JumpTrue` has the same row fields, and the comparison-only condition is a property
-    // of the operator (`fuses_with_jump_operator`), not of any row.
-    BinaryJumpFalse: [Binary, JumpFalse] =>
+    // Derived: a `BINARY_RESULT` op, then a `JUMPS_ON_FALSE` op. The comparison-only condition is a
+    // property of the operator (`fuses_with_jump_operator`), a per-instruction check kept here.
+    BinaryJumpFalse: [] =>
         |first: Instr, second: Instr, _: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             // Only a comparison fuses (`ast::fuses_with_jump`): an arithmetic or bitwise
@@ -117,10 +115,9 @@ fusion_recipes! {
         first.set_returns_from_frame();
         Some(first)
     };
-    // Listed, not derived: `GetField` is the only `ReturnableAndThis` row (`allows_this_write`), but
-    // `SetThisField` shares every row field with `SetThisFieldStrict`, which throws on a failed
-    // store. No row states the sloppy-mode sink this recipe fuses, so the second op stays named.
-    GetSetThis: [GetField, SetThisField] =>
+    // Derived: a `ReturnableAndThis` op (`allows_this_write`, which is `GetField` alone), then a
+    // `THIS_FIELD_SINK` op. `SetThisFieldStrict` is untagged, so a strict store stays a separate op.
+    GetSetThis: [] =>
         |mut first: Instr, second: Instr, fields: &mut SiteTable<'_, FieldSite>| {
             if first.result_register() != second.register_a() { return None; }
             let sink = (second.atom_index(), second.cache_site_index());
@@ -751,6 +748,12 @@ const CONSTANT_LEFT: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::
 const CONSTANT_RIGHT: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::ConstantRight };
 /// `LocalField`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
 const LOCAL_FIELD: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::LocalField };
+/// `StoreLoadLocal`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
+const STORE_LOAD_LOCAL: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::StoreLoadLocal };
+/// `BinaryJumpFalse`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
+const BINARY_JUMP_FALSE: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::BinaryJumpFalse };
+/// `GetSetThis`'s rule, for any pair `derived_rules` admits (placeholder pattern, as above).
+const GET_SET_THIS: Rule = Rule { pattern: [Op::Nop, Op::Nop], recipe: Recipe::GetSetThis };
 
 /// Whether `op`'s row makes one value into its result register and nothing else of its
 /// registers: field A is the result, which it does not read; no other field writes a register
@@ -812,6 +815,24 @@ const FIELD_LOOKUPS: OpSet = row_ops!(op =>
     matches!(op.field_layout(InstructionField::B), FieldLayout::FieldBase)
         && matches!(op.immediate_role(), ImmediateRole::FieldLookup));
 
+/// Ops tagged `FRAME_LOCAL_STORE`: the first op of `StoreLoadLocal`.
+const FRAME_LOCAL_STORES: OpSet = row_ops!(op => op.traits().has(Traits::FRAME_LOCAL_STORE));
+
+/// Ops tagged `FRAME_LOCAL_LOAD`: the second op of `StoreLoadLocal`.
+const FRAME_LOCAL_LOADS: OpSet = row_ops!(op => op.traits().has(Traits::FRAME_LOCAL_LOAD));
+
+/// Ops tagged `BINARY_RESULT`: the first op of `BinaryJumpFalse`.
+const BINARY_RESULTS: OpSet = row_ops!(op => op.traits().has(Traits::BINARY_RESULT));
+
+/// Ops tagged `JUMPS_ON_FALSE`: the second op of `BinaryJumpFalse`.
+const JUMPS_ON_FALSE: OpSet = row_ops!(op => op.traits().has(Traits::JUMPS_ON_FALSE));
+
+/// Ops whose result may be written to `this` (`ResultLayout::allows_this_write`): the first op of `GetSetThis`.
+const THIS_WRITE_SOURCES: OpSet = row_ops!(op => op.result_layout().allows_this_write());
+
+/// Ops tagged `THIS_FIELD_SINK`: the second op of `GetSetThis`.
+const THIS_FIELD_SINKS: OpSet = row_ops!(op => op.traits().has(Traits::THIS_FIELD_SINK));
+
 /// Ops whose result may carry a numeric local target (`ResultLayout::allows_numeric_local`):
 /// the arithmetic rows `Binary`, `NumericAdd`, `NumericMultiply`. Their store-compaction rules
 /// use it as the first op.
@@ -839,6 +860,12 @@ fn derived_rules(first: Op, second: Op) -> &'static [Rule] {
         &[CONSTANT_RIGHT]
     } else if LOCAL_READERS[first_index] && FIELD_LOOKUPS[second_index] {
         &[LOCAL_FIELD]
+    } else if FRAME_LOCAL_STORES[first_index] && FRAME_LOCAL_LOADS[second_index] {
+        &[STORE_LOAD_LOCAL]
+    } else if BINARY_RESULTS[first_index] && JUMPS_ON_FALSE[second_index] {
+        &[BINARY_JUMP_FALSE]
+    } else if THIS_WRITE_SOURCES[first_index] && THIS_FIELD_SINKS[second_index] {
+        &[GET_SET_THIS]
     } else {
         &[]
     }
@@ -1010,9 +1037,6 @@ fn rewrite_once(
         function.parameter_end_pc,
         &function.binding_sites,
     );
-    // Decoded at most once, for the rules that record their sources.
-    let positions = std::cell::OnceCell::new();
-    let positions = || positions.get_or_init(|| function.source_positions.iter().collect::<Vec<_>>()).as_slice();
     let mut code = Vec::with_capacity(old.len());
     // A kept instruction keeps its transfer masks, which name registers and not positions, and
     // moves to a pc no later than its old one, so the masks move down in place; only a pair's
@@ -1044,7 +1068,7 @@ fn rewrite_once(
                         | liveness::definitions(second.as_wide(), superinstructions);
                 let live_out = liveness::live_out(successors, live, index + 1);
                 rules.find_map(|rule| {
-                    let replacement = apply_rule(*rule, first, *second, field_sites, &positions, index)?;
+                    let replacement = apply_rule(*rule, first, *second, field_sites, &function.source_positions, index)?;
                     let removed_definitions = original_definitions
                         & !liveness::definitions(replacement.as_wide(), superinstructions);
                     (live_out & removed_definitions == 0).then_some(replacement)
@@ -1093,24 +1117,25 @@ fn rewrite_once(
     true
 }
 
-fn apply_rule<'p>(
+fn apply_rule(
     rule: Rule,
     first: Instr,
     second: Instr,
     field_sites: &mut SiteTable<'_, FieldSite>,
-    positions: &impl Fn() -> &'p [crate::bytecode::SourcePosition],
+    source_positions: &crate::bytecode::SourcePositions,
     pc: usize,
 ) -> Option<Instr> {
     let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
     let replacement = sound_replacement(first, second, replacement)?;
     if matches!(rule.recipe, Recipe::GetSetThis)
         && let Some(crate::bytecode::FieldLookup::Site(index)) = replacement.field_lookup() {
-            let positions = positions();
+            // The entry in effect at a pc, found by the table's own lookup rather than a
+            // decoded copy of the whole table.
             let at = |pc: usize| {
-                positions
-                    .partition_point(|p| p.pc as usize <= pc)
-                    .checked_sub(1)
-                    .map(|index| (positions[index].line, positions[index].column))
+                u32::try_from(pc)
+                    .ok()
+                    .and_then(|pc| source_positions.at(pc))
+                    .map(|position| (position.line, position.column))
             };
             let site = &mut field_sites[index];
             if site.sources[0].is_none() {
@@ -1178,13 +1203,25 @@ fn relocate_source_positions(
     wide: &[WideInstruction],
     map: &[usize],
 ) {
-    let surviving_positions = source_positions
+    let relocated = relocated_source_positions(code_len, source_positions, old_code, wide, map);
+    *source_positions = relocated;
+}
+
+/// The table `source_positions` becomes once the code is relocated through `map`. Surviving
+/// entries stream in pc order, one ahead of the cursor, so no list of them is built.
+fn relocated_source_positions(
+    code_len: usize,
+    source_positions: &crate::bytecode::SourcePositions,
+    old_code: &[Instr],
+    wide: &[WideInstruction],
+    map: &[usize],
+) -> crate::bytecode::SourcePositions {
+    let mut survivors = source_positions
         .iter()
         .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
-        .collect::<Vec<_>>();
+        .peekable();
     // Relocation keeps or drops entries, so the old coding bounds the new one's.
     let mut relocated = crate::bytecode::SourcePositions::with_capacity(source_positions.coded_len());
-    let mut position_index = 0;
     let mut origin_pc = 0;
     let mut effective = None;
     let mut previous_location = None;
@@ -1201,12 +1238,11 @@ fn relocate_source_positions(
         }
         let anchor = origin_pc;
         origin_pc += 1;
-        while surviving_positions
-            .get(position_index)
+        while survivors
+            .peek()
             .is_some_and(|position| position.pc as usize <= anchor)
         {
-            effective = surviving_positions.get(position_index).copied();
-            position_index += 1;
+            effective = survivors.next();
         }
         let Some(position) = effective else {
             continue;
@@ -1229,7 +1265,7 @@ fn relocate_source_positions(
         });
         previous_location = Some(location);
     }
-    *source_positions = relocated;
+    relocated
 }
 
 fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize]) -> bool {
@@ -1645,12 +1681,10 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        // Only the listed recipes are rows; the derived ones come from `derived_rules`.
-        assert_eq!(RULES.len(), 3);
-        assert_eq!(RULES[0].pattern, [Op::StoreLocal, Op::LoadLocal]);
-        assert!(matches!(RULES[0].recipe, Recipe::StoreLoadLocal));
-        assert!(matches!(RULES[1].recipe, Recipe::BinaryJumpFalse));
-        assert!(matches!(RULES[2].recipe, Recipe::GetSetThis));
+        // Every recipe's pairs are derived from row traits and properties (`derived_rules`), so no
+        // pattern is listed by hand and no first op is registered in `RULE_FIRSTS`.
+        assert!(RULES.is_empty());
+        assert!(RULE_FIRSTS.iter().all(|first| !first));
     }
 
     #[test]
@@ -1667,6 +1701,24 @@ if (Object.keys(side).join() !== 'A,B' || f1() !== 1) throw Error('field read');
         assert!(recipes(Op::LoadEnvLocal, Op::GetField).is_empty());
         assert!(matches!(recipes(Op::Binary, Op::Move).as_slice(), [Recipe::ProducerMove]));
         assert!(matches!(recipes(Op::Binary, Op::Return).as_slice(), [Recipe::ReturnResult]));
+        // A frame local store fuses into a frame local load of the same slot, plain or not. Env stores and
+        // env loads name another slot space, so they keep their pair.
+        assert!(matches!(recipes(Op::StoreLocal, Op::LoadLocal).as_slice(), [Recipe::StoreLoadLocal]));
+        assert!(matches!(recipes(Op::StoreLocalPlain, Op::LoadLocalPlain).as_slice(), [Recipe::StoreLoadLocal]));
+        assert!(matches!(recipes(Op::StoreLocal, Op::LoadLocalPlain).as_slice(), [Recipe::StoreLoadLocal]));
+        assert!(recipes(Op::StoreEnvLocal, Op::LoadLocal).is_empty());
+        assert!(recipes(Op::StoreLocal, Op::LoadEnvLocal).is_empty());
+        // A binary result fuses into a false jump only: `JumpTrue` jumps on the other test, and the
+        // arithmetic rows name their operator in another immediate role.
+        assert!(matches!(recipes(Op::Binary, Op::JumpFalse).as_slice(), [Recipe::BinaryJumpFalse]));
+        assert!(recipes(Op::Binary, Op::JumpTrue).is_empty());
+        assert!(recipes(Op::NumericAdd, Op::JumpFalse).is_empty());
+        // A field read's result fuses into a `this` write's sink. `SetThisFieldStrict` is untagged.
+        assert!(matches!(recipes(Op::GetField, Op::SetThisField).as_slice(), [Recipe::GetSetThis]));
+        assert!(recipes(Op::GetField, Op::SetThisFieldStrict).is_empty());
+        assert!(recipes(Op::Binary, Op::SetThisField).is_empty());
+        // An untagged first op keeps its pair with a local load.
+        assert!(recipes(Op::Nop, Op::LoadLocal).is_empty());
     }
 
     #[test]

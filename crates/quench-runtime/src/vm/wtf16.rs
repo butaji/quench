@@ -68,6 +68,15 @@ const DEFERRED_DECODE_MIN_BYTES: usize = 64 << 10;
 fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     let mut storage = Rc::<[u16]>::new_uninit_slice(length);
     let output = Rc::get_mut(&mut storage).expect("a new allocation is unshared");
+    if text.is_ascii() {
+        // One byte per unit throughout: a plain widening copy.
+        for (slot, &byte) in output.iter_mut().zip(text.as_bytes()) {
+            slot.write(u16::from(byte));
+        }
+        assert_eq!(text.len(), length, "the text has the units counted for it");
+        // SAFETY: every unit was written.
+        return unsafe { storage.assume_init() };
+    }
     // Source text is mostly ASCII: each ASCII run widens byte by byte, which the compiler
     // vectorizes, and only the other characters go through UTF-16 encoding (a 250 KB bundle's
     // text: 32 Ir per byte through `encode_utf16` alone).
@@ -92,6 +101,15 @@ fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
     assert_eq!(written, length, "the text has the units counted for it");
     // SAFETY: every unit was written.
     unsafe { storage.assume_init() }
+}
+
+/// The number of UTF-16 units of `text`, counted from its bytes: each character has one
+/// leading byte (a continuation byte is not one), and a four-byte character takes two units.
+/// The same count as `text.encode_utf16().count()`, without encoding.
+fn utf16_len(text: &str) -> usize {
+    text.bytes()
+        .map(|byte| usize::from(byte.is_ascii() || byte >= 0xC0) + usize::from(byte >= 0xF0))
+        .sum()
 }
 
 /// `Units::utf8_len` of UTF-16 units, without decoding them: each unit counts as the bytes
@@ -923,7 +941,7 @@ impl JsString {
         if text.is_ascii() {
             return Self::from_flat(FlatUnits::ascii(text));
         }
-        Self::from_flat(FlatUnits::Wide(wide_units(text, text.encode_utf16().count())))
+        Self::from_flat(FlatUnits::Wide(wide_units(text, utf16_len(text))))
     }
 
     /// Text decoded out of data (a file's or a buffer's bytes). Long non-ASCII text keeps the
@@ -936,7 +954,7 @@ impl JsString {
             return Self::from_str(text);
         }
         charge_materialized_beside(text.len());
-        Self::shared(JsStringInner::decoded(Rc::from(text), text.encode_utf16().count()))
+        Self::shared(JsStringInner::decoded(Rc::from(text), utf16_len(text)))
     }
 
     /// The host text of decoded text whose units are not made yet (`JsString::decoded`): a
@@ -1551,7 +1569,14 @@ impl Hash for JsString {
 
 #[cfg(test)]
 mod tests {
-    use super::JsString;
+    use super::{utf16_len, JsString};
+
+    #[test]
+    fn utf16_length_from_bytes_matches_encoding() {
+        for text in ["", "abc", "é", "€", "𝄞", "a😀b中文\u{10FFFF}", "\u{7FF}\u{800}\u{FFFF}"] {
+            assert_eq!(utf16_len(text), text.encode_utf16().count(), "{text:?}");
+        }
+    }
 
     #[test]
     fn wide_utf8_length_matches_the_lossy_encoding() {
