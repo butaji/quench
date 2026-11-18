@@ -30,6 +30,10 @@ pub(super) type DirectSites = BTreeMap<usize, *const DirectCallee>;
 use cranelift_codegen::bitset::CompoundBitSet;
 use cranelift_codegen::entity::EntityRef;
 
+#[path = "lane_region/known_branches.rs"]
+mod known_branches;
+#[path = "lane_region/clif_census.rs"]
+mod clif_census;
 #[path = "lane_region/packed_ranges.rs"]
 mod packed_ranges;
 #[path = "lane_region/int_ranges.rs"]
@@ -510,6 +514,9 @@ struct Lowering<'a, 'f> {
     blocks: Vec<Option<ir::Block>>,
     /// Per resume PC, its leave blocks, one per set of registers stored (`exits.rs`).
     exits: Vec<Vec<exits::ExitBlock>>,
+    /// The leave blocks shared by every caller-frame PC that stores the same registers, which
+    /// take the exit word as their parameter (`Lowering::shared_exit_block`).
+    shared_exits: Vec<exits::ExitBlock>,
     /// Each block leader's register use demand (`demand::analyze`).
     demands: demand::Demands,
     entry: Option<Entry>,
@@ -825,6 +832,15 @@ impl<'a, 'f> Lowering<'a, 'f> {
         }
         let stored = self.stored_at(state, pc);
         self.materialize_inlined(state, pc);
+        // A caller-frame leave of a body differs from another storing the same registers only
+        // by its exit word: one block stores them for all, the word its parameter.
+        if let (Completion::Body, super::lane_unit::Origin::Caller(record)) = (self.completion,
+            self.unit.origins.get(pc).copied().unwrap_or(super::lane_unit::Origin::Caller(self.unit.end))) {
+            let block = self.shared_exit_block(stored);
+            let word = self.raw_const(Lane::I64, LaneExit::At(record as usize).word() as i64);
+            self.goto(block, &[word]);
+            return;
+        }
         let block = self.exit_block(pc, stored);
         self.goto(block, &[]);
     }
@@ -836,6 +852,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
         if self.proving_entry {
             let builder = &mut self.builder;
             return *self.entry_exit.get_or_insert_with(|| { let block = builder.create_block(); builder.set_cold_block(block); block });
+        }
+        // A guard after another that leaves at the same PC from the same facts shares its
+        // block: the leave it builds is the same, and SSA joins the variables' values.
+        if !self.vm.diagnostics && let Some(last) = self.pending.last()
+            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed {
+            return last.block;
         }
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
@@ -1644,6 +1666,7 @@ pub(super) fn lower(
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
         blocks,
         exits: std::iter::repeat_with(Vec::new).take(unit.instructions.len() + 1).collect(),
+        shared_exits: Vec::new(),
         demands: demand::analyze(program, unit, &leaders, &live),
         entry: None,
         native: 0,
@@ -1830,6 +1853,11 @@ pub(super) fn lower(
         lowering.proving_entry = false;
         lowering.goto(target, &[]);
     }
+    let mut census = clif_census::Census::new();
+    let emitted = |lowering: &Lowering<'_, '_>| lowering.builder.func.dfg.num_insts();
+    let mut mark = emitted(&lowering);
+    let mut block_mark = lowering.builder.func.dfg.num_blocks();
+    if let Some(census) = census.as_mut() { census.part(clif_census::Part::Entry, mark); }
     let mut state = State::canonical(count);
     let mut reachable = false;
     for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -1859,7 +1887,18 @@ pub(super) fn lower(
             continue;
         }
         lowering.at = pc;
+        if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Edges, now - mark); mark = now; block_mark = lowering.builder.func.dfg.num_blocks(); }
         reachable = lowering.instruction(&mut state, pc, instruction);
+        if let Some(census) = census.as_mut() {
+            let now = emitted(&lowering);
+            if census.sample(instruction.op()) {
+                let insts: Vec<String> = (mark..now).map(|index| format!("{}", lowering.builder.func.dfg.display_inst(ir::Inst::new(index)))).collect();
+                eprintln!("QUENCH_CLIF_SAMPLE {:?} pc={pc} n={}\n  {}", instruction.op(), now - mark, insts.join("\n  "));
+            }
+            census.op(instruction.op(), now - mark); mark = now;
+            let blocks = lowering.builder.func.dfg.num_blocks();
+            census.blocks(instruction.op(), blocks - block_mark); block_mark = blocks;
+        }
     }
     if reachable {
         lowering.exit(&mut state, coverage.exit_pc(instructions.len()) as u32);
@@ -1873,6 +1912,7 @@ pub(super) fn lower(
     }
     // A prefix pays for its entry with a loop, or with the calls it runs inlined.
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
+    if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); mark = now; }
     for GuardExit { block, values, homed, pc, line } in lowering.take_leaves() {
         lowering.switch_to(block, true);
         let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new() };
@@ -1882,8 +1922,10 @@ pub(super) fn lower(
         }
         lowering.leave_at(&mut leaving, pc);
     }
+    if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }
     lowering.fill_call_out_stop();
     lowering.fill_exits();
+    if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Exits, now - mark); mark = now; }
     lowering.builder.switch_to_block(stop);
     let word = lowering.builder.block_params(stop)[0];
     let status = lowering.raw_const(Lane::I32, i64::from(NATIVE_JS_STOPPED));
@@ -1892,6 +1934,13 @@ pub(super) fn lower(
     let results = lowering.builder.block_params(leave).to_vec();
     lowering.flush_trips();
     lowering.leave(&results);
+    if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); census.report(function_id, now);
+        let mut opcodes: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        for index in 0..now { *opcodes.entry(format!("{:?}", lowering.builder.func.dfg.insts[ir::Inst::new(index)].opcode())).or_default() += 1; }
+        let blocks = lowering.builder.func.layout.blocks().count();
+        let cold = lowering.builder.func.layout.blocks().filter(|block| lowering.builder.func.layout.is_cold(*block)).count();
+        eprintln!("QUENCH_CLIF_BLOCKS {blocks} {cold}");
+        eprintln!("QUENCH_CLIF_OPCODES {}", opcodes.iter().map(|(name, count)| format!("{name}={count}")).collect::<Vec<_>>().join(" ")); }
     // A lane body is a whole function body and must complete; so must an inlined unit, whose
     // callees rejoin it. A loop or range over the function's own code completes by its exits
     // and backedge, which the plan emits where the interpreter resumes.
@@ -1912,6 +1961,8 @@ pub(super) fn lower(
     lowering.builder.seal_all_blocks();
     lowering.builder.finalize(isa.frontend_config());
     BUILDER_CONTEXT.with(|held| held.set(Some(builder_context)));
+    let decided = known_branches::decide(&mut native);
+    if clif_census::enabled() { eprintln!("QUENCH_CLIF_DECIDED {decided}"); }
     if fault_poll { specialize_closed_polls(&mut native, &reentries, &mut polls, helpers, context, isa); }
     Some(LoweredRegion { function: native, native: native_count, fault_poll, number_result, hoists_arrays, stable })
 }

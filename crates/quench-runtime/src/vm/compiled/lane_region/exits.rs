@@ -59,9 +59,34 @@ impl Lowering<'_, '_> {
         block
     }
 
+    /// The block that stores `stored` and leaves at the exit word it is passed, shared by every
+    /// caller-frame leave of a body that stores the same registers.
+    pub(super) fn shared_exit_block(&mut self, stored: ExitStores) -> ir::Block {
+        if let Some(held) = self.shared_exits.iter().find(|held| held.stored == stored) { return held.block; }
+        let block = self.builder.create_block();
+        self.builder.append_block_param(block, ir::types::I64);
+        self.builder.set_cold_block(block);
+        self.shared_exits.push(ExitBlock { stored, block });
+        block
+    }
+
     /// The exit blocks: write back each one's registers, and an inlined callee's registers to the
     /// window its recovery makes the activation from, then leave at the origin.
     pub(super) fn fill_exits(&mut self) {
+        if super::clif_census::enabled() {
+            let count = |stored: &ExitStores| [&stored.tagged, &stored.int, &stored.long, &stored.float].iter().map(|set| set.iter().count()).sum::<usize>();
+            let private: Vec<(usize, usize)> = self.exits.iter().flatten().map(|exit| (count(&exit.stored), usize::from(matches!(self.unit.origins.first(), Some(_))))).collect();
+            let boxed: usize = self.exits.iter().flatten().chain(self.shared_exits.iter()).map(|exit| [&exit.stored.int, &exit.stored.long, &exit.stored.float].iter().map(|set| set.iter().count()).sum::<usize>()).sum();
+            eprintln!("QUENCH_EXIT_CENSUS {{\"shared\":{},\"shared_stores\":{},\"private\":{},\"private_stores\":{},\"boxed\":{boxed}}}",
+                self.shared_exits.len(), self.shared_exits.iter().map(|exit| count(&exit.stored)).sum::<usize>(), private.len(), private.iter().map(|(n, _)| n).sum::<usize>());
+        }
+        for ExitBlock { stored, block } in std::mem::take(&mut self.shared_exits) {
+            self.switch_to(block, true);
+            let word = self.builder.block_params(block)[0];
+            self.store_exit_registers(&stored);
+            let stop = self.stop;
+            self.goto(stop, &[word]);
+        }
         for pc in 0..self.exits.len() {
             for ExitBlock { stored, block } in std::mem::take(&mut self.exits[pc]) {
                 self.switch_to(block, true);
