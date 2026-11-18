@@ -309,7 +309,6 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         "a Number pointer store must not consume the owner's reference barrier");
     // A real reference store still logs its owner, and the collector follows it.
     assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
-    assert!(!vm.heap.collection_is_full(false));
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
     assert_eq!(vm.heap.property_get(vm.heap.object(receiver).unwrap(), slot), Some(child));

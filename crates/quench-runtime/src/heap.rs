@@ -27,8 +27,6 @@ pub(crate) use dependencies::{
 mod cell_access;
 mod buffer_bytes;
 mod collection_entries;
-mod concurrent_mark;
-mod concurrent_view;
 mod environment_trace;
 pub(crate) use environment_trace::{ClosureReadSource, EnvironmentReads, EnvironmentTrace};
 mod external;
@@ -46,6 +44,7 @@ mod promise_record;
 pub(crate) use promise_record::{AbandonedHostContexts, PromiseCell, PromiseReaction, PromiseRecord, PromiseRejectionPhase, PromiseRejectionState, PromiseState, StoredHostContext};
 mod rc_drop;
 mod rc;
+mod record_children;
 mod records;
 mod root;
 mod slots;
@@ -446,9 +445,6 @@ const WITHHELD_PROTOTYPE_IDS: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct Heap {
-    /// The concurrent cycle's mark state between steps (`concurrent_mark`). First, so a heap
-    /// dropped mid-cycle stops its marker before any space the marker reads goes.
-    cycle: Option<Box<concurrent_mark::ConcurrentCycle>>,
     slots: SlotArena,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
@@ -490,6 +486,12 @@ pub(crate) struct Heap {
     /// The young cells with weak entries (weak maps and sets, weak refs, finalization
     /// registries): a minor collection prunes only these and the remembered cells.
     young_weak: Vec<u32>,
+    /// Every cell with weak entries allocated since its last full collection or kept by it:
+    /// a full collection prunes only these. Walking every slot to find them cost each live
+    /// environment ~55 Ir per full collection (a decode and a match per slot). An index whose
+    /// cell a minor collection freed may stay until then, naming whatever reused it, which
+    /// the prune's match passes over.
+    weak_cells: Vec<u32>,
     free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     /// The slots of one free-list word claimed whole (`refill_bump`), which allocations take
@@ -585,8 +587,6 @@ pub(crate) struct Heap {
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
-    /// Whether a concurrent cycle is marking (`concurrent_mark`): never set yet.
-    satb_active: bool,
     /// Whether plain objects' property runs take the narrow form (`value_vec::NARROW_FORM`) at
     /// promotion and compaction: only the interpreter reads one in place, so only a run without
     /// native tiers (`Heap::set_narrow_runs`) makes them.
@@ -600,24 +600,6 @@ pub(crate) struct Heap {
     /// eight fulls went by. The low, not the pass's own length, so that an arena that shrank
     /// and grows again narrows on the way back up.
     narrow_pass: (usize, u32),
-    /// Values the cycle's weak reads handed out (`Heap::shade`), for its mark: a value read
-    /// through a weak reference may be one its snapshot does not reach.
-    satb_shaded: std::cell::RefCell<Vec<Value>>,
-    /// Whether the last collection kept the marks a finished cycle made, so its own trace
-    /// reached only what the cycle had not (`Heap::last_collection_kept_cycle_marks`).
-    last_collection_premarked: bool,
-    /// The last finished cycle's polls, the allocation weight and wall time it ran over, and
-    /// the values its remark marked, for the trace.
-    last_cycle_extent: concurrent_mark::CycleExtent,
-    /// The cycles' allocation weight, averaged (`CycleExtent::weight`): how early the next
-    /// starts.
-    cycle_weight_average: usize,
-    /// The allocation count at which the running or next cycle's remark is due: past it, the
-    /// interval's budget is spent, and the mutator assists the marker.
-    cycle_due_at: usize,
-    /// What decides whether the next full collection runs as a cycle when cycles are adaptive
-    /// (`concurrent_mark::CycleGate`).
-    cycle_gate: concurrent_mark::CycleGate,
     /// Whether old records keep reference counts (`rc`, `QUENCH_DEV=rc-gc`).
     rc_active: bool,
     /// Whether any store gate input is on: a concurrent cycle's snapshot barrier, reference
@@ -865,6 +847,7 @@ impl Heap {
             reclaimable_program_bytes_since_full: 0,
             reclaimable_program_bytes_after_full: 0,
             young: YoungSlots::default(),
+            weak_cells: Vec::new(),
             free_by_slab: Vec::with_capacity(12),
             free_slabs: Vec::with_capacity(12),
             bump_bits: 0,
@@ -1775,9 +1758,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index);
-        }
-        if self.satb_active {
-            self.blacken_slot(index as usize);
+            self.weak_cells.push(index);
         }
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(Value::heap(index));
@@ -1858,9 +1839,7 @@ impl Heap {
         }
         if weak {
             self.young_weak.push(index as u32);
-        }
-        if self.satb_active {
-            self.blacken_slot(index);
+            self.weak_cells.push(index as u32);
         }
         Value::heap(index as u32)
     }
@@ -2151,7 +2130,6 @@ impl Heap {
         }
     }
     pub(crate) fn reset(&mut self) {
-        self.abandon_cycle();
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
         self.array_records = ArrayRecordSpace::default();
@@ -2189,7 +2167,6 @@ impl Heap {
         self.live_weight_after_full = 0;
         self.resident_at_full_start = 0;
         self.resident_after_full = 0;
-        self.cycle_gate = concurrent_mark::CycleGate::default();
         self.rc_zero.clear();
         self.rc_candidates.clear();
         self.rc_suspects.clear();
@@ -2211,6 +2188,7 @@ impl Heap {
         self.carried_owners.clear();
         self.young.clear();
         self.young_weak.clear();
+        self.weak_cells.clear();
         self.roots.clear(); self.folded = Default::default(); // the discarded heap's identities root nothing
         self.sparse_arrays = None;
         // The shared unit strings name cells of the discarded heap.
@@ -2429,16 +2407,10 @@ impl Heap {
         }
     }
 
-    pub(crate) fn collection_is_full(&self, full: bool) -> bool {
-        // A collection while a cycle runs is its remark, a full one.
-        full || self.cycle.is_some()
-    }
-
-    /// `collection_is_full`, noting a full collection's start for the old-generation sizing
+    /// Notes a full collection's start for the old-generation sizing
     /// (`GenerationalPacing::old_sizing`).
     fn start_collection(&mut self, full: bool) -> bool {
         self.retire_bump();
-        let full = self.collection_is_full(full);
         if full {
             self.pacing_state.old_generation.start_full();
             self.resident_at_full_start = self.occupied_resident_bytes();
@@ -2468,9 +2440,6 @@ impl Heap {
         let full = self.start_collection(full);
         // `QUENCH_TRACE=gc` reports the mark, sweep, and record-sweep times.
         let trace_started = crate::trace::Channel::Gc.on().then(std::time::Instant::now);
-        // A full collection's mark time chooses between cycles and stopping the world
-        // (`Heap::judge_cycles`).
-        let full_started = full.then(std::time::Instant::now);
         // No reference to a small string's view outlives the shared borrow it came from.
         self.small_views.clear();
         let age = self.promotion_age();
@@ -2509,27 +2478,18 @@ impl Heap {
                 self.gc_profile.young_cells_swept += self.young.count() as u64;
             }
         }
-        // A collection while a cycle runs finishes it: the cycle's marks are this full
-        // collection's, which its own trace from `roots` only completes (the remark).
-        let premarked = self.complete_cycle_marking();
-        debug_assert!(!premarked || full);
-        self.last_collection_premarked = premarked;
         if full && self.rc_active {
             self.rc_full_start();
         }
         if full {
-            if !premarked {
-                Self::clear_marks(&self.marks);
-            }
+            Self::clear_marks(&self.marks);
             self.remembered.clear();
             self.remembered_marks.fill(0);
             self.carried_owners.clear();
             // A full collection promotes every survivor, aged or not.
             self.aged.clear();
             for (family, _) in self.record_families_mut() {
-                if !premarked {
-                    family.clear_marks();
-                }
+                family.clear_marks();
                 family.forget_ages();
             }
         }
@@ -2611,9 +2571,7 @@ impl Heap {
         // then are what grew it, and slots cleared before stay cleared. Between them the
         // trace's per-environment state would only add to each full collection's peak
         // (V8-v7 max RSS +50 to +156 KiB on most fixtures when every full collection traced).
-        // A remark traces only what the cycle did not reach, so it cannot tell which slots
-        // closures read: environments are trimmed by stop-the-world collections only.
-        let trims_environments = full && !premarked && self.environment_trim_due();
+        let trims_environments = full && self.environment_trim_due();
         let environment_reads = if trims_environments {
             EnvironmentReads::Closures
         } else {
@@ -2668,7 +2626,7 @@ impl Heap {
             // The verifying marks count nothing.
             let rc_marking = std::mem::replace(&mut self.rc_marking, false);
             if full {
-                self.debug_verify_full(premarked, &verify_roots, &mut object_roots, closure_reads, environment_reads);
+                self.debug_verify_full(&verify_roots, &mut object_roots, closure_reads, environment_reads);
             } else {
                 let mut pinned = verify_old_records.unwrap_or_default();
                 pinned.extend(verify_remembered_records);
@@ -2707,7 +2665,6 @@ impl Heap {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
         let trace_sweep_started = trace_started.map(|_| std::time::Instant::now());
-        let full_mark_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
         // Property-arena owners are listed only for a full collection that compacts: the
         // lists hold an entry per live owner at the heap's peak. A compaction that this
         // sweep's releases make due waits for the next full collection.
@@ -3075,16 +3032,6 @@ impl Heap {
         // Live weight in the units allocation is charged in: one per cell or record plus
         // its payload.
         let live_weight = live + self.payload_bytes / payload_unit();
-        // A remark keeps everything its cycle allocated (black), garbage or not, which the
-        // next cycle frees: pacing sizes the next interval from the snapshot's live set, the
-        // marks less the cycle's allocation weight, at most half of them.
-        let (live, live_weight, black_share) = if premarked {
-            let black = self.last_cycle_extent.weight.min(live_weight / 2);
-            let records = (black as u128 * live as u128 / live_weight.max(1) as u128) as usize;
-            (live - records, live_weight - black, (black, live_weight))
-        } else {
-            (live, live_weight, (0, 1))
-        };
         let allocated = self.allocated_since_collection();
         self.allocated_at_collection = self.allocated;
         self.external_since_collection = 0;
@@ -3101,8 +3048,7 @@ impl Heap {
         if full {
             self.live_after_full = live;
             self.live_weight_after_full = live_weight;
-            let resident = self.occupied_resident_bytes();
-            self.resident_after_full = resident - (resident as u128 * black_share.0 as u128 / black_share.1 as u128) as usize;
+            self.resident_after_full = self.occupied_resident_bytes();
         }
         if trims_environments && closure_reads.is_some() {
             self.live_at_environment_trim = Some(live);
@@ -3129,32 +3075,18 @@ impl Heap {
                 since_previous_full: if full { self.weight_between_fulls } else { 0 },
             },
         );
-        if full {
-            let pause_micros = full_started.map_or(0, |started| started.elapsed().as_micros() as u64);
-            self.judge_cycles(premarked, full_mark_micros, pause_micros);
-        }
         if self.rc_active {
             next = self.rc_plan(live);
         }
         if crate::trace::Channel::Gc.on() {
             let (mark_us, sweep_us) = trace_times;
-            let concurrent = if full {
-                format!(" concurrent={:?} {}", self.concurrent_cycle_refusal(), self.cycle_gate)
-            } else {
-                String::new()
-            };
-            let concurrent = if self.last_collection_premarked {
-                format!("{concurrent} {}", self.last_cycle_extent)
-            } else {
-                concurrent
-            };
             // Resident set size at this collection's end, so a pacing change can be judged
             // by its peak from one traced run.
             let rss_kb = std::fs::read_to_string("/proc/self/statm")
                 .ok()
                 .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<usize>().ok())
                 .map_or(0, |pages| pages * 4);
-            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full}{concurrent} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
+            eprintln!("gc rss_kb={rss_kb} live_weight={live_weight} full={full} mark_us={mark_us} rc={:?} sweep_us={sweep_us} records_us={trace_records_us} resident_start={} resident_kept={} weight_between_fulls={} live={live} prev={} after_full={} alloc={} since_full={} next={next:?} state={:?} {}", self.rc_trace, self.resident_at_full_start, self.resident_after_full, self.weight_between_fulls, self.live_weight_after_previous, self.live_after_full, allocated, self.allocated_since_full(), self.pacing_state, self.properties.trace_summary());
         }
         if full && crate::trace::Channel::StorageCensus.on() {
             self.trace_storage_census();
@@ -3162,10 +3094,6 @@ impl Heap {
         self.live_weight_after_previous = live_weight;
         self.set_young_budget(next.threshold);
         self.full_due = next.full;
-        self.cycle_due_at = usize::MAX;
-        if next.full {
-            self.plan_cycle(premarked, next.threshold);
-        }
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.allocations_between_collections_total +=
@@ -3426,7 +3354,6 @@ impl Heap {
     #[cfg(debug_assertions)]
     fn debug_verify_full(
         &mut self,
-        premarked: bool,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
         closure_reads: Option<&dyn ClosureReadSource>,
@@ -3452,9 +3379,7 @@ impl Heap {
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_record_marks = self.snapshot_record_marks();
-        // A collection that finishes a cycle also keeps what the cycle's snapshot reached
-        // (floating garbage): its marks contain the verifier's. A stopped full mark equals them.
-        let agree = |sequential: &[u64], collector: &[u64]| if premarked { sequential.iter().zip(collector).all(|(s, c)| s & !c == 0) } else { sequential == collector };
+        let agree = |sequential: &[u64], collector: &[u64]| sequential == collector;
         assert!(agree(&sequential_marks, &parallel_marks) && sequential_record_marks.iter().zip(&parallel_record_marks).all(|(s, c)| agree(s, c)), "full mark misses what the single-threaded verifier reaches");
         Self::restore_marks(&self.marks, &parallel_marks);
         self.restore_record_marks(&parallel_record_marks);
@@ -3977,8 +3902,7 @@ impl Heap {
         arrays.get(&array).map(|elements| elements.length)
     }
     /// The write barrier for an edge stored outside `owner`'s own storage (sparse elements,
-    /// owner-attached VM tables): `owner` is logged as if it had been written, or, while a
-    /// concurrent cycle marks, a record owner is snapshotted (`RecordSpace::barrier`).
+    /// owner-attached VM tables): `owner` is logged as if it had been written.
     pub(crate) fn write_barrier(&mut self, owner: Value) {
         match owner.heap_reference() {
             Some(HeapReference::ObjectRecord(record_id)) => self.object_records.barrier(record_id, &self.properties),
@@ -4180,10 +4104,6 @@ impl Heap {
         slot: usize,
         writes: crate::typed_ir::Type,
     ) -> Option<*mut Value> {
-        // A raw writer passes no snapshot barrier, so none is handed out while a cycle marks.
-        if self.satb_active {
-            return None;
-        }
         let data = self.object(object)?;
         let vector = data.properties();
         let shape = data.shape();
@@ -4731,7 +4651,10 @@ impl Heap {
             }
             Cell::Function(function) => {
                 object(&function.object);
-                work.extend([function.env, function.realm]);
+                work.push(function.env);
+                if last_proto.first_shared(function.realm) {
+                    work.push(function.realm);
+                }
             }
             Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
@@ -4744,8 +4667,11 @@ impl Heap {
                 scope,
                 ..
             } => {
-                work.push(*parent);
-                work.extend(slots.roots());
+                if last_proto.first_shared(*parent) {
+                    work.push(*parent);
+                }
+                // Only heap values are edges: a slot's number or `undefined` costs a pop.
+                slots.extend_heap_roots(work);
                 let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
@@ -4843,13 +4769,34 @@ impl Heap {
         );
         // The count of non-int32 values is kept per backing: none means no element to scan.
         if array.elements().holds_only_int32() || array.elements().double_values().is_some() { return; }
-        match array.elements().wide_values() {
-            Some(values) => work.extend(
-                values.iter().copied().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
-            ),
-            None => work.extend(
-                array.elements().iter().filter(|value| value.is_heap() && !Self::mark_leaf(&mut mark_string, *value)),
-            ),
+        // A run of one value (an array filled with one object or function) pushes it once:
+        // a pushed value is marked before the collection ends, and each repeat cost a pop.
+        let mut last = Value::UNDEFINED;
+        let mut push = |value: Value, work: &mut Vec<Value>| {
+            if value != last && !Self::mark_leaf(&mut mark_string, value) {
+                work.push(value);
+            }
+            last = value;
+        };
+        let elements = array.elements();
+        if let Some(values) = elements.wide_values() {
+            for &value in values {
+                if value.is_heap() {
+                    push(value, work);
+                }
+            }
+        } else if let Some(words) = elements.narrow_words() {
+            for &word in words {
+                if Value::narrow_is_heap(word) {
+                    push(Value::from_narrow(word), work);
+                }
+            }
+        } else {
+            for value in elements.iter() {
+                if value.is_heap() {
+                    push(value, work);
+                }
+            }
         }
     }
 
@@ -4948,7 +4895,9 @@ impl Heap {
             last_proto,
         );
         // The environment edge is the caller's (`EnvironmentTrace::closure`).
-        work.push(function.realm);
+        if last_proto.first_shared(function.realm) {
+            work.push(function.realm);
+        }
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
@@ -5277,11 +5226,11 @@ mod offset_order_tests;
 /// objects alternates between theirs and their arrays' (V8-v7 Splay's leaves: one entry
 /// missed about twice per leaf, a third of the pops of a full collection).
 #[derive(Clone, Copy)]
-pub(crate) struct PushedProtos([Value; 2], ProtoLink);
+pub(crate) struct PushedProtos([Value; 2], ProtoLink, [Value; 2]);
 
 impl Default for PushedProtos {
     fn default() -> Self {
-        Self([Value::UNDEFINED; 2], ProtoLink::NULL)
+        Self([Value::UNDEFINED; 2], ProtoLink::NULL, [Value::UNDEFINED; 2])
     }
 }
 
@@ -5296,6 +5245,19 @@ impl PushedProtos {
             return false;
         }
         self.1 = link;
+        true
+    }
+
+    /// Whether the shared edge `edge` (a function's realm, an environment's parent) is a heap
+    /// value this walk did not push last as such. Closures of one realm and activations of one
+    /// scope name the same few cells: each push of one already pushed costs a work-list pop
+    /// that finds it marked (a closure per activation: 2 of its 8 pops, about 70 Ir).
+    #[inline(always)]
+    pub(crate) fn first_shared(&mut self, edge: Value) -> bool {
+        if !edge.is_heap() || edge == self.2[0] || edge == self.2[1] {
+            return false;
+        }
+        self.2 = [edge, self.2[0]];
         true
     }
 

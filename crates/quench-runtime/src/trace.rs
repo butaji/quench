@@ -146,10 +146,6 @@ setting! {
         WasmRootOnly = "wasm-root-only",
         /// Tiering starts at the selected root and promotes hot fallback callees.
         WasmRootFirst = "wasm-root-first",
-        /// Full collections that pass the concurrent-cycle gates (`Heap::concurrent_cycle_refusal`)
-        /// may mark concurrently with the mutator: always (`=on`, or no value), where measured to
-        /// pay (`=adaptive`), or never (`=off`).
-        ConcurrentGc = "concurrent-gc",
         /// Functions of a direct eval's source compile on first call.
         DirectEvalStubs = "direct-eval-stubs",
         /// Old records keep reference counts, and minor collections free the records whose

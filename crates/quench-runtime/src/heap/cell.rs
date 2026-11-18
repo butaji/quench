@@ -2216,66 +2216,9 @@ impl Object {
         }
     }
 
-    /// A copy of the object at `object` for a concurrent marker, its fields read with relaxed
-    /// atomic loads while the mutator may write them; possibly torn between fields. It owns
-    /// nothing: it is never dropped, and its extras are never read.
-    ///
-    /// # Safety
-    /// `object` points to an initialized object that stays allocated during the call.
-    #[inline(always)]
-    pub(super) unsafe fn load_racy(object: *const Object) -> std::mem::ManuallyDrop<Object> {
-        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
-        // The payload word may be only 4-aligned (records stride 12 bytes), so it is read as its
-        // two halves, the upper (which tells extras apart) again after the lower: a word whose
-        // upper half changed meanwhile is read once more.
-        // SAFETY: the caller's contract; each half and the layout are 4-aligned for an atomic.
-        unsafe {
-            let base = object.cast::<u8>();
-            let half = |offset: usize| AtomicU32::from_ptr(base.add(offset).cast::<u32>().cast_mut()).load(Relaxed);
-            let payload_at = std::mem::offset_of!(Object, payload);
-            let payload = loop {
-                let high = half(payload_at + 4);
-                let low = half(payload_at);
-                if half(payload_at + 4) == high {
-                    break u64::from(low) | u64::from(high) << u32::BITS;
-                }
-            };
-            std::mem::ManuallyDrop::new(Object { payload, layout: half(std::mem::offset_of!(Object, layout)) })
-        }
-    }
 
-    /// Where a concurrent marker reads this object's values (`load_racy`): its run, `(0, 0)`
-    /// for inline values or none, or `None` when the mutator must trace it (extras,
-    /// dictionary storage, a shape or run past the snapshot).
-    #[inline(always)]
-    pub(super) fn concurrent_run(&self, shape_lengths: &[u32], arena_len: usize) -> Option<(usize, usize)> {
-        if self.extras_pointer().is_some() {
-            return None;
-        }
-        self.properties().concurrent_run(shape_lengths, arena_len)
-    }
 
-    /// The prototype and inline values of an object `concurrent_run` accepted.
-    #[inline(always)]
-    pub(super) fn concurrent_inline_children(&self, mut visit: impl FnMut(Value)) {
-        let proto = self.proto();
-        if proto.is_heap() {
-            visit(proto);
-        }
-        if self.meta() & OBJECT_INLINE_STORAGE != 0 {
-            for value in Self::unpack_inline(self.payload) {
-                if value.is_heap() && !value.is_deleted() {
-                    visit(value);
-                }
-            }
-        }
-    }
 
-    /// The elements backing word of an array copy without extras (`ArrayElements::from_raw`).
-    #[inline(always)]
-    pub(super) fn concurrent_elements_word(&self) -> u64 {
-        self.payload
-    }
 
     /// The prototype reference as stored (`ProtoLink`), undecoded.
     #[inline(always)]
@@ -3746,6 +3689,31 @@ impl EnvironmentSlots {
         };
         self.0.get_mut(position)?.owned_mut()
     }
+    /// Appends the heap values `roots` yields (owned heap values, and the owner of each
+    /// shared slot) to `out`. A dense storage takes a branch-free compaction over its words:
+    /// a loop's per-iteration copy repeats every binding of its function, which the filtered
+    /// iterator decoded at ~20 Ir a slot.
+    #[inline]
+    pub(crate) fn extend_heap_roots(&self, out: &mut Vec<Value>) {
+        if self.0.marked() {
+            out.extend(self.roots().filter(|value| value.is_heap()));
+            return;
+        }
+        let slots: &[EnvironmentSlot] = &self.0;
+        out.reserve(slots.len());
+        let start = out.len();
+        let mut kept = 0;
+        for slot in slots {
+            let (value, heap) = slot.0.environment_slot_edge();
+            // SAFETY: `kept` never passes the slots read so far, so every write lands within
+            // the `slots.len()` values reserved past `start`.
+            unsafe { out.as_mut_ptr().add(start + kept).write(value) };
+            kept += usize::from(heap);
+        }
+        // SAFETY: the first `kept` values past `start` were written above.
+        unsafe { out.set_len(start + kept) };
+    }
+
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         // A sparse storage's index words are not values; its owner and slots are.
         let sparse = self.0.marked();
@@ -3877,13 +3845,15 @@ impl EnvironmentSlots {
             })
         };
         let Some((_, owner)) = self.sparse() else {
-            // Every slot shares with its current owner, then the fresh and reset ones own.
-            let mut copy = super::thin_slice::ThinBoxSlice::from_exact_iter(self.0.iter().map(
-                |slot| match slot.state() {
-                    EnvironmentSlotState::Owned(_) => EnvironmentSlot::shared(environment),
-                    EnvironmentSlotState::Shared(owner) => EnvironmentSlot::shared(owner),
-                },
-            ));
+            // Every slot shares with its current owner, then the fresh and reset ones own: one
+            // copy of the words, then a select per word (a shared word names its owner already).
+            let shared = EnvironmentSlot::shared(environment);
+            let mut copy = super::thin_slice::ThinBoxSlice::from_slice(&self.0);
+            for slot in copy.iter_mut() {
+                if !slot.0.is_shared_environment_slot() {
+                    *slot = shared;
+                }
+            }
             for &slot in fresh {
                 let index = usize::from(slot);
                 let Some(source) = self.0.get(index) else {
