@@ -377,6 +377,18 @@ pub(crate) const fn checked_local(op: Op) -> bool {
     matches!(op, Op::LoadLocal | Op::StoreLocal | Op::InitializeTdz)
 }
 
+/// Whether `op` is an increment or decrement (`IncDec`), the update a fused index triple starts with
+/// (`dispatch_fast::raw_results`).
+pub(crate) const fn increments(op: Op) -> bool {
+    matches!(op, Op::IncDec)
+}
+
+/// Whether `op`'s result is a word a following arithmetic reads without boxing it: an element or
+/// field read, a Binary, an increment, a copy, a constant or a capture read (`dispatch_fast::raw_results`).
+pub(crate) const fn yields_raw_word(op: Op) -> bool {
+    matches!(op, Op::GetIndex | Op::IncDec | Op::Binary | Op::LoadConst | Op::Move | Op::GetField | Op::LoadCapture)
+}
+
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global
 /// store has no result register, and answers the source word it stored; a store's result is its
