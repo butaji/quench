@@ -348,11 +348,16 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
 /// The heap instructions that name a field or a global: a recorded or cached field read or store, a
 /// membership test, and a global name's access (`globals`).
 fn named_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32, instruction: WideInstruction) -> Option<Decoded> {
+    use crate::staged::Operation;
+    match crate::vm::compiled::decoded(instruction) {
+        Some(Operation::GetField { .. }) if !instruction.returns_from_frame() && !instruction.writes_current_this() =>
+            return field_row(region, facts, known, pc, instruction),
+        Some(Operation::SetField { .. }) => return field_store_row(known, instruction),
+        _ => {}
+    }
     match instruction.op().class() {
-        Class::GetField if !instruction.returns_from_frame() && !instruction.writes_current_this() => field_row(region, facts, known, pc, instruction),
         Class::Binary => membership_row(known, pc, instruction, instruction.result_register()),
         _ if instruction.op().traits().has(crate::bytecode::Traits::GLOBAL_NAME_ACCESS) => global_row(known, pc, instruction),
-        _ if instruction.op().is_field_store() => field_store_row(known, instruction),
         _ => None,
     }
 }
