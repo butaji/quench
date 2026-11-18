@@ -151,3 +151,20 @@ pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytec
         shape.leaf.map_or(shape.entry, CallEntry::leaf)
     }
 }
+
+/// Whether async `body`, whose plan is `plan`, settles its call's promise from an environment
+/// activation (`TARGET_SETTLES_IN_ENVIRONMENT`): a plain async function whose suspension keeps
+/// its environment and locals (`CallPlan::suspended_environment`), laid out as an environment
+/// activation lays out an ordinary body (`CallPlan::environment_activation`): each parameter a
+/// frame local, every register starting `undefined`. Its `await` suspends it in place, its frame
+/// taking the window's environment (`generator_yields::lane_await_settling`).
+pub(super) fn settles_in_environment(body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan) -> bool {
+    body.is_async
+        && !body.is_generator
+        && !body.is_class_constructor
+        && !body.derived_constructor
+        && plan.suspended_environment
+        && body.parent.is_some()
+        && body.local_registers.is_empty()
+        && body.initial_register == crate::bytecode::InitialRegister::Undefined
+}

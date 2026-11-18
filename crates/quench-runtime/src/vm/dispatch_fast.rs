@@ -1911,6 +1911,10 @@ const TARGET_INITIALIZES: u8 = 2;
 /// passed, for a kept `arguments` (`CallPlan::keeps_arguments`) or legacy reflection of a
 /// sloppy function's; any other's rest array holds every value past its parameters.
 const TARGET_GATHERS_KEEPING: u8 = 4;
+/// `ScriptCallTarget::forms`: a settling target (`CallEntry::Settles`) whose body activates
+/// over an environment window (`lane_activate_environment`): an async body whose locals and
+/// closures ride the window (`CallPlan::suspended_environment`).
+const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 8;
 
 impl ScriptCallTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -1951,6 +1955,12 @@ impl ScriptCallTarget {
     #[inline(always)]
     fn settles(&self) -> bool {
         self.entry == CallEntry::Settles
+    }
+
+    /// Its settling activation holds an environment window (`TARGET_SETTLES_IN_ENVIRONMENT`).
+    #[inline(always)]
+    fn settles_in_environment(&self) -> bool {
+        self.forms & TARGET_SETTLES_IN_ENVIRONMENT != 0
     }
 }
 
@@ -13686,16 +13696,22 @@ impl<H: Host> Vm<H> {
         // the lane's, with or without a frame.
         // An environment body runs in an environment activation where every local and
         // closure record of its view reads one (`LaneView::environment_window`).
+        // A settling call is a plain call of the running program, under a host that observes no
+        // promise lifecycle; an async body whose locals and closures ride a window settles from
+        // an environment activation (`settles_in_environment`).
+        let may_settle = !cross && !numeric && !self.host.observes_promise_lifecycle();
+        let settles_in_environment = may_settle && closure_targets::settles_in_environment(body, &plan);
         let environment = !plan.registers_only
-            && plan.environment_activation
+            && (plan.environment_activation || settles_in_environment)
             && !numeric
             && self
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
+        let settles_in_environment = settles_in_environment && environment;
         // A non-suspending async body of the running program activates for its plain calls,
         // whose promise its return settles (`CallEntry::Settles`); across programs, or under a
         // host that observes promise lifecycles, its calls take a frame.
-        let settles = plan.settles_in_loop && !cross && !numeric && !self.host.observes_promise_lifecycle();
+        let settles = (plan.settles_in_loop || settles_in_environment) && may_settle;
         // A non-suspending async body runs in registers only as a settling activation.
         let registers_only = plan.registers_only && (settles || !plan.settles_in_loop);
         // Across programs a construction leaves its calls a frame.
@@ -13809,7 +13825,8 @@ impl<H: Host> Vm<H> {
             // An environment activation's window has no record to hold the `new.target` an arrow reads.
             forms: u8::from(shape.constructs && !(environment && body.activation_bindings_observable(code)) && !settles && !body.rest && !(cross && plan.keeps_arguments)) * TARGET_CONSTRUCTS
                 | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES
-                | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING,
+                | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING
+                | u8::from(settles_in_environment) * TARGET_SETTLES_IN_ENVIRONMENT,
             fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -14376,8 +14393,17 @@ script_handler! {
             Some(vm.heap.root(promise))
         };
         vm.lane_stack.settling.push(root);
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        let (registers, base) = lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false);
+        let (registers, base) = if target.settles_in_environment() {
+            // SAFETY: the call's window is registers of the running function.
+            let passed = unsafe { lane_call_window(r, i) };
+            match generator_yields::activate_settling_environment(cx, r, ip, &target, passed, this) {
+                Ok(entered) => entered,
+                Err(next) => return next,
+            }
+        } else {
+            let arguments = ImmediateLayout::call_window_base(i.imm());
+            lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false)
+        };
         next!(cx, registers, base, Carried::script_in(cx, view))
     }
 }

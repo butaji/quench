@@ -143,12 +143,13 @@ pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
     }
 }
 
-/// `await` of an async body its caller's run called and settles (`Completion::SettlesPromise`,
-/// one whose suspension keeps only its registers): its registers become the frame of the
-/// continuation the awaited value's reaction resumes (a job, `Vm::run_lane_job`), the activation
-/// pops, and its caller goes on with the call's promise, as the general loop's in-place async
-/// call leaves it (`StepResult::Await`). A body that keeps more than its registers, or whose
-/// call returns its completion, takes the general path.
+/// `await` of an async body its caller's run called and settles (`Completion::SettlesPromise`):
+/// its registers, and for an environment activation the environment and locals its window holds
+/// (`settling_frame`), become the frame of the continuation the awaited value's reaction resumes
+/// (a job, `Vm::run_lane_job`), the activation pops, and its caller goes on with the call's
+/// promise, as the general loop's in-place async call leaves it (`StepResult::Await`). A body
+/// that kept the values it was passed, or whose call returns its completion, takes the general
+/// path.
 #[inline(never)]
 fn lane_await_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
     let vm = unsafe { vm(cx) };
@@ -158,7 +159,7 @@ fn lane_await_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     // SAFETY: the call record belongs to the caller's live view.
     let returns = unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER != 0;
-    let Some(value) = (!script.environment && !script.forwards && !returns).then(|| vm.lane_await_source(code, r.get(i.b))).flatten() else {
+    let Some(value) = (!script.forwards && !returns).then(|| vm.lane_await_source(code, r.get(i.b))).flatten() else {
         return Resumed::Exit(exit(ip));
     };
     note_allocation(vm);
@@ -183,13 +184,22 @@ fn lane_await_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i
 
 /// The frame of the settling `activation` running with registers `r`, which resumes at `pc`:
 /// its registers, receiver and environment, with the loops it opened (`LaneStack::iterators`).
+/// An environment activation's frame owns the environment its window made, or makes it now,
+/// and takes the window's locals, as its materialization would (`materialize_environment_frame`).
 fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &Activation, (r, pc): (Registers, usize)) -> Box<super::super::Frame> {
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     let count = usize::from(code.function(activation.function as usize).registers);
+    let argc = usize::from(script.argc);
     // SAFETY: the activation's window holds its registers, which nothing writes until the frame takes them.
     let window = unsafe { activation.window(count) };
+    // SAFETY: an environment activation's window holds its kept values after its locals.
+    let passed = if script.environment { unsafe { environment_passed(code, activation, count, argc) } } else { &window[..argc.min(count)] };
     let context = CallContext::user_function(activation.function, script.callee);
-    vm.push_script_frame_with_registers(code, activation.function, r.env(), r.this(), context, &window[..usize::from(script.argc).min(count)], window);
+    vm.push_script_frame_with_registers(code, activation.function, r.env(), r.this(), context, passed, window);
+    if script.environment {
+        // A settling activation runs its caller's program (`Completion::of`).
+        vm.materialize_environment_frame(code, activation, (activation.caller_program, r.env(), r.this()), argc);
+    }
     let mut frame = vm.frames.pop().expect("the activation pushed a frame");
     frame.pc = pc;
     frame.pc_is_resume = true;
@@ -198,4 +208,40 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
     vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
     vm.persist_global_lexical_bindings(code, &frame);
     frame
+}
+
+/// The `argc` values passed to the environment `activation` of a function of `count`
+/// registers: kept after its environment and locals (`lane_activate_environment`).
+///
+/// # Safety
+/// `activation` is a live environment activation, whose window nothing writes meanwhile.
+unsafe fn environment_passed<'a>(code: &ResidualProgram, activation: &'a Activation, count: usize, argc: usize) -> &'a [Value] {
+    let kept = count + usize::from(WINDOW_LOCALS) + usize::from(code.function(activation.function as usize).locals);
+    // SAFETY: as the caller guarantees.
+    &(unsafe { activation.window(kept + argc) })[kept..]
+}
+
+/// The environment activation (`lane_activate_environment`) of settling `target`, called at
+/// `ip` with registers `r`, passing `passed` with receiver `this`: its return settles the call's
+/// promise, whose root `LaneStack::settling` holds last (`Completion::SettlesPromise`); an
+/// activation refused releases it, before any effect.
+pub(super) fn activate_settling_environment<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    passed: &[Value],
+    this: Value,
+) -> Result<(Registers, Ip), Ip> {
+    let entered = lane_activate_environment(cx, r, ip, target, passed, (this, false));
+    let vm = unsafe { vm(cx) };
+    if entered.is_ok() {
+        let activation = vm.lane_stack.activations.last_mut().expect("the activation was pushed");
+        if let ActivationKind::Script(script) = &mut activation.kind {
+            script.completion = Completion::SettlesPromise;
+        }
+    } else if let Some(root) = vm.lane_stack.settling.pop().flatten() {
+        vm.heap.release_root(root);
+    }
+    entered
 }
