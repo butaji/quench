@@ -31,7 +31,7 @@ pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16
         return vm.owner_capture_env(VarOwner::Frame(unsafe { (*cx).frame() }), depth);
     }
     for _ in 0..depth {
-        let Some(Cell::Environment { parent, .. }) = vm.heap.get(env) else { return None };
+        let Some(crate::heap::EnvironmentRecord { parent, .. }) = vm.heap.environment(env) else { return None };
         env = *parent;
     }
     Some(env)
@@ -47,8 +47,8 @@ pub(super) fn lane_root_binding_slot<H: Host>(cx: *mut LaneContext<H>, depth: u1
     // The parent links first: most captures end at a function's environment.
     let Some(root) = lane_root_environment(cx, depth) else { return false };
     let vm = unsafe { vm(cx) };
-    let slots = match vm.heap.get(root) {
-        Some(Cell::Environment { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),
+    let slots = match vm.heap.environment(root) {
+        Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),
         _ => return false,
     };
     let env = unsafe { (*cx).registers }.env();

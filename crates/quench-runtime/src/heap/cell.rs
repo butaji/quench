@@ -2208,6 +2208,7 @@ impl Object {
             Some(HeapReference::AwaitRecord(_)) => unreachable!("an await state is never a prototype"),
             Some(HeapReference::StringRecord(_)) => unreachable!("a string is never a prototype"),
             Some(HeapReference::V128Record(_)) => unreachable!("a Wasm vector is never a prototype"),
+            Some(HeapReference::EnvironmentRecord(_)) => unreachable!("an environment is never a prototype"),
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -3280,6 +3281,16 @@ impl EnvironmentSlot {
     }
 }
 
+/// An environment: a function activation's captured bindings (`slots`), its parent's link,
+/// its function and its scope. A record of its own family (`Value::direct_environment`).
+#[derive(Debug)]
+pub(crate) struct EnvironmentRecord {
+    pub(crate) parent: Value,
+    pub(crate) function: u32,
+    pub(crate) slots: EnvironmentSlots,
+    pub(crate) scope: EnvironmentScopeRef,
+}
+
 /// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
 /// name resolution, while slot reads only need `parent`, `function` and `slots`.
 #[derive(Debug, Clone)]
@@ -4258,12 +4269,6 @@ pub(crate) enum Cell {
         slot: u16,
         kind: crate::bytecode::LexicalBindingKind,
     },
-    Environment {
-        parent: Value,
-        function: u32,
-        slots: EnvironmentSlots,
-        scope: EnvironmentScopeRef,
-    },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
     WasmV128([u8; crate::wasm::V128_BYTES]),
@@ -4421,7 +4426,6 @@ impl Cell {
             Self::Proxy { .. } => "proxy",
             Self::Function(_) => "function",
             Self::BindingReference { .. } => "binding_reference",
-            Self::Environment { .. } => "environment",
             Self::WasmBits64(_) => "wasm_bits64",
             Self::WasmInstance(_) => "wasm_instance",
             Self::WasmV128(_) => "wasm_v128",
@@ -4468,11 +4472,6 @@ impl Cell {
     pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
         match self {
             Self::Function(function) => function.program().into_iter().for_each(&mut visit),
-            Self::Environment { scope, .. } => {
-                if let Some(program) = scope.program() {
-                    visit(ProgramId::from_raw(program));
-                }
-            }
             Self::Iterator(iterator) => iterator.program_references(&mut visit),
             Self::AwaitState(state) => state.program_references(&mut visit),
             _ => {}

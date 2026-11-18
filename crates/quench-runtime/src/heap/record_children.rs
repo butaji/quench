@@ -62,3 +62,9 @@ impl records::RecordChildren for AwaitState {
         self.extend_roots(out);
     }
 }
+
+impl records::RecordChildren for EnvironmentRecord {
+    fn children(&self, _properties: &ValueArena, out: &mut Vec<Value>) {
+        Heap::environment_children(self, out, &mut PushedProtos::default());
+    }
+}

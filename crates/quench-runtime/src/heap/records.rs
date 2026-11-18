@@ -34,6 +34,9 @@ pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
 pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
 pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
+/// Environments have no legacy-slot fallback, so their space holds as many records as the
+/// legacy slots do (`MAX_HEAP_CELLS`).
+pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, { super::MAX_HEAP_CELLS }>;
 /// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
 pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
@@ -363,6 +366,19 @@ impl<'space, T> ParallelRecordMarks<'space, T> {
             AtomicU64::from_ptr(std::ptr::addr_of_mut!((*block).marked).cast::<u64>().add(word_index))
         };
         super::mark_word_if_new(word, mask)
+    }
+
+    /// Whether record `id` is occupied.
+    #[inline(always)]
+    pub(super) fn occupied(&self, id: RecordId) -> bool {
+        let (block_index, record_index) = RecordSpace::<T>::split_id(id);
+        // SAFETY: the block is in bounds, and no occupancy word is written while marking.
+        block_index < self.block_count
+            && unsafe {
+                let block = self.blocks.add(block_index);
+                std::ptr::addr_of!((*block).occupied).cast::<u64>().add(record_index / OCCUPANCY_WORD_BITS).read()
+            } & (1_u64 << (record_index % OCCUPANCY_WORD_BITS))
+                != 0
     }
 
     /// The record `id`.
@@ -1219,6 +1235,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         }
     }
 
+    #[inline(always)]
     fn is_occupied(&self, id: RecordId) -> bool {
         let (block_index, record_index) = Self::split_id(id);
         self.blocks
@@ -1226,6 +1243,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             .is_some_and(|block| block.is_occupied(record_index))
     }
 
+    #[inline(always)]
     pub(super) fn is_live(&self, id: RecordId) -> bool {
         id < self.next_id && self.is_occupied(id)
     }

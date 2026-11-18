@@ -68,7 +68,7 @@ pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_addres
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
-    ArrayRecordSpace, AwaitRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
+    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
 use records::RECORD_SPACE_CAPACITY;
@@ -369,7 +369,7 @@ struct SweepOutput {
 }
 
 /// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 9;
+const RECORD_FAMILIES: usize = 10;
 
 /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
 #[derive(Clone, Copy)]
@@ -383,6 +383,7 @@ pub(super) struct MarkBits<'a> {
     string_records: &'a StringRecordSpace,
     small_strings: &'a small_strings::SmallStringSpace,
     v128_records: &'a V128RecordSpace,
+    environment_records: &'a EnvironmentRecordSpace,
     marks: &'a [AtomicU64],
 }
 
@@ -401,6 +402,7 @@ impl MarkBits<'_> {
                 None => self.string_records.is_marked(id),
             },
             Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
+            Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
@@ -425,6 +427,7 @@ macro_rules! mark_bits {
             string_records: &$heap.string_records,
             small_strings: &$heap.small_strings,
             v128_records: &$heap.v128_records,
+            environment_records: &$heap.environment_records,
             marks: &$heap.marks,
         }
     };
@@ -461,6 +464,7 @@ pub(crate) struct Heap {
     string_atoms: string_atoms::StringAtoms,
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
+    environment_records: EnvironmentRecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
     #[cfg(feature = "profile-aggregate")]
     allocated_variants: std::collections::BTreeMap<&'static str, u64>,
@@ -901,11 +905,14 @@ impl Heap {
     }
 
     #[cfg(test)]
+    pub(crate) fn alloc_environment_record(&mut self, environment: EnvironmentRecord) -> Value {
+        let EnvironmentRecord { parent, function, slots, scope } = environment;
+        self.alloc_environment(parent, function, slots, scope).0
+    }
+
+    #[cfg(test)]
     pub(crate) fn environment_count_for_test(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|slot| matches!(slot.cell, Some(Cell::Environment { .. })))
-            .count()
+        self.environment_records.live_count()
     }
 
     #[cfg(test)]
@@ -974,6 +981,7 @@ impl Heap {
             (&self.string_records, Value::direct_string),
             (&self.small_strings, small_strings::small_string_value),
             (&self.v128_records, Value::direct_v128),
+            (&self.environment_records, Value::direct_environment),
         ]
     }
 
@@ -997,6 +1005,7 @@ impl Heap {
             (&mut self.string_records, Value::direct_string),
             (&mut self.small_strings, small_strings::small_string_value),
             (&mut self.v128_records, Value::direct_v128),
+            (&mut self.environment_records, Value::direct_environment),
         ]
     }
 
@@ -1009,6 +1018,11 @@ impl Heap {
             .for_each_live(|_, state| state.program_references(&mut visit));
         self.iterator_records
             .for_each_live(|_, iterator| iterator.program_references(&mut visit));
+        self.environment_records.for_each_live(|_, environment| {
+            if let Some(program) = environment.scope.program() {
+                visit(crate::vm::ProgramId::from_raw(program));
+            }
+        });
         self.for_each_cell(|cell| cell.program_references(&mut visit));
     }
 
@@ -1364,9 +1378,9 @@ impl Heap {
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::BigInt(value))
     }
 
-    /// `alloc(Cell::Environment { .. })` without the dispatch on the cell's kind, with the
-    /// address of the environment's slot storage, which stays put while it lives. An
-    /// environment's weight is one allocation: it has no prototype, payload or external bytes.
+    /// An environment record, with the address of its slot storage, which stays put while it
+    /// lives. An environment's weight is one allocation: it has no prototype, payload or
+    /// external bytes.
     pub(crate) fn alloc_environment(
         &mut self,
         parent: Value,
@@ -1374,20 +1388,13 @@ impl Heap {
         slots: EnvironmentSlots,
         scope: EnvironmentScopeRef,
     ) -> (Value, *const EnvironmentSlots) {
-        let cell = Cell::Environment { parent, function, slots, scope };
-        let environment = if cfg!(feature = "profile-aggregate") {
-            self.alloc(cell)
-        } else {
-            self.allocated += 1;
-            // An environment holds no weak entries (`Cell::has_weak_entries`).
-            let track_young = self.tracks_young_cells();
-            self.alloc_in_slot_with(track_young, false, || cell)
+        self.allocated += 1;
+        let Ok(record_id) = self.environment_records.try_insert(EnvironmentRecord { parent, function, slots, scope }) else {
+            panic!("environment records exhausted");
         };
-        let storage = match self.get(environment) {
-            Some(Cell::Environment { slots, .. }) => slots as *const EnvironmentSlots,
-            _ => unreachable!("an environment is allocated in a slot"),
-        };
-        (environment, storage)
+        // SAFETY: just inserted; records never move while they live.
+        let storage = unsafe { &self.environment_records.get_live(record_id).slots } as *const EnvironmentSlots;
+        (Value::direct_environment(record_id), storage)
     }
 
     /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
@@ -2136,6 +2143,7 @@ impl Heap {
         self.function_records = FunctionRecordSpace::default();
         self.promise_records = PromiseRecordSpace::default();
         self.await_records = AwaitRecordSpace::default();
+        self.environment_records = EnvironmentRecordSpace::default();
         self.iterator_records = IteratorRecordSpace::default();
         self.string_records = StringRecordSpace::default();
         self.small_strings = small_strings::SmallStringSpace::default();
@@ -2919,7 +2927,10 @@ impl Heap {
             self.payload_bytes = self.payload_bytes.saturating_sub(string_out.dead_bytes);
             *live_payload_bytes += string_out.live_bytes;
             let (string_live, string_freed) = (string_out.live, string_out.freed);
-            live += object_live
+            // An environment owns no arena storage; dropping a dead one frees its slots.
+            let (environment_live, environment_freed) = self.environment_records.sweep(full, age, false, |_| {});
+            live += environment_live
+                + object_live
                 + array_live
                 + function_live
                 + promise_live
@@ -2929,7 +2940,8 @@ impl Heap {
                 + string_live;
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.freed += (object_freed
+                self.gc_profile.freed += (environment_freed
+                    + object_freed
                     + array_freed
                     + function_freed
                     + promise_freed
@@ -2940,6 +2952,7 @@ impl Heap {
             }
             #[cfg(not(feature = "profile-aggregate"))]
             let _ = (
+                environment_freed,
                 object_freed,
                 array_freed,
                 function_freed,
@@ -3235,12 +3248,6 @@ impl Heap {
                         }
                         // SAFETY: the cell's only owned memory was released above.
                         unsafe { std::ptr::write(&mut slot.cell, None) };
-                    }
-                    // An environment owns only its slot storage and scope, which its drop
-                    // releases: no payload or external bytes, no properties, no sparse entry.
-                    #[cfg(not(feature = "profile-memory"))]
-                    Some(Cell::Environment { .. }) => {
-                        drop(slot.cell.take());
                     }
                     Some(_) => {
                         let cell = slot.cell.take().unwrap();
@@ -3758,6 +3765,23 @@ impl Heap {
                     self.gc_profile.marked_kinds[CellKind::WasmV128 as usize] += 1;
                 }
             }
+        } else if let Some(record_id) = value.direct_environment_index() {
+            // A full collection traces environments by what their readers read.
+            // SAFETY: a direct environment Value names an initialized record while it is live.
+            let function = unsafe { self.environment_records.get_live(record_id) }.function;
+            if environments.whole(value, record_id, function) {
+                return;
+            }
+            if !self.environment_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                self.gc_profile.marked_kinds[CellKind::Environment as usize] += 1;
+            }
+            // SAFETY: as above.
+            Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, work, last_proto);
         } else if let Some(record_id) = value.direct_await_index() {
             if !self.await_records.mark(record_id) {
                 return;
@@ -3800,12 +3824,6 @@ impl Heap {
                 return;
             };
             if slot.cell.is_none() {
-                return;
-            }
-            // A full collection traces environments by what their readers read.
-            if let Some(Cell::Environment { function, .. }) = &slot.cell
-                && environments.whole(value, index as u32, *function)
-            {
                 return;
             }
             if !Self::mark_serial(&self.marks, index) {
@@ -3912,6 +3930,7 @@ impl Heap {
             }
             Some(HeapReference::PromiseRecord(record_id)) => self.promise_records.barrier(record_id, &self.properties),
             Some(HeapReference::AwaitRecord(record_id)) => self.await_records.barrier(record_id, &self.properties),
+            Some(HeapReference::EnvironmentRecord(record_id)) => self.environment_records.barrier(record_id, &self.properties),
             Some(HeapReference::IteratorRecord(record_id)) => {
                 self.iterator_records.barrier(record_id, &self.properties)
             }
@@ -4540,6 +4559,26 @@ impl Heap {
         }
     }
 
+    /// An environment's edges: its parent (once per run of siblings), the heap values of its
+    /// slots, and its scope's dynamic bindings and `with` objects.
+    #[inline(always)]
+    pub(super) fn environment_children(environment: &EnvironmentRecord, work: &mut Vec<Value>, last_proto: &mut PushedProtos) {
+        let EnvironmentRecord { parent, slots, scope, .. } = environment;
+        if last_proto.first_shared(*parent) {
+            work.push(*parent);
+        }
+        // Only heap values are edges: a slot's number or `undefined` costs a pop.
+        slots.extend_heap_roots(work);
+        let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
+        match dynamic_bindings {
+            EnvironmentBindings::Owned(bindings) => {
+                work.extend(bindings.iter().map(|(_, value)| *value));
+            }
+            EnvironmentBindings::Shared(owner) => work.push(*owner),
+        }
+        work.extend(with_objects.iter().copied());
+    }
+
     fn children(
         owner: Value,
         cell: &Cell,
@@ -4661,26 +4700,6 @@ impl Heap {
                 work.extend((WasmStorage::of(*ty) == WasmStorage::Handle).then(|| Value::from_bits(*bits)));
             }
             Cell::BindingReference { environment, .. } => work.push(*environment),
-            Cell::Environment {
-                parent,
-                slots,
-                scope,
-                ..
-            } => {
-                if last_proto.first_shared(*parent) {
-                    work.push(*parent);
-                }
-                // Only heap values are edges: a slot's number or `undefined` costs a pop.
-                slots.extend_heap_roots(work);
-                let (dynamic_bindings, with_objects) = (scope.dynamic_bindings(), scope.with_objects());
-                match dynamic_bindings {
-                    EnvironmentBindings::Owned(bindings) => {
-                        work.extend(bindings.iter().map(|(_, value)| *value));
-                    }
-                    EnvironmentBindings::Shared(owner) => work.push(*owner),
-                }
-                work.extend(with_objects.iter().copied());
-            }
             Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
             Cell::WasmTable { object: value, elements, .. } => {
                 object(value);
@@ -4918,7 +4937,7 @@ impl Heap {
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
             Cell::Function(_) => CellKind::Function,
-            Cell::Environment { .. } | Cell::BindingReference { .. } => CellKind::Environment,
+            Cell::BindingReference { .. } => CellKind::Environment,
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmElements(_) | Cell::WasmInstance(_) => CellKind::WasmElements,
             Cell::WasmGlobal { .. } => CellKind::WasmGlobal,
@@ -5007,11 +5026,6 @@ impl Heap {
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
                 Cell::Function(_) => size_of::<FunctionRecord>(),
-                Cell::Environment { slots, scope, .. } => {
-                    let with_objects = scope.with_objects();
-                    slots.len() * size_of::<EnvironmentSlot>()
-                        + std::mem::size_of_val(with_objects)
-                }
                 Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
@@ -5334,6 +5348,11 @@ impl Heap {
         });
         self.function_records.for_each_live(|_, function| { functions += 1; take_object(&function.object, &mut own); });
         let (mut maps, mut sets, mut environments, mut cells) = (Tally::default(), Tally::default(), Tally::default(), 0usize);
+        self.environment_records.for_each_live(|_, environment| {
+            environments.containers += 1;
+            environments.values += environment.slots.len();
+            environments.words += environment.slots.len();
+        });
         let mut map_bytes = 0usize;
         for slot in self.slots.iter() {
             let Some(cell) = slot.cell.as_ref() else { continue };
@@ -5348,11 +5367,6 @@ impl Heap {
                     map_bytes += entries.payload_bytes();
                     sets.words += entries.capacity();
                     sets.take(entries.iter());
-                }
-                Cell::Environment { slots, .. } => {
-                    environments.containers += 1;
-                    environments.values += slots.len();
-                    environments.words += slots.len();
                 }
                 _ => {}
             }
@@ -5373,7 +5387,7 @@ impl Heap {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
                 Cell::Object(_) => "object", Cell::Array { .. } => "array", Cell::Function(_) => "function",
-                Cell::Environment { .. } => "env", Cell::Map { .. } => "map", Cell::Set { .. } => "set",
+                Cell::Map { .. } => "map", Cell::Set { .. } => "set",
                 Cell::Iterator(_) => "iter", Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",

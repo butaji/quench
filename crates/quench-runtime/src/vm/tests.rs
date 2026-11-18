@@ -4067,30 +4067,30 @@ fn atom_invalidation_drops_only_the_entries_naming_the_atom() {
 #[test]
 fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(TestHost::default());
-    let live = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let live = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
-    let dead = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    ).0;
+    let dead = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     vm.method_caches.push([
         MethodCache {
             shape: 1,
@@ -4126,18 +4126,18 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     ));
     assert!(vm.method_caches[0][1].target.is_none());
 
-    let reused = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: crate::Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let reused = vm.heap.alloc_environment(
+        crate::Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
 }
@@ -5291,20 +5291,20 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 .iter()
                 .position(|candidate| *candidate == atom)
                 .unwrap();
-            let environment = vm.heap.alloc(crate::heap::Cell::Environment {
-                parent: Value::NULL,
-                function: super::ROOT_FUNCTION_ID,
-                slots: vec![Value::DELETED; program.function(0).local_atoms.len()]
+            let environment = vm.heap.alloc_environment(
+                Value::NULL,
+                super::ROOT_FUNCTION_ID,
+                vec![Value::DELETED; program.function(0).local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+                crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                     program: Some(super::program_store::ProgramId::MAIN.raw()),
                     root_eval_scope: false,
                     binding_site_pc: None,
                     dynamic_bindings: vec![].into(),
                     with_objects: Box::default(),
                 }),
-            });
+            ).0;
             vm.programs
                 .set_module_environment(super::program_store::ProgramId::MAIN, environment);
             let attributes = super::PropertyAttributes {
@@ -6956,18 +6956,18 @@ fn await_state_traces_its_continuation_until_a_reaction_takes_it() {
     let mut vm = Vm::new(TestHost::default());
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
     vm.initialize(&program).unwrap();
-    let live = vm.heap.alloc(crate::heap::Cell::Environment {
-        parent: Value::NULL,
-        function: u32::MAX,
-        slots: Vec::<Value>::new().into_boxed_slice().into(),
-        scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+    let live = vm.heap.alloc_environment(
+        Value::NULL,
+        u32::MAX,
+        Vec::<Value>::new().into_boxed_slice().into(),
+        crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
             program: None,
             root_eval_scope: false,
             binding_site_pc: None,
             dynamic_bindings: vec![].into(),
             with_objects: Box::default(),
         }),
-    });
+    ).0;
     let held = vm
         .heap
         .alloc(crate::heap::Cell::Error("suspended binding".into()));

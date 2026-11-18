@@ -228,7 +228,7 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
 fn scope_slot_owners_survive_collection_and_release() {
     let mut heap = Heap::new();
     let kept = heap.alloc(Cell::Error("kept".into()));
-    let owner = heap.alloc(Cell::Environment {
+    let owner = heap.alloc_environment_record(crate::heap::EnvironmentRecord {
         parent: Value::NULL,
         function: 0,
         slots: vec![Value::number(1.0), kept].into_boxed_slice().into(),
@@ -241,7 +241,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         }),
     });
     let slots = heap.clone_environment_slots(owner, &[0], crate::bytecode::Resets::listed(&[])).unwrap();
-    let view = heap.alloc(Cell::Environment {
+    let view = heap.alloc_environment_record(crate::heap::EnvironmentRecord {
         parent: Value::NULL,
         function: 0,
         slots,
@@ -761,7 +761,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
 fn resolved_binding_reference_keeps_its_slot_owner_alive() {
     let mut heap = Heap::new();
     let value = heap.alloc(Cell::Error("kept".into()));
-    let environment = heap.alloc(Cell::Environment {
+    let environment = heap.alloc_environment_record(crate::heap::EnvironmentRecord {
         parent: Value::NULL,
         function: 0,
         slots: vec![value].into_boxed_slice().into(),
@@ -930,7 +930,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
     let width = crate::heap::SPARSE_CLONE_MIN_SLOTS + 8;
     let kept = heap.alloc(Cell::Error("kept".into()));
     let environment = |heap: &mut Heap, slots: EnvironmentSlots| {
-        heap.alloc(Cell::Environment {
+        heap.alloc_environment_record(crate::heap::EnvironmentRecord {
             parent: Value::NULL,
             function: 0,
             slots,
@@ -1573,7 +1573,7 @@ fn memory_census_distinguishes_sparse_environment_storage_from_logical_slots() {
     let width = super::cell::SPARSE_CLONE_MIN_SLOTS;
     let slots = EnvironmentSlots::from_values(std::iter::repeat_n(Value::UNDEFINED, width));
     let (owner, _) = heap.alloc_environment(Value::UNDEFINED, 0, slots, EnvironmentScopeRef::of_program(0));
-    let Some(Cell::Environment { slots, .. }) = heap.get(owner) else { unreachable!() };
+    let Some(crate::heap::EnvironmentRecord { slots, .. }) = heap.environment(owner) else { unreachable!() };
     let sparse = slots.iteration_copy(owner, &[], crate::bytecode::Resets::listed(&[]), |_, _| None).unwrap();
     assert!(sparse.dense().is_none());
     let sparse_bytes = sparse.0.allocated_bytes();

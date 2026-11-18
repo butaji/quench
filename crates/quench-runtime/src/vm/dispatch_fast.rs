@@ -2790,8 +2790,8 @@ fn lane_find_frame_storage<H: Host>(
     env: Value,
 ) -> *mut crate::heap::EnvironmentSlots {
     let vm = unsafe { vm(cx) };
-    let slots = match vm.heap.get_mut(env) {
-        Some(Cell::Environment { slots, .. }) => std::ptr::from_mut(slots),
+    let slots = match vm.heap.environment_mut(env) {
+        Some(crate::heap::EnvironmentRecord { slots, .. }) => std::ptr::from_mut(slots),
         _ => std::ptr::null_mut(),
     };
     unsafe { (*cx).frame_storage = FrameStorage { frame, env, slots } };
@@ -3847,7 +3847,7 @@ script_handler! {
             return exit(ip);
         };
         note_allocation(vm);
-        let Some(crate::heap::Cell::Environment { slots, .. }) = vm.heap.get(environment) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = vm.heap.environment(environment) else {
             unreachable!("an iteration copy is an environment");
         };
         let storage = std::ptr::from_ref(slots);
@@ -6588,8 +6588,8 @@ script_handler! {
         let imm = i.imm();
         let slot = usize::from(ImmediateLayout::capture_slot(imm));
         let vm = unsafe { vm(cx) };
-        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.get(env) {
-            Some(Cell::Environment { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
+        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.environment(env) {
+            Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
                 slots.owned(slot).filter(|value| !value.is_internal_marker())
             }
             _ => None,
@@ -6613,8 +6613,8 @@ script_handler! {
         let value = r.get(i.a);
         let stored = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).is_some_and(|env| {
             let vm = unsafe { vm(cx) };
-            match vm.heap.get_mut(env) {
-                Some(Cell::Environment { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
+            match vm.heap.environment_mut(env) {
+                Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
                     match slots.owned_mut(slot) {
                         Some(binding) if !binding.is_internal_marker() => {
                             *binding = value;
@@ -14182,7 +14182,7 @@ impl<H: Host> Vm<H> {
         // A frameless activation's function has no environment of its own: its depth-0
         // captures are the closure environment's dense slots (`Vm::environment_capture_slots`),
         // read here with the facts the store tag needs from the same cell.
-        let Some(Cell::Environment { function, slots, scope, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.environment(env) else {
             return std::ptr::null();
         };
         if *function == u32::MAX || *function == super::ROOT_FUNCTION_ID {
@@ -18935,7 +18935,7 @@ unsafe fn window_environment<H: Host>(
         let (environment, storage) = vm.heap.alloc_environment(parent, function, slots, scope);
         // Its storage links to its parent's for its closures' outer captures
         // (`EnvironmentSlots::link`), as a capture walk would find the parent's.
-        if let Some(Cell::Environment { function: owner, slots: parent_slots, .. }) = vm.heap.get(parent)
+        if let Some(crate::heap::EnvironmentRecord { function: owner, slots: parent_slots, .. }) = vm.heap.environment(parent)
             && *owner != u32::MAX
             && *owner != super::ROOT_FUNCTION_ID
             && let Some(parent_storage) = parent_slots.dense_storage()

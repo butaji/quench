@@ -259,7 +259,7 @@ impl<H: Host> Vm<H> {
     /// The environment slot of `env`'s instance record: the last before the imported functions,
     /// which end the layout (`wasm_function_reference` derives their base from the end).
     pub(crate) fn wasm_context_slot(&self, env: Value, program: ProgramId) -> Option<usize> {
-        let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
             return None;
         };
         let imports = self.programs.wasm_signatures(program)?.imports().len();
@@ -284,7 +284,7 @@ impl<H: Host> Vm<H> {
     /// function of the instance.
     pub(crate) fn install_wasm_instance(&mut self, env: Value, program: ProgramId) -> Option<()> {
         let slot = self.wasm_context_slot(env, program)?;
-        let Some(Cell::Environment { slots, .. }) = self.heap.get(env) else {
+        let Some(crate::heap::EnvironmentRecord { slots, .. }) = self.heap.environment(env) else {
             return None;
         };
         let record = InstanceRecord::new(env, program, slots.len());
