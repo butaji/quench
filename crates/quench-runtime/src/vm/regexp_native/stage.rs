@@ -3,19 +3,17 @@
 //! one, and a guarded operation a pair of blocks that join on the flag.
 use super::Emit;
 use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
-use cranelift_codegen::ir::{self, condcodes::CondCode, InstBuilder, MemFlagsData};
+use cranelift_codegen::ir::{self, MemFlagsData};
 use quench_regexp::backtrack::matcher::MatchStage;
 use quench_regexp::backtrack::native::{NativeTest, NATIVE_ASCII_UNITS};
 
 /// The bits of a mask word, and the mask of a shift within one.
 const WORD_BITS: i64 = 64;
 const WORD_SHIFT_MASK: i64 = WORD_BITS - 1;
-/// The words of a mask of the ASCII units.
-const MASK_WORDS: usize = (NATIVE_ASCII_UNITS as i64 / WORD_BITS) as usize;
 
 impl Emit<'_, '_> {
     /// Bit `byte` of the 128-bit `mask`.
-    fn in_mask(&mut self, mask: [u64; MASK_WORDS], byte: ir::Value) -> ir::Value {
+    fn in_mask(&mut self, mask: [u64; 2], byte: ir::Value) -> ir::Value {
         let low = self.constant(mask[0] as i64);
         let high = self.constant(mask[1] as i64);
         let below = self.compare_constant(Relation::UnsignedLess, byte, WORD_BITS);
@@ -24,15 +22,6 @@ impl Emit<'_, '_> {
         let bit = self.b.raw_binary(Binary::ShiftRightUnsigned, word, shift);
         let bit = self.b.raw_binary_imm(Binary::And, bit, 1);
         self.compare_constant(Relation::NotEqual, bit, 0)
-    }
-
-    /// The opposite comparison where `flag` is a comparison.
-    fn complement(&mut self, flag: ir::Value) -> Option<ir::Value> {
-        let ir::ValueDef::Result(inst, _) = self.b.func.dfg.value_def(flag) else { return None };
-        match self.b.func.dfg.insts[inst] {
-            ir::InstructionData::IntCompare { cond, args: [left, right], .. } => Some(self.b.ins().icmp(cond.complement(), left, right)),
-            _ => None,
-        }
     }
 
     /// Whether `byte` lies in `first..=last`.
@@ -86,16 +75,6 @@ impl MatchStage for Emit<'_, '_> {
 
     /// The ranges' ASCII part: an ASCII subject holds no other unit.
     fn in_ranges(&mut self, unit: ir::Value, ranges: &[(u32, u32)]) -> ir::Value {
-        // Two or more ranges (`\w`, which `\b` reads twice) are one test of their mask.
-        if ranges.len() > 1 {
-            let mut mask = [0u64; MASK_WORDS];
-            for &(first, last) in ranges.iter().filter(|(first, _)| *first < NATIVE_ASCII_UNITS) {
-                for unit in first..=last.min(NATIVE_ASCII_UNITS - 1) {
-                    mask[(unit as i64 / WORD_BITS) as usize] |= 1 << (unit as i64 & WORD_SHIFT_MASK);
-                }
-            }
-            return self.in_mask(mask, unit);
-        }
         let mut found = self.b.raw_const(Lane::I8, 0);
         for &(first, last) in ranges.iter().filter(|(first, _)| *first < NATIVE_ASCII_UNITS) {
             let hit = self.in_range(unit, (first, last.min(NATIVE_ASCII_UNITS - 1)));
@@ -104,9 +83,8 @@ impl MatchStage for Emit<'_, '_> {
         found
     }
 
-    /// The complement of a comparison is the opposite comparison, which a branch fuses with.
     fn not(&mut self, flag: ir::Value) -> ir::Value {
-        self.complement(flag).unwrap_or_else(|| self.b.raw_binary_imm(Binary::Xor, flag, 1))
+        self.b.raw_binary_imm(Binary::Xor, flag, 1)
     }
 
     fn differ(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {

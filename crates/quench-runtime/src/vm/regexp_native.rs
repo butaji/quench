@@ -9,11 +9,10 @@ use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineSc
 use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission};
-use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
+use quench_regexp::backtrack::CAPTURE_REGISTERS;
+use quench_regexp::backtrack::matcher::{admits, assertion_holds, takes_unit, Admission, AssertionTest};
+use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
-mod look;
-mod machine;
 mod repeats;
 mod stage;
 
@@ -29,7 +28,7 @@ const FIRST_RESUME: i64 = 2;
 const FIRST_OPERAND: i32 = WORD;
 const SECOND_OPERAND: i32 = 2 * WORD;
 /// The parameters of a native search (`NativeFn`).
-const PARAMETERS: usize = 8;
+const PARAMETERS: usize = 6;
 /// An address of register `n` is `n << REGISTER_SHIFT` bytes on.
 const REGISTER_SHIFT: i64 = 3;
 
@@ -87,9 +86,6 @@ enum Resume {
     Greedy(u32),
     /// A lazy repeat that takes a unit, ceiling and position in the frame.
     Lazy(u32),
-    /// The mark of the lookahead at this pc, its position in the frame's first word: the
-    /// backtrack reached it, so the body found no match.
-    LookFail(u32),
 }
 
 struct Emit<'a, 'f> {
@@ -99,16 +95,8 @@ struct Emit<'a, 'f> {
     length: ir::Value,
     registers: ir::Value,
     stack_end: ir::Value,
-    /// The last start a search that moves on by itself tries, and where it writes the start
-    /// of its match (`NativeFn`).
-    last: ir::Value,
-    found: ir::Value,
     position: Variable,
     top: Variable,
-    /// The start of the run, for a search that moves on by itself.
-    start: Variable,
-    /// Each lookahead's mark, by the lookahead's pc: the stack address its body runs above.
-    marks: Vec<(u32, Variable)>,
     instructions: Vec<ir::Block>,
     backtrack: ir::Block,
     overflow: ir::Block,
@@ -144,15 +132,13 @@ impl<'a, 'f> Emit<'a, 'f> {
         b.append_block_params_for_function_params(entry);
         b.enter_open(entry);
         let parameters = b.block_params(entry).to_vec();
-        let [bytes, length, position_in, registers, stack, stack_end, last, found] = parameters[..] else { unreachable!("`PARAMETERS` parameters") };
-        let (position, top, start) = (b.declare_var(types::I64), b.declare_var(types::I64), b.declare_var(types::I64));
+        let [bytes, length, position_in, registers, stack, stack_end] = parameters[..] else { unreachable!("`PARAMETERS` parameters") };
+        let (position, top) = (b.declare_var(types::I64), b.declare_var(types::I64));
         let instructions: Vec<_> = plan.insts.iter().map(|_| b.new_block()).collect();
         let (backtrack, overflow) = (b.new_block(), b.new_block());
         b.def_var(position, position_in);
         b.def_var(top, stack);
-        // A search that moves on by itself has no entry offset (`Program::native_restarts`).
-        b.def_var(start, position_in);
-        let mut emit = Self { b, plan, bytes, length, registers, stack_end, last, found, position, top, start, marks: Vec::new(), instructions, backtrack, overflow, resumes: Vec::new() };
+        let mut emit = Self { b, plan, bytes, length, registers, stack_end, position, top, instructions, backtrack, overflow, resumes: Vec::new() };
         let barrier = emit.constant(BARRIER);
         let zero = emit.constant(0);
         emit.push_frame(barrier, zero, zero);
@@ -191,6 +177,13 @@ impl<'a, 'f> Emit<'a, 'f> {
     /// Branches to `then` when `condition` holds, else `otherwise`.
     fn branch(&mut self, condition: ir::Value, then: ir::Block, otherwise: ir::Block) {
         self.b.branch_if(condition, (then, &[]), (otherwise, &[]));
+    }
+
+    /// Continues in a new block where `condition` holds, failing where it does not.
+    fn require(&mut self, condition: ir::Value) {
+        let held = self.b.new_block();
+        self.branch(condition, held, self.backtrack);
+        self.b.enter_open(held);
     }
 
     fn compare(&mut self, relation: Relation, left: ir::Value, right: ir::Value) -> ir::Value {
@@ -241,6 +234,109 @@ impl<'a, 'f> Emit<'a, 'f> {
         FIRST_RESUME + index as i64
     }
 
+    /// Records the register's old value so backtracking puts it back, then sets it.
+    fn set_register(&mut self, index: u32, value: ir::Value) {
+        let old = self.register(index);
+        let id = self.constant(RESTORE);
+        let register = self.constant(i64::from(index));
+        self.push_frame(id, register, old);
+        self.store_register(index, value);
+    }
+
+    /// `set_register` of both bounds of a capture.
+    fn set_capture(&mut self, capture: u32, start: ir::Value, end: ir::Value) {
+        self.set_register(CAPTURE_REGISTERS * capture, start);
+        self.set_register(CAPTURE_REGISTERS * capture + 1, end);
+    }
+
+    fn instruction(&mut self, pc: u32, inst: &NativeInst) {
+        match inst {
+            NativeInst::Unit(test) => self.unit(pc, *test),
+            NativeInst::UnitRepeat { test, min, max, greedy } => self.unit_repeat(pc, *test, (*min, *max), *greedy),
+            NativeInst::Assert(test) => self.assertion(pc, *test),
+            NativeInst::Split { alternative } => {
+                let position = self.position();
+                self.push_resume(Resume::Choice(*alternative), position, position);
+                self.next(pc);
+            }
+            NativeInst::GuardedSplit { alternative, guard } => self.guarded_split(pc, *alternative, *guard),
+            NativeInst::Jump(target) => self.goto(*target),
+            NativeInst::Match => {
+                let position = self.position();
+                self.b.leave(&[position]);
+            }
+            other => self.registers_instruction(pc, other),
+        }
+    }
+
+    fn unit(&mut self, pc: u32, test: NativeTest) {
+        let position = self.position();
+        let takes = takes_unit(self, test, position);
+        self.require(takes);
+        let after = self.b.raw_binary_imm(Binary::Add, position, 1);
+        self.set_position(after);
+        self.next(pc);
+    }
+
+    fn assertion(&mut self, pc: u32, test: AssertionTest) {
+        let position = self.position();
+        let holds = assertion_holds(self, test, position);
+        self.require(holds);
+        self.next(pc);
+    }
+
+    fn guarded_split(&mut self, pc: u32, alternative: u32, guard: Admission<NativeTest>) {
+        let position = self.position();
+        let admitted = admits(self, guard, position);
+        let (admit, refuse) = (self.b.new_block(), self.b.new_block());
+        self.branch(admitted, admit, refuse);
+        self.b.enter_open(admit);
+        self.push_resume(Resume::Choice(alternative), position, position);
+        self.next(pc);
+        self.b.enter_open(refuse);
+        self.goto(alternative);
+    }
+
+    /// The instructions that read and write registers, the counters and captures of the loops.
+    fn registers_instruction(&mut self, pc: u32, inst: &NativeInst) {
+        match inst {
+            NativeInst::CaptureOpen { temporary, count, restores } => {
+                let position = self.position();
+                for register in *temporary..*temporary + *count {
+                    if *restores {
+                        self.set_register(register, position);
+                    } else {
+                        self.store_register(register, position);
+                    }
+                }
+                self.next(pc);
+            }
+            NativeInst::CaptureClose { capture, temporary } => {
+                let start = self.register(*temporary);
+                let end = self.position();
+                self.set_capture(*capture, start, end);
+                self.next(pc);
+            }
+            NativeInst::ResetCaptures { captures } => self.reset_captures(pc, captures),
+            other => self.loop_instruction(pc, other),
+        }
+    }
+
+    fn reset_captures(&mut self, pc: u32, captures: &[u32]) {
+        let unset = self.constant(self.plan.unset as i64);
+        for capture in captures {
+            let current = self.register(CAPTURE_REGISTERS * capture);
+            let is_set = self.compare(Relation::NotEqual, current, unset);
+            let (reset, skip) = (self.b.new_block(), self.b.new_block());
+            self.branch(is_set, reset, skip);
+            self.b.enter_open(reset);
+            self.set_capture(*capture, unset, unset);
+            self.b.goto(skip, &[]);
+            self.b.enter_open(skip);
+        }
+        self.next(pc);
+    }
+
     /// The backtrack block: pops a frame and goes where its id says; then each resume block.
     fn finish(&mut self) {
         let overflow = self.overflow;
@@ -257,7 +353,8 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.b.enter_open(restore);
         self.restore_frame(top);
         self.b.enter_open(barrier);
-        self.restart();
+        let failed = self.constant(NATIVE_FAIL as i64);
+        self.b.leave(&[failed]);
         // The resume blocks stay listed: a resume pushes frames of its own kind, which name
         // their ids from the list (`resume_id`), so it never grows here.
         let listed = self.resumes.len();
@@ -267,91 +364,6 @@ impl<'a, 'f> Emit<'a, 'f> {
             self.resume(resume);
         }
         debug_assert_eq!(self.resumes.len(), listed, "no resume made another");
-    }
-
-    /// The barrier: the run from this start failed. The caller finds the next start, or the
-    /// code moves to the next position past it that the start set admits (`Program::next_start`)
-    /// and runs from there, failing past `last`.
-    fn restart(&mut self) {
-        let admission = match self.plan.restarts {
-            NativeRestarts::Caller => None,
-            NativeRestarts::Every => Some(None),
-            NativeRestarts::Admitted(admission) => Some(Some(admission)),
-        };
-        let Some(admission) = admission else {
-            let failed = self.constant(NATIVE_FAIL as i64);
-            self.b.leave(&[failed]);
-            return;
-        };
-        let (next, exhausted, run) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
-        if let Some(test) = self.plan.restart_skip {
-            self.skip_taken_units(test);
-        }
-        self.b.goto(next, &[]);
-        self.b.enter_open(next);
-        let start = self.b.use_var(self.start);
-        let start = self.b.raw_binary_imm(Binary::Add, start, 1);
-        self.b.def_var(self.start, start);
-        let past = self.compare(Relation::UnsignedGreater, start, self.last);
-        let candidate = self.b.new_block();
-        self.branch(past, exhausted, candidate);
-        self.b.enter_open(candidate);
-        match admission {
-            None => self.b.goto(run, &[]),
-            Some(admission) => {
-                let admitted = admits(self, admission, start);
-                self.branch(admitted, run, next);
-            }
-        }
-        self.b.enter_open(exhausted);
-        let failed = self.constant(NATIVE_FAIL as i64);
-        self.b.leave(&[failed]);
-        self.b.enter_open(run);
-        self.run_from_start(admission, next);
-    }
-
-    /// Runs from the restart's start, `admission` having admitted it: past its leading
-    /// assertions, which fail on to `next` with no frame of their own to undo, and above a
-    /// new barrier.
-    fn run_from_start(&mut self, admission: Option<Admission<NativeTest>>, next: ir::Block) {
-        let start = self.b.use_var(self.start);
-        // The start set may say whether the unit at the start is a word unit, which leaves
-        // `\b` and `\B` only the unit before it to read.
-        let word = match admission {
-            Some(Admission { units: NativeTest::Mask(mask), at_end, .. }) => ascii_units_are_words(mask).filter(|word| !(*word && at_end)),
-            _ => None,
-        };
-        let mut entry = self.plan.entry;
-        while let Some(NativeInst::Assert(test)) = self.plan.insts.get(entry as usize) {
-            let given = word.and_then(|word| word_assertion_given(self, *test, start, word));
-            let holds = given.unwrap_or_else(|| assertion_holds(self, *test, start));
-            let held = self.b.new_block();
-            self.branch(holds, held, next);
-            self.b.enter_open(held);
-            entry += 1;
-        }
-        self.b.raw_store(Lane::I64, MemFlagsData::trusted(), (start, false), self.found, 0);
-        self.set_position(start);
-        let barrier = self.constant(BARRIER);
-        let zero = self.constant(0);
-        self.push_frame(barrier, zero, zero);
-        self.goto(entry);
-    }
-
-    /// Moves the failed start to the end of the units its leading atomic repeat took
-    /// (`Program::next_candidate`), whose next position the restart tries.
-    fn skip_taken_units(&mut self, test: NativeTest) {
-        let (scan, step, done) = (self.b.new_block(), self.b.new_block(), self.b.new_block());
-        self.b.goto(scan, &[]);
-        self.b.enter_open(scan);
-        let at = self.b.use_var(self.start);
-        let takes = takes_unit(self, test, at);
-        self.branch(takes, step, done);
-        self.b.enter_open(step);
-        let after = self.b.raw_binary_imm(Binary::Add, at, 1);
-        self.b.def_var(self.start, after);
-        self.b.goto(scan, &[]);
-        self.b.enter_open(done);
     }
 
     /// Jumps by `id` to the restore block, the barrier block or a resume block.
@@ -366,18 +378,13 @@ impl<'a, 'f> Emit<'a, 'f> {
 
     /// A restore frame: its register gets its old value back, and the backtrack goes on.
     fn restore_frame(&mut self, frame: ir::Value) {
-        self.write_back(frame);
-        self.fail();
-    }
-
-    /// The register a restore entry at `frame` names gets its old value back.
-    fn write_back(&mut self, frame: ir::Value) {
         let flags = MemFlagsData::trusted();
         let register = self.b.raw_load(Lane::I64, flags, frame, FIRST_OPERAND);
         let value = self.b.raw_load(Lane::I64, flags, frame, SECOND_OPERAND);
         let offset = self.b.raw_binary_imm(Binary::ShiftLeft, register, REGISTER_SHIFT);
         let address = self.b.raw_binary(Binary::Add, self.registers, offset);
         self.b.raw_store(Lane::I64, flags, (value, false), address, 0);
+        self.fail();
     }
 }
 

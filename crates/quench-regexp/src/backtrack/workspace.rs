@@ -1,5 +1,5 @@
 //! The registers and stack a search runs in, shared by every program on a thread.
-use super::{EXHAUSTED, MAXIMUM_STACK_FRAMES, ascii_table, AssertionTest, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
+use super::{ascii_table, AssertionTest, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
 use crate::Assertion;
 use std::cell::Cell;
 use std::ops::Range;
@@ -100,14 +100,7 @@ impl Program {
                 stack.clear();
                 stack.push(Frame::Barrier);
                 let (pc, position) = self.entry(text, start);
-                let ran = self.run(text, (pc, start, position), Some(search), registers, stack);
-                if stack.capacity() >= MAXIMUM_STACK_FRAMES && EXHAUSTED.get() {
-                    // No answer; the exhausted search's stack is not kept for the next.
-                    *stack = Vec::new();
-                    registers.fill(UNSET);
-                    return None;
-                }
-                ran
+                self.run(text, (pc, start, position), Some(search), registers, stack)
             }
         };
         let found = ran.map(|(start, end)| Found { start, end, captures: captures(registers, spare) });
@@ -183,7 +176,7 @@ pub(super) fn anchored_run_of(instructions: &[Inst], capture_count: usize) -> Op
 }
 
 pub(super) fn class_run_of(instructions: &[Inst], sets: &[MatchSet], capture_count: usize) -> Option<Box<ClassRun>> {
-    let [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true, .. }, Inst::Match] = instructions else {
+    let [Inst::UnitRepeat { test, min: 1, max: UNBOUNDED, greedy: true }, Inst::Match] = instructions else {
         return None;
     };
     if capture_count != 0 {

@@ -48,7 +48,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
             Expression::BigIntLiteral(value) => self.bigint_literal(value),
-            Expression::RegExpLiteral(value) => self.regexp_literal(value, false),
+            Expression::RegExpLiteral(value) => self.regexp_literal(value),
             Expression::TemplateLiteral(value) => self.template_literal(value),
             Expression::TaggedTemplateExpression(value) => self.tagged_template(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
@@ -210,9 +210,7 @@ impl FunctionCompiler<'_, '_> {
         self.load_atom(atom)
     }
 
-    /// A regexp literal; `receiver` when its only use is the receiver of a `test` or `exec`
-    /// call, which lets every evaluation share one object (`RegExpLiteralSite::receiver`).
-    pub(super) fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>, receiver: bool) -> Register {
+    fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>) -> Register {
         let pattern = self
             .owner
             .constant(Constant::String(value.regex.pattern.text.as_str().into()));
@@ -232,7 +230,7 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         let flags = self.owner.constant(Constant::String(flags.into()));
-        let site = self.owner.regexp_literal_site(pattern, flags, receiver);
+        let site = self.owner.regexp_literal_site(pattern, flags);
         let destination = self.reg();
         self.emit(Op::CreateRegExpLiteral, destination, 0, 0, site);
         destination

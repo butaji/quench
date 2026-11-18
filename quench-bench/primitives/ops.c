@@ -24,7 +24,6 @@
  * Build: cc -O2 -fno-tree-vectorize -fno-unroll-loops -o ops_c ops.c -lm
  * Run:   ./ops_c <opname> <n>   prints "<opname> <result>"
  */
-#define _GNU_SOURCE /* memmem, for the rx_lit twin */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -720,54 +719,6 @@ static double NOINL op_call_method(long n) {
   return a;
 }
 
-
-/* RegExp twins: RegExp.prototype.test of each ops.js rx_ pattern over RS, as the matcher a C
- * programmer writes for the pattern (same answer, same subject). */
-static const char RS[] = "The quick brown fox jumps over the lazy dog; contact: john.doe+tag@example.com, price $1234.56, date 2026-11-18, running jumping";
-static int is_word(unsigned char c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
-static int is_space(unsigned char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
-static int NOINL rx_lit(const char *s, size_t len) { return memmem(s, len, "lazy", 4) != NULL; }
-static int NOINL rx_digits(const char *s, size_t len) {
-  for (size_t i = 0; i < len; i++) if (s[i] >= '0' && s[i] <= '9') return 1;
-  return 0;
-}
-static int NOINL rx_word2(const char *s, size_t len) {
-  /* (\w+)\s(\w+): a word unit, then whitespace, then a word unit. */
-  for (size_t i = 1; i + 1 < len; i++)
-    if (is_space((unsigned char)s[i]) && is_word((unsigned char)s[i - 1]) && is_word((unsigned char)s[i + 1])) return 1;
-  return 0;
-}
-static int email_left(unsigned char c) { return is_word(c) || c == '.' || c == '+' || c == '-'; }
-static int NOINL rx_email(const char *s, size_t len) {
-  /* [\w.+-]+@[\w-]+\.[\w.]+ */
-  for (const char *at = memchr(s, '@', len); at; at = memchr(at + 1, '@', len - (size_t)(at + 1 - s))) {
-    if (at == s || !email_left((unsigned char)at[-1])) continue;
-    size_t j = (size_t)(at - s) + 1, k = j;
-    while (k < len && (is_word((unsigned char)s[k]) || s[k] == '-')) k++;
-    if (k > j && k + 1 < len && s[k] == '.' && (is_word((unsigned char)s[k + 1]) || s[k + 1] == '.')) return 1;
-  }
-  return 0;
-}
-static int NOINL rx_dotstar(const char *s, size_t len) {
-  /* q.*z: a q, then a z before the next line terminator. */
-  for (const char *q = memchr(s, 'q', len); q; q = memchr(q + 1, 'q', len - (size_t)(q + 1 - s))) {
-    for (const char *p = q + 1; p < s + len && *p != '\n' && *p != '\r'; p++) if (*p == 'z') return 1;
-  }
-  return 0;
-}
-static int NOINL rx_ahead(const char *s, size_t len) {
-  /* \w+(?=@): an @ right after a word unit. */
-  for (const char *at = memchr(s, '@', len); at; at = memchr(at + 1, '@', len - (size_t)(at + 1 - s)))
-    if (at > s && is_word((unsigned char)at[-1])) return 1;
-  return 0;
-}
-#define RX_OP(name) \
-  static double NOINL op_##name(long n) { \
-    int32_t N = (int32_t)n, c = 0; const char *s = RS; size_t len = sizeof RS - 1; \
-    for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); OPAQUE_P(s); if (name(s, len)) c++; } \
-    return c; \
-  }
-RX_OP(rx_lit) RX_OP(rx_digits) RX_OP(rx_word2) RX_OP(rx_email) RX_OP(rx_dotstar) RX_OP(rx_ahead)
 /* ---------------- kernels ---------------- */
 
 struct body { double x, y, z, vx, vy, vz, mass; };
@@ -1226,9 +1177,6 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"arr_load_dbl", op_arr_load_dbl}, {"arr_store_dbl", op_arr_store_dbl},
   {"arr_load_obj", op_arr_load_obj}, {"arr_store_obj", op_arr_store_obj},
   {"arr_length", op_arr_length}, {"arr_push", op_arr_push},
-  {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
-  {"rx_lit", op_rx_lit}, {"rx_digits", op_rx_digits}, {"rx_word2", op_rx_word2},
-  {"rx_email", op_rx_email}, {"rx_dotstar", op_rx_dotstar}, {"rx_ahead", op_rx_ahead},
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64}, {"typed_store_u8c", op_typed_store_u8c},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
   {"k_dist2", op_k_dist2}, {"k_field_acc", op_k_field_acc}, {"k_list_walk", op_k_list_walk}, {"k_vec_local", op_k_vec_local},

@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
     /// The element backing of an array whose indices are all own data properties of it: no
     /// indexed descriptors, sparse storage or arguments mapping. A slot holding the hole
     /// marker is a hole. Reading it runs no guest code; a search reads it in place.
-    pub(super) fn array_search_elements(&self, this: Value) -> Option<&crate::heap::ArrayElements> {
+    fn array_search_elements(&self, this: Value) -> Option<&crate::heap::ArrayElements> {
         let object = self.heap.array(this)?;
         (!object.has_indexed_descriptors() && !object.is_arguments_object() && self.heap.sparse_length(this).is_none())
             .then(|| object.elements())

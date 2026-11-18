@@ -453,13 +453,21 @@ complexity crates/quench-node/src/shared_run.rs::finish_shared_execution 11
 complexity crates/quench-node/src/shared_run.rs::print_cli_help 11
 complexity crates/quench-node/src/shared_run.rs::run_shared_cli 68
 complexity crates/quench-node/src/shared_run.rs::validate_bench_cli_args 26
+complexity crates/quench-regexp/src/backtrack.rs::Compiler::compile 25
 complexity crates/quench-regexp/src/backtrack.rs::consuming_starts 12
+complexity crates/quench-regexp/src/lib.rs::Regex::backtracking_find 11
+complexity crates/quench-regexp/src/lib.rs::assertion_matches 18
 complexity crates/quench-regexp/src/lib.rs::class_item_matches 16
 complexity crates/quench-regexp/src/lib.rs::decode_identifier_escapes 11
 complexity crates/quench-regexp/src/lib.rs::lower_class 11
 complexity crates/quench-regexp/src/lib.rs::lower_term 21
+complexity crates/quench-regexp/src/lib.rs::match_expr_with 19
 complexity crates/quench-regexp/src/lib.rs::normalize_escaped_backslash_quantifiers 14
+complexity crates/quench-regexp/src/lib.rs::repeat_simple_with 12
+complexity crates/quench-regexp/src/lib.rs::repeat_with 14
 complexity crates/quench-regexp/src/lib.rs::resolved_property_matches 18
+complexity crates/quench-regexp/src/lib.rs::reverse_options 14
+complexity crates/quench-regexp/src/lib.rs::reverse_repeat_options::visit 13
 complexity crates/quench-regexp/src/lib.rs::string_property_matches_units 12
 complexity crates/quench-regexp/src/lib.rs::term_contains_invalid_string_property 12
 complexity crates/quench-runtime/src/bytecode.rs::Function::derive_call_plan 51
@@ -569,6 +577,7 @@ complexity crates/quench-runtime/src/vm.rs::Vm<H>::call_prepared 13
 complexity crates/quench-runtime/src/vm.rs::Vm<H>::call_value_with_target_inner 12
 complexity crates/quench-runtime/src/vm.rs::Vm<H>::instantiate_global_declarations 16
 complexity crates/quench-runtime/src/vm/agent.rs::AgentMethod::from_index 12
+complexity crates/quench-runtime/src/vm/array.rs::Vm<H>::array_concat_native 11
 complexity crates/quench-runtime/src/vm/array_buffer.rs::Vm<H>::array_buffer_getter_native 18
 complexity crates/quench-runtime/src/vm/array_buffer.rs::Vm<H>::array_buffer_slice_native 20
 complexity crates/quench-runtime/src/vm/array_buffer.rs::Vm<H>::array_buffer_transfer_native 14
@@ -647,6 +656,7 @@ complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::construct_value_
 complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::inline_construct_target 14
 complexity crates/quench-runtime/src/vm/construction.rs::Vm<H>::native_constructor_prototype 28
 complexity crates/quench-runtime/src/vm/data_view.rs::Vm<H>::data_view_native 26
+complexity crates/quench-runtime/src/vm/data_view.rs::Vm<H>::lane_data_view_float64 15
 complexity crates/quench-runtime/src/vm/date.rs::DateSetter::from_native 16
 complexity crates/quench-runtime/src/vm/date.rs::Vm<H>::date_native 20
 complexity crates/quench-runtime/src/vm/date.rs::Vm<H>::date_setter 15
@@ -1318,8 +1328,8 @@ file-lines crates/quench-node/src/modules/zlib_native_shared_vm.rs 714
 file-lines crates/quench-node/src/modules/zlib_shared_vm.rs 1392
 file-lines crates/quench-node/src/shared_run.rs 1514
 file-lines crates/quench-node/tests/aot-bootstrap.rs 2030
-file-lines crates/quench-regexp/src/backtrack.rs 1755
-file-lines crates/quench-regexp/src/lib.rs 2293
+file-lines crates/quench-regexp/src/backtrack.rs 1917
+file-lines crates/quench-regexp/src/lib.rs 2936
 file-lines crates/quench-runtime/src/api.rs 10290
 file-lines crates/quench-runtime/src/api_native.rs 2520
 file-lines crates/quench-runtime/src/api_native_tests.rs 2520
@@ -2295,8 +2305,12 @@ function-lines crates/quench-node/tests/aot-bootstrap.rs::unscoped_typescript_ty
 function-lines crates/quench-node/tests/aot-bootstrap.rs::write_literal_import_fixture 65
 function-lines crates/quench-node/tests/cli-options.rs::internal_options_match_node_without_source_in_native_js_and_ts 94
 function-lines crates/quench-node/tests/cli-options.rs::internal_options_matches_node_in_interpreter_and_jit 51
+function-lines crates/quench-regexp/src/backtrack.rs::Compiler::compile 167
 function-lines crates/quench-regexp/src/backtrack.rs::consuming_starts 45
+function-lines crates/quench-regexp/src/backtrack.rs::tests::class_ascii_mask_matches_each_unit 41
+function-lines crates/quench-regexp/src/backtrack.rs::tests::matches_the_repository_matcher 238
 function-lines crates/quench-regexp/src/lib.rs::Regex::unit_match 49
+function-lines crates/quench-regexp/src/lib.rs::assertion_matches 44
 function-lines crates/quench-regexp/src/lib.rs::class_item_matches 50
 function-lines crates/quench-regexp/src/lib.rs::class_item_widths 47
 function-lines crates/quench-regexp/src/lib.rs::class_match_widths 53
@@ -2304,8 +2318,13 @@ function-lines crates/quench-regexp/src/lib.rs::compile_property_matcher 103
 function-lines crates/quench-regexp/src/lib.rs::decode_identifier_escapes 49
 function-lines crates/quench-regexp/src/lib.rs::lower_class 62
 function-lines crates/quench-regexp/src/lib.rs::lower_term 100
+function-lines crates/quench-regexp/src/lib.rs::match_expr_with 130
 function-lines crates/quench-regexp/src/lib.rs::normalize_new_unicode_scripts 41
+function-lines crates/quench-regexp/src/lib.rs::repeat_simple_with 62
+function-lines crates/quench-regexp/src/lib.rs::repeat_with 62
 function-lines crates/quench-regexp/src/lib.rs::resolved_property_matches 47
+function-lines crates/quench-regexp/src/lib.rs::reverse_options 108
+function-lines crates/quench-regexp/src/lib.rs::reverse_repeat_options 58
 function-lines crates/quench-runtime/src/api.rs::tests::regression_activation_retains_exact_callable_identity 48
 function-lines crates/quench-runtime/src/api.rs::tests::regression_aggregate_error_preserves_effect_order 77
 function-lines crates/quench-runtime/src/api.rs::tests::regression_array_buffer_intrinsics_and_backing_stores_are_realm_owned 84
@@ -2786,6 +2805,8 @@ function-lines crates/quench-runtime/src/vm/construction.rs::Vm<H>::native_const
 function-lines crates/quench-runtime/src/vm/data_view.rs::Vm<H>::construct_data_view_native 44
 function-lines crates/quench-runtime/src/vm/data_view.rs::Vm<H>::data_view_native 131
 function-lines crates/quench-runtime/src/vm/data_view.rs::Vm<H>::install_data_view_for_realm 73
+function-lines crates/quench-runtime/src/vm/data_view.rs::Vm<H>::lane_data_view_float64 96
+function-lines crates/quench-runtime/src/vm/data_view.rs::Vm<H>::plain_data_view_access 48
 function-lines crates/quench-runtime/src/vm/date.rs::DateSetter::from_native 119
 function-lines crates/quench-runtime/src/vm/date.rs::Vm<H>::date_construct_native 44
 function-lines crates/quench-runtime/src/vm/date.rs::Vm<H>::date_native 109
@@ -3229,6 +3250,9 @@ function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::install_regexp_int
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::install_regexp_symbol_properties 93
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_compile_native 55
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_exec_result 57
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_from_meta 42
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_literal_of 58
+function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_literal_of 58
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_proven_symbol_method 46
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_replace_with_literal 68
 function-lines crates/quench-runtime/src/vm/regexp.rs::Vm<H>::regexp_split_builtin 61
@@ -4567,6 +4591,7 @@ magic crates/quench-regexp/src/backtrack.rs::PrefixUnit::of 1
 magic crates/quench-regexp/src/backtrack.rs::Program::compile 1
 magic crates/quench-regexp/src/backtrack.rs::Program::find 2
 magic crates/quench-regexp/src/backtrack.rs::StartBytes::find 1
+magic crates/quench-regexp/src/lib.rs::assertion_matches 1
 magic crates/quench-regexp/src/lib.rs::class_item_widths 2
 magic crates/quench-regexp/src/lib.rs::decode_identifier_escapes 6
 magic crates/quench-regexp/src/lib.rs::escape_matches 2
@@ -4577,6 +4602,7 @@ magic crates/quench-regexp/src/lib.rs::is_tag_units 5
 magic crates/quench-regexp/src/lib.rs::is_zwj_units 5
 magic crates/quench-regexp/src/lib.rs::normalize_escaped_backslash_quantifiers 4
 magic crates/quench-regexp/src/lib.rs::resolved_property_matches 2
+magic crates/quench-regexp/src/lib.rs::reverse_class_options 1
 magic crates/quench-regexp/src/lib.rs::string_property_widths 4
 magic crates/quench-regexp/src/lib.rs::units_from_str 1
 magic crates/quench-regexp/src/lib.rs::units_from_utf16 10
@@ -4724,6 +4750,7 @@ magic crates/quench-runtime/src/vm/compiled/lane_unit.rs::completion_length 2
 magic crates/quench-runtime/src/vm/compiled/osr_loop.rs::successors 1
 magic crates/quench-runtime/src/vm/data_view.rs::Vm<H>::construct_data_view_native 1
 magic crates/quench-runtime/src/vm/data_view.rs::Vm<H>::data_view_native 3
+magic crates/quench-runtime/src/vm/data_view.rs::Vm<H>::lane_data_view_float64 2
 magic crates/quench-runtime/src/vm/date.rs::civil_from_days 12
 magic crates/quench-runtime/src/vm/date.rs::days_from_civil 8
 magic crates/quench-runtime/src/vm/date.rs::parse_date_offset 2
@@ -4849,7 +4876,7 @@ magic crates/quench-runtime/src/vm/regexp.rs::Vm<H>::replacement_substitution 10
 magic crates/quench-runtime/src/vm/regexp.rs::advance_string_index_units 1
 magic crates/quench-runtime/src/vm/regexp.rs::escape_regexp_character 1
 magic crates/quench-runtime/src/vm/regexp.rs::escape_regexp_string 3
-magic crates/quench-runtime/src/vm/regexp/steady_strings.rs::Vm<H>::steady_string_replace 2
+magic crates/quench-runtime/src/vm/regexp/steady.rs::Vm<H>::steady_string_replace 2
 magic crates/quench-runtime/src/vm/shadow_realm.rs::Vm<H>::install_shadow_realm_for_realm 1
 magic crates/quench-runtime/src/vm/shape_lookup.rs::ShapeLookupIndex::remove 1
 magic crates/quench-runtime/src/vm/site_table.rs::SiteTable<T>::grow 1

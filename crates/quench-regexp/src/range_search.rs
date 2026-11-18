@@ -36,7 +36,7 @@ impl Regex {
     /// the backend chosen once for every search of a loop over the subject's matches.
     pub fn range_searcher<'a>(&'a self, subject: &'a Subject) -> RangeSearcher<'a> {
         let complete = self.complete();
-        let backend = match (subject.ascii(), complete.literal_run.finder(&complete.required_literal), Some(&complete.backtracking)) {
+        let backend = match (subject.ascii(), complete.literal_run.finder(&complete.required_literal), complete.backtracking.as_ref()) {
             (Some(bytes), Some(finder), _) => RangeBackend::Literal { finder, bytes },
             (Some(bytes), None, Some(program)) => RangeBackend::Backtracking { program, bytes },
             _ => RangeBackend::General,

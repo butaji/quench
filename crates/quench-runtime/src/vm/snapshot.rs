@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
             share_entry_pair: _,
             descriptor_shapes: _,
             descriptor_layout: _,
-            regexp_object_header: _,
+            regexp_object_shapes: _,
             regexp_last_index_layouts: _,
             regexp_builtin_layouts: _,
             regexp_symbol_layouts: _,

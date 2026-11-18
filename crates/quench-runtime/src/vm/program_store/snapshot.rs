@@ -87,7 +87,6 @@ impl ProgramEntry {
             const_arrays,
             function_sources,
             regexp_literals: _,
-            regexp_receivers: _,
             module_environment,
             import_meta,
             module_imports,
@@ -229,7 +228,6 @@ impl ProgramEntry {
         let pass = reader.u64()?;
         Ok(Self {
             regexp_literals: vec![None; regexp_literal_sites],
-            regexp_receivers: FxHashMap::default(),
             #[cfg(feature = "native-execution")]
             native_js: None,
             lane_views: super::LaneViews::default(),

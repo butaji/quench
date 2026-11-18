@@ -1012,7 +1012,7 @@ impl<H: Host> Vm<H> {
         self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
-        self.regexp_object_header = None;
+        self.regexp_object_shapes = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();

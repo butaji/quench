@@ -180,42 +180,6 @@ fn word_at<S: MatchStage>(stage: &mut S, index: S::Pos, ignore_case: bool) -> S:
     stage.or_else(word, |stage| stage.in_ranges(unit, &FOLDED_WORD_UNITS))
 }
 
-/// `assertion_holds` of `\b` or `\B` at `position` where the unit there is known to be a
-/// word unit (`word`) inside the subject, or known not to be one (or the subject's end): only
-/// the unit before it is read. `None` for any other assertion.
-pub fn word_assertion_given<S: MatchStage>(stage: &mut S, test: AssertionTest, position: S::Pos, word: bool) -> Option<S::Flag> {
-    let boundary = match test.assertion {
-        Assertion::Boundary => true,
-        Assertion::NonBoundary => false,
-        _ => return None,
-    };
-    let start = stage.at_start(position);
-    let after_start = stage.not(start);
-    let left = stage.guarded(after_start, |stage| {
-        let before = stage.offset(position, -1);
-        word_at(stage, before, test.word_ignore_case)
-    });
-    // `\b` holds where the left unit differs from the known right one, `\B` where it agrees.
-    Some(if boundary == word { stage.not(left) } else { left })
-}
-
-/// Whether the ASCII units of `mask` (bit `n` of the low word first) are all word units
-/// (`Some(true)`) or none is (`Some(false)`); `None` where some are.
-pub fn ascii_units_are_words(mask: [u64; 2]) -> Option<bool> {
-    let units = (0..super::ASCII_UNITS).filter(|unit| mask[(unit / u64::BITS) as usize] >> (unit % u64::BITS) & 1 != 0);
-    let (mut words, mut others) = (false, false);
-    for unit in units {
-        let word = WORD_UNITS.iter().any(|&(first, last)| (first..=last).contains(&unit));
-        words |= word;
-        others |= !word;
-    }
-    match (words, others) {
-        (true, false) => Some(true),
-        (false, _) => Some(false),
-        (true, true) => None,
-    }
-}
-
 /// `\b`: exactly one of the units either side of `position` is a word unit.
 #[inline(always)]
 fn boundary<S: MatchStage>(stage: &mut S, position: S::Pos, ignore_case: bool) -> S::Flag {

@@ -33,29 +33,6 @@ impl Output for Vec<u8> {
     }
 }
 
-impl<const N: usize> Output for smallvec::SmallVec<[u8; N]> {
-    #[inline(always)] fn push(&mut self, byte: u8) {
-        smallvec::SmallVec::push(self, byte);
-    }
-    #[inline(always)] fn extend_from_slice(&mut self, bytes: &[u8]) {
-        self.append_bytes(bytes);
-    }
-}
-
-impl<const N: usize> AppendBytes for smallvec::SmallVec<[u8; N]> {
-    /// One reservation and a short copy: SmallVec's own `extend_from_slice` inserts as at any
-    /// index.
-    #[inline(always)] fn append_bytes(&mut self, bytes: &[u8]) {
-        self.reserve(bytes.len());
-        // SAFETY: the reservation holds `bytes.len()` bytes past the length, which `bytes`
-        // does not alias.
-        unsafe {
-            copy_short(bytes, self.as_mut_ptr().add(self.len()));
-            self.set_len(self.len() + bytes.len());
-        }
-    }
-}
-
 /// Appending bytes where the std call (`Vec::extend_from_slice`) is shared across codegen
 /// units and so runs out of line: the copy into spare capacity is written here, and only
 /// growth calls out.
@@ -70,47 +47,8 @@ impl AppendBytes for Vec<u8> {
         }
         // SAFETY: the spare capacity holds `bytes.len()` bytes, which `bytes` does not alias.
         unsafe {
-            copy_short(bytes, self.as_mut_ptr().add(self.len()));
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.as_mut_ptr().add(self.len()), bytes.len());
             self.set_len(self.len() + bytes.len());
-        }
-    }
-}
-
-/// Copies `bytes` to `to` as `copy_nonoverlapping` does, a short run (a key, a number, a
-/// literal) inline: two overlapping word moves rather than a `memcpy` call, whose entry and
-/// size dispatch cost more than such a copy.
-///
-/// # Safety
-/// `to` is valid for `bytes.len()` writes and does not alias `bytes`.
-/// The word sizes `copy_short` moves a short run in.
-const WIDE_WORD: usize = size_of::<u64>();
-const NARROW_WORD: usize = size_of::<u32>();
-/// The longest run `copy_short` moves without `memcpy`: two overlapping wide words.
-const SHORT_RUN: usize = 2 * WIDE_WORD;
-
-#[inline(always)]
-unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
-    let (from, len) = (bytes.as_ptr(), bytes.len());
-    // SAFETY: every read is within `bytes` and every write within `to`'s `len` bytes; the
-    // overlapping moves write the same bytes twice.
-    unsafe {
-        match len {
-            WIDE_WORD..=SHORT_RUN => {
-                let (head, tail) = (from.cast::<u64>().read_unaligned(), from.add(len - WIDE_WORD).cast::<u64>().read_unaligned());
-                to.cast::<u64>().write_unaligned(head);
-                to.add(len - WIDE_WORD).cast::<u64>().write_unaligned(tail);
-            }
-            NARROW_WORD..WIDE_WORD => {
-                let (head, tail) = (from.cast::<u32>().read_unaligned(), from.add(len - NARROW_WORD).cast::<u32>().read_unaligned());
-                to.cast::<u32>().write_unaligned(head);
-                to.add(len - NARROW_WORD).cast::<u32>().write_unaligned(tail);
-            }
-            0..NARROW_WORD => {
-                for index in 0..len {
-                    to.add(index).write(from.add(index).read());
-                }
-            }
-            _ => std::ptr::copy_nonoverlapping(from, to, len),
         }
     }
 }
