@@ -234,6 +234,10 @@ impl<H: Host> Vm<H> {
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
         let epoch = self.heap.collection_epoch();
         let cx: *mut LaneContext<H> = context;
+        // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
+        // the outer run's resumes after this one.
+        let outer_script_calls = self.lane_stack.script_calls_allowed();
+        self.lane_stack.set_script_calls(context.script_calls);
         let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
         // SAFETY: `cx` outlives the run, which restores the outer fuel before it ends.
         let outer_fuel = LANE_FUEL.with(|current| current.replace(unsafe { &raw mut (*cx).fuel }));
@@ -251,6 +255,7 @@ impl<H: Host> Vm<H> {
             unsafe { (outer.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(outer) };
         }
         self.leave_lane(outer, entered);
+        self.lane_stack.set_script_calls(outer_script_calls);
         ip
     }
 

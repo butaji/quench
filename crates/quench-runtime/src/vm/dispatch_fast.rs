@@ -2070,6 +2070,12 @@ impl Admission {
     /// no cached call may run under holds (`LaneStack::refuse_cached_calls`), so every
     /// admission fails, and the paths that resolve again decide.
     const REFUSED: u64 = 1 << 63;
+    /// A bit the lane's admission carries while its run calls no script functions
+    /// (`LaneContext::script_calls`, `LaneStack::set_script_calls`): every cached call misses, so
+    /// the plain call's handler need not test the flag.
+    const NO_SCRIPT_CALLS: u64 = 1 << 62;
+    /// Every bit only the lane's admission carries.
+    const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
 
     #[inline(always)]
     const fn generation(self) -> ScriptGeneration {
@@ -2762,20 +2768,38 @@ impl LaneStack {
     /// (`Vm::construct_target`), under which a lane call leaves the lane, so the cached paths
     /// need not test either (`Vm::refresh_call_refusal`).
     pub(super) fn set_refused(&mut self, refused: bool) {
-        self.refused = if refused { Admission::REFUSED } else { 0 };
-        self.admission = Admission(self.admission.0 & !Admission::REFUSED | self.refused);
+        self.set_condition(Admission::REFUSED, refused);
+    }
+
+    /// Notes whether the running lane run calls script functions (`LaneContext::script_calls`):
+    /// while it does not, every cached call misses (`Admission::NO_SCRIPT_CALLS`).
+    #[inline(always)]
+    pub(super) fn set_script_calls(&mut self, allowed: bool) {
+        self.set_condition(Admission::NO_SCRIPT_CALLS, !allowed);
+    }
+
+    /// Whether the lane's admission admits script calls (`set_script_calls`).
+    #[inline(always)]
+    pub(super) fn script_calls_allowed(&self) -> bool {
+        self.refused & Admission::NO_SCRIPT_CALLS == 0
+    }
+
+    #[inline(always)]
+    fn set_condition(&mut self, bit: u64, holds: bool) {
+        self.refused = self.refused & !bit | if holds { bit } else { 0 };
+        self.admission = Admission(self.admission.0 & !Admission::CONDITIONS | self.refused);
     }
 
     /// Whether cached calls are refused (`set_refused`).
     #[inline(always)]
     fn refuses(&self) -> bool {
-        self.refused != 0
+        self.refused & Admission::REFUSED != 0
     }
 
-    /// The admission a target or memo made now holds: the lane's, without `Admission::REFUSED`.
+    /// The admission a target or memo made now holds: the lane's, without its conditions.
     #[inline(always)]
     fn current_admission(&self) -> Admission {
-        Admission(self.admission.0 & !Admission::REFUSED)
+        Admission(self.admission.0 & !Admission::CONDITIONS)
     }
 }
 
@@ -14727,6 +14751,19 @@ script_handler! {
     }
 }
 
+/// Sets whether the lane run calls script functions (`LaneContext::script_calls`), which the
+/// lane's admission mirrors (`LaneStack::set_script_calls`).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_set_script_calls<H: Host>(cx: *mut LaneContext<H>, allowed: bool) {
+    unsafe {
+        (*cx).script_calls = allowed;
+        vm(cx).lane_stack.set_script_calls(allowed);
+    }
+}
+
 script_handler! {
     /// A JavaScript `Call` of a frameless target (`Vm::resolve_script_call_target`): the
     /// callee runs in the lane on a window of the lane stack, with the frame facts its
@@ -14737,9 +14774,9 @@ script_handler! {
     /// register (`Function::undefined_register`, `specialize_script_calls`), whose value the
     /// handler then knows without reading it.
     fn lane_script_call<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).script_calls } {
-            return exit(ip);
-        }
+        // A run that calls no script functions refuses every cached call
+        // (`Admission::NO_SCRIPT_CALLS`), which the link's test below makes.
+        debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
         // The link proves the call (`PLAIN_LINK`): the target activates plainly and takes the
@@ -14768,6 +14805,9 @@ script_handler! {
     #[cold]
     #[inline(never)]
     fn lane_script_call_prove<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
+        if !unsafe { (*cx).script_calls } {
+            return exit(ip);
+        }
         let vm = unsafe { vm(cx) };
         let Some(target) = vm.linked_script_call_entry(r.get(i.b), &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view))
@@ -20122,7 +20162,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             lane_enter_program(cx, activation.caller_program());
             unsafe {
                 (*cx).inline_calls = false;
-                (*cx).script_calls = true;
+                lane_set_script_calls(cx, true);
                 (*cx).instance = Value::DELETED;
             }
             value = vm.wasm_export_result(value, result);
@@ -20173,7 +20213,7 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
     };
     unsafe {
         (*cx).inline_calls = true;
-        (*cx).script_calls = false;
+        lane_set_script_calls(cx, false);
         (*cx).instance = call.instance;
         (*cx).memory = memory;
     }
@@ -20201,7 +20241,7 @@ fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Va
         lane_enter_program(cx, activation.caller_program());
         unsafe {
             (*cx).inline_calls = false;
-            (*cx).script_calls = true;
+            lane_set_script_calls(cx, true);
             (*cx).instance = Value::DELETED;
         }
         value = vm.wasm_export_result(value, result);
@@ -21531,7 +21571,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     // (`lane_return_frame`); the caller's lane run starts afresh there.
     unsafe {
         (*cx).inline_calls = true;
-        (*cx).script_calls = false;
+        lane_set_script_calls(cx, false);
     }
     // SAFETY: the general loop's pending calls outlive the lane run.
     unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
@@ -21621,7 +21661,7 @@ fn lane_activate_wasm_export<H: Host>(
         (*cx).memory = MemoryView::NONE;
         (*cx).instance = instance;
         (*cx).inline_calls = true;
-        (*cx).script_calls = false;
+        lane_set_script_calls(cx, false);
     }
     let view = Carried { memory: MemoryView::NONE, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
     Some(Resumed::At(callee_registers, base, view))
@@ -21890,7 +21930,7 @@ fn lane_return_wasm_export<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Re
     lane_enter_program(cx, saved.id);
     unsafe {
         (*cx).inline_calls = false;
-        (*cx).script_calls = true;
+        lane_set_script_calls(cx, true);
     }
     drop(call.call_guard);
     let frame = call.caller;
