@@ -2271,7 +2271,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `inherited_field_hit` with the index of the entry that answered, which a lane record
-    /// keeps as its hint (`hinted_inherited_field_hit`).
+    /// keeps as its hint (`inherited_hint_operands`).
     #[inline(always)]
     pub(super) fn inherited_field_entry_hit(
         &mut self,
@@ -2312,17 +2312,27 @@ impl<H: Host> Vm<H> {
         self.proved_inherited_entry_value(index, object)
     }
 
-    /// `proved_inherited_field_hit` of inherited entry `index`, a lane record's hint of the
-    /// entry that last answered its read of `atom` (`inherited_field_entry_hit`): an entry
-    /// answers any read of its name from a receiver of its shape whose prototype its proof
-    /// names, whichever site recorded it.
+    /// The operands of inherited hint `index` for a read of `atom` (`IcOp::Held`): the layout id
+    /// of the receivers its proof last answered, the watch on its answer and the answer's bits;
+    /// `None` where no proved entry of that atom is held, or its slot holds no constant yet.
+    /// `others`: a function, array or builtin receiver reads it too, which the entry answers
+    /// only where functions may stand on its chain and a builtin's own lookup is its shape's.
     #[inline(always)]
-    pub(super) fn hinted_inherited_field_hit(&mut self, object: Value, atom: Atom, index: u16) -> Option<Value> {
-        let index = u32::from(index);
-        if self.heap.dependencies().inherited_get(index)?.atom != atom {
+    pub(super) fn inherited_hint_operands(&self, index: u16, atom: Atom, others: bool) -> Option<(u64, u64, u64)> {
+        let cache = self.heap.dependencies().inherited_get(u32::from(index))?;
+        if cache.atom != atom || !cache.proved {
             return None;
         }
-        self.proved_inherited_entry_value(index, object)
+        if others && !(cache.function_links && self.inherited_entry_answers(super::field_cache::InheritedReceiver::Builtin, u32::from(index))) {
+            return None;
+        }
+        // An absent name answers `undefined` while the proof holds, which the read tests above
+        // each time: its watch is one never retired.
+        let (watch, value) = match cache.answer {
+            InheritedFieldAnswer::Absent => (super::holder_hints::never_retired(), Value::UNDEFINED),
+            InheritedFieldAnswer::Slot(_) => (std::rc::Rc::as_ptr(cache.constant_watch.as_ref()?), cache.constant),
+        };
+        Some((u64::from(cache.proved_layout), watch as u64, value.to_bits()))
     }
 
     /// The value inherited entry `index` answers for `object` while its proof holds: its
@@ -2435,34 +2445,21 @@ impl<H: Host> Vm<H> {
         self.holder_hints.holder.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
     }
 
-    /// `holder_hint_hit` for a string primitive, whose read `String.prototype` answers
-    /// (`hold_string_hint`): the realm's `String.prototype` still, under the hint's watch
-    /// was read in.
+    /// The operands of string hint `index` for a read of `atom` (`IcOp::HeldString`): its watch's
+    /// address and its value's bits; `None` where no `String.prototype` hint of that atom is held.
     #[inline(always)]
-    pub(super) fn string_hint_hit(&self, index: u16, atom: Atom) -> Option<Value> {
+    pub(super) fn string_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64)> {
         let hint = self.holder_hints.holder.get(usize::from(index))?;
-        (hint.atom == atom
-            && hint.holder == self.string_proto
-            && hint.watch.is_published())
-        .then_some(hint.value)
+        (hint.atom == atom && hint.holder == self.string_proto)
+            .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
     }
 
     /// The object part of a direct object, array, function or ordinary builtin, whose own
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
-    pub(super) fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
+    fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index() { return Some(self.heap.object_record_by_id(record_id)); }
-        if let Some(array) = self.heap.record_array(object) { return Some(array); }
-        self.hinted_other_receiver(object)
-    }
-
-    /// `hinted_receiver` of anything but a direct object or array (as hot: `a.push`), out of
-    /// line: the hint tests those first, with no compare of the other families before them.
-    #[cold]
-    #[inline(never)]
-    fn hinted_other_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
-        let function = object.direct_function_index().and_then(|_| self.heap.function(object));
-        function.map(|function| &function.object).or_else(|| self.heap.ordinary_builtin_object(object))
+        self.heap.held_other_receiver(object)
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`

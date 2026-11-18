@@ -610,6 +610,22 @@ impl Heap {
         }
     }
 
+    /// The object part of an array, function or ordinary builtin, whose own layout a held
+    /// read guards (`IcOp::Held`): an array's inline, the rest out of line.
+    #[inline(always)]
+    pub(crate) fn held_other_receiver(&self, value: Value) -> Option<&Object> {
+        if let Some(array) = self.record_array(value) { return Some(array); }
+        self.held_cell_receiver(value)
+    }
+
+    /// `held_other_receiver` of a function or ordinary builtin.
+    #[cold]
+    #[inline(never)]
+    fn held_cell_receiver(&self, value: Value) -> Option<&Object> {
+        let function = value.direct_function_index().and_then(|_| self.function(value));
+        function.map(|function| &function.object).or_else(|| self.ordinary_builtin_object(value))
+    }
+
     /// The array a direct-array Value names; `None` for any other value, including an array
     /// in a slot.
     #[inline(always)]
