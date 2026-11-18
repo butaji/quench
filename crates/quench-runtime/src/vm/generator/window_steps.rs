@@ -71,12 +71,23 @@ impl<H: Host> Vm<H> {
         depth: usize,
     ) {
         self.realm.promise.active_native.pop();
-        let record = std::ptr::from_mut(self.generator_record_mut(generator).expect("a windowed yield belongs to a generator"));
+        let record = self.windowed_generator_record(generator);
         // SAFETY: the generator's cell keeps its record boxed, and parking the frame frees no cell.
         let mut frame = unsafe { &mut *record }.take_windowed().expect("a windowed yield belongs to a windowed generator");
         self.park_frame(&mut frame, pc, depth);
         let continuation = Continuation { frame, completion: Completion::Yield(value), resume_register: Some(destination), promise: Value::UNDEFINED };
         unsafe { &mut *record }.suspend(continuation);
+    }
+
+    /// The record of `generator`, which runs as a lane window: the one the lane last resumed
+    /// while no collection ran since (`LaneStack::last_generator`), else looked up.
+    #[inline(always)]
+    fn windowed_generator_record(&mut self, generator: Value) -> *mut GeneratorRecord {
+        let (last, epoch, record) = self.lane_stack.last_generator;
+        if last == generator && epoch == self.heap.collection_epoch() {
+            return record;
+        }
+        std::ptr::from_mut(self.generator_record_mut(generator).expect("a windowed yield belongs to a generator"))
     }
 
     /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead

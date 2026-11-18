@@ -247,6 +247,7 @@ fn lane_resume_generator<H: Host>(
 /// nothing moves or frees either before the resume.
 fn resumable_generator_frame<'a, H: Host>(vm: &mut Vm<H>, generator: Value) -> Option<(*mut GeneratorRecord, &'a FrameRecord)> {
     let record = std::ptr::from_mut(vm.generator_record_mut(generator)?);
+    vm.lane_stack.last_generator = (generator, vm.heap.collection_epoch(), record);
     let frame = unsafe { &*std::ptr::from_ref(&*(*record).suspended_continuation()?.frame) };
     let resumable = unsafe { (*record).realm } == vm.realm.globals && frame.program == vm.active_program;
     resumable.then_some((record, frame))
