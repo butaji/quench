@@ -1,16 +1,20 @@
-//! Every tier is a stage of the one staged definition, so every tier implements every stage trait
-//! of its family: a trait a tier lacks is semantics that tier writes again by hand (the b-jit's
-//! Number rows in `quench-bjit/stencils/numeric.rs` while `StencilStage` has no `NumericStage`).
-//! `stage_debt.txt` lists the (trait, tier) pairs missing today; it may only shrink, and a new
-//! tier or trait starts complete.
+//! Every tier is a stage of the one staged definition: the interpreter runs it over `Concrete`
+//! (`ConcreteWasm`), b-jit compiles it with rustc over `Concrete` on const-generic operand places
+//! plus `StencilStage` for its holes, u-jit emits it over `Emit` (`Emitter`). A stage trait a tier
+//! lacks is semantics that tier cannot derive, which it then writes again by hand or leaves to the
+//! interpreter. `stage_debt.txt` lists the (trait, tier) pairs missing today; it may only shrink,
+//! and a new tier or trait starts complete.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
-/// The stage traits of each family and the tiers that must implement all of them: the interpreter
-/// (`Concrete`, `ConcreteWasm`), u-jit (`Emit`, `Emitter`) and b-jit (`StencilStage`).
-const FAMILIES: [(&[&str], &[&str]); 2] = [
-    (&["Stage", "FlowStage", "NumericStage"], &["Concrete", "Emit", "StencilStage"]),
-    (&["MachineStage"], &["ConcreteWasm", "Emitter", "StencilStage"]),
+/// Each stage trait and the stages that must implement it. `FlowStage` (blocks and transfers) is a
+/// specializer's alone: the interpreter runs the host's control flow, and b-jit's stencils chain by
+/// `become`.
+const REQUIRED: [(&str, &[&str]); 4] = [
+    ("Stage", &["Concrete", "Emit", "StencilStage"]),
+    ("NumericStage", &["Concrete", "Emit"]),
+    ("FlowStage", &["Emit"]),
+    ("MachineStage", &["ConcreteWasm", "Emitter", "StencilStage"]),
 ];
 const DEBT: &str = include_str!("stage_debt.txt");
 /// The source trees tiers are written in, from this crate's manifest.
@@ -41,7 +45,7 @@ fn implemented(texts: &[String]) -> BTreeSet<(String, String)> {
 }
 
 #[test]
-fn every_tier_implements_every_stage_trait_of_its_family() {
+fn every_tier_implements_the_stage_traits_it_derives_from() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut texts = Vec::new();
     for tree in TREES { sources(&root.join(tree), &mut texts) }
@@ -50,8 +54,8 @@ fn every_tier_implements_every_stage_trait_of_its_family() {
         .filter_map(|line| line.split_once(' ')).map(|(stage_trait, tier)| (stage_trait.to_owned(), tier.trim().to_owned())).collect();
     let mut missing = Vec::new();
     let mut paid = Vec::new();
-    for (traits, tiers) in FAMILIES {
-        for stage_trait in traits {
+    for (stage_trait, tiers) in REQUIRED {
+        {
             for tier in tiers {
                 let pair = ((*stage_trait).to_owned(), (*tier).to_owned());
                 match (have.contains(&pair), debt.contains(&pair)) {
@@ -62,6 +66,6 @@ fn every_tier_implements_every_stage_trait_of_its_family() {
             }
         }
     }
-    assert!(missing.is_empty(), "tiers missing a stage trait of their family (implement it; the debt may not grow): {missing:?}");
+    assert!(missing.is_empty(), "tiers missing a stage trait (implement it; the debt may not grow): {missing:?}");
     assert!(paid.is_empty(), "implemented now, remove from staged/stage_debt.txt: {paid:?}");
 }

@@ -1,6 +1,4 @@
 # (stage trait, tier) pairs a tier does not implement yet (`stage_coverage_tests`): each is semantics
-# that tier writes again by hand instead of deriving it from the staged definition. Shrink-only.
-FlowStage Concrete
-FlowStage StencilStage
+# that tier cannot derive from the staged definition. Shrink-only.
+# b-jit has no Wasm stage: a function holding a Wasm opcode is no b-jit body (`base_region::steps::EXCLUDED`).
 MachineStage StencilStage
-NumericStage StencilStage
