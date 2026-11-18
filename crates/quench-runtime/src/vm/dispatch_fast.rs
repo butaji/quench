@@ -3735,6 +3735,8 @@ pub(super) fn lane_body_locals<H: Host>(lane_context: *mut (), registers: *mut V
     let function = frame.function;
     match code.function_get(function as usize) {
         Some(body) if frame.locals.len() >= usize::from(body.locals) => frame.locals.as_mut_ptr(),
+        // No record of the function addresses a local (`lane_context_locals_in_window`).
+        Some(body) if !body.call_plan(code).addresses_locals => std::ptr::null_mut(),
         _ => window(function),
     }
 }
@@ -10933,8 +10935,10 @@ pub(super) unsafe fn lane_context_locals_in_window<H: Host>(context: usize) -> b
     }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
+    // A function none of whose records addresses a local (`CallPlan::addresses_locals`) keeps
+    // none anywhere: its frame holds none, and neither its records nor its bodies read any.
     vm.frames.get(unsafe { (*cx).frame() }).is_some_and(|frame| code.function_get(frame.function as usize)
-        .is_some_and(|body| frame.locals.len() < usize::from(body.locals)))
+        .is_some_and(|body| frame.locals.len() < usize::from(body.locals) && body.call_plan(code).addresses_locals))
 }
 
 /// Where the lane goes after a region of the loop of `function` left inside the callee of a call it
