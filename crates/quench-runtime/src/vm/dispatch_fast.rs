@@ -3849,19 +3849,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// `IteratorClose` of a built-in iterator whose chain lacks `return`
-    /// (`Vm::iterator_close_absent`), which ends with `undefined`; any other takes the general
-    /// step in place.
-    fn lane_iterator_close<>(cx, r, ip, i, view) {
-        if !(unsafe { vm(cx) }).iterator_close_absent(r.get(i.b)) {
-            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        r.set(i.a, Value::UNDEFINED);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `ToPropertyKey` of a string, which is itself (the staged fast arm), of a symbol, which is
     /// itself, or of an integer, its decimal string; any other value, which may run guest code
     /// or format a float, takes the general step in place.
@@ -21191,7 +21178,6 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::GetIterator => Some(lane_get_iterator::<H>),
-        Class::IteratorClose => Some(lane_iterator_close::<H>),
         Class::AppendArray => Some(lane_append_array::<H>),
         Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),

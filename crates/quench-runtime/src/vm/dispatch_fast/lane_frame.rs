@@ -5,7 +5,7 @@ use super::lane_reads::{RecordOperand, Reads};
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Step, read_initialized_local, write_initialized_local, write_local};
+use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, read_initialized_local, write_initialized_local, write_local};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -18,6 +18,10 @@ type PropertyDeleter = unsafe fn(*mut (), Value, Value) -> Option<Value>;
 /// The reader of a frame's by-name load: the value of `atom` under a binding the record's first
 /// run resolved, which runs no guest code; `None` leaves the instruction to the residual.
 type NameReader = unsafe fn(*mut (), NameRead, u32) -> Option<Value>;
+
+/// The fast answer of a `Names` row's iteration or for-in call-out over its operands (`fast_names_step`),
+/// which runs no guest code; `None` leaves the call to the row's miss.
+type NamesStep = unsafe fn(*mut (), CallOut, [Option<Value>; 2]) -> Option<Value>;
 
 /// How a by-name load's record reads its name once resolved (`lane_name_resolution`).
 #[derive(Clone, Copy)]
@@ -136,6 +140,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The lane's pure binary operation (`lane_binary_values`), which answers a `Binary` or an
     /// `Equality` call-out a row makes where its words do not decide it (`vm_step`).
     binary: Option<(*mut (), unsafe fn(*mut (), u32, Value, Value) -> Option<Value>)>,
+    /// The lane context and the fast answers of an iteration or for-in call-out (`fast_names_step`), for
+    /// the row that makes one (`Decoder::Names`).
+    names: Option<(*mut (), NamesStep)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
@@ -161,7 +168,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -185,7 +192,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, reads: Reads::NONE }
     }
 }
 
@@ -316,10 +323,21 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             // SAFETY: the running lane's context, live for the row's step.
             return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
         }
-        let CallOut::Decide { left, right, operator } = operation else { return None };
-        let Decisions { context, decide, .. } = self.decisions?;
-        let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
-        decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
+        match operation {
+            CallOut::Decide { left, right, operator } => {
+                let Decisions { context, decide, .. } = self.decisions?;
+                let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+                decide(context, operator, left, right).map(|holds| (Value::boolean(holds).to_bits(), Boxing::Value))
+            }
+            CallOut::Protocol { .. } | CallOut::ForInNext { .. } => {
+                let (context, step) = self.names?;
+                let operands = operation.operands().fixed;
+                let operands = operands.map(|register| register.map(|register| Value::from_bits(self.read(stage, register))));
+                // SAFETY: the running lane's context, live for the row's step.
+                unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
+            }
+            _ => None,
+        }
     }
 
     #[inline(always)]
@@ -647,7 +665,8 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         } else {
             None
         };
-        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store,
+        let names: NamesStep = fast_names_step::<H>;
+        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), environment: Some(environment), global_store, names: Some((cx.cast(), names)),
             ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
@@ -882,6 +901,25 @@ unsafe fn lane_delete_value<H: Host>(cx: *mut (), base: Value, key: Value) -> Op
         && vm.heap.string(key).is_some()
         && vm.object_data(base).is_some_and(|data| !data.is_module_namespace() && !data.is_arguments_object());
     (plain && vm.object_delete_property(code, &[base, key]).is_ok_and(|deleted| deleted == Value::TRUE)).then_some(Value::TRUE)
+}
+
+/// The fast answer of a `Names` row's iteration or for-in call-out over its operands (`[first, second]`,
+/// the registers the call names in order): the VM's fast arm of the step, which runs no guest code and
+/// allocates at most what the general step would. `None` where the general step decides it.
+///
+/// # Safety
+/// `cx` is the running lane's context. Called through `LaneFrame::names`, a constant function pointer
+/// in the inlined frame `row_frame` builds, so the call inlines.
+#[inline(always)]
+unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [_, second]: [Option<Value>; 2]) -> Option<Value> {
+    let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
+    match call {
+        // A built-in iterator whose chain lacks `return` closes with `undefined`.
+        CallOut::Protocol { step: Protocol::IteratorClose, .. } => {
+            vm.iterator_close_absent(second?).then_some(Value::UNDEFINED)
+        }
+        _ => None,
+    }
 }
 
 /// The array of the `count` program constants from `constant` (`Vm::const_array_value`);
