@@ -71,12 +71,19 @@ pub struct CallRecord {
     /// both fixed per site, so a plain direct call stores them without computing either.
     pub call: u64,
     pub header: u64,
+    /// The caller's lane view records (`LaneContext::base` while it runs), header word 6, and the
+    /// caller's program (`ProgramId::raw`), which the first plain frame names (`PlainFrames::program`).
+    pub caller_base: u64,
+    pub program: u64,
 }
 
 /// The packed header word's flag bit for a plain activation (bits 32..48 hold the flags) and the
 /// shift of its argument count (`argc = word >> HEADER_ARGC_SHIFT`, no mask).
 pub const HEADER_PLAIN: u64 = 1 << 32;
 pub const HEADER_ARGC_SHIFT: u32 = 48;
+/// The flag of a compiled body's plain header, whose word 8 is its `DirectCallee` descriptor
+/// (`staged::frame::BODY_FLAG`): the lane spills it as the native frame a direct row would push.
+pub const HEADER_BODY: u64 = 1 << 33;
 
 /// The packed header word of a plain activation of `function` taking `argc` arguments.
 pub const fn plain_header(function: u32, argc: u16) -> u64 {

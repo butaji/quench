@@ -3500,6 +3500,9 @@ struct JsStepDispatch {
     /// read through (`staged::environment::environment_slot`): its activation's window, or storage that holds no
     /// slot where it runs in a frame (`heap::absent_environment_storage`).
     environment_storage: u64,
+    /// The address of the lane stack's plain activation words (`LaneStackWords::plain_frames`,
+    /// `PlainFrames`), which a b-jit direct call's plain header bumps (call protocol v2 stage C).
+    lane_plain_frames: usize,
     outcome: Option<JsNativeStep>,
     /// Past every word generated code reads: a feature's field leaves their offsets as they are.
     #[cfg(feature = "native-execution")]
@@ -4447,7 +4450,7 @@ impl JsStepDispatch {
             receiver: Value::DELETED.to_bits(),
             vm: 0, residual: 0, body: std::ptr::null(), inlined: 0, exit_line: 0, lane_context: 0, returned_pc: 0,
             native_top: 0, native_end: 0, shadow_top: 0, shadow_end: 0,
-            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
+            lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0, lane_plain_frames: 0,
             outcome: None,
         }
     }

@@ -154,6 +154,7 @@ pub(super) struct DirectFacts {
     /// The caller's call record and the callee's function, the plain header's fixed words.
     pub(super) call: u64,
     pub(super) function: u32,
+    pub(super) program: u32,
 }
 
 impl DirectFacts {
@@ -178,6 +179,7 @@ impl DirectFacts {
             frame_bytes: FRAME_BYTES as u64,
             call: callee.call as u64,
             function: callee.target.function,
+            program: callee.target.program().raw(),
         }
     }
 
@@ -309,7 +311,10 @@ fn direct_part(shape: &CallShape, facts: &DirectFacts) -> Result<(CallPart, Box<
         args_register: shape.window,
         result_register: shape.result,
         call: facts.call,
-        header: quench_bjit::call_record::plain_header(facts.function, shape.argc),
+        header: quench_bjit::call_record::plain_header(facts.function, shape.argc) | quench_bjit::call_record::HEADER_BODY,
+        // The call record is the caller's records at the call's pc (`lane_direct_callee`).
+        caller_base: facts.call.wrapping_sub(u64::from(shape.call_pc) * std::mem::size_of::<crate::vm::dispatch_fast::LaneInstruction>() as u64),
+        program: u64::from(facts.program),
     });
     let argc = u8::try_from(shape.argc).map_err(|e| e.to_string())?;
     let this = if facts.lexical { ThisRow::Lexical } else if facts.global_this.is_some() { ThisRow::Sloppy } else { ThisRow::Strict };
@@ -365,7 +370,7 @@ mod tests {
 
     fn facts(registers: u16, params: u16) -> DirectFacts {
         let cell = CellFacts { registers, room: registers, params, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32, call: 0x3000, function: 1 }
+        DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers, construction: false, frame_bytes: 32, call: 0x3000, function: 1, program: 0 }
     }
 
     /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.

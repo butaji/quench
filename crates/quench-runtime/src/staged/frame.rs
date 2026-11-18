@@ -39,6 +39,8 @@ pub(crate) const ARGC_SHIFT: u32 = 48;
 pub(crate) const PLAIN_DEPTH_AT: usize = 0;
 pub(crate) const PLAIN_REGISTERS_AT: usize = 8;
 pub(crate) const PLAIN_PROGRAM_AT: usize = 16;
+/// The records' top under the outermost plain frame (`PlainFrames::records_top`).
+pub(crate) const PLAIN_RECORDS_TOP_AT: usize = 24;
 /// An activation record's size and where its kind tag lies (`Activation`).
 pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;

@@ -396,6 +396,7 @@ mod tests {
             ("function_mark_block_count", at!(JsStepDispatch, function_mark_block_count), m::JS_STEP_FUNCTION_MARK_BLOCK_COUNT),
             ("empty_string", at!(JsStepDispatch, empty_string), m::JS_STEP_EMPTY_STRING),
             ("environment_storage", at!(JsStepDispatch, environment_storage), m::JS_STEP_ENV_STORAGE),
+            ("lane_plain_frames", at!(JsStepDispatch, lane_plain_frames), m::JS_STEP_LANE_PLAIN),
         ]
     }
 
