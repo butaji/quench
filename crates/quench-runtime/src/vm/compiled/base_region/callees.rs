@@ -25,15 +25,33 @@ pub(in crate::vm::compiled) struct InlineBody {
     registers: u16,
     homes: Vec<(u16, Register)>,
     live: Rc<RegisterMasks>,
+    /// The Number constants the callee's instructions name, by pool index: its rows fold them as the
+    /// caller's rows fold the caller's (the caller's region holds only its own).
+    numbers: std::collections::BTreeMap<usize, f64>,
 }
 
 impl InlineBody {
-    /// The body of `function`, whose liveness is `live`; none where liveness does not cover it.
-    pub(in crate::vm::compiled) fn of(function: &Function, live: Option<&Rc<RegisterMasks>>) -> Option<Self> {
+    /// The body of `function`, whose liveness is `live` and whose constant pool is `constants`; none
+    /// where liveness does not cover it.
+    pub(in crate::vm::compiled) fn of(function: &Function, live: Option<&Rc<RegisterMasks>>, constants: &[crate::value::Value]) -> Option<Self> {
         let home = |argument: u16| function.parameter_registers.map(|base| base + argument).or_else(|| function.promoted_register(argument));
         let homes = (0..function.params).filter_map(|argument| home(argument).map(|home| (argument, home))).collect();
-        Some(Self { code: function.instructions().collect(), registers: function.registers, homes, live: live?.clone() })
+        let code: Vec<WideInstruction> = function.instructions().collect();
+        let numbers = code.iter().flat_map(|instruction| named_constants(*instruction))
+            .filter_map(|index| Some((index, constants.get(index)?.as_number()?)))
+            .collect();
+        Some(Self { code, registers: function.registers, homes, live: live?.clone(), numbers })
     }
+}
+
+/// The constant-pool indexes `instruction` may name: a loaded constant and its constant operands.
+fn named_constants(instruction: WideInstruction) -> impl Iterator<Item = usize> {
+    use crate::bytecode::{Class, OperandKind};
+    let loaded = (instruction.op().class() == Class::LoadConst).then(|| instruction.constant_index());
+    let operand = |operand: crate::bytecode::Operand| (operand.kind() == Some(OperandKind::Constant)).then(|| usize::from(operand.payload()));
+    let binary = matches!(instruction.op().class(), Class::Binary | Class::NumericAdd | Class::NumericMultiply | Class::JumpBinaryFalse);
+    let operands = binary.then(|| [operand(instruction.operand_b()), operand(instruction.operand_c())]).into_iter().flatten().flatten();
+    loaded.into_iter().chain(operands)
 }
 
 /// The callees a body calls by their entries: the descriptors its code names, which its method
@@ -99,7 +117,7 @@ impl Callees {
     pub(super) fn inlined_call(&self, facts: &[Option<DirectFacts>], region: &LoopRegion, context: &mut Context, shape: &CallShape) -> Option<InlineSite> {
         let at = (*self.at.get(shape.call_pc as usize)?)?;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
-        let numbers = |index: usize| region.number_constant(index);
+        let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
         let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize] };
         let mut trial = context.clone();
         let site = InlineSite::plan(shape, facts[shape.call_pc as usize].as_ref()?, &inlinable, &mut trial).ok()?;
