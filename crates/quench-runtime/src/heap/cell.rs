@@ -2317,6 +2317,7 @@ impl Object {
     }
 
     pub(crate) fn set_proto(&mut self, proto: Value) {
+        self.note_constant_write();
         self.note_prototype_layout_change();
         self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));
     }
@@ -2383,8 +2384,11 @@ impl Object {
     #[inline(always)] fn initialize_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
         // Exotic access is a fact of the object, not of the storage that replaces its own.
+        // A storage change ends the object's constancy (`note_constant_write`): its readers
+        // retire here, and the new word carries no mark.
+        self.note_constant_write();
         let (meta, current) = (self.meta(), self.aux());
-        let auxiliary = auxiliary | (current & crate::value_vec::EXOTIC_ACCESS);
+        let auxiliary = (auxiliary & !crate::value_vec::CONSTANT_FORM) | (current & crate::value_vec::EXOTIC_ACCESS);
         let flags = meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
         let position = start & VALUE_VEC_START_BITS;
         if properties.has_inline_property_storage() {
@@ -3066,10 +3070,42 @@ impl Object {
     /// storage (`ValueVec::EXOTIC_ACCESS`).
     #[inline(always)]
     pub(crate) fn ordinary_shape(&self) -> u32 {
-        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM)
+        self.aux() & !(crate::value_vec::DICTIONARY_STORAGE | crate::value_vec::STORAGE_FORM | crate::value_vec::CONSTANT_FORM)
+    }
+
+    /// Whether code holds this object's values as constants (`value_vec::CONSTANT_FORM`).
+    #[inline(always)]
+    pub(crate) fn holds_constant_mark(&self) -> bool {
+        self.aux() & crate::value_vec::CONSTANT_FORM != 0
+    }
+
+    /// Marks this object's values as held by code (`value_vec::CONSTANT_FORM`): until the bit
+    /// clears, every raw-word guard misses it and its stores go through the VM, which clears
+    /// it (`note_constant_write`). The caller subscribes its reader under `exact_shape`, which
+    /// the mark leaves unchanged.
+    pub(crate) fn mark_constant(&mut self) {
+        self.set_aux(self.aux() | crate::value_vec::CONSTANT_FORM);
+    }
+
+    /// A write to one of this object's values, or a change of its layout or storage: where
+    /// code holds its values (`holds_constant_mark`), that code retires, by the object's exact
+    /// shape as it subscribed (`watch_prototype_values`), and the mark clears, so later stores
+    /// take every fast path again. One test of the header word otherwise.
+    #[inline(always)]
+    pub(crate) fn note_constant_write(&mut self) {
+        if self.holds_constant_mark() {
+            self.clear_constant_mark();
+        }
+    }
+
+    #[inline(never)]
+    fn clear_constant_mark(&mut self) {
+        prototype_values::retire(self.exact_shape());
+        self.set_aux(self.aux() & !crate::value_vec::CONSTANT_FORM);
     }
     #[inline(always)]
     pub(crate) fn set_shape(&mut self, shape: u32, arena: &mut ValueArena) {
+        self.note_constant_write();
         arena.note_shape_transition(self.shape(), shape);
         self.note_prototype_layout_change();
         self.note_global_layout_change();

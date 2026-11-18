@@ -3,8 +3,9 @@
 //! a plain arena run.
 
 use super::super::ic::{self, Reached};
-use super::super::object::{read_slot_value, Form, Layout, Rep};
+use super::super::object::{read_slot_value, Form, Layout};
 use super::super::Stage;
+use crate::typed_ir::Representation;
 use super::{Owner, PropertyFrame};
 
 /// The value at `slot` of `owner`'s object, which must have exact `shape` and keep its values in
@@ -13,7 +14,7 @@ use super::{Owner, PropertyFrame};
 /// read does (`object::formed_own_layout`); the frame keeps the shape and the run. Only a direct
 /// object's record keeps those bits current: a function's record is read through `kept_slot`.
 pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
-    at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Rep, usize), miss: S::Miss) -> Option<S::Word> {
+    at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     let word = super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
         crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
     let same = { let shape = stage.site(u64::from(shape)); stage.eq_imm(word, shape) };
@@ -28,7 +29,7 @@ pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &
 /// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
 /// where it covers the slot, else the one this read proves and keeps.
 pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32),
-    at: &Reached<S::Word, S::Cond>, (slot, form, storage_len, rep): (u16, Form, usize, Rep), miss: S::Miss) -> Option<S::Word> {
+    at: &Reached<S::Word, S::Cond>, (slot, form, storage_len, rep): (u16, Form, usize, Representation), miss: S::Miss) -> Option<S::Word> {
     let layout = match frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
         Some(layout) => layout,
         None => {
@@ -49,7 +50,7 @@ pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, fra
     let shape = ic::layout_shape(word);
     if frame.proven_shape(stage, owner) == Some(shape)
         && let Some(layout) = frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
-        return Some(read_slot_value(stage, layout, slot, Rep::Tagged));
+        return Some(read_slot_value(stage, layout, slot, Representation::Tagged));
     }
     ic::guard_layout(stage, at, word, miss)?;
     let bits = ic::layout_form(word);
@@ -57,5 +58,5 @@ pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, fra
     let formed = Reached { formed: Some(bits), ..*at };
     let layout = ic::slot_layout(stage, &formed, Form::Either, storage_len, miss)?;
     frame.keep_layout(owner, shape, layout);
-    Some(read_slot_value(stage, layout, slot, Rep::Tagged))
+    Some(read_slot_value(stage, layout, slot, Representation::Tagged))
 }

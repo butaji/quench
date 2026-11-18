@@ -1008,6 +1008,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             Representation::Int32 | Representation::Int64 | Representation::Float64 => {}
         }
         self.conform_object(state, target, register, ty);
+        self.conform_language(state, target, register, ty);
         // A fact this edge does not prove and cannot guard leaves at the target, exactly:
         // the edge loses native code, never the body (AGENTS.md, check once).
         if self.proves(state, register, ty, target) { return true; }
@@ -1037,6 +1038,42 @@ impl<'a, 'f> Lowering<'a, 'f> {
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,
                 ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
         }
+    }
+
+    /// A language fact of the target the edge has not proved, when `ty` is exactly a set
+    /// `scalar::checkable` names: one guard that the register holds a member, then the set as its
+    /// fact. A Number, String, BigInt or Symbol set is not tested here and leaves to `proves`.
+    fn conform_language(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
+        use crate::ValueType::{Boolean, Function, Null, Object, Undefined};
+        use crate::staged::Stage;
+        use crate::staged::value::{is_boolean, is_direct_function, is_direct_object, is_null, is_undefined};
+        let index = usize::from(register);
+        let kinds = [Boolean, Undefined, Null, Object, Function];
+        let bits = kinds.into_iter().filter(|kind| Type::language(*kind).is_subtype(ty))
+            .fold(0u16, |bits, kind| bits | (1u16 << kind as u16));
+        if !scalar::checkable(bits) || Type::languages(bits) != ty || state.values[index].value.ty.is_subtype(ty) { return; }
+        let value = self.tagged(state, register);
+        let exit = self.guard_exit(state, target as u32);
+        let member = {
+            let stage = &mut super::object_slots::emit(&mut self.builder);
+            let mut member: Option<ir::Value> = None;
+            for kind in kinds.into_iter().filter(|kind| bits & (1u16 << *kind as u16) != 0) {
+                let test = match kind {
+                    Boolean => is_boolean(stage, value),
+                    Undefined => is_undefined(stage, value),
+                    Null => is_null(stage, value),
+                    Object => is_direct_object(stage, value),
+                    Function => is_direct_function(stage, value),
+                    // Not in `kinds`: no exact one-word test.
+                    _ => continue,
+                };
+                member = Some(match member { Some(any) => stage.any(any, test), None => test });
+            }
+            member.expect("a checkable set names a member")
+        };
+        emit_js_guard(&mut self.builder, member, exit);
+        state.values[index] = RegisterFact { tagged: state.values[index].tagged,
+            ..RegisterFact::definition(ty, Representation::Tagged) };
     }
 
     fn entry_state(&mut self, pc: usize, registers: usize) -> State {

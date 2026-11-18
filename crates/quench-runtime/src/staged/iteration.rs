@@ -180,7 +180,7 @@ pub(crate) fn for_in_keyed_get<S: Stage>(stage: &mut S, (arrays, objects): (S::W
     let inline = super::object::inline_storage(stage, record);
     let layout = super::object::own_layout(stage, record, inline, super::object::Form::Either, 0,
         super::object::PackedAccess::Reload, miss)?;
-    Some(super::object::read_slot_at(stage, layout, slot, super::object::Rep::Tagged))
+    Some(super::object::read_slot_at(stage, layout, slot, crate::typed_ir::Representation::Tagged))
 }
 
 /// The interpreter's reading of `for_in_next`: the key the step over `state` yields, among the array

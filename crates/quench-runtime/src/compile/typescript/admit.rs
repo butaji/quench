@@ -26,6 +26,8 @@ mod decorators;
 
 /// Admit a typed tree: the declared environment out, run-time meaning in.
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
+    // Before the class bodies change: signature-only members and parameter modifiers are still in place.
+    super::fields::collect(program, declarations);
     let mut admit = Admit {
         allocator, declarations, type_names: FxHashSet::default(), lexical: false,
         bindings: if program.source_text.contains("const enum") { binding_counts(program) } else { FxHashMap::default() },

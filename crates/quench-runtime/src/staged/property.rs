@@ -79,7 +79,7 @@ pub(crate) enum FieldPlan<'a> {
 /// is the type the row tests the value for before it stores in place, so the slot's
 /// representation never widens under the raw write; a value of any other type stores through
 /// the VM, which joins the slot's type. `raw_double` marks a slot whose arena word is a raw
-/// double (`Rep::Float64`): the store writes the value's binary64 word (`PropertyFrame::stored_number`),
+/// double (`Representation::Float64`): the store writes the value's binary64 word (`PropertyFrame::stored_number`),
 /// never its tagged one, so a Number keeps no integer canonical form on its way in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct StoreArm {

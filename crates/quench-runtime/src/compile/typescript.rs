@@ -10,6 +10,7 @@ use oxc_span::Span;
 mod admit;
 mod checked;
 mod enums;
+mod fields;
 mod imports;
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;

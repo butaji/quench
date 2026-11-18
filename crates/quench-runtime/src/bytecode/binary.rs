@@ -1779,7 +1779,7 @@ fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleReques
     })
 }
 
-/// The declared environment: none (0), or its declarations and enum constants (1).
+/// The declared environment: none (0), or its declarations, enum constants and class fields (1).
 fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::DeclaredTypes>) {
     let Some(declared) = declared else {
         out.u8(0);
@@ -1809,6 +1809,13 @@ fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::Declare
             }
         }
     }
+    out.u32(declared.fields.len() as u32);
+    for field in &declared.fields {
+        out.u32(field.class_start);
+        out.string(&field.name);
+        out.u16(field.languages);
+        out.u8(u8::from(field.is_static));
+    }
 }
 
 fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
@@ -1829,7 +1836,18 @@ fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super:
         };
         Ok((enumeration, member, value))
     })?;
-    Ok(Some(Box::new(super::DeclaredTypes { declared, enum_constants })))
+    let fields = input.list(|input| {
+        let class_start = input.u32()?;
+        let name = input.string()?.into_boxed_str();
+        let languages = input.u16()?;
+        let is_static = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid declared field static flag".to_string()),
+        };
+        Ok(super::declared_types::DeclaredField { class_start, name, languages, is_static })
+    })?;
+    Ok(Some(Box::new(super::DeclaredTypes { declared, enum_constants, fields })))
 }
 
 fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {

@@ -4,7 +4,7 @@
 //! staged step (whose answer picks the edge through `Frame::branch`). An operator the step does
 //! not name leaves the jump to the exact path.
 use super::*;
-use crate::staged::{Comparison, Domain, Nullish, Operation};
+use crate::staged::{nullish_of, Comparison, Domain, Operation};
 use crate::vm::operations::NumberRelation;
 
 impl Lowering<'_, '_> {
@@ -40,7 +40,7 @@ impl Lowering<'_, '_> {
             nullish_comparison(&self.program.constants, instruction, register_type)?;
         let (b, c) = (instruction.operand_b(), instruction.operand_c());
         let other = if c.register_index() == Some(source) { b } else { c };
-        Some((Comparison::Nullish { expected: Nullish::of(expected)?, strict, negated }, [Operand::register(source), other]))
+        Some((Comparison::Nullish { expected: nullish_of(expected)?, strict, negated }, [Operand::register(source), other]))
     }
 
     /// Whether neither constant operand is anything but a Number: a register's type is for the

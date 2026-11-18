@@ -10141,9 +10141,9 @@ script_handler! {
     /// (`Vm::identity_equality`).
     fn lane_jump_nullish_false<BACKWARD: bool, NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
         let (expected, strict) = match NULLISH {
-            NULLISH_NULL => (crate::staged::Nullish::Null, true),
-            NULLISH_UNDEFINED => (crate::staged::Nullish::Undefined, true),
-            _ => (crate::staged::Nullish::Null, false),
+            NULLISH_NULL => (crate::ValueType::Null, true),
+            NULLISH_UNDEFINED => (crate::ValueType::Undefined, true),
+            _ => (crate::ValueType::Null, false),
         };
         let comparison = crate::staged::Comparison::Nullish { expected, strict, negated: NEGATED };
         // A heap cell outside the records may be the [[IsHTMLDDA]] object, which the step leaves.
