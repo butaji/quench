@@ -9,6 +9,7 @@ mod completion;
 pub(in crate::compile) use completion::StatementCompletion;
 mod environment_clones;
 mod expression;
+pub(crate) use expression::fuses_with_jump_operator;
 mod iteration;
 mod literal_template;
 mod object;

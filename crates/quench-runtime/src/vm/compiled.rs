@@ -53,7 +53,9 @@ mod region_lend;
 pub(super) use exit_protocol::{ExitTable, RegionRun};
 mod osr_compile; mod osr_lane; pub(in crate::vm) mod base_region; mod base_body; mod base_rows; mod stencil_run; use stencil_run::Crossing;
 pub(super) use osr_compile::{start_osr_region, CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
+pub(super) use lane_facts::bind_callees as bind_region_callees;
 pub(super) use lane_region::ElementViews;
+pub(in crate::vm) use lane_region::inlines_keeping_arrays;
 use osr_compile::OsrFacts;
 use crate::typed_ir;
 
@@ -214,7 +216,7 @@ mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(super) use osr_loop::{
     CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
+    FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
     MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
 };
 
@@ -305,10 +307,52 @@ fn emit_js_exact_int32(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> 
     (integer, exact)
 }
 
+// The boxes `emit_js_box_number` made while a lowering records them (`record_boxed_numbers`):
+// each tagged result with the binary64 word it boxed, which dominates it. A lowering that reads
+// the Number back takes that word (`State::proofs.numbers`) instead of unboxing.
+thread_local! {
+    static BOXED_NUMBERS: std::cell::RefCell<Option<Vec<(ir::Value, ir::Value)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts recording the boxes `emit_js_box_number` makes, until `take_boxed_numbers`.
+pub(super) fn record_boxed_numbers() {
+    BOXED_NUMBERS.with(|boxed| *boxed.borrow_mut() = Some(Vec::new()));
+}
+
+/// The boxes made since `record_boxed_numbers`, which stops recording.
+pub(super) fn take_boxed_numbers() -> Vec<(ir::Value, ir::Value)> {
+    BOXED_NUMBERS.with(|boxed| boxed.borrow_mut().take().unwrap_or_default())
+}
+
 /// Encode a Number result with `Value::number`'s integer, double and NaN
 /// representations. A double with a fraction is its own bits, after one compare
 /// with its truncation; a whole, signed-zero or NaN result takes the cold encoding.
 pub(super) fn emit_js_box_number(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    let recording = BOXED_NUMBERS.with(|boxed| boxed.borrow().is_some());
+    if !recording { return emit_js_box_number_word(builder, number); }
+    // A recorded box is pure (no branch), so a lowering that reads the Number back leaves it
+    // unread and it folds away.
+    let result = emit_js_box_number_pure(builder, number);
+    BOXED_NUMBERS.with(|boxed| if let Some(boxed) = boxed.borrow_mut().as_mut() { boxed.push((result, number)); });
+    result
+}
+
+/// `emit_js_box_number` with no branch: the integer, double and NaN encodings, selected.
+fn emit_js_box_number_pure(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
+    use crate::staged::machine::{Binary, Lane, Relation, Unary};
+    let (integer, is_integer) = emit_js_exact_int32(builder, number);
+    let mut stage = object_slots::emit(builder);
+    let bits = stage.raw_unary(Unary::Bitcast(Lane::I64), number);
+    let integer_bits = stage.raw_unary(Unary::ZeroExtend(Lane::I64), integer);
+    let int_tag = stage.raw_const(Lane::I64, crate::value::ValueLayout::INT_TAG as i64);
+    let integer_bits = stage.raw_binary(Binary::Or, integer_bits, int_tag);
+    let encoded = stage.raw_select(is_integer, integer_bits, bits);
+    let is_nan = stage.raw_compare(Relation::FloatUnordered, number, number);
+    let canonical_nan = stage.raw_const(Lane::I64, crate::value::ValueLayout::CANONICAL_NAN as i64);
+    stage.raw_select(is_nan, canonical_nan, encoded)
+}
+
+fn emit_js_box_number_word(builder: &mut FunctionBuilder<'_>, number: ir::Value) -> ir::Value {
     use crate::staged::machine::{Binary, Lane, Relation, Unary};
     let (cold, join) = (builder.create_block(), builder.create_block());
     builder.set_cold_block(cold);
@@ -1284,20 +1328,33 @@ pub(super) struct VmFacts<'a> {
     pub(super) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
     pub(super) scalar: Option<lane_region::scalar::ScalarAbi>,
+    /// The names method caches hold now, where offline code stores in place under a dependency on
+    /// the atoms it stores staying unnamed (`OsrFacts::stable`): a loop region compiled for a
+    /// specialized run, which a cache naming one retires (`MethodCacheAtoms::name`).
+    pub(super) held_atoms: Option<HeldAtoms<'a>>,
+}
+
+/// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
+/// hold now, and the word its publication sets when a cache names one it stores
+/// (`code_dependencies::Invalidation`), which a run that calls reads after each call.
+#[derive(Clone, Copy)]
+pub(super) struct HeldAtoms<'a> {
+    pub(super) names: &'a super::method_cache::AtomBits,
+    pub(super) invalidation: usize,
 }
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(super) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None };
+        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None };
 }
 
 impl<H: Host> Vm<H> {
     pub(super) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == crate::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None }
+            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None }
     }
 }
 
@@ -3151,7 +3208,7 @@ pub(super) fn analyze_inlining_osr_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     osr_loop::inline_region(function, decoded, constants, sites, live, header, backedge, resolve)
 }
@@ -3638,11 +3695,16 @@ unsafe extern "C" fn lane_truthy<H: Host>(vm: u64, _residual: u64, bits: u64) ->
 /// Admit a bound slot's write domain before any guest effect or raw store.
 unsafe extern "C" fn lane_field_write_admission<H: Host>(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
-    let Some(domain) = crate::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
+    let raw_double = domain & RAW_DOUBLE_WRITES != 0;
+    let Some(domain) = crate::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    u64::from(vm.heap.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
+    u64::from(vm.heap.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
 }
+
+/// The bit of a write admission's domain word (`lane_field_write_admission`) that says the
+/// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
+pub(super) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full

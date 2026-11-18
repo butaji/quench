@@ -48,6 +48,8 @@ pub const JUMP_FALSE: u8 = 26;
 /// negation of the first operand.
 pub const NOT: u8 = 27;
 pub const NEG: u8 = 28;
+/// `%` of two Numbers (`Kind::Rem`).
+pub const REM: u8 = 29;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;

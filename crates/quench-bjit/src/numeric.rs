@@ -84,6 +84,9 @@ pub enum Kind {
     /// Number negation of a Number operand (`Neg`).
     Not,
     Neg,
+    /// `%` of two Numbers: int32 where both are and the remainder is one (no zero divisor, no
+    /// negative zero), else through doubles.
+    Rem,
 }
 
 impl Kind {
@@ -94,7 +97,7 @@ impl Kind {
 
     /// Whether a row of this kind with a double operand computes in f64.
     pub fn has_float_form(self) -> bool {
-        self <= Kind::Ne && !self.is_bitwise()
+        (self <= Kind::Ne && !self.is_bitwise()) || self == Kind::Rem
     }
 }
 

@@ -41,6 +41,7 @@ mod int_ranges_tests;
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
+pub(in crate::vm) use native_calls::inlines_keeping_arrays;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
@@ -123,6 +124,9 @@ const INLINE_ARRAY_VIEWS: usize = 4;
 const INLINE_LOOP_INPUTS: usize = 4;
 /// A jump's step proves a fact of one tested register, along one or both of its edges.
 const INLINE_EDGE_REFINEMENTS: usize = 2;
+/// The sums of int32 constants a truncated chain passes through (`Lowering::truncated_through_sums`):
+/// from a product under 2^52, each adds under 2^31 and the doubles stay under 2^53.
+const TRUNCATION_CHAIN: usize = 4;
 /// Common native-entry failure status; a pure scalar miss restarts its call.
 const NUMBER_ENTRY_MISS: i64 = 1;
 /// The machine bytes an inlined instruction of a lane body costs at most, with its guards and
@@ -231,12 +235,22 @@ struct LocalProofs {
     stable: bool,
     /// Whether this block proved the realm its global reads were compiled against active (`Lowering::hold_global`).
     realm: bool,
+    /// Whether this block proved the run's stores specialized (`JsStepDispatch::stores_specialized`, a
+    /// constant of the run), so a store of an unnamed atom tests only the invalidation word (`Lowering::online_store_held`).
+    specialized: bool,
     /// Registers whose lane-frame slot holds their current tagged value (`Lowering::home_written`): a
     /// definition retires one, so a call writes back only what changed since the last write-back.
     homed: CompoundBitSet,
 }
 
 impl LocalProofs {
+    /// Notes that tagged `bits` read as the double `number`: the most recent views win a full
+    /// list (a loop body that proves many Numbers keeps the ones its next reads name).
+    pub(super) fn note_number(&mut self, bits: ir::Value, number: ir::Value) {
+        if self.numbers.len() >= 4 * INLINE_NUMBER_PROJECTIONS { self.numbers.remove(0); }
+        self.numbers.push((bits, number));
+    }
+
     fn set_readable(&mut self, owner: usize, readable: bool) {
         if readable { self.readable.insert(owner); } else { self.readable.remove(owner); }
     }
@@ -258,7 +272,7 @@ impl State {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
-            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false,
+            fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), homed: CompoundBitSet::new() } }
     }
 
@@ -472,6 +486,8 @@ struct Lowering<'a, 'f> {
     /// The view of the loop's hoisted dense array the next element row reads or writes through, which
     /// its entering edge proved once (`EmitFrame::held`).
     held_view: Option<frame_elements::Held>,
+    /// Whether the held view's read leaves at a hole (`EmitFrame::hole_leaves`).
+    hole_leaves: bool,
     /// The shared leave of a failed input proof (`LaneExit::Entry`), made at its first guard
     /// and filled with the other exits.
     entry_exit: Option<ir::Block>,
@@ -900,6 +916,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             .all(|other| other.arrays.contains(view))).collect();
         state.proofs.stable = first.stable && rest.iter().all(|other| other.stable);
         state.proofs.realm = first.realm && rest.iter().all(|other| other.realm);
+        state.proofs.specialized = first.specialized && rest.iter().all(|other| other.specialized);
         // A block a rotated latch also enters has an edge `rest` does not hold: only a sealable block keeps the homes.
         if self.sealable.contains(pc) {
             state.proofs.homed.clone_from(&first.homed);
@@ -1111,6 +1128,9 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
         // dense element is read natively, any other leaving (`emit_dense_element_read`); a null or
         // undefined operand leaves before any effect (`staged::require_object_coercible`).
         opcode if opcode.is_to_numeric() || opcode.is_get_index() || opcode.is_require_object_coercible() => !instruction.returns_from_frame(),
+        // A Number operator of a Number; any other operand leaves before any effect (`Lowering::unary`).
+        opcode if opcode.is_unary() => instruction.result_flags() == 0 && !instruction.writes_current_this()
+            && crate::vm::operations::NumberUnary::from_js_instruction(opcode, instruction.unary_operator()).is_some(),
         _ => instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary && !instruction.returns_from_frame(),
     })
 }
@@ -1622,7 +1642,7 @@ pub(super) fn lower(
         vm,
         stable: Default::default(),
         generic,
-        proving_entry: false, left_here: false, held_view: None, entry_exit: None,
+        proving_entry: false, left_here: false, held_view: None, hole_leaves: false, entry_exit: None,
         direct,
         frame_captures,
         context,
@@ -1745,6 +1765,7 @@ pub(super) fn lower(
             read.pc == at && read.owner.is_none() && instructions[at].op().is_load_capture())),
         lowering.views, typed_captures, |pc| coverage.lowered(pc));
     lowering.entering = lowering.entering_ranges(entry_pc);
+    lowering.entering = lowering.kept_entering(entry_pc, &initial, &instructions, &leaders, &own_shape);
     lowering.ranges = lowering.prove_ranges(entry_pc, &initial, &instructions, &leaders, &own_shape, &loops);
     lowering.arrays_fixed = lowering.arrays_stay_put(&leaders, &writes);
     lowering.loop_fields = loop_fields(program, unit, &loops);
@@ -1923,13 +1944,76 @@ impl Lowering<'_, '_> {
         let Some(next) = self.unit.instructions.get(at).copied() else { return false };
         if !next.op().is_binary() || next.returns_from_frame() || next.writes_current_this() { return false; }
         let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(register)).count();
-        if reads == 0 || !(next.result_register() == register || !self.is_live(at + 1, register)) { return false; }
+        if reads == 0 || !(next.result_register() == register || self.dead_after(at, register)) { return false; }
         let operator = next.binary_operator();
         if super::operations::NumberBitwise::from_js_instruction(next.op(), operator)
             .is_some_and(|bitwise| bitwise != super::operations::NumberBitwise::ShiftRightUnsigned) {
             return true;
         }
         false
+    }
+
+    /// Whether only the ToInt32 of the int32 result written to `register` at `pc` is read: through
+    /// at most `TRUNCATION_CHAIN` sums or differences with an int32 constant, into a bitwise
+    /// operator (`truncated`). Each sum adds less than 2^31 to an exact integer, so a chain from a
+    /// value under 2^52 keeps every double exact, and ToInt32 of an exact integer is its low 32
+    /// bits: the wrapping int32 steps compute it. Only int32 constants join the chain: a
+    /// non-integer would not commute with ToInt32 (`truncated`).
+    pub(super) fn truncated_through_sums(&self, pc: usize, register: Register) -> bool {
+        let (mut pc, mut register) = (pc, register);
+        for _ in 0..=TRUNCATION_CHAIN {
+            if self.truncated(pc, register) { return true; }
+            let Some(next) = self.int32_constant_sum(pc, register) else { return false };
+            (pc, register) = next;
+        }
+        false
+    }
+
+    /// The sum or difference that next reads `register`, written at `pc`, with an int32 constant
+    /// as its other operand and `register` dead past it: its PC and result register.
+    fn int32_constant_sum(&self, pc: usize, register: Register) -> Option<(usize, Register)> {
+        let (at, register) = self.reader(pc + 1, register);
+        let next = self.unit.instructions.get(at).copied()?;
+        if !next.op().is_binary() || next.returns_from_frame() || next.writes_current_this() || next.result_flags() != 0 { return None; }
+        let operation = super::operations::NumberArithmetic::from_js_instruction(next.op(), next.binary_operator())?;
+        if !operation.int32_projection_is_wrapping() { return None; }
+        let operands = [next.operand_b(), next.operand_c()];
+        let int32_constant = |operand: Operand| operand.kind() == Some(OperandKind::Constant)
+            && self.program.constants.get(usize::from(operand.payload())).and_then(super::facts::immediate).is_some_and(super::facts::is_int32);
+        let [first, second] = operands;
+        let paired = (first.register_index() == Some(register) && int32_constant(second))
+            || (second.register_index() == Some(register) && int32_constant(first));
+        (paired && (next.result_register() == register || self.dead_after(at, register))).then(|| (at, next.result_register()))
+    }
+
+    /// Whether `register` is dead past the instruction at `at`. An inlined callee's returning
+    /// instruction is followed by its completion (`lane_unit`): moves and a jump out of the
+    /// callee that share its origin, whose liveness row is the returning instruction's own. Past
+    /// that completion the callee's frame is gone, so its registers are dead unless a completion
+    /// move reads them.
+    fn dead_after(&self, at: usize, register: Register) -> bool {
+        use super::lane_unit::Origin;
+        let origin = self.unit.origins.get(at).copied();
+        if let Some(Origin::Inlined { frame, .. }) = origin
+            && self.unit.origins.get(at + 1).copied() == origin {
+            let inlined = self.unit.frames[frame];
+            let own = (inlined.base..inlined.base + inlined.registers).contains(&register);
+            let mut pc = at + 1;
+            while own && self.unit.origins.get(pc).copied() == origin {
+                let Some(instruction) = self.unit.instructions.get(pc).copied() else { return false };
+                if instruction.op().copies_register() {
+                    if instruction.register_b() == register { return false; }
+                } else if instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Jump {
+                    let target = instruction.jump_target() as usize;
+                    let leaves = !matches!(self.unit.origins.get(target).copied(), Some(Origin::Inlined { frame: to, .. }) if to == frame);
+                    return leaves;
+                } else {
+                    return false;
+                }
+                pc += 1;
+            }
+        }
+        !self.is_live(at + 1, register)
     }
 
     /// Where `register` at `at` is next read, past an inlined completion's move and jump (`lane_unit`).
@@ -2385,21 +2469,28 @@ impl Lowering<'_, '_> {
         admitted
     }
 
-    fn admit_slot_writes(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, exit: ir::Block) -> Type {
-        let (admitted, domain) = self.slot_writes_admitted(shape, slot, writes);
+    /// Admits at entry the writes `writes` to `slot` of `shape`, failing through `exit`; a slot whose
+    /// words are raw doubles where `raw_double`, which the unit's in-place arms store as such
+    /// (`Heap::admit_slot_writes_as`).
+    pub(super) fn admit_slot_writes_as(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, raw_double: bool, exit: ir::Block) {
+        let (admitted, _) = self.slot_writes_admitted_as(shape, slot, writes, raw_double);
         emit_js_guard(&mut self.builder, admitted, exit);
-        domain
     }
 
     fn slot_writes_admitted(&mut self, shape: ir::Value, slot: ir::Value, writes: Type) -> (ir::Value, Type) {
+        self.slot_writes_admitted_as(shape, slot, writes, false)
+    }
+
+    fn slot_writes_admitted_as(&mut self, shape: ir::Value, slot: ir::Value, writes: Type, raw_double: bool) -> (ir::Value, Type) {
         let domain = crate::typed_ir::SlotType::from_type(writes);
-        let encoded = self.raw_const(Lane::I64, domain as i64);
+        let encoded = self.raw_const(Lane::I64, domain as i64 | if raw_double { RAW_DOUBLE_WRITES as i64 } else { 0 });
         let helper = self.helpers.address(&mut self.builder, LaneHelper::FieldWriteAdmission);
         let admitted = emit_lane_helper_call(&mut self.builder, self.payload, helper, &[shape, slot, encoded]);
         (self.raw_compare_imm(Relation::NotEqual, admitted, 0), domain.ty())
     }
 
     fn emit_store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
+        if let Some(held) = self.loop_held_atom(atom) { return held; }
         let specialized = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, stores_specialized));
         let specialized = self.raw_compare_imm(Relation::NotEqual, specialized, 0);
         if let Some(held) = self.store_held_unnamed(atom, specialized) { return held; }
@@ -2476,7 +2567,7 @@ impl Lowering<'_, '_> {
             }
             // A capture's read or store, by its staged row.
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
-            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.get_field(state, pc, instruction),
+            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.fold_native_member(state, pc, instruction).or_else(|| self.get_field(state, pc, instruction)),
             _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if instruction.op().class().eq(Class::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
@@ -2719,8 +2810,14 @@ impl Lowering<'_, '_> {
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
             call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
-            held: self.held_view.take(), arrays_fixed: self.arrays_fixed, site };
+            held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site };
+        super::record_boxed_numbers();
         let step = crate::staged::step(&mut stage, &mut frame, operation);
+        // A Number the step boxed (a raw-double slot's read) reads back as the word it boxed.
+        for (bits, number) in super::take_boxed_numbers() {
+            let bits = self.builder.func.dfg.resolve_aliases(bits);
+            state.proofs.note_number(bits, number);
+        }
         debug_assert!(!matches!(step, crate::staged::Step::Unresolved), "the lane specializer decides every truthiness");
         // A step that ends in a branch makes no environment: only a closure's allocation, a value step, does.
         if makes_environment && matches!(edges, frame::Edges::Value | frame::Edges::ValueGuarded { .. }) { self.reload_environment(); }
@@ -3484,7 +3581,7 @@ impl Lowering<'_, '_> {
                     let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
                         &mut self.builder, self.payload, site, exit, None));
                     self.admit_field_writes(&mut binding, Type::INT32, exit);
-                    let allowed = self.store_atom_admitted(instruction.atom_index());
+                    let allowed = self.store_atom_admitted(state, instruction.atom_index(), exit);
                     emit_js_guard(&mut self.builder, allowed, exit);
                     let packed = self.builder.create_block();
                     let packed_address = self.builder.append_block_param(packed, types::I64);
@@ -3748,7 +3845,15 @@ impl Lowering<'_, '_> {
             let exit = self.guard_exit(state, pc as u32);
             let held = HeldRead { entry_word: Some(word), ..HeldRead::default() };
             let bits = self.field_value(state, (base, lookup), &[], held, exit)?;
-            self.set_tagged(state, destination, bits);
+            // A register's `length` read is an int32 to the facts (`osr_compile::observed_reads`).
+            if register.is_some() && super::reads_length(self.program, instruction) {
+                let integer = is_int_tagged(&mut self.builder, bits);
+                emit_js_guard(&mut self.builder, integer, exit);
+                let int = self.raw_unary(Unary::Narrow(Lane::I32), bits);
+                self.set_int(state, destination, int);
+            } else {
+                self.set_tagged(state, destination, bits);
+            }
             return Some(true);
         }
         let exit = self.guard_exit(state, pc as u32);
@@ -3903,8 +4008,13 @@ impl Lowering<'_, '_> {
         // which changes the object's shape and may move the property arena: every proof of
         // an object retires, as another register may name it, and `this`'s facts are read
         // again.
+        // The site's own shapes still store in place first: a body that left here once (before
+        // the site cached a shape, say) keeps its arms, and only their miss adds.
         if self.generic.contains(&pc) && self.completion.status_and_pc() {
-            self.store_step(state, operation, (StorePlan::Add, HeldRead::default()), exit)?;
+            let (arms, _) = self.site_store_plan(instruction.cache_site_index(), ty);
+            let admitted = (!arms.is_empty()).then(|| self.store_atom_admitted(state, instruction.atom_index(), exit));
+            state.proofs.write_field(instruction.atom_index());
+            self.store_step(state, operation, (StorePlan::of(&arms, StoreJoin::Add), HeldRead { admitted, ..HeldRead::default() }), exit)?;
             self.after_store(state, StoreJoin::Add);
             return Some(true);
         }
@@ -3956,9 +4066,11 @@ impl Lowering<'_, '_> {
         (atom, site, ty): (Atom, u16, Type), exit: ir::Block) -> Option<()> {
         let (arms, join) = self.site_store_plan(site, ty);
         let plan = StorePlan::of(&arms, join);
-        let admitted = (!arms.is_empty() || join == StoreJoin::Bound).then(|| self.store_atom_admitted(atom));
+        let admitted = (!arms.is_empty() || join == StoreJoin::Bound).then(|| self.store_atom_admitted(state, atom, exit));
+        let leaves = join == StoreJoin::Host && self.store_leaves();
         state.proofs.write_field(atom);
-        self.store_step(state, operation, (plan, HeldRead { admitted, ..HeldRead::default() }), exit)?;
+        self.store_step(state, operation, (plan, HeldRead { admitted, leaves, ..HeldRead::default() }), exit)?;
+        if leaves { return Some(()); }
         self.after_store(state, join);
         Some(())
     }
@@ -3984,10 +4096,19 @@ impl Lowering<'_, '_> {
         let own: Vec<&NativeFieldLoad> = site_loads(self.fields, site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         let arms = own.iter().filter(|load| load.valid())
-            .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)).collect();
+            .filter_map(|load| StoreArm::of_rep((load.shape, load.slot), load.ty, ty,
+                (load.raw_double, crate::staged::Form::of(load.storage, load.storage_len)))).collect();
         let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
             else if bound { StoreJoin::Bound } else { StoreJoin::Host };
         (arms, join)
+    }
+
+    /// Whether a store of a loop region that its in-place arms miss leaves at its PC rather than
+    /// calling the VM's store: the call would spill every value live across the loop and keep the
+    /// loop's poll (a reentry). A store left at often enough is widened (`LoopTier::left_at`), and
+    /// the recompile takes the VM's store there.
+    fn store_leaves(&self) -> bool {
+        matches!(self.coverage, Coverage::Loop { .. }) && !self.generic.contains(&self.at)
     }
 
     /// What a store the VM may have completed changes: an adding entry reshapes any object, so
@@ -4041,8 +4162,10 @@ impl Lowering<'_, '_> {
     /// Whether the run admits a direct store of `atom`. A run that calls may meet a method
     /// cache that names the atom only after a call; one that does not tests it once, at
     /// entry (`Lowering::entry_facts`).
-    fn store_atom_admitted(&mut self, atom: Atom) -> ir::Value {
+    fn store_atom_admitted(&mut self, state: &mut State, atom: Atom, exit: ir::Block) -> ir::Value {
         if self.native_calls {
+            if let Some(held) = self.called_held_atom(state, atom, exit) { return held; }
+            if let Some(held) = self.online_store_held(state, atom, exit) { return held; }
             self.emit_store_atom_admitted(atom)
         } else {
             self.builder.use_var(self.entry.as_ref().expect("entry facts").store_atoms[&atom])

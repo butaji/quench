@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
             invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
-        let number_reads = super::osr_compile::observed_reads(&unit, arrays, &[], &left_at);
+        let number_reads = super::osr_compile::observed_reads(program, &unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
             &leaves, &direct_sites, &frame_captures, entry, &number_reads).or_else(|| { plan_miss(self, Miss::PlanNothingNative); None })?;
         if lowered.region.native == 0 { plan_miss(self, Miss::PlanNothingNative); return None; }
@@ -377,8 +377,8 @@ impl<H: Host> Vm<H> {
     /// Registers the writes a unit's raw stores may make (`lane_region::store_domains`) with
     /// the slots' observations; whether every slot already admitted them. A body's slot
     /// dependencies hold its slots at the admitted types, so its runs need not admit again.
-    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, crate::typed_ir::Type)>) -> bool {
-        domains.into_iter().fold(true, |admitted, (shape, slot, domain)| self.heap.admit_slot_writes(shape, usize::from(slot), domain) && admitted)
+    fn admit_lane_stores(&mut self, domains: Vec<(u32, u16, crate::typed_ir::Type, bool)>) -> bool {
+        domains.into_iter().fold(true, |admitted, (shape, slot, domain, raw)| self.heap.admit_slot_writes_as(shape, usize::from(slot), domain, raw) && admitted)
     }
 }
 

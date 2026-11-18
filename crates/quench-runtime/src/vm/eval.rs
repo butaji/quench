@@ -517,6 +517,11 @@ impl<H: Host> Vm<H> {
         if !self.host.keeps_compiled_programs() {
             return None;
         }
+        self.encode_compact_program(program)
+    }
+
+    /// `program`'s compact form, when every atom it names is found again by its text.
+    fn encode_compact_program(&self, program: &crate::ResidualProgram) -> Option<Vec<u8>> {
         let (bytes, atoms) = program.encode_compact();
         atoms
             .iter()
@@ -565,6 +570,14 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, goal: &str, origin: Option<(u32, u32)>,
     ) -> Option<crate::PreparedScript> {
         let entry = self.host.kept_compiled_program(name, &[self.specialization_part(), goal, source])?;
+        self.decode_kept_script(entry, source, name, origin)
+    }
+
+    /// The script `source` decoded for this VM from `entry`, its kept form (`append_kept_source`),
+    /// with its origin.
+    fn decode_kept_script(
+        &mut self, entry: crate::KeptBytes, source: &str, name: &str, origin: Option<(u32, u32)>,
+    ) -> Option<crate::PreparedScript> {
         let (bytes, text) = crate::bytecode::split_kept_source(entry, source.len())
             .unwrap_or_else(|entry| (entry, crate::bytecode::SourceText::Shared(std::sync::Arc::from(source))));
         // Checking the kept text's checksum read every page of it, and the run reads it again
@@ -622,10 +635,9 @@ impl<H: Host> Vm<H> {
         // malloc arena.
         let scratch = cache_key.is_some().then(ScratchPhase::begin);
         // A program keeping only static text cannot compile its functions again from it. One
-        // the host's compile cache keeps encodes each record its load releases.
-        let compiled = crate::Engine::specialize_host_script(
-            source, name, &*self, options, self.released_records(cache_key.is_some()),
-        );
+        // that runs from its kept form encodes each record its load releases.
+        let released = if cache_key.is_some() { crate::compile::ReleasedRecords::Encoded } else { crate::compile::ReleasedRecords::Dropped };
+        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released);
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
@@ -652,20 +664,27 @@ impl<H: Host> Vm<H> {
         // Kept before its records are released: encoding reads every record. Every distinct
         // text a user runs adds an entry; a store that fails (a full disk) keeps the cache
         // as it was, and costs only the compilation it would have saved.
+        crate::compile::compile_phase_boundary(crate::compile::CompilePhase::Encoding);
         if let Some(goal) = &cache_key
-            && let Some(mut bytes) = self.encode_cached_program(&residual)
+            && let Some(mut bytes) = self.encode_compact_program(&residual)
         {
             crate::bytecode::append_kept_source(&mut bytes, source);
             let mode = self.specialization_part();
-            self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
-            drop(bytes);
-            // The program then runs from its kept form, as every later run of the text does:
-            // its records decode on first call from the host's mapped entry, which the host
-            // can page out, instead of staying compiled in memory for the whole run (V8-v7
-            // MemoryFirst max RSS of a cold entry, static x86_64, 5 pairs, 2026-10-24:
-            // NavierStokes 4708 -> 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292,
-            // RegExp 6228 -> 6028; a whole cold typescript-eslint run's CPU unchanged).
-            if let Some(kept) = self.kept_script(source, name, goal, origin) {
+            if self.host.keeps_compiled_programs() {
+                self.host.keep_compiled_program(name, &[mode, goal, source], &bytes);
+            }
+            // The program then runs from its kept form, as every later run of the text does,
+            // whether or not the host could keep it: one execution path for an entry, never one
+            // for a writable cache and another without (a run with no cache had kept every
+            // recursive function in its unlowered tier, fib(32) 8x slower, all tiers). Its
+            // records decode on first call from the host's mapped entry, which the host can
+            // page out, or from these bytes where the host kept none (V8-v7 MemoryFirst max
+            // RSS of a cold entry, static x86_64, 5 pairs, 2026-10-24: NavierStokes 4708 ->
+            // 4172 KiB, RayTrace 3332 -> 3016, Crypto 3480 -> 3292, RegExp 6228 -> 6028; a
+            // whole cold typescript-eslint run's CPU unchanged).
+            let kept = self.kept_script(source, name, goal, origin)
+                .or_else(|| self.decode_kept_script(Rc::new(bytes) as crate::KeptBytes, source, name, origin));
+            if let Some(kept) = kept {
                 drop(residual);
                 drop(scratch);
                 return Ok(kept);

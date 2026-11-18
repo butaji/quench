@@ -96,6 +96,34 @@ impl LoopBody {
     pub(super) fn pending(&self) -> bool { !matches!(self, Self::Declined) }
 }
 
+/// Makes `site`'s loop a body's once, where its call boundary has no region (no inlinable
+/// script callee): loop bodies are off where a region runs the loop (`tier_policy::LOOP_BODIES`),
+/// but here none can, and without a body the loop interprets every iteration. Whether it did.
+/// Each call must be one the body runs inline (a Math function, a string builtin) or a script
+/// function's, which it inlines or calls by its entry, by the callee its register holds now: a
+/// body's general native call costs more than the lane's own.
+pub(super) fn offer_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, site: &LoopSite) -> bool {
+    let vm = unsafe { vm(cx) };
+    if site.call_boundary_pcs.is_empty() || site.body_offered.replace(true) || !vm.programs.js_jit_lane_methods_enabled()
+        || !crate::jit_mode::tiers_allowed(crate::jit_mode::Tier::CRANELIFT) { return false; }
+    // SAFETY: the context's program outlives the lane run.
+    let Some(function) = unsafe { &*(*cx).code }.function_get(site.function as usize) else { return false };
+    let inline = |pc: usize| function.code.get(pc).is_some_and(|packed| {
+        let call = decoded_instruction(function, *packed);
+        vm.heap.function(r.get(call.register_b())).is_some_and(|callee| match callee.kind {
+            FunctionKind::Native(native) => super::super::compiled::inlines_keeping_arrays(native),
+            _ => true,
+        })
+    });
+    let calls = (site.header as usize..=site.backedge as usize)
+        .filter(|pc| function.code.get(*pc).is_some_and(|packed| decoded_instruction(function, *packed).op().is_call()));
+    if !calls.into_iter().all(inline) { return false; }
+    let mut body = site.body.borrow_mut();
+    if !matches!(*body, LoopBody::Declined) { return false; }
+    *body = LoopBody::IDLE;
+    true
+}
+
 /// Plans or polls the body of `site`'s loop (its state is `Idle` or `Compiling` and due).
 fn plan_loop_body<H: Host>(cx: *mut LaneContext<H>, r: Registers, own: &LaneView, site: &LoopSite) {
     let vm = unsafe { vm(cx) };

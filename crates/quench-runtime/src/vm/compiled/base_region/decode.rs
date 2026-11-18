@@ -7,11 +7,12 @@ pub(super) use fields::stores_field;
 
 /// The row kind of a binary operator, from one table for arithmetic, bitwise and relational
 /// operators.
-pub(super) const OPERATORS: [(BinaryOperator, Kind); 18] = [
+pub(super) const OPERATORS: [(BinaryOperator, Kind); 19] = [
     (BinaryOperator::Addition, Kind::Add),
     (BinaryOperator::Subtraction, Kind::Sub),
     (BinaryOperator::Multiplication, Kind::Mul),
     (BinaryOperator::Division, Kind::Div),
+    (BinaryOperator::Remainder, Kind::Rem),
     (BinaryOperator::BitwiseAnd, Kind::And),
     (BinaryOperator::BitwiseOR, Kind::Or),
     (BinaryOperator::BitwiseXOR, Kind::Xor),
@@ -30,7 +31,7 @@ pub(super) const OPERATORS: [(BinaryOperator, Kind); 18] = [
 
 pub(super) fn kind_of(operator: u32, relational: bool) -> Option<Kind> {
     let found = OPERATORS.iter().find(|(candidate, _)| *candidate as u32 == operator)?.1;
-    (relational == (found >= Kind::Lt)).then_some(found)
+    (relational == (Kind::Lt..=Kind::Ne).contains(&found)).then_some(found)
 }
 
 /// An operand: a register of the activation or a constant `Value` word.
@@ -247,9 +248,10 @@ fn capture_arm(facts: Facts, heap: Heap, result: Option<Register>, value: Option
     }
 }
 
-/// The row of a depth-0 capture read, which a loop region that makes calls leaves for the captures its entry copied.
+/// The row of a depth-0 capture read: the activation's slots, which a region that makes calls
+/// reads live (`osr_lane::bind_captures`), as the interpreter's `lane_load_capture` does.
 fn capture_load_row(facts: Facts, instruction: WideInstruction) -> Option<Decoded> {
-    (instruction.capture_depth() == 0 && !matches!(facts, Facts::Entry { calls: true, .. }))
+    (instruction.capture_depth() == 0)
         .then(|| capture_arm(facts, Heap::Capture(instruction.capture_slot()), Some(instruction.result_register()), None))
 }
 

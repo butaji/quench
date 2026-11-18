@@ -302,6 +302,8 @@ pub(super) struct LoopSite {
     /// body is planned again (`loop_model::body_taken`, at the size its last plan had).
     body_seen: std::cell::Cell<u64>,
     body_due: std::cell::Cell<u64>,
+    /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
+    body_offered: std::cell::Cell<bool>,
 }
 
 impl LoopSite {
@@ -10145,6 +10147,10 @@ script_handler! {
                 loop_tier::lane_method_call_region(cx, site)
             }) {
                 Some(region) => site.region.get_or_init(|| region),
+                // A call no region runs (a native's, a callee the inliner cannot take) is a
+                // loop body's: the body planner inlines what it knows (`native_calls`) and
+                // starts at the header, so the loop runs natively without a function entry.
+                None if loop_body::offer_body(cx, r, site) => next!(cx, r, header, Carried::script_in(cx, view)),
                 None => {
                     site.entering.set(false);
                     lane_loop_retire::<H>(cx, ip, site);
@@ -10274,7 +10280,8 @@ fn lane_loop_native<H: Host>(
 
 /// Counts a leave at `pc` (`LoopTier::left_at`) where it is a Number operator, whose int32
 /// speculation a compilation can drop, an element read, whose observed type it can drop, an
-/// element store, whose append helper it can compile, or a capture read, whose root-held binding
+/// element store, whose append helper it can compile, a field store, whose VM store it can call
+/// (`Lowering::store_leaves`), or a capture read, whose root-held binding
 /// it can read by helper; a leave at any other guard (a shape, say) widens nothing.
 #[cold]
 fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc: u32, region: std::ops::RangeInclusive<u32>) {
@@ -10287,10 +10294,14 @@ fn count_arithmetic_leave<H: Host>(cx: *mut LaneContext<H>, site: &LoopSite, pc:
             let op = decoded_instruction(body, *packed).op();
             super::compiled::base_region::leave(site.function(), pc, op);
             (op.js_denotation() == crate::bytecode::JsDenotation::NumericBinary || op.is_get_index() || op.stores_element()
-                || matches!(op.class(), Class::LoadCapture)).then(|| op.is_get_index())
+                || op.is_field_store() || matches!(op.class(), Class::LoadCapture)).then(|| (op.is_get_index(), op.is_field_store()))
         })
     });
-    if let Some(read) = counted { site.tier.borrow_mut().left_at(site.tiers, pc as usize, read); }
+    match counted {
+        Some((_, true)) => site.tier.borrow_mut().left_store(site.tiers, pc as usize),
+        Some((read, false)) => site.tier.borrow_mut().left_at(site.tiers, pc as usize, read),
+        None => {}
+    }
 }
 
 /// Gives `site` its `header` record (`LoopSite::hookable`) once its region has code: the
@@ -10800,7 +10811,7 @@ fn lane_loop_entry<H: Host>(
         // Leaving at an inlined instruction makes its callee's activation as the call would:
         // each call must still be one the lane activates in place (`lane_inlined_activation`).
         for frame in &inlining.frames {
-            lane_inlined_target(cx, lane_inlined_receiver(r, region, entry, frame), frame)?;
+            lane_inlined_target(cx, r, lane_inlined_receiver(r, region, entry, frame), frame)?;
         }
     }
     Some(views)
@@ -10837,7 +10848,9 @@ fn lane_region_field<H: Host>(
         // detach, a resize, a redefinition) changes, and a call leaves the region.
         _ => vm.polymorphic_field_hit(code, receiver, field.cache_site)
             .or_else(|| vm.typed_array_geometry_read(receiver, field.atom))
-            .or_else(|| (field.atom == vm.length_atom).then(|| vm.own_array_length(receiver).map(Value::length)).flatten()),
+            .or_else(|| (field.atom == vm.length_atom).then(|| vm.own_array_length(receiver).map(Value::length)
+                // A string's length is its own, immutable: the region reads it at the instruction too.
+                .or_else(|| vm.string_length_value(receiver))).flatten()),
     }
 }
 
@@ -10846,11 +10859,14 @@ fn lane_region_field<H: Host>(
 /// activation of the running program with room on the lane stack.
 fn lane_inlined_target<H: Host>(
     cx: *mut LaneContext<H>,
+    r: Registers,
     receiver: Value,
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
-    if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
-        (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?;
+    match frame.guard {
+        super::compiled::InlineGuard::Capture(slot) => (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?,
+        super::compiled::InlineGuard::Register(register) => (r.get(register) == frame.callee).then_some(())?,
+        _ => {}
     }
     let vm = unsafe { vm(cx) };
     let target_pointer = vm.script_call_entry(frame.callee)?;
@@ -10862,7 +10878,7 @@ fn lane_inlined_target<H: Host>(
         && !vm.with_scope_entered
         && lane_activation_room(vm, target)
         && lane_call_this(vm, target, receiver).is_some_and(|bound| {
-            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_))
+            bound == receiver || matches!(frame.guard, super::compiled::InlineGuard::Capture(_) | super::compiled::InlineGuard::Register(_))
         }))
     .then_some(target_pointer)
 }
@@ -10898,15 +10914,16 @@ fn lane_inlining_region<H: Host>(
     let live = code.register_root_masks(function_index)?;
     // The callee is the last of the fields its read reads through, each read from the
     // registers and the fields before it as they are now.
-    let mut resolve = |chain: &[super::compiled::FieldUse], capture: Option<u16>| -> Option<super::compiled::InlineCallee<'_>> {
+    let mut resolve = |chain: &[super::compiled::FieldUse], source: super::compiled::CalleeSource| -> Option<super::compiled::InlineCallee<'_>> {
         let mut values = Vec::with_capacity(chain.len());
         for field in chain {
             let value = lane_region_field(cx, r, field, |index| values[index])?;
             values.push(value);
         }
-        let callee = match capture {
-            Some(slot) => lane_capture_value(cx, 0, slot)?,
-            None => *values.last()?,
+        let callee = match source {
+            super::compiled::CalleeSource::Capture(slot) => lane_capture_value(cx, 0, slot)?,
+            super::compiled::CalleeSource::Register(register) => r.get(register),
+            super::compiled::CalleeSource::Path => *values.last()?,
         };
         let vm = unsafe { vm(cx) };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
@@ -10951,7 +10968,7 @@ fn lane_inlined_activation<H: Host>(
     callee_pc: u32,
 ) -> Ip {
     let receiver = lane_inlined_receiver(r, region, entry, &frame);
-    let target = lane_inlined_target(cx, receiver, &frame).expect("the entry checked the inlined call");
+    let target = lane_inlined_target(cx, r, receiver, &frame).expect("the entry checked the inlined call");
     // SAFETY: as `Vm::script_call_entry`; `call` is the call's record in the running view.
     let (target, arguments) =
         unsafe { (&*target, ImmediateLayout::call_window_base((*call).imm())) };
@@ -23073,7 +23090,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
                 },
             )
         })
@@ -25228,6 +25245,10 @@ unsafe fn lane_reenter_prepared_values<H: Host, const N: usize>(
 ) -> Ip {
     unsafe {
         let registers = lane_fill_prepared_values::<H, N>(entry, values, registers);
+        // A capture walk inside the returned run may have cached the closure's dense slots in the
+        // window's capture word (`lane_capture_value`): the same environment's, which the entry
+        // passes as it passed it before.
+        Registers(registers).set_capture(entry.capture);
         debug_assert!(
             (*cx).registers.0 == registers
                 && (*cx).base == (*entry.view).records()

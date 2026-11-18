@@ -174,7 +174,7 @@ fn decode_facts(region: &LoopRegion, sites: &Sites, calls: &[Option<Vec<What>>])
     }
     let kept = calls.iter().flatten().flatten().any(|what| matches!(what, What::Row(row) if matches!(row.step, Some(Step::Call(_)))));
     let stores = region.instructions().iter().any(|instruction| stores_field(sites.known, *instruction) || stores_name(*instruction));
-    Facts::Entry { views: if kept { Views::Frame } else { sites.views }, writes: stores || kept, calls: kept }
+    Facts::Entry { views: if kept { Views::Frame } else { sites.views }, writes: stores || kept }
 }
 
 /// The row of the instruction at `pc` that is no planned call: in a body, what it lowers to

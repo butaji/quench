@@ -3,7 +3,7 @@
 
 use super::{
     compile_native_function, dump_native_bytes, dump_native_code, DumpSite, names_length, native_dump_directory, lane_unit, osr_loop,
-    publish_body, tier_policy, CompiledOsrRegion, FieldReceiver, LaneHelpers, LoopRegion,
+    publish_body, tier_policy, CompiledOsrRegion, LaneHelpers, LoopRegion,
     NativeCompileRejection, NativeFieldLoad, Observation, VmFacts,
 };
 use super::base_region::function::{build_region, Body, BodySpec};
@@ -16,7 +16,7 @@ pub(in crate::vm) use calls::{CallCode, RegionCalls};
 use crate::bytecode::{FieldLookup, Function, Op, ResidualProgram, WideInstruction};
 use crate::vm::global_facts::GlobalTable;
 use super::super::specializer::Specializer;
-use std::collections::BTreeMap;
+use super::{DirectCallee, DirectCandidates};
 use std::rc::Rc;
 
 /// What a region's code relies on beyond its entry guards: the exits that widen a value,
@@ -171,19 +171,35 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
     inserted.sort_unstable_by_key(|(at, _)| *at);
     inserted.dedup_by_key(|(at, _)| *at);
     let mut markers: Vec<usize> = inserted.iter().map(|(at, _)| *at).collect();
+    // The frame each instruction runs in, before the markers move them.
+    let running: Vec<Option<usize>> = origins.iter().map(|origin| match origin {
+        lane_unit::Origin::Inlined { frame, .. } => Some(*frame),
+        _ => None,
+    }).collect();
     for &(at, call) in inserted.iter().rev() {
         instructions.insert(at, WideInstruction::new(Op::Nop, 0, 0, 0, 0));
         origins.insert(at, lane_unit::Origin::Caller(call));
     }
     // A jump target lands on the marker at its own position, as the call's PC did: an
-    // insertion at the target itself is that marker, so only earlier ones move it.
-    let shift = |target: usize| target + inserted.iter().filter(|(at, _)| *at < target).count();
-    for instruction in instructions.iter_mut() {
+    // insertion at the target itself is that marker, so only earlier ones move it. A callee's
+    // own jump to its first instruction (a loop at its entry) is no call: it lands past its
+    // frame's marker, which would bind the call's arguments to the parameters again.
+    let within = |frame: usize, mut inner: usize| loop {
+        if inner == frame { return true; }
+        match frames.get(inner).and_then(|candidate| candidate.parent) { Some(parent) => inner = parent, None => return false }
+    };
+    let shift = |target: usize, from: Option<usize>| target + inserted.iter().filter(|(at, _)| *at < target
+        || (*at == target && from.is_some_and(|inner| running.get(target).copied().flatten().is_some_and(|frame| within(frame, inner))))).count();
+    let mut original = 0;
+    for (unit_pc, instruction) in instructions.iter_mut().enumerate() {
+        if inserted.iter().any(|(at, _)| *at + inserted.iter().filter(|(before, _)| before < at).count() == unit_pc) { continue; }
+        let from = running.get(original).copied().flatten();
+        original += 1;
         if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
-            instruction.set_jump_target(shift(instruction.imm() as usize) as u32);
+            instruction.set_jump_target(shift(instruction.imm() as usize, from) as u32);
         }
     }
-    for marker in &mut markers { *marker = shift(*marker); }
+    for marker in &mut markers { *marker = shift(*marker, None); }
     (inserted, markers)
 }
 
@@ -194,6 +210,17 @@ fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane
     let inlining = region.inlining.as_deref()?;
     let count = region.instructions().len();
     let mut instructions = localized_jumps(region);
+    // A callee's own capture read names its slot in the callee's environment again: the unit's
+    // frame reads it from that environment's dense slots (`Observation::frame_captures`), as a
+    // lane body's inlined frame does, not from the entry's snapshot of it.
+    for (instruction, origin) in instructions.iter_mut().zip(&inlining.origins) {
+        if matches!(origin, osr_loop::Origin::Inlined { .. }) && instruction.op().is_load_capture()
+            && instruction.capture_depth() == 0 && instruction.capture_slot() & osr_loop::CALLEE_CAPTURE != 0
+            && let Some(&(_, slot)) = inlining.callee_captures.get(usize::from(instruction.capture_slot() & !osr_loop::CALLEE_CAPTURE)) {
+            *instruction = WideInstruction::new(instruction.op(), instruction.a(), instruction.b(), instruction.c(),
+                crate::bytecode::ImmediateLayout::capture_immediate(0, slot));
+        }
+    }
     let mut origins: Vec<lane_unit::Origin> = inlining.origins.iter().take(count).map(|origin| match origin {
         osr_loop::Origin::Caller(pc) => lane_unit::Origin::Caller(*pc),
         osr_loop::Origin::Inlined { frame, pc } => lane_unit::Origin::Inlined { frame: usize::from(*frame), pc: *pc },
@@ -213,12 +240,11 @@ fn inlining_unit(region: &LoopRegion, program: &ResidualProgram) -> Option<(lane
 }
 
 /// Whether the read of `region`'s field `index` answers from the entry record: a static read
-/// of a field, not a register's `length`, which native code reads from the array's length
-/// word at the read (`Lowering::array_length`) as the loop's stores may change it.
+/// of a field, never a `length`, whatever its receiver (a register, `this`, a field or a
+/// capture): the loop's element stores may change an array's length word, so native code
+/// reads it at the read.
 fn entry_read(region: &LoopRegion, index: usize, program: &ResidualProgram) -> bool {
-    let field = &region.fields[index];
-    !region.is_dynamic_field(index)
-        && !(matches!(field.receiver, FieldReceiver::Register(_)) && names_length(program, field.atom))
+    !region.is_dynamic_field(index) && !names_length(program, region.fields[index].atom)
 }
 
 /// A plain loop unit's static field reads, by the unit PC each instruction keeps, answered
@@ -235,11 +261,13 @@ fn plain_entry_fields(region: &LoopRegion, program: &ResidualProgram) -> Vec<Opt
 /// field-site map, from the observation's descriptors.
 fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     -> Vec<Option<Vec<NativeFieldLoad>>> {
-    super::lane_region::flat_table(region.field_reads().iter().filter_map(|(&offset, &index)| {
+    let reads = region.field_reads().iter().filter_map(|(&offset, &index)| {
         let Some(FieldLookup::Atom { cache_site, .. }) =
             region.instructions()[offset as usize].field_lookup() else { return None };
         Some((usize::from(cache_site), observation.native_field_loads.get(index)?.clone()))
-    }))
+    });
+    let stores = observation.store_loads.iter().map(|(site, loads)| (usize::from(*site), loads.clone()));
+    super::lane_region::flat_table(reads.chain(stores))
 }
 
 impl OsrFacts {
@@ -262,9 +290,9 @@ impl OsrFacts {
 /// The element reads through an array observed to hold int32s or Numbers (`number_arrays`), where
 /// no earlier body left (`generic`) and none was `abandoned`: typed, each leaving at an element
 /// that is not one. A lane body's observation is its entry activation's array parameters.
-pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
+pub(super) fn observed_reads(program: &ResidualProgram, unit: &lane_unit::Unit, number_arrays: &[(crate::bytecode::Register, crate::typed_ir::Type)],
     abandoned: &[usize], generic: &[usize]) -> Vec<super::facts::ObservedRead> {
-    unit.instructions.iter().enumerate()
+    let mut reads: Vec<super::facts::ObservedRead> = unit.instructions.iter().enumerate()
         .filter(|(pc, instruction)| instruction.op().is_get_index() && !abandoned.contains(pc))
         .filter_map(|(pc, instruction)| {
             let register = instruction.operand_b().register_index()?;
@@ -274,7 +302,15 @@ pub(super) fn observed_reads(unit: &lane_unit::Unit, number_arrays: &[(crate::by
             // once: an int32 observation it outgrew widens to Numbers before it is dropped.
             let ty = if unit.frames.is_empty() && !generic.contains(&pc) { ty } else { crate::typed_ir::Type::NUMBER };
             Some(super::facts::ObservedRead { pc, ty })
-        }).collect()
+        }).collect();
+    // A register's `length` read defines an int32: the region reads it as one
+    // (`Lowering::array_length`), leaving where it is not.
+    reads.extend(unit.instructions.iter().enumerate().filter(|(_, instruction)| super::reads_length(program, **instruction)
+        && instruction.result_flags() == 0
+        && matches!(instruction.field_lookup(), Some(crate::bytecode::FieldLookup::Atom { base, .. }) if base.register_index().is_some()))
+        .map(|(pc, _)| super::facts::ObservedRead { pc, ty: crate::typed_ir::Type::INT32 }));
+    reads.sort_by_key(|read| read.pc);
+    reads
 }
 
 /// What lowers a loop's unit: the region specializer, the same plan a lane body and a static
@@ -289,6 +325,11 @@ struct LoopPlanner<'a> {
     helpers: LaneHelpers,
     views: super::ElementViews,
     tiers: &'static Tiers,
+    /// The names method caches hold now, in a specialized run (`VmFacts::held_atoms`).
+    stores: Option<super::HeldAtoms<'a>>,
+    /// By function PC, the callees each call site reached: the lowered unit calls them by their
+    /// entries (`unit_direct_calls`).
+    unit_calls: &'a [DirectCandidates],
 }
 
 impl LoopPlanner<'_> {
@@ -298,13 +339,13 @@ impl LoopPlanner<'_> {
     /// cannot prove exactly then costs the region nothing but the inlining.
     fn plan(&self, global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
         unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, (header, backedge): (usize, usize),
-        generic: &[usize]) -> Option<super::lane_region::LoweredRegion> {
-        let number_reads = observed_reads(unit, self.observation.number_arrays, self.observation.abandoned, generic);
+        generic: &[usize], direct: &super::lane_region::DirectSites) -> Option<super::lane_region::LoweredRegion> {
+        let number_reads = observed_reads(self.program, unit, self.observation.number_arrays, self.observation.abandoned, generic);
         super::lane_region::RegionSpecializer {
             number_reads: &number_reads, int_entries: self.observation.int_entries, typed_captures: self.observation.typed_captures, int_captures: self.observation.int_captures,
             function_id: self.function_id, unit, helpers: self.helpers, fields: self.fields,
-            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, ..VmFacts::STATIC }, generic,
-            direct: &BTreeMap::new(), frame_captures: &[], isa: self.isa,
+            global_reads: &global_reads(unit, GlobalTable::Lane), facts: VmFacts { tiers: self.tiers, held_atoms: self.stores, ..VmFacts::STATIC }, generic,
+            direct, frame_captures: self.observation.frame_captures, isa: self.isa,
             entry_fields,
             plan: super::lane_region::RegionPlan { entry_bounds: self.observation.entry_bounds,
                 coverage: super::lane_region::Coverage::Loop { header, backedge, poll: true },
@@ -349,21 +390,29 @@ fn fast_pending(region: &LoopRegion, views: super::ElementViews, known: super::b
 /// declines) the function's own unit over the loop. One plan lowers a loop, the region
 /// specializer, the same plan a lane body and a static typed region use; a region it declines
 /// stays in the interpreter, with no second lowering with its own facts, widenings and entry
-/// record.
+/// record. The plain unit calls the region's direct callees by their entries (`planner.direct`);
+/// the second value says it lowered, so that its code owns them.
 fn lower_loop(planner: &LoopPlanner<'_>, region: &LoopRegion,
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads, widened: &[usize],
-) -> Option<super::lane_region::LoweredRegion> {
+) -> Option<(super::lane_region::LoweredRegion, Box<[DirectCallee]>)> {
     let program = planner.program;
-    let mut plan = |unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, header: usize, backedge: usize, generic: &[usize]|
-        planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic);
+    let mut plan = |unit: &lane_unit::Unit, entry_fields: &super::lane_region::EntryWords, header: usize, backedge: usize, generic: &[usize], direct: &super::lane_region::DirectSites|
+        planner.plan(&mut *global_reads, unit, entry_fields, (header, backedge), generic, direct);
     let inlined = region.inlining.is_some().then(|| inlining_unit(region, program)).flatten();
     inlined
         .as_ref()
-        .and_then(|(unit, fields)| plan(unit, fields.as_slice(), 0, unit.instructions.len().saturating_sub(1), &[]))
+        .and_then(|(unit, fields)| {
+            // A unit that inlined no frame calls its callees by their entries as the plain unit does:
+            // its leaves write no inlined registers, so the lane's scratch window is its callees' alone.
+            let (direct, sites) = if unit.frames.is_empty() { super::lane_facts::unit_direct_calls(unit, planner.unit_calls) } else { Default::default() };
+            plan(unit, fields.as_slice(), 0, unit.instructions.len().saturating_sub(1), &[], &sites).map(|lowered| (lowered, direct))
+        })
         .or_else(|| {
             let plain = loop_unit(program.function(planner.function_id as usize));
+            let (direct, sites) = super::lane_facts::unit_direct_calls(&plain, planner.unit_calls);
             // The plain unit's PCs are the function's, which the site's leaves name.
-            plan(&plain, plain_entry_fields(region, program).as_slice(), region.header as usize, region.backedge as usize, widened)
+            plan(&plain, plain_entry_fields(region, program).as_slice(), region.header as usize, region.backedge as usize, widened, &sites)
+                .map(|lowered| (lowered, direct))
         })
 }
 
@@ -378,7 +427,7 @@ pub(in crate::vm) fn start_osr_region(
     helpers: LaneHelpers,
     global_reads: &mut dyn FnMut(&lane_unit::Unit, GlobalTable) -> crate::vm::global_facts::GlobalReads,
     (widened, stores): (&[usize], Option<&crate::vm::method_cache::AtomBits>),
-    calls: RegionCalls,
+    mut calls: RegionCalls,
 ) -> Option<PendingOsrRegion> {
     let isa = super::super::jit_backend::target_isa().filter(|_| tier_policy::by_policy(policy).loop_tier)?;
     // The word the code reads where a call may have changed a Stable fact it folded (`Known::invalidation`).
@@ -386,20 +435,26 @@ pub(in crate::vm) fn start_osr_region(
     // The b-jit's rows hold global slots where the VM and the program run specialized (`stores` is that fact).
     let globals = (crate::jit_mode::base_regions() && region.inlining.is_none() && stores.is_some()).then(|| global_reads(&loop_unit(program.function(function_id as usize)), GlobalTable::Base));
     let known = super::base_region::Known { program, stores, reads: None, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
-    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
+    let unit_calls = std::mem::take(&mut calls.direct);
+    if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation.clone())) {
         return decided;
     }
-    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers };
-    let lowered = lower_loop(&planner, region, global_reads, widened)?;
+    // The calls' callees, by the sites that reached them: the lowered unit calls them by their entries.
+    let caller = program.function(function_id as usize);
+    let held = stores.map(|names| super::HeldAtoms { names, invalidation: invalidation.address() });
+    let planner = LoopPlanner { observation, fields: &loop_fields(region, observation), isa: &*isa, program, function_id, helpers, views, tiers, stores: held, unit_calls: &unit_calls };
+    let (lowered, direct) = lower_loop(&planner, region, global_reads, widened)?;
     let function = lowered.function;
     super::residuals::report_clif(region.header, &function);
     let clif = native_dump_directory().map(|_| function.display().to_string());
-    let facts = OsrFacts { roots: lowered.stable.roots, ..OsrFacts::observed(observation) };
+    let stable = StableFacts { atoms: lowered.stable.atoms, holders: lowered.stable.holders, ..StableFacts::default() };
+    let calls = if !direct.is_empty() { CallCode::of((Vec::new(), direct, Vec::new()), caller.registers, invalidation) } else { CallCode::holding(invalidation) };
+    let facts = OsrFacts { roots: lowered.stable.roots, stable, calls: LaneDependencies::of(std::iter::empty(), &calls.direct), ..OsrFacts::observed(observation) };
     let code = super::super::jit_backend::run_in_background(move || {
         compile_native_function(function, &*isa, REGION_CODE_BUDGET, |code| Some(code.to_vec()))
     });
     let watch = Rc::new(crate::code_dependencies::PublishedCode::new(()));
-    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), calls: CallCode::default() })
+    Some(PendingOsrRegion { code, watch, header: region.header, clif, facts, crossing: super::Crossing::General, resumes: super::base_region::ResumeTable::empty(), calls })
 }
 
 impl PendingOsrRegion {

@@ -46,6 +46,9 @@ impl Lowering<'_, '_> {
         let packed = self.observed.at(pc).is_some();
         let within = self.ranges.in_bounds(pc);
         self.held_view = array.map(|array| self.held_array(array, (packed, within)));
+        // A hoisted array's hole leaves, until the read has left often enough to be widened
+        // (`LoopTier::left_at`), whose recompile then takes the VM's read.
+        self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
         let Step::Value(value) = self.step(state, frame::Edges::ValueGuarded { miss: exit }, Operation::ElementRead { base, key })
             else { unreachable!("an element read yields a value or leaves at its miss edge") };
         if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_))) {

@@ -28,7 +28,11 @@ pub(crate) fn encode_slot(owner: SlotType, value: Value) -> Value {
 #[inline(always)]
 pub(crate) fn decode_slot(owner: SlotType, word: Value) -> Value {
     match owner.rep() {
-        Rep::Float64 => word.as_number().map_or(word, Value::number),
+        // A tagged word (an int32, a reference, the deleted marker, a word a packed or narrow form
+        // decoded) is canonical already: one tag test passes it. Only a raw double's bits take
+        // `Value::number`'s canonical form.
+        Rep::Float64 if word.is_tagged() => word,
+        Rep::Float64 => Value::number(f64::from_bits(word.to_bits())),
         Rep::Int32 | Rep::Tagged => word,
     }
 }
