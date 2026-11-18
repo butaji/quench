@@ -12939,6 +12939,43 @@ unsafe fn arguments_count<H: Host, const KEPT: bool>(cx: *mut LaneContext<H>, sl
     None
 }
 
+/// The keeping activation's `arguments` binding a local read of its slot takes (`Frame::arguments_binding`): a
+/// frame run reads its own binding as the general path does (`Vm::read_validated_local`, which materializes it);
+/// a frameless activation's is the unmaterialized marker a forwarding read passes on (`OBJECT` false), or the
+/// object made from the values it kept (`OBJECT` true, `Vm::activation_arguments_object`), which the keeping
+/// activation's last read makes. `None` where the object cannot be made: the row leaves to its miss.
+/// Subsumes the hand loads `lane_load_forwarded_arguments` and `lane_load_kept_arguments_object` of the lane.
+///
+/// # Safety
+/// `cx` is the running lane's context, and `r` its register file.
+unsafe fn kept_arguments_binding<H: Host, const OBJECT: bool>(cx: *mut (), r: Registers, slot: u16) -> Option<Value> {
+    let cx = cx.cast::<LaneContext<H>>();
+    let vm = unsafe { vm(cx) };
+    // The forwarding check: a frame run's registers hold the deleted environment marker.
+    if unsafe { (*cx).registers }.env().is_deleted() {
+        // SAFETY: validated bytecode bounds the slot by Function.locals, and the frame is the running one.
+        return Some(unsafe { vm.read_validated_local((*cx).frame(), usize::from(slot)) });
+    }
+    if !OBJECT {
+        return Some(Value::UNMATERIALIZED_ARGUMENTS);
+    }
+    let Some((function, Some(script))) =
+        vm.lane_stack.activations().last().map(|activation| (activation.function(), activation.script()))
+    else {
+        return None;
+    };
+    // SAFETY: the context's program outlives the lane run.
+    let body = unsafe { &*(*cx).code }.function(function as usize);
+    // A keeping activation's values follow its registers (`lane_activate_keeping`).
+    let kept = (0..script.argc)
+        .map(|index| r.get(body.registers + index))
+        .collect::<SmallVec<[Value; GATHERED_INLINE_VALUES]>>();
+    let context = CallContext::user_function(function, script.callee);
+    let arguments = vm.activation_arguments_object(body, context, &kept).ok()?;
+    note_allocation(vm);
+    Some(arguments)
+}
+
 /// The frameless target of a lane call to `callee`, resolved on first use.
 /// Whether `callee` is the target of a `new` whose `new.target` the general path still
 /// holds (`Vm::construct_target`): a lane activation would not bind it.
@@ -17580,8 +17617,6 @@ fn derive_lane_view<'live, H: Host>(
                             _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
                         })
                     })
-            // merge: theirs' call-forwarding and kept-arguments loads (`lane_load_forwarded_arguments`,
-            // `lane_load_kept_arguments_object`) are not ported; `checked_local_hand` reads that binding.
             } else if admits_row(op) && op.reads_arguments()
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
@@ -17591,11 +17626,18 @@ fn derive_lane_view<'live, H: Host>(
                 row.map(|row| LaneHandler { handler: row_near::<H, ARGUMENTS_COUNT>(row.handler as *const ()).unwrap_or(row.handler), ..row })
             } else if crate::staged::local_read_family(op)
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
-                && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
+                && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
             {
-                // The binding a keeping activation may leave unmaterialized is read by the local read's
-                // binding rules (the general step), which materialize it or forward its marker.
-                Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
+                // The binding a keeping activation may leave unmaterialized: its local read's row answers it
+                // (`Frame::arguments_binding`). The object is made where no forwarding call follows the read
+                // and the activation keeps its values to its last read (`KeptArguments::Passes`); else the marker.
+                let forwards = decoded.get(pc + 1).is_some_and(|next| {
+                    crate::staged::forwarded_call_family(next.op()) && next.call_window().last() == Some(instruction.result_register())
+                });
+                let object = kept == crate::bytecode::KeptArguments::Passes && !forwards;
+                tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
+                    .and_then(|row| lane_frame::kept_row::<H>(row.handler as *const (), object)
+                        .map(|handler| LaneHandler { handler, ..row }))
             } else if crate::staged::calls(op) && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
                     handler: match lane_for_of_step(&decoded, pc) {

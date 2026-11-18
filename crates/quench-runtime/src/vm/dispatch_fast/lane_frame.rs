@@ -156,6 +156,9 @@ struct Decisions {
     prototype: fn(*mut (), Value) -> Option<u32>,
     /// The base of the object record table.
     records: fn(*mut ()) -> Option<u64>,
+    /// `value instanceof constructor` by the VM's published proof of the constructor's chain (`Vm::record_instanceof`),
+    /// else the ordinary walk (`Vm::ordinary_instanceof`): neither runs guest code.
+    instance: fn(*mut (), Value, Value) -> Option<bool>,
 }
 
 impl Decisions {
@@ -165,7 +168,11 @@ impl Decisions {
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext<H>>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext<H>>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
-            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64) }
+            records: |context| unsafe { vm(context.cast::<LaneContext<H>>()) }.heap.object_record_base().map(|base| base as u64),
+            instance: |context, value, constructor| {
+                let machine = unsafe { vm(context.cast::<LaneContext<H>>()) };
+                machine.record_instanceof(value, constructor).or_else(|| machine.ordinary_instanceof(value, constructor))
+            } }
     }
 }
 
@@ -322,6 +329,10 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The running function's `arguments` count in a local slot (`arguments_count`), read only
     /// by the row that asks for it.
     arguments: Option<(*mut (), unsafe fn(*mut (), u16) -> Option<Value>)>,
+    /// The running activation's kept `arguments` binding, read only by a local read of that slot
+    /// (`FLAG_KEPT_MARKER`, `FLAG_KEPT_OBJECT`): the lane context and `kept_arguments_binding`, which
+    /// answers the binding's marker or its object (`Frame::arguments_binding`).
+    kept_binding: Option<(*mut (), unsafe fn(*mut (), Registers, u16) -> Option<Value>)>,
     /// The register a keeping activation's kept values follow its registers from (`ArgumentGet`'s
     /// record `c`, the running function's register count), read by `Frame::argument`.
     kept: u16,
@@ -784,7 +795,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -810,7 +821,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
     }
 }
 
@@ -1258,6 +1269,23 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             return None;
         }
         Some((self.registers.get(self.kept + index).to_bits(), Boxing::Value))
+    }
+
+    /// The keeping activation's `arguments` binding in local `slot` (`kept_binding`): the marker a forwarding
+    /// read passes on, the object it makes at its last read, or a frame's binding as the Vm reads it.
+    #[inline(always)]
+    fn arguments_binding(&mut self, _stage: &mut Concrete, slot: u16) -> Option<(u64, Boxing)> {
+        let (context, binding) = self.kept_binding?;
+        // SAFETY: the running lane's context and register file, live for the row's step.
+        Some((unsafe { binding(context, self.registers, slot) }?.to_bits(), Boxing::Value))
+    }
+
+    /// `value instanceof constructor` by the VM's proof of the constructor's chain, else the ordinary walk
+    /// (`Decisions::instance`), which runs no guest code; `None` where only the full algorithm decides.
+    #[inline(always)]
+    fn instance_of(&mut self, _stage: &mut Concrete, value: u64, constructor: u64) -> Option<bool> {
+        let Decisions { context, instance, .. } = self.decisions?;
+        instance(context, Value::from_bits(value), Value::from_bits(constructor))
     }
 
     /// The by-name read through the window's scope (`ScopeReads::name`): the destination and the call
@@ -1828,6 +1856,12 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
         Value::from_bits(word).as_int().map(|int| u64::from(int as u32))
     }
 
+    /// The program constant a constant operand names (`Reads::word`), which the numeric stage folds.
+    #[inline(always)]
+    fn constant_operand(&mut self, operand: Operand) -> Option<Value> {
+        (operand.kind() == Some(crate::bytecode::OperandKind::Constant)).then(|| self.reads.word(operand)).flatten()
+    }
+
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let word = self.operand_word(stage, operand)?;
         Value::from_bits(word).as_number().map(f64::to_bits)
@@ -1984,6 +2018,12 @@ pub(in crate::vm::dispatch_fast) const FLAG_LOOP: u8 = 14;
 /// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`load_capture_walk_miss`): its row decodes
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(in crate::vm::dispatch_fast) const FLAG_ROOT: u8 = 15;
+/// `FLAG` of a local read of a keeping activation's `arguments` binding that a forwarding call passes on
+/// (`CallForwardingArguments` after it): the row answers the unmaterialized marker (`kept_arguments_binding`).
+pub(in crate::vm::dispatch_fast) const FLAG_KEPT_MARKER: u8 = 17;
+/// `FLAG` of a local read of a keeping activation's `arguments` binding the activation makes into an object
+/// at its last read (`KeptArguments::Passes`): the row answers that object (`kept_arguments_binding`).
+pub(in crate::vm::dispatch_fast) const FLAG_KEPT_OBJECT: u8 = 18;
 
 /// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -2210,6 +2250,17 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
+    // A keeping activation's `arguments` binding is answered by the Vm (`kept_arguments_binding`) whatever the
+    // frame's locals hold, so the row needs no locals or window of its own: where the Vm declines it, the row
+    // leaves to its miss, as the slot's read would.
+    if const { FLAG == FLAG_KEPT_MARKER || FLAG == FLAG_KEPT_OBJECT } {
+        let binding: unsafe fn(*mut (), Registers, u16) -> Option<Value> = if const { FLAG == FLAG_KEPT_OBJECT } {
+            super::kept_arguments_binding::<H, true>
+        } else {
+            super::kept_arguments_binding::<H, false>
+        };
+        return LaneFrame::<ACC> { kept_binding: Some((cx.cast(), binding)), ..LaneFrame::<ACC>::new(r, view) };
+    }
     // A local access holds the frame's locals only in an activation without its own environment, and
     // not a root body's frame. A window record (`FLAG_WINDOW`) in an activation that holds one reads the
     // window's locals instead. Any other leaves to its miss (`row_miss`).
@@ -2323,6 +2374,29 @@ fn is_row_flagged<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) ->
     let rows: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG>, generated_row::<H, OP, ACC_A, FLAG>,
         generated_row::<H, OP, ACC_B, FLAG>, generated_row::<H, OP, ACC_C, FLAG>, generated_row::<H, OP, ACC_PAIR, FLAG>];
     rows.iter().any(|row| *row as *const () == handler)
+}
+
+/// The row of a local read of a keeping activation's `arguments` binding (`handler`, a local read row at its unread
+/// flag, any accumulator) at the kept flag: `FLAG_KEPT_OBJECT` where the binding makes an object (`object`), else
+/// `FLAG_KEPT_MARKER`. `None` where `handler` is no local read row. Subsumes the forwarded and kept-object loads
+/// (`lane_load_forwarded_arguments`, `lane_load_kept_arguments_object`) of the lane's hand handlers.
+pub(in crate::vm::dispatch_fast) fn kept_row<H: Host>(handler: *const (), object: bool) -> Option<Handler> {
+    kept_row_of::<H, { crate::staged::LOCAL_LOAD_ROW }>(handler, object)
+        .or_else(|| kept_row_of::<H, { crate::staged::LOAD_LOCAL_PLAIN_ROW }>(handler, object))
+}
+
+/// `kept_row` for opcode `OP`'s rows.
+fn kept_row_of<H: Host, const OP: u16>(handler: *const (), object: bool) -> Option<Handler> {
+    if object { kept_row_at::<H, OP, FLAG_KEPT_OBJECT>(handler) } else { kept_row_at::<H, OP, FLAG_KEPT_MARKER>(handler) }
+}
+
+/// `kept_row_of` at one kept `FLAG`: opcode `OP`'s row at `FLAG` for the accumulator field its unread row carries.
+fn kept_row_at<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) -> Option<Handler> {
+    let unread: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG_UNREAD>, generated_row::<H, OP, ACC_A, FLAG_UNREAD>,
+        generated_row::<H, OP, ACC_B, FLAG_UNREAD>, generated_row::<H, OP, ACC_C, FLAG_UNREAD>, generated_row::<H, OP, ACC_PAIR, FLAG_UNREAD>];
+    let kept: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG>, generated_row::<H, OP, ACC_A, FLAG>,
+        generated_row::<H, OP, ACC_B, FLAG>, generated_row::<H, OP, ACC_C, FLAG>, generated_row::<H, OP, ACC_PAIR, FLAG>];
+    unread.iter().position(|row| *row as *const () == handler).map(|position| kept[position])
 }
 
 /// `staged::step` of opcode `$op`'s row, compiled as only the part the row reaches

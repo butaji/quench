@@ -147,7 +147,7 @@ mod stage;
 pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
-pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
+pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_arguments_binding, read_initialized_local, read_local, write_initialized_local, write_local};
 
 /// Where a row goes when its frame cannot decide a step: the VM's general step (`General`, which
 /// runs the interpreter's own step in place for every opcode the general path covers); for a

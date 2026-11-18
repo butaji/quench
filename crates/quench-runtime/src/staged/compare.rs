@@ -216,13 +216,22 @@ fn decided_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 /// The longest prototype chain a word walk follows: a longer one is the VM's decision.
 const PROTOTYPE_WALK_LINKS: u32 = 16;
 
-/// Whether `value instanceof constructor` holds. Where the frame holds the constructor's `prototype`
-/// as a Stable fact (`NumericFrame::stable_prototype`) the value's own words decide it by a walk
-/// of its prototype links (`walked_instanceof`), and the VM the pairs they leave; with no such
-/// fact, or no object record table to walk in, it is the VM's decision.
+/// Whether `value instanceof constructor` holds. Subsumes the hand `instanceof` relations of the lane
+/// (`lane_instanceof_value`, `lane_instanceof_value_walk`, and the jump forms `lane_instanceof_jump_true`,
+/// `lane_jump_instanceof_false`, which are this comparison under a `JumpTrue` or `JumpFalse`). The frame's own proof of the constructor's chain
+/// (`Frame::instance_of`: a published watch, or an ordinary walk that runs no guest code) decides it
+/// first where it holds. Else, where the frame holds the constructor's `prototype` as a Stable fact
+/// (`NumericFrame::stable_prototype`) the value's own words decide it by a walk of its prototype links
+/// (`walked_instanceof`), and the VM the pairs they leave; with no such fact, or no object record table
+/// to walk in, it is the VM's decision.
 #[inline(always)]
 fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operands: [Operand; 2]) -> Option<S::Cond> {
     let [value, constructor] = operands;
+    if let (Some(left), Some(right)) = (frame.operand_word(stage, value), frame.operand_word(stage, constructor))
+        && let Some(holds) = frame.instance_of(stage, left, right)
+    {
+        return Some(holds);
+    }
     let target = constructor.register_index().and_then(|register| frame.stable_prototype(stage, register));
     let Some(target) = target else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
     let Some(records) = frame.object_records(stage) else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
@@ -266,7 +275,7 @@ fn walked_instanceof<S: NumericStage>(stage: &mut S, (records, value): (S::Word,
 fn bitwise<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, [left, right]: [Operand; 2],
     operation: NumberBitwise) -> Option<S::Cond> {
     let miss = frame.miss();
-    let (left, right) = (frame.int32_operand(stage, left, miss)?, frame.int32_operand(stage, right, miss)?);
+    let (left, right) = (super::numeric::bitwise_word(stage, frame, left, miss)?, super::numeric::bitwise_word(stage, frame, right, miss)?);
     let bits = stage.int_bitwise(operation, left, right);
     let zero = stage.i32_is_zero(bits);
     Some(stage.not(zero))
