@@ -153,7 +153,7 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::IcGet => { let ic = decoded.ic.unwrap_or_default(); [dst_hole, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        Heap::IcGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
         Heap::IcSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
@@ -172,6 +172,8 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::Store | Heap::TypedStore(_) => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index | Heap::TypedIndex(_) if entry => [dst_hole, decoded.hole, b_hole],
+        // A narrow element decodes through the upper-word table (`elements::record_element`).
+        Heap::Index => return padded_holes([dst_hole, a_hole, b_hole, 0, crate::value::NarrowLayout::upper_words() as u64]),
         Heap::Field | Heap::TypedLength => [dst_hole, decoded.hole, 0],
         Heap::Instanceof => {
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));

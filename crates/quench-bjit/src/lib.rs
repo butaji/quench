@@ -335,7 +335,7 @@ mod rustc_tests {
     }
 
     /// The cache rows (`stencils/ic_rows.rs`) patch the holes `base_rows` fills: a get its
-    /// destination, receiver, shape and slot offset (a holder read also the holder's shape), a
+    /// destination and receiver, the upper-word table, shape and slot offset (a holder read also the holder's shape), a
     /// store its receiver, value, atom, shape and slot offset; a chained row's hit takes the
     /// branch target and the last entry's miss takes the exit.
     #[test]
@@ -349,8 +349,9 @@ mod rustc_tests {
             let successors: Vec<u32> = stencil.relocs.iter().filter(|reloc| crate::class::is_successor(reloc.class)).map(|reloc| reloc.index).collect();
             (values, successors)
         };
-        assert_eq!(row(IC_GET_ROW, false).0, [0, 1, 2, 3]);
-        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 1, 2, 3, 4]);
+        // A get's receiver offset (hole 0's upper half) and upper-word table (hole 1) are 64-bit fields.
+        assert_eq!(row(IC_GET_ROW, false).0, [0, 2, 3]);
+        assert_eq!(row(IC_GET_HOLDER_ROW, false).0, [0, 2, 3, 4]);
         assert_eq!(row(IC_SET_ROW, false).0, [0, 1, 2, 3, 4]);
         for heap in [IC_GET_ROW, IC_GET_HOLDER_ROW, IC_SET_ROW] {
             let (last, chained) = (row(heap, false).1, row(heap, true).1);
