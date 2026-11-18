@@ -819,7 +819,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     /// Whether `atom` is a var of this function's frame. A script's root keeps none: its vars
     /// are the global object's, which a root whose names resolve statically reaches by name, as
-    /// its functions do (`lane_load_name_bound`).
+    /// its functions do (`name_row`).
     pub(super) fn frame_var(&self, atom: Atom) -> bool {
         self.function_scope.contains(&atom)
             && (self.function_id != 0 || self.owner.module_goal || self.owner.eval_context.is_some() || self.owner.dynamic_binding_scopes != 0)

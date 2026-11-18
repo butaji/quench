@@ -146,7 +146,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
     match op.staged() {
         Some(Decoder::Flow) => RowStep::Flow,
         Some(Decoder::Local) => RowStep::Local,
-        Some(Decoder::Names) => RowStep::Names,
+        Some(Decoder::Names) | Some(Decoder::Proved) => RowStep::Names,
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
         Some(Decoder::Generic) => if matches!(op, Op::Unary) { RowStep::Full } else { RowStep::Generic },

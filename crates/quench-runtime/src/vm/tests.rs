@@ -20245,7 +20245,7 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
     // By-name loads of the global `undefined`, of globals a call reads (whose receiver is
     // `undefined`: a strict function's `this`, globalThis for a sloppy one), of intrinsic
     // names (`{ __proto__: v }`, `super`) and of intrinsic natives, run from their first
-    // resolution to their bound reads (`lane_load_name_resolve`, `lane_load_name_bound`). The
+    // resolution to their bound reads (`lane_load_name_resolve`, `name_row`). The
     // expected values are Node's.
     let source = r#"
       function hot(f) { var s = 0; for (var i = 0; i < 3000; i++) s = (s + f(i)) | 0; return s; }
@@ -20317,7 +20317,7 @@ fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
 #[cfg(not(quench_profiled))]
 #[test]
 fn global_reads_follow_redefinition_deletion_accessors_and_later_lexical_declarations() {
-    // Hot reads of global bindings (`lane_load_name_bound`) across every change of what the
+    // Hot reads of global bindings (`name_row`) across every change of what the
     // name resolves to; the expectations are Node's, each script run as its own global Script.
     let first = r#"
 function hot(read) { var s = 0; for (var i = 0; i < 2000; i++) s = (s + read()) | 0; return s; }

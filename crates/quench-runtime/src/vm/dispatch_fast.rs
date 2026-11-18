@@ -406,7 +406,7 @@ pub(super) struct LaneView {
     /// hold, whose own-field hints a shape compaction clears.
     field_records: Box<[u32]>,
     /// The by-name load and store records past the loop headers its sites hold, whose
-    /// global-object hints (`lane_load_name_bound`, the `StoreName` row's `global_name_store`)
+    /// global-object hints (`name_row`, the `StoreName` row's `global_name_store`)
     /// a shape compaction clears, and a change of the global
     /// lexical names they answer past (`LaneView::clear_name_hints`).
     name_records: Box<[u32]>,
@@ -1131,7 +1131,7 @@ impl LaneView {
         self.held_hints(&self.field_records)
     }
 
-    /// How many of its by-name loads hold a global-object hint (`lane_load_name_bound`).
+    /// How many of its by-name loads hold a global-object hint (`name_row`).
     #[cfg(all(test, not(quench_profiled)))]
     pub(super) fn held_name_hints(&self) -> usize {
         self.held_hints(&self.name_records)
@@ -3316,7 +3316,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, staged_require_iterator_result, staged_typeof_index, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, staged_property_key};
 
 
 lane_handler! {
@@ -14746,7 +14746,7 @@ const LOAD_NAME_CALL: u8 = 1;
 /// `LOAD_NAME` for `LoadNameTypeof`.
 const LOAD_NAME_TYPEOF: u8 = 2;
 
-/// What a by-name load's first run resolves its name to: the `lane_load_name_bound` instance its
+/// What a by-name load's first run resolves its name to: the `name_row` instance its
 /// record runs from then on, which holds the binding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum NameResolution {
@@ -14768,15 +14768,6 @@ enum NameResolution {
     /// Any other name, which the general path resolves.
     General,
 }
-
-/// A `lane_load_name_bound` that reads the native an internal name stands for.
-const BOUND_NATIVE: u8 = 0;
-/// A `lane_load_name_bound` of the global `undefined`.
-const BOUND_UNDEFINED: u8 = 1;
-/// A `lane_load_name_bound` that reads the global object's own data field its record's hint names.
-const BOUND_GLOBAL: u8 = 2;
-/// A `lane_load_name_bound` of an intrinsic name.
-const BOUND_INTRINSIC: u8 = 3;
 
 /// The resolution of the by-name load of `atom` in the function `cx` runs. A native an internal
 /// name stands for is recorded for its reads (`Vm::intrinsic_natives`). An internal name is no
@@ -14811,16 +14802,22 @@ fn lane_name_resolution<H: Host>(cx: *mut LaneContext<H>, atom: u32) -> NameReso
 }
 
 script_handler! {
-    /// A by-name load's first run: the VM's resolution of its name (`lane_name_resolution`) fills
-    /// the record, whose handler from then on is the `lane_load_name_bound` instance holding the
-    /// binding, or leaves every run to the general path. `KIND` is the load's (`LOAD_NAME`).
+    /// A by-name load's first run, the miss its generated row takes (`name_load_miss`): the VM's
+    /// resolution of its name (`lane_name_resolution`) fills the record, whose handler from then on
+    /// is the row instance (`name_row`) holding the binding, or leaves every run to the general
+    /// path. `KIND` is the load's (`LOAD_NAME`).
     #[inline(never)]
     fn lane_load_name_resolve<KIND: u8>(cx, r, ip, i, view) {
+        let load = match KIND {
+            LOAD_NAME_CALL => crate::staged::NameLoad::Call,
+            LOAD_NAME_TYPEOF => crate::staged::NameLoad::Typeof,
+            _ => crate::staged::NameLoad::Read,
+        };
         let bound: Handler = match lane_name_resolution(cx, i.imm()) {
-            NameResolution::Native => lane_load_name_bound::<H, KIND, BOUND_NATIVE>,
-            NameResolution::Undefined => lane_load_name_bound::<H, KIND, BOUND_UNDEFINED>,
-            NameResolution::Global => lane_load_name_bound::<H, KIND, BOUND_GLOBAL>,
-            NameResolution::Intrinsic => lane_load_name_bound::<H, KIND, BOUND_INTRINSIC>,
+            NameResolution::Native => name_row::<H, FLAG_NAME_NATIVE>(load),
+            NameResolution::Undefined => name_row::<H, FLAG_NAME_UNDEFINED>(load),
+            NameResolution::Global => name_row::<H, FLAG_NAME_GLOBAL>(load),
+            NameResolution::Intrinsic => name_row::<H, FLAG_NAME_INTRINSIC>(load),
             NameResolution::General => {
                 // SAFETY: the context's program outlives the lane run.
                 let code = unsafe { &*(*cx).code };
@@ -14840,41 +14837,6 @@ script_handler! {
         };
         requicken::<H>(ip, bound);
         sibling!(bound, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-/// The binding the record `i` of `lane_load_name_bound::<_, _, BOUND>` holds: a global's is its
-/// record's own-field hint.
-#[inline(always)]
-fn lane_name_binding<const BOUND: u8>(i: &LaneInstruction) -> NameBinding {
-    match BOUND {
-        BOUND_NATIVE => NameBinding::Read(NameRead::Native),
-        BOUND_UNDEFINED => NameBinding::Undefined,
-        BOUND_GLOBAL => NameBinding::Read(NameRead::Field(i.field_hint())),
-        BOUND_INTRINSIC => NameBinding::Read(NameRead::Intrinsic),
-        _ => unreachable!("a bound name load holds one of the BOUND_ bindings"),
-    }
-}
-
-script_handler! {
-    /// A by-name load whose first run resolved its name (`lane_load_name_resolve`): the staged
-    /// `LoadName` row over the binding `BOUND` names, whose call receiver (`LOAD_NAME_CALL`) is
-    /// `undefined`, as for any global. A global object's own data field is read through its
-    /// record's hint (`LaneInstruction::field_hint`): one shape test and one load, the hint set
-    /// only while no realm declares the name lexically (`Vm::global_name_hintable`), a
-    /// declaration clearing it (`Vm::note_global_lexical_names`), and the global object's
-    /// deletes, redefinitions and storage changes changing its exact shape. A read the binding
-    /// does not answer takes its residual: a global's `lane_load_global_name_refresh`, a native's
-    /// resolution again, and an intrinsic name's the general path.
-    fn lane_load_name_bound<KIND: u8, BOUND: u8>(cx, r, ip, i, view) {
-        if !staged_load_name(cx, r, i, KIND == LOAD_NAME_CALL, lane_name_binding::<BOUND>(i)) {
-            match BOUND {
-                BOUND_GLOBAL => sibling!(lane_load_global_name_refresh::<H, KIND, false>, r, ip, Carried::script_in(cx, view)),
-                BOUND_NATIVE => sibling!(lane_load_name_resolve::<H, KIND>, r, ip, view),
-                _ => return exit(ip),
-            }
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
 
@@ -14946,7 +14908,7 @@ script_handler! {
 script_handler! {
     /// A `LoadName` the general path's probe found landing on the global object
     /// (`settle_name_record`): the global object's own data field its record's hint names
-    /// (`LaneInstruction::field_hint`), one shape test and one load, as `lane_load_name_bound`
+    /// (`LaneInstruction::field_hint`), one shape test and one load, as `name_row`
     /// reads a global. Any other read takes `lane_load_global_name_refresh`. A `LoadNameCall`
     /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding.
     fn lane_load_global_name<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
@@ -14963,7 +14925,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_load_name_bound` of a global, or `lane_load_global_name`, past its record's hint: an
+    /// `name_row` of a global, or `lane_load_global_name`, past its record's hint: an
     /// initialized global lexical binding of
     /// the name, which the general path's search finds first there; else the global object's
     /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
@@ -21167,9 +21129,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::CallSpread => Some(lane_call_spread::<H>),
         Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
-        Class::LoadName => Some(lane_load_name_resolve::<H, LOAD_NAME>),
-        Class::LoadNameCall => Some(lane_load_name_resolve::<H, LOAD_NAME_CALL>),
-        Class::LoadNameTypeof => Some(lane_load_name_resolve::<H, LOAD_NAME_TYPEOF>),
         Class::MakeObject2 => Some(lane_make_object2::<H>),
         Class::MakeClosure => Some(lane_make_closure::<H>),
         Class::MakeObjectLiteral => Some(lane_make_object_literal::<H>),
@@ -22826,7 +22785,7 @@ fn derive_lane_view<'live, H: Host>(
 
 /// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
 /// operand: every field read or store's of its receiver, and a global name access's or top-level
-/// `var` capture read's of the global object (`lane_load_name_bound`, `lane_load_root_var`).
+/// `var` capture read's of the global object (`name_row`, `lane_load_root_var`).
 fn holds_field_hint(op: Op) -> bool {
     op.is_field_store() || op.is_get_field() || op.is_load_capture() || is_global_name_access(op)
 }

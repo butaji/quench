@@ -456,6 +456,19 @@ impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
         Some(())
     }
 
+    /// `LoadNameTypeof`'s read of the name: the binding's value, where the binding answers it. An
+    /// absent name answers nothing, which the row's miss settles (`typeof` reads it as `undefined`).
+    #[inline(always)]
+    fn global_typeof(&mut self, _stage: &mut Concrete, destination: Register, atom: u32, _site: u16) -> Option<()> {
+        let host = self.host?;
+        let value = match host.name? {
+            NameBinding::Undefined => Value::UNDEFINED,
+            // SAFETY: the reader was made for the lane context this frame runs in.
+            NameBinding::Read(read) => unsafe { (host.read_name)(host.cx, read, atom) }?,
+        };
+        self.registers.set(destination, value);
+        Some(())
+    }
     #[inline(always)]
     fn global_write(&mut self, _stage: &mut Concrete, _source: Register, atom: u32, _site: u16, value: u64, _initialize: bool) -> Option<()> {
         let GlobalStore { cx, hint, store } = self.global_store?;
@@ -624,6 +637,16 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
 pub(in crate::vm::dispatch_fast) const FLAG_UNREAD: u8 = 0;
 pub(in crate::vm::dispatch_fast) const FLAG_CLEAR: u8 = 1;
 pub(in crate::vm::dispatch_fast) const FLAG_SET: u8 = 2;
+/// `lane_row`'s `FLAG` for a by-name load (`NameLoad`) whose first run resolved its name to a
+/// native an internal name stands for (`NameRead::Native`).
+pub(in crate::vm::dispatch_fast) const FLAG_NAME_NATIVE: u8 = 3;
+/// `FLAG` of a by-name load resolved to the global `undefined` (`NameBinding::Undefined`).
+pub(in crate::vm::dispatch_fast) const FLAG_NAME_UNDEFINED: u8 = 4;
+/// `FLAG` of a by-name load resolved to the global object's own data field its record's hint
+/// names (`NameRead::Field`).
+pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL: u8 = 5;
+/// `FLAG` of a by-name load resolved to an intrinsic name (`NameRead::Intrinsic`).
+pub(in crate::vm::dispatch_fast) const FLAG_NAME_INTRINSIC: u8 = 6;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -649,6 +672,22 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
+    if const { crate::staged::name_load(LaneFields::<OP>::OPCODE).is_some() } {
+        // A by-name load reads the binding its record's first run resolved (`FLAG`, `name_row`);
+        // an unresolved record holds none, so its row misses to the resolve (`name_load_miss`).
+        let binding = match FLAG {
+            FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
+            FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
+            FLAG_NAME_GLOBAL => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
+            FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
+            _ => None,
+        };
+        let frame = LaneFrame::<ACC>::hosted::<H>(r, view, cx);
+        return match binding {
+            Some(binding) => frame.named(binding),
+            None => frame,
+        };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
         // A count the view proved to read its function's kept arguments (`FLAG_SET`) takes a
@@ -703,7 +742,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
 /// a capture access the lane's own slow arm, which walks the scopes and requickens the record to
 /// the root binding it finds (`lane_load_capture_walk`, `lane_store_outer_capture`), or for a
 /// `ToPropertyKey` the lane's integer and symbol answers (`lane_to_property_key`).
-const fn row_miss<H: Host>(op: Op) -> Handler {
+const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
         crate::staged::Miss::StoreThroughScopes => super::lane_store_outer_capture::<H>,
@@ -712,8 +751,41 @@ const fn row_miss<H: Host>(op: Op) -> Handler {
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
         crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
+        crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
         crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }
             | crate::staged::Miss::CompareChain => lane_general_step::<H>,
+    }
+}
+
+/// The row handler of by-name load `load` for a record in binding state `FLAG` (`lane_row`'s
+/// instantiation over the load's opcode, with an accumulator-free record, since a load answers
+/// no accumulator).
+pub(in crate::vm::dispatch_fast) const fn name_row<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) -> Handler {
+    match load {
+        crate::staged::NameLoad::Read => lane_row::<H, { crate::staged::LOAD_NAME_ROW }, ACC_NONE, FLAG> as Handler,
+        crate::staged::NameLoad::Call => lane_row::<H, { crate::staged::LOAD_NAME_CALL_ROW }, ACC_NONE, FLAG> as Handler,
+        crate::staged::NameLoad::Typeof => lane_row::<H, { crate::staged::LOAD_NAME_TYPEOF_ROW }, ACC_NONE, FLAG> as Handler,
+    }
+}
+
+/// Where a by-name load's row leaves when its binding does not answer it: the first run (and a
+/// native's, which is resolved again) resolves the name (`lane_load_name_resolve`); a global's
+/// read takes its refresh (`lane_load_global_name_refresh`); an undefined or intrinsic read takes
+/// the general path, which the lane exits to.
+const fn name_load_miss<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) -> Handler {
+    match load {
+        crate::staged::NameLoad::Read => name_miss_kind::<H, FLAG, { super::LOAD_NAME }>(),
+        crate::staged::NameLoad::Call => name_miss_kind::<H, FLAG, { super::LOAD_NAME_CALL }>(),
+        crate::staged::NameLoad::Typeof => name_miss_kind::<H, FLAG, { super::LOAD_NAME_TYPEOF }>(),
+    }
+}
+
+/// `name_load_miss` for the by-name load of kind `KIND`.
+const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
+    match FLAG {
+        FLAG_NAME_GLOBAL => super::lane_load_global_name_refresh::<H, KIND, false> as Handler,
+        FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC => super::lane_exit::<H> as Handler,
+        _ => super::lane_load_name_resolve::<H, KIND> as Handler,
     }
 }
 
@@ -839,6 +911,10 @@ lane_handler! {
             Operation::decode_generic(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             Operation::decode_names(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
+            // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
+            // proof is the unit.
+            Operation::decode_load_name(crate::staged::Fields::wide(fields), ())
         } else {
             None
         };
@@ -862,7 +938,7 @@ lane_handler! {
                 // No record reads a non-producer's accumulator (`derive_lane_view`).
                 next!(cx, r, following(ip), view)
             }
-            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
+            Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
         }
     }
 }
@@ -895,7 +971,7 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
 ///
 /// # Safety
 /// `cx` is the running lane's context. Called through `LaneHost::read_name`, a constant
-/// function pointer in the inlined frame `staged_load_name` builds, so the call inlines.
+/// function pointer in the inlined frame `row_frame` builds for a by-name load, so the call inlines.
 #[inline(always)]
 unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
@@ -1032,16 +1108,4 @@ pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [des
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
-}
-
-/// The by-name load of record `i` (a call's, with a receiver, where `call`) by the staged
-/// `LoadName` row over `binding`, in the lane context `cx`'s own run; false, writing nothing,
-/// where the binding does not answer it.
-#[inline(always)]
-pub(super) fn staged_load_name<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction, call: bool,
-    binding: NameBinding) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx).named(binding);
-    let row = Operation::LoadName { destination: i.a, atom: i.imm(), site: i.c, receiver: call.then_some(i.b), proof: () };
-    matches!(crate::staged::step(&mut stage, &mut frame, row), Step::Value(_))
 }

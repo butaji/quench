@@ -153,6 +153,29 @@ pub(crate) enum Miss {
     /// `ToPropertyKey` of a value the frame leaves (an integer's decimal key, a symbol): the
     /// lane's own answer for it, else the general step.
     PropertyKeyValue,
+    /// A by-name load the frame does not answer: its first run resolves the name, and a later
+    /// run whose binding misses takes that binding's residual (`NameLoad`).
+    NameLoad(NameLoad),
+}
+
+/// The by-name loads a `LoadName` family row answers: a plain read, a call's read with its
+/// receiver (`LoadNameCall`), and `typeof`'s read of an absent name as `undefined`
+/// (`LoadNameTypeof`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NameLoad {
+    Read,
+    Call,
+    Typeof,
+}
+
+/// The by-name load `op` is, or `None` for any other opcode.
+pub(crate) const fn name_load(op: Op) -> Option<NameLoad> {
+    match op {
+        Op::LoadName => Some(NameLoad::Read),
+        Op::LoadNameCall => Some(NameLoad::Call),
+        Op::LoadNameTypeof => Some(NameLoad::Typeof),
+        _ => None,
+    }
 }
 
 /// The row of `op`'s miss route (`Miss`).
@@ -166,9 +189,12 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::StoreName => Miss::StoreNameFirst,
         Op::JumpBinaryFalse => Miss::CompareChain,
         Op::ToPropertyKey => Miss::PropertyKeyValue,
-        _ => match truth_jump(op) {
-            Some(taken) => Miss::CellTruth { taken },
-            None => Miss::General,
+        _ => match name_load(op) {
+            Some(load) => Miss::NameLoad(load),
+            None => match truth_jump(op) {
+                Some(taken) => Miss::CellTruth { taken },
+                None => Miss::General,
+            },
         },
     }
 }
@@ -196,6 +222,11 @@ pub(crate) const COMPARE_JUMP_ROW: u16 = Op::JumpBinaryFalse as u16;
 pub(crate) const fn compare_jump(op: Op) -> bool {
     matches!(op, Op::JumpBinaryFalse)
 }
+/// The opcodes of the by-name load rows, one per `NameLoad`, which a tier names to instantiate
+/// the row of a binding it resolved (`lane_frame::name_row`).
+pub(crate) const LOAD_NAME_ROW: u16 = Op::LoadName as u16;
+pub(crate) const LOAD_NAME_CALL_ROW: u16 = Op::LoadNameCall as u16;
+pub(crate) const LOAD_NAME_TYPEOF_ROW: u16 = Op::LoadNameTypeof as u16;
 
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global

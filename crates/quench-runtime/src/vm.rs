@@ -623,7 +623,7 @@ struct Realm {
     globals: Value,
     /// Every global lexical name of the realm, including every bound one
     /// (`Realm::bind_global_lexical`), so it alone answers whether a name is one: a test every
-    /// global name load makes (`lane_load_name_bound`).
+    /// global name load makes (`name_row`).
     global_lexical_declarations: AtomSet,
     global_lexical_bindings: GlobalLexicalBindings,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
@@ -2507,7 +2507,7 @@ impl<H: Host> Vm<H> {
         }
     }
     /// A global lexical name was declared: it may shadow a global property that a global name
-    /// read's hint names (`dispatch_fast::lane_load_name_bound`), so every such hint is
+    /// read's hint names (`dispatch_fast::name_row`), so every such hint is
     /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
     pub(super) fn note_global_lexical_names(&self) {
         self.programs.clear_global_name_hints();
