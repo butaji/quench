@@ -677,6 +677,9 @@ struct ProgramEntry {
     function_sources: FxHashMap<u32, Value>,
     /// Each RegExp literal site's record, shared by every object it evaluates to.
     regexp_literals: Vec<Option<Rc<crate::heap::RegExpMeta>>>,
+    /// The one object each receiver-only literal site evaluates to while it cannot escape
+    /// (`RegExpLiteralSite::receiver`, `Vm::regexp_literal_receiver`).
+    regexp_receivers: FxHashMap<u32, Value>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -1316,6 +1319,7 @@ impl ProgramStore {
             const_arrays: FxHashMap::default(),
             function_sources,
             regexp_literals,
+            regexp_receivers: FxHashMap::default(),
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
@@ -2754,6 +2758,18 @@ impl ProgramStore {
         self.entry(id)?.regexp_literals.get(site)?.clone()
     }
 
+    /// The object receiver-only literal `site` of program `id` shares, once one was made.
+    pub(crate) fn regexp_literal_receiver(&self, id: ProgramId, site: usize) -> Option<Value> {
+        self.entry(id)?.regexp_receivers.get(&u32::try_from(site).ok()?).copied()
+    }
+
+    /// Keeps `object` as the one object receiver-only literal `site` evaluates to.
+    pub(crate) fn cache_regexp_literal_receiver(&mut self, id: ProgramId, site: usize, object: Value) {
+        if let (Some(entry), Ok(site)) = (self.entry_mut(id), u32::try_from(site)) {
+            entry.regexp_receivers.insert(site, object);
+        }
+    }
+
     pub(crate) fn cache_regexp_literal_meta(
         &mut self,
         id: ProgramId,
@@ -2801,6 +2817,7 @@ impl ProgramStore {
             }
             roots.extend_from_slice(&entry.constants);
             roots.extend(entry.function_sources.values().copied());
+            roots.extend(entry.regexp_receivers.values().copied());
             roots.extend(entry.module_environment);
             roots.extend(entry.import_meta);
             roots.extend(entry.module_imports.iter().map(|(_, import)| match import {

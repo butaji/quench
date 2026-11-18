@@ -373,6 +373,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     for site in &program.regexp_literal_sites {
         out.u32(site.pattern_constant);
         out.u32(site.flags_constant);
+        out.bool(site.receiver);
     }
     out.u32(program.literal_templates.len() as u32);
     for template in &program.literal_templates {
@@ -690,6 +691,7 @@ fn decode_program(
         Ok(RegExpLiteralSite {
             pattern_constant: input.u32()?,
             flags_constant: input.u32()?,
+            receiver: input.bool()?,
         })
     })?;
     let literal_templates = input.list(|input| {
