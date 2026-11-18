@@ -74,7 +74,6 @@ pub(in crate::vm) use store_domains::store_domains;
 use relocs::RelocKind; pub(super) use relocs::{atom_symbol, helper_symbol, numeric_symbol};
 use captures::RootedRead;
 #[path = "lane_region/constructions.rs"] mod constructions;
-#[path = "lane_region/virtual_objects.rs"] mod virtual_objects;
 #[path = "lane_region/dense_elements.rs"] mod dense_elements;
 #[path = "lane_region/dense_appends.rs"] mod dense_appends;
 #[path = "lane_region/bindings.rs"] mod bindings;
@@ -205,8 +204,6 @@ struct State {
     /// What the jump just stepped proved of a register along each of its edges
     /// (`Frame::refine`), applied to the successors' states (`State::narrow`) once it branches.
     refinements: smallvec::SmallVec<[(crate::staged::Edge, Register, Type); INLINE_EDGE_REFINEMENTS]>,
-    /// Receivers kept as their field values (`virtual_objects`), each live in its register.
-    virtuals: smallvec::SmallVec<[virtual_objects::VirtualObject; 1]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -283,7 +280,7 @@ impl LocalProofs {
 
 impl State {
     fn canonical(registers: usize) -> Self {
-        Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(), proofs: LocalProofs {
+        Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: vec![None; registers + 1], readable: CompoundBitSet::with_capacity(registers + 1),
             layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
@@ -450,7 +447,6 @@ struct GuardExit {
     block: ir::Block,
     values: Vec<RegisterFact>,
     homed: CompoundBitSet,
-    virtuals: smallvec::SmallVec<[virtual_objects::VirtualObject; 1]>,
     pc: u32,
     line: u32,
 }
@@ -854,8 +850,6 @@ impl<'a, 'f> Lowering<'a, 'f> {
             if self.unit.frames[frame].recovery != super::lane_unit::CallRecovery::RestartCall { break; }
             pc = self.unit.markers[frame];
         }
-        // A kept receiver the interpreter reads is an object again (`virtual_objects`).
-        if !state.virtuals.is_empty() { self.materialize_virtuals(state, pc); }
         let stored = self.stored_at(state, pc);
         self.materialize_inlined(state, pc);
         // A caller-frame leave of a body differs from another storing the same registers only
@@ -882,12 +876,12 @@ impl<'a, 'f> Lowering<'a, 'f> {
         // A guard after another that leaves at the same PC from the same facts shares its
         // block: the leave it builds is the same, and SSA joins the variables' values.
         if !self.vm.diagnostics && let Some(last) = self.pending.last()
-            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed && last.virtuals == state.virtuals {
+            && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed {
             return last.block;
         }
         let block = self.builder.create_block();
         self.builder.set_cold_block(block);
-        self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(), virtuals: state.virtuals.clone(),
+        self.pending.push(GuardExit { block, values: state.values.clone(), homed: state.proofs.homed.clone(),
             pc, line: std::panic::Location::caller().line() });
         block
     }
@@ -1954,9 +1948,9 @@ pub(super) fn lower(
     // A prefix pays for its entry with a loop, or with the calls it runs inlined.
     if matches!(coverage, Coverage::PrefixFrom(_)) && !lowering.backedge && unit.frames.is_empty() { return None; }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Tail, now - mark); mark = now; }
-    for GuardExit { block, values, homed, virtuals, pc, line } in lowering.take_leaves() {
+    for GuardExit { block, values, homed, pc, line } in lowering.take_leaves() {
         lowering.switch_to(block, true);
-        let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals };
+        let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new() };
         if lowering.vm.diagnostics {
             let line = lowering.raw_const(Lane::I64, i64::from(line));
             lowering.store_word(regions::dispatch(), line, lowering.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
@@ -2112,8 +2106,6 @@ impl Lowering<'_, '_> {
     /// `state` past a join with `incoming`: each register's facts as both paths prove them.
     /// A join no verified fact describes invalidates the region.
     fn join_states(&mut self, state: &mut State, incoming: &State, pc: usize) {
-        // A kept receiver never reaches a join: the block that would carry it allocates it.
-        if !state.virtuals.is_empty() || !incoming.virtuals.is_empty() { self.valid = false; }
         // Only the same pre-branch SSA definition can survive both numeric arms.
         state.proofs.fields.retain(|field| incoming.proofs.fields.contains(field));
         state.join_kept_shapes(incoming);
@@ -2623,22 +2615,6 @@ impl Lowering<'_, '_> {
         }
         if let Some(read) = self.hoisted.get(&pc).copied() {
             self.hoisted_read(state, pc, instruction, read);
-            return true;
-        }
-        // Kept receivers (`virtual_objects`): a dead one is dropped, a read of a field it keeps
-        // is its value, and an instruction that needs it as an object allocates it first.
-        if !state.virtuals.is_empty() {
-            state.virtuals.retain(|kept| self.is_live(pc, kept.register));
-            if instruction.op().is_get_field() && let Some(falls) = self.virtual_field(state, pc, instruction) {
-                self.native += 1;
-                return falls;
-            }
-            if !state.virtuals.is_empty() {
-                if self.keeps_virtuals(state, pc, instruction) { self.drop_overwritten_virtuals(state, instruction); } else { self.materialize_virtuals(state, pc); }
-            }
-        }
-        if let Some(plan) = self.virtual_construct_plan(pc, instruction) && self.virtual_construct(state, pc, instruction, plan) {
-            self.native += 1;
             return true;
         }
         let pc32 = pc as u32;
