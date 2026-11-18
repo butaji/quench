@@ -32,13 +32,13 @@ pub(crate) enum GeneratorLife {
     Completed,
 }
 
-/// `GeneratorLife` as the snapshot writes it, a state beside an optional continuation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GeneratorState {
-    Suspended,
-    Executing,
-    Completed,
-    AwaitingReturn,
+/// The snapshot's tags for the state a `GeneratorLife` projects to (`GeneratorRecord::parts`),
+/// beside an optional continuation.
+mod state_tag {
+    pub(super) const SUSPENDED: u8 = 0;
+    pub(super) const EXECUTING: u8 = 1;
+    pub(super) const COMPLETED: u8 = 2;
+    pub(super) const AWAITING_RETURN: u8 = 3;
 }
 
 #[derive(Clone, Debug)]
@@ -61,30 +61,30 @@ impl GeneratorRecord {
     pub(crate) fn from_parts(
         continuation: Option<Continuation>,
         realm: Value,
-        state: GeneratorState,
+        state: u8,
         requests: VecDeque<AsyncGeneratorRequest>,
     ) -> Option<Self> {
         let life = match (state, continuation.is_some()) {
-            (GeneratorState::Suspended, true) => GeneratorLife::Suspended,
-            (GeneratorState::Suspended, false) => GeneratorLife::Frameless,
-            (GeneratorState::Executing, true) => GeneratorLife::Busy,
-            (GeneratorState::Executing, false) => GeneratorLife::Executing,
-            (GeneratorState::Completed, false) => GeneratorLife::Completed,
-            (GeneratorState::AwaitingReturn, false) => GeneratorLife::AwaitingReturn,
-            (GeneratorState::Completed | GeneratorState::AwaitingReturn, true) => return None,
+            (state_tag::SUSPENDED, true) => GeneratorLife::Suspended,
+            (state_tag::SUSPENDED, false) => GeneratorLife::Frameless,
+            (state_tag::EXECUTING, true) => GeneratorLife::Busy,
+            (state_tag::EXECUTING, false) => GeneratorLife::Executing,
+            (state_tag::COMPLETED, false) => GeneratorLife::Completed,
+            (state_tag::AWAITING_RETURN, false) => GeneratorLife::AwaitingReturn,
+            _ => return None,
         };
         Some(Self { life, parked: continuation, realm, requests })
     }
 
-    /// The state and parked continuation the snapshot writes.
-    pub(crate) fn parts(&self) -> (Option<&Continuation>, GeneratorState) {
+    /// The state tag and parked continuation the snapshot writes.
+    pub(crate) fn parts(&self) -> (Option<&Continuation>, u8) {
         match self.life {
-            GeneratorLife::Suspended => (self.parked.as_ref(), GeneratorState::Suspended),
-            GeneratorLife::Frameless => (None, GeneratorState::Suspended),
-            GeneratorLife::Busy => (self.parked.as_ref(), GeneratorState::Executing),
-            GeneratorLife::Executing | GeneratorLife::Windowed => (None, GeneratorState::Executing),
-            GeneratorLife::AwaitingReturn => (None, GeneratorState::AwaitingReturn),
-            GeneratorLife::Completed => (None, GeneratorState::Completed),
+            GeneratorLife::Suspended => (self.parked.as_ref(), state_tag::SUSPENDED),
+            GeneratorLife::Frameless => (None, state_tag::SUSPENDED),
+            GeneratorLife::Busy => (self.parked.as_ref(), state_tag::EXECUTING),
+            GeneratorLife::Executing | GeneratorLife::Windowed => (None, state_tag::EXECUTING),
+            GeneratorLife::AwaitingReturn => (None, state_tag::AWAITING_RETURN),
+            GeneratorLife::Completed => (None, state_tag::COMPLETED),
         }
     }
 
@@ -267,13 +267,16 @@ impl Snap for GeneratorRecord {
         writer.bool(continuation.is_some());
         continuation.map_or(Ok(()), |continuation| continuation.snap(writer))?;
         self.realm.snap(writer)?;
-        state.snap(writer)?;
+        writer.u8(state);
         self.requests.snap(writer)
     }
     fn unsnap(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let continuation = Snap::unsnap(reader)?;
         let realm = Snap::unsnap(reader)?;
-        let state = Snap::unsnap(reader)?;
+        let state = reader.u8()?;
+        if state > state_tag::AWAITING_RETURN {
+            return Err(SnapshotError("invalid snapshot generator_state".into()));
+        }
         let requests = Snap::unsnap(reader)?;
         Self::from_parts(continuation, realm, state, requests)
             .ok_or_else(|| SnapshotError("generator state disagrees with its continuation".into()))
