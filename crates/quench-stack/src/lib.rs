@@ -129,6 +129,18 @@ impl StackBudget {
     pub fn admits(&self, depth: usize) -> bool {
         depth < self.remaining && current_stack_pointer().abs_diff(self.origin) <= STACK_BUDGET_BYTES
     }
+
+    /// Whether a tree `depth` levels deep is admitted at every level without visiting it: the
+    /// levels fit the transitions left, and the deepest level fits the stack distance at the
+    /// reserve each transition may use. A walk of such a tree admits every level it enters.
+    #[inline]
+    pub fn admits_tree(&self, depth: usize) -> bool {
+        depth < self.remaining
+            && current_stack_pointer()
+                .abs_diff(self.origin)
+                .saturating_add(depth.saturating_mul(STACK_TRANSITION_RESERVE_BYTES))
+                <= STACK_BUDGET_BYTES
+    }
 }
 
 impl Drop for StackGuard {
