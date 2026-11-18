@@ -8595,7 +8595,7 @@ fn lane_safepoint_writing<H: Host>(
 /// The head record of a move pair followed by a jump (`(Move, Move, Jump)`, a `FUSED_CHAINS`
 /// entry) in direction `backward`. The pair's two moves and the jump run as one record.
 fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
-    lane_frame::chain_row::<H, { opc::Move }, { opc::Move }, { opc::Jump }, { crate::staged::NO_LINK }>(backward)
+    lane_frame::chain_row::<H, { opc::Move }, { opc::Move }, { opc::Jump }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(backward)
 }
 
 /// The most records before a record that one fused record can run through:
@@ -16493,7 +16493,7 @@ pub(in crate::vm) const ELEMENT_WRITE: u16 = {
 pub(in crate::vm) fn proved_read_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET> as Handler as *const () }
 pub(in crate::vm) fn proved_store_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET> as Handler as *const () }
 pub(in crate::vm) fn updated_read_add_handler<H: Host>() -> *const () {
-    chain_row::<H, { opc::IncDec }, { opc::GetIndex }, { opc::Binary }, { crate::staged::NO_LINK }>(false) as *const ()
+    chain_row::<H, { opc::IncDec }, { opc::GetIndex }, { opc::Binary }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(false) as *const ()
 }
 
 /// The handler serving opcode `OP` whose accumulator field is `ACC`, derived

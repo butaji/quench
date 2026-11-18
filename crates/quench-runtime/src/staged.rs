@@ -443,6 +443,9 @@ pub(crate) const FUSED_PLAIN: u8 = 0;
 pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
 /// `FUSED_ROWS` mode: `A`'s result stays an unboxed word for `B`. Never boxed in the fused record.
 pub(crate) const FUSED_RAW: u8 = 2;
+/// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
+/// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
+pub(crate) const FUSED_WINDOW: u8 = 3;
 /// `FUSED_ROWS` mode: `B` runs on the record at `A`'s jump target (reserved; not yet implemented in `fused_rows`).
 pub(crate) const FUSED_TARGET: u8 = 4;
 

@@ -1693,6 +1693,8 @@ lane_handler! {
         }}; }
         if LaneFields::<A>::FLAG_ROLE {
             if i.imm() != 0 { step_a!(FLAG_SET) } else { step_a!(FLAG_CLEAR) }
+        } else if const { MODE == crate::staged::FUSED_WINDOW } {
+            step_a!(FLAG_WINDOW)
         } else {
             step_a!(FLAG_UNREAD)
         }
@@ -1747,6 +1749,8 @@ lane_handler! {
         }}; }
         if LaneFields::<B>::FLAG_ROLE {
             if i.imm() != 0 { step_b!(FLAG_SET) } else { step_b!(FLAG_CLEAR) }
+        } else if const { MODE == crate::staged::FUSED_WINDOW } {
+            step_b!(FLAG_WINDOW)
         } else {
             step_b!(FLAG_UNREAD)
         }
@@ -1760,7 +1764,7 @@ lane_handler! {
     /// row's miss at its own record, after the earlier links' effects, as separate records
     /// would. Only the last link may be a jump (`BACKWARD` its direction). `L3` is
     /// `staged::NO_LINK` for a three-link chain.
-    pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+    pub(super) fn chain_rows<L0: u16, L1: u16, L2: u16, L3: u16, BACKWARD: bool, MODE: u8>(cx, r, ip, i, view) {
         macro_rules! link_flag { ($L:ident, $flag:expr) => {{
             let fields = LaneFields::<$L, { $flag }>(i);
             let Some(operation) = row_decode!($L, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
@@ -1782,7 +1786,7 @@ lane_handler! {
             if LaneFields::<$L>::FLAG_ROLE {
                 if i.imm() != 0 { link_flag!($L, FLAG_SET) } else { link_flag!($L, FLAG_CLEAR) }
             } else {
-                link_flag!($L, FLAG_UNREAD)
+                if const { MODE == crate::staged::FUSED_WINDOW } { link_flag!($L, FLAG_WINDOW) } else { link_flag!($L, FLAG_UNREAD) }
             }
         }; }
         macro_rules! last_flag { ($L:ident, $flag:expr) => {{
@@ -1835,7 +1839,7 @@ lane_handler! {
             if LaneFields::<$L>::FLAG_ROLE {
                 if i.imm() != 0 { last_flag!($L, FLAG_SET) } else { last_flag!($L, FLAG_CLEAR) }
             } else {
-                last_flag!($L, FLAG_UNREAD)
+                if const { MODE == crate::staged::FUSED_WINDOW } { last_flag!($L, FLAG_WINDOW) } else { last_flag!($L, FLAG_UNREAD) }
             }
         }}; }
         value_link!(L0);
@@ -1856,8 +1860,14 @@ lane_handler! {
 }
 
 /// Chain `(L0, L1, L2, L3)`'s record handler for its last link's jump direction `backward`.
-pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, const L1: u16, const L2: u16, const L3: u16>(backward: bool) -> Handler {
-    if backward { chain_rows::<H, L0, L1, L2, L3, true> } else { chain_rows::<H, L0, L1, L2, L3, false> }
+pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, const L1: u16, const L2: u16, const L3: u16, const MODE: u8>(backward: bool) -> Handler {
+    if backward { chain_rows::<H, L0, L1, L2, L3, true, MODE> } else { chain_rows::<H, L0, L1, L2, L3, false, MODE> }
+}
+
+/// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
+/// an environment window's function, which `window_local_handler` gives its row.
+fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
+    lane_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
 }
 
 /// `chains!` index `chain` within `staged::FUSED_CHAINS` (past its end, entry 0 again).
@@ -1882,15 +1892,34 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
                 ],
                 if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
                 (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { jump_row_backward::<H, { link!($chain, 2) }>(handler) } else { jump_row_backward::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
-                [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }>(false),
-                    chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }>(true)],
+                [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_PLAIN }>(false),
+                    chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_PLAIN }>(true)],
             )),*]
         };
     }
+    // The window chains: a chain whose first row is a window local's (`FLAG_WINDOW`) installs its window
+    // record (`FUSED_WINDOW`), whose links all run at the window's flag. The indices name `FUSED_CHAINS`.
+    macro_rules! window_chains {
+        ($($chain:literal),*) => {
+            [$((
+                [
+                    (|handler| is_window_row::<H, { link!($chain, 0) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<H, { link!($chain, 1) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| plain_row::<H, { link!($chain, 2) }>(handler)) as fn(*const ()) -> bool,
+                    (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { true } else { plain_row::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
+                ],
+                if link!($chain, 3) == crate::staged::NO_LINK { 3usize } else { 4 },
+                (|handler| if const { link!($chain, 3) == crate::staged::NO_LINK } { jump_row_backward::<H, { link!($chain, 2) }>(handler) } else { jump_row_backward::<H, { link!($chain, 3) }>(handler) }) as fn(*const ()) -> bool,
+                [chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_WINDOW }>(false),
+                    chain_row::<H, { link!($chain, 0) }, { link!($chain, 1) }, { link!($chain, 2) }, { link!($chain, 3) }, { crate::staged::FUSED_WINDOW }>(true)],
+            )),*]
+        };
+    }
+    let window_chains = window_chains!(0, 1);
     let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63);
     const { assert!(crate::staged::FUSED_CHAINS.len() <= 64, "`chains!` covers 64 chains; add indices") };
     for pc in 0..records.len() {
-        let Some((_, length, backward, row)) = chains.iter().find(|(links, length, _, _)| {
+        let Some((_, length, backward, row)) = chains.iter().chain(window_chains.iter()).find(|(links, length, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))
         }) else { continue };
         records[pc].handler = row[usize::from(backward(records[pc + length - 1].handler))] as *const ();
@@ -1940,10 +1969,28 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             )),*]
         };
     }
+    // The window pairs: a pair whose first row is a window local's installs its window record
+    // (`FUSED_WINDOW`). The indices name `FUSED_ROWS` (its plain local-read and local-store pairs with a jump).
+    macro_rules! window_pairs {
+        ($($pair:literal),*) => {
+            [$((
+                (|handler| is_window_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }>(handler)) as fn(*const ()) -> bool,
+                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }>(handler)) as fn(*const ()) -> bool,
+                jump_row_backward::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }> as fn(*const ()) -> bool,
+                [fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_WINDOW }>(false),
+                    fused_row::<H, { crate::staged::FUSED_ROWS[fused_index($pair)].0 }, { crate::staged::FUSED_ROWS[fused_index($pair)].1 }, { crate::staged::FUSED_WINDOW }>(true)],
+            )),*]
+        };
+    }
+    let window_pairs = window_pairs!(31, 34, 35, 63);
     let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127);
     const { assert!(crate::staged::FUSED_ROWS.len() <= 128, "`pairs!` covers 128 fused pairs; add indices") };
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
+        if let Some((_, _, backward, window)) = window_pairs.iter().find(|(a, b, _, _)| a(first) && b(second)) {
+            records[pc].handler = window[usize::from(backward(second))] as *const ();
+            continue;
+        }
         let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
