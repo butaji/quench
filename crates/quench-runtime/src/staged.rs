@@ -146,75 +146,34 @@ pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, wo
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, WasmRep, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 
-/// Where a row goes when its frame cannot decide a step: the VM's general step; for a capture
-/// access whose scopes the frame does not hold, the walk over the scopes from the activation's
-/// environment (a read) or the store into the scope it finds (a write); for a truth test of a
-/// heap value, its cell's answer.
+/// Where a row goes when its frame cannot decide a step: the VM's general step (`General`, which
+/// runs the interpreter's own step in place for every opcode the general path covers); for a
+/// capture read whose scopes the frame does not hold, the walk over the scopes from the
+/// activation's environment (`WalkScopes`); for a by-name load or a store, the name's first-run
+/// resolution or the scope's rules; for a comparison jump the frame leaves, the lane's comparison
+/// chain; for a `yield`, the suspension the root takes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Miss {
     General,
+    /// A capture read the frame does not answer: the walk over the scopes, which requickens the
+    /// record to the root binding it finds (`load_capture_walk_miss`).
     WalkScopes,
-    StoreThroughScopes,
-    /// A conditional jump on a heap value whose cell decides its truthiness, jumping where the
-    /// truthiness is `taken`.
-    CellTruth { taken: bool },
-    /// An `arguments` count the frame does not hold: the binding's own count, read from the
-    /// frame or window that holds it.
-    ArgumentsBinding,
-    /// An `arguments` element the frame does not hold: the binding's element, read from the frame or
-    /// window that holds it (`lane_frame_arguments` with its element flag).
-    ArgumentsElement,
-    /// An environment read the frame holds no storage for (an uncaptured or root frame, a
-    /// mapped `arguments`, an environment window): the lane's local read (`load_local_miss`).
-    EnvironmentLoad,
-    /// An environment write the frame cannot make in place: the lane's local store
-    /// (`store_local_miss`), which takes the binding rules.
-    EnvironmentStore,
     /// A global-name store the frame does not hold (its hint misses): the name's first-run
     /// resolution, which resolves the store and holds the record on its row.
     StoreNameFirst,
     /// A comparison jump the frame leaves (a pair that is no Number relation or word test): the
-    /// lane's comparison chain decides the relations it can without guest code.
+    /// lane's comparison chain decides the relations it can without guest code, and keeps the
+    /// operands' feedback (`binary_false_chain_miss`).
     CompareChain,
     /// A `yield` the frame does not suspend in place (no generator runs the lane): the job root's
     /// suspension, or the general step (`yield_miss`).
     Yield,
-    /// A `yield*` the frame does not suspend in place: the general step (`yield_star_miss`).
+    /// A `yield*` the frame does not suspend in place: the general path (`lane_exit`), since the
+    /// general step of a suspending operation does not continue in place.
     YieldStar,
-    /// A `Binary` whose pure value declines (a heap operand, BigInt, a numeric local target): the
-    /// general operation made in place (`binary_general_miss`).
-    Binary,
-    /// `ToPropertyKey` of a value the frame leaves (an integer's decimal key, a symbol): the
-    /// lane's own answer for it, else the general step.
-    PropertyKeyValue,
-    /// A checked local read the frame does not hold in its own locals (a temporal dead zone, a
-    /// numeric target, a root body, an environment, a mapped `arguments`): the lane's local read
-    /// (`load_local_miss`), which takes the binding rules.
-    LocalLoad,
-    /// A checked local store the frame does not hold in its own locals: the lane's local store
-    /// (`store_local_miss`).
-    LocalStore,
-    /// An InitializeTdz the frame does not hold in its own locals: the lane's dead-zone opening
-    /// (`initialize_tdz_miss`), which finds the binding wherever the frame keeps it.
-    LocalInitialize,
     /// A by-name load the frame does not answer: its first run resolves the name, and a later
     /// run whose binding misses takes that binding's residual (`NameLoad`).
     NameLoad(NameLoad),
-    /// A generic Wasm memory load the row leaves (a vector load, a memory the frame does not
-    /// address directly, an out-of-bounds access): the lane's hand handler of the load, which
-    /// completes it or raises its trap.
-    WasmMemoryLoad,
-    /// A generic Wasm memory store the row leaves: the lane's hand handler of the store.
-    WasmMemoryStore,
-    /// A generic Wasm effective address the row leaves: the lane's hand handler of the address.
-    WasmMemoryAddress,
-    /// A `Unary` the frame leaves (an operand its value declines): the lane's unary arm
-    /// (`unary_miss`), which answers the pure operators and otherwise makes the operation in place.
-    Unary,
-    /// A `StringConcat` whose parts the pure concatenation declines (a part that converts with guest
-    /// code, or a result past the string length limit): the lane's own concatenation of the parts
-    /// (`denoted::string_concat_miss`), else the general step.
-    Concat,
 }
 
 /// The by-name loads a `LoadName` family row answers: a plain read, a call's read with its
@@ -241,31 +200,13 @@ pub(crate) const fn name_load(op: Op) -> Option<NameLoad> {
 pub(crate) const fn miss(op: Op) -> Miss {
     match op {
         Op::LoadCapture => Miss::WalkScopes,
-        Op::StoreCapture => Miss::StoreThroughScopes,
-        Op::ArgumentsLength => Miss::ArgumentsBinding,
-        Op::ArgumentGet => Miss::ArgumentsElement,
-        Op::LoadEnvLocal => Miss::EnvironmentLoad,
-        Op::StoreEnvLocal => Miss::EnvironmentStore,
         Op::StoreName => Miss::StoreNameFirst,
         Op::JumpBinaryFalse => Miss::CompareChain,
-        Op::Binary => Miss::Binary,
-        Op::ToPropertyKey => Miss::PropertyKeyValue,
-        Op::LoadLocal => Miss::LocalLoad,
-        Op::StoreLocal => Miss::LocalStore,
-        Op::InitializeTdz => Miss::LocalInitialize,
-        Op::WasmMemoryLoad => Miss::WasmMemoryLoad,
-        Op::WasmMemoryStore => Miss::WasmMemoryStore,
-        Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
-        Op::Unary => Miss::Unary,
-        Op::StringConcat => Miss::Concat,
         Op::Yield => Miss::Yield,
         Op::YieldStar => Miss::YieldStar,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
-            None => match truth_jump(op) {
-                Some(taken) => Miss::CellTruth { taken },
-                None => Miss::General,
-            },
+            None => Miss::General,
         },
     }
 }
@@ -485,7 +426,7 @@ pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
 pub(crate) const FUSED_WINDOW: u8 = 3;
 
-/// The opcode whose row answers an arguments binding's count (`Miss::ArgumentsBinding`), which a
+/// The opcode whose row answers an arguments binding's count (`Frame::arguments_length`), which a
 /// tier names to give the row a fact it proved at view time.
 pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
 /// The opcode whose row answers an `arguments` element (`Frame::argument`), which the lane's record
@@ -693,7 +634,7 @@ pub(crate) const fn local_access_row(op: Op) -> Option<u16> {
 }
 
 /// Whether `op` is a checked local access: its row reads and writes the frame's own locals in
-/// place, and leaves to its hand handler (`Miss`) for any slot those locals do not hold.
+/// place, and leaves to the general step (`Miss::General`) for any slot those locals do not hold.
 pub(crate) const fn checked_local(op: Op) -> bool {
     matches!(op, Op::LoadLocal | Op::StoreLocal | Op::InitializeTdz)
 }

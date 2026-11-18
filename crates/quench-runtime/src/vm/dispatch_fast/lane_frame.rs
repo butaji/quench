@@ -5,7 +5,7 @@ use super::lane_reads::Reads;
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep, read_initialized_local, write_initialized_local, write_local};
+use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -119,11 +119,6 @@ struct CaptureStores {
 }
 
 impl CaptureStores {
-    /// The stores of the running lane's `cx`.
-    fn of<H: Host>(cx: *mut LaneContext<H>) -> Self {
-        Self { context: cx.cast(), store: |context, depth, slot, value| store_to_capture(context.cast::<LaneContext<H>>(), depth, slot, value) }
-    }
-
     /// The running function's own initialized slot written directly through its dense slots
     /// (`store_own_capture`), over the register file `r`; any other store is the row's miss
     /// (`row_miss`: the lane's walking store).
@@ -1044,7 +1039,7 @@ unsafe fn environment_read<H: Host>(cx: *mut ()) -> Option<*mut crate::heap::Env
 }
 
 /// `EnvironmentReads::write`: the storage `environment_of` finds for a store to `slot`, after the
-/// environment's write barrier (`Heap::remember_cell`), as `store_local_miss` takes it.
+/// environment's write barrier (`Heap::remember_cell`), as the general store takes it.
 ///
 /// # Safety
 /// `cx` is the running lane's context.
@@ -1613,41 +1608,22 @@ pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handl
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
-/// a capture access the lane's own slow arm, which walks the scopes and requickens the record to
-/// the root binding it finds (`load_capture_walk_miss`, `store_outer_capture_miss`), or for a
-/// `ToPropertyKey` the lane's integer and symbol answers (`lane_to_property_key`).
+/// a capture read the lane's walk, which requickens the record to the root binding it finds
+/// (`load_capture_walk_miss`), for a store the first-run resolution of a global name
+/// (`store_name_first_miss`), for a `yield` its suspension (`yield_miss`), and for a `yield*` the
+/// general path (`lane_exit`).
 pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
     match crate::staged::miss(op) {
         crate::staged::Miss::WalkScopes => super::load_capture_walk_miss::<H>,
-        crate::staged::Miss::StoreThroughScopes => super::store_outer_capture_miss::<H>,
-        crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
-        crate::staged::Miss::ArgumentsElement => super::lane_frame_arguments::<H, true>,
-        crate::staged::Miss::EnvironmentLoad => super::load_local_miss::<H>,
-        crate::staged::Miss::EnvironmentStore => match FLAG {
-            FLAG_SCOPE => super::scoped_names::scoped_store_local::<H, false>(),
-            FLAG_SCOPE_ENVIRONMENT => super::scoped_names::scoped_store_local::<H, true>(),
-            _ => super::store_local_miss::<H> as Handler,
-        },
         crate::staged::Miss::StoreNameFirst => match FLAG {
             // A window's store the scope does not take leaves to the general step.
             FLAG_SCOPE => super::lane_exit::<H> as Handler,
             _ => super::store_name_first_miss::<H> as Handler,
         },
-        crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
-        crate::staged::Miss::Binary => super::binary_general_miss::<H>,
-        crate::staged::Miss::WasmMemoryLoad => super::lane_wasm_memory_load::<H>,
-        crate::staged::Miss::WasmMemoryStore => super::lane_wasm_memory_store::<H>,
-        crate::staged::Miss::WasmMemoryAddress => super::lane_wasm_memory_address::<H>,
-        crate::staged::Miss::LocalLoad => super::load_local_miss::<H>,
-        crate::staged::Miss::LocalStore => super::store_local_miss::<H>,
-        crate::staged::Miss::LocalInitialize => super::initialize_tdz_miss::<H>,
-        crate::staged::Miss::Unary => super::denoted::unary_miss::<H>,
-        crate::staged::Miss::Concat => super::denoted::string_concat_miss::<H>,
         crate::staged::Miss::Yield => super::generator_yields::yield_miss::<H>,
-        crate::staged::Miss::YieldStar => super::generator_yields::yield_star_miss::<H>,
+        crate::staged::Miss::YieldStar => super::lane_exit::<H>,
         crate::staged::Miss::NameLoad(load) => name_load_miss::<H, FLAG>(load),
-        crate::staged::Miss::General | crate::staged::Miss::CellTruth { .. }
-            | crate::staged::Miss::CompareChain => lane_general_step::<H>,
+        crate::staged::Miss::General | crate::staged::Miss::CompareChain => lane_general_step::<H>,
     }
 }
 
@@ -1746,13 +1722,11 @@ macro_rules! row_step {
     }};
 }
 
-/// Where opcode `op`'s jump row leaves when its words do not decide the edge: a truth test of a
-/// heap value asks its cell (`jump_test_cell_miss`); a comparison the frame leaves takes the
-/// lane's comparison chain (`binary_false_chain_miss`); any other takes the VM's general step.
+/// Where opcode `op`'s jump row leaves when its words do not decide the edge: a comparison the
+/// frame leaves takes the lane's comparison chain (`binary_false_chain_miss`); any other, a truth
+/// test of a heap value among them, takes the VM's general step.
 const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
     match crate::staged::miss(op) {
-        crate::staged::Miss::CellTruth { taken: false } => super::jump_test_cell_miss::<H, BACKWARD, false>,
-        crate::staged::Miss::CellTruth { taken: true } => super::jump_test_cell_miss::<H, BACKWARD, true>,
         crate::staged::Miss::CompareChain => super::binary_false_chain_miss::<H, BACKWARD>,
         _ => lane_general_step::<H>,
     }
