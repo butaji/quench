@@ -18144,6 +18144,7 @@ fn derive_lane_view<'live, H: Host>(
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     lane_frame::fuse_chains::<H>(&mut records);
+    fuse_target_backedges::<H>(&mut records, loop_tier);
     lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier);
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
@@ -18526,6 +18527,77 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
         });
         if !shared {
             records[pc].handler = proved as *const ();
+        }
+    }
+}
+
+/// The `FUSED_ROWS` pairs whose second row is `Jump`, by their index in that table: a row followed
+/// by a backward jump, which `FUSED_TARGET` may fuse with the conditional test at the jump's target.
+/// `(Move, Jump)`, `(StoreLocalPlain, Jump)`, `(WasmI32AddImmediate, Jump)` and `(IncDec, Jump)` are
+/// the pairs; the const check below names each one's second row.
+const BACK_EDGE_PAIRS: [usize; 4] = [31, 32, 33, 37];
+const _: () = {
+    let mut k = 0;
+    while k < BACK_EDGE_PAIRS.len() {
+        assert!(crate::staged::FUSED_ROWS[BACK_EDGE_PAIRS[k]].1 == crate::staged::JUMP_ROW, "a BACK_EDGE_PAIRS entry is not a Jump pair");
+        k += 1;
+    }
+};
+
+/// Gives each `FUSED_ROWS` pair in `BACK_EDGE_PAIRS` followed by a backward jump whose target
+/// record holds a conditional test (`staged::FUSED_TARGET_ROWS`, the row `plain_row` names) the
+/// `FUSED_TARGET` record: the pair, the jump, and the test at the target in one dispatch, the
+/// target keeping its own row for every other entry. Runs before `fuse_rows`, so the pair it
+/// claims is not refused by its plain pair. A pair at a hot OSR latch whose first row is a move
+/// or an add of a constant keeps its own record, as `fuse_rows` keeps it.
+///
+/// Subsumes `lane_inc_dec_loop` (an `IncDec` pair whose back edge enters a register test) and
+/// `lane_inc_dec_small_loop` (the same with a constant bound, which the test's own row reads). Not
+/// claimed here: a back edge whose target is a loaded bound (`lane_inc_dec_load_loop`, a chain
+/// target), a back edge whose target is an update (`lane_jump_back_update_small`), and a lone back
+/// jump into a nullish test (`lane_jump_back_nullish`, `specialize_nullish_back_edges`), which is
+/// not a pair.
+fn fuse_target_backedges<H: Host>(records: &mut [LaneInstruction], osr_loop: bool) {
+    macro_rules! test {
+        ($pair:literal, $k:literal) => {
+            (
+                (|handler| plain_row::<H, { crate::staged::FUSED_TARGET_ROWS[$k] }>(handler)) as fn(*const ()) -> bool,
+                lane_frame::fused_rows::<H, { crate::staged::FUSED_ROWS[$pair].0 }, { crate::staged::FUSED_ROWS[$pair].1 }, true, { crate::staged::FUSED_TARGET }, { crate::staged::FUSED_TARGET_ROWS[$k] }> as Handler,
+            )
+        };
+    }
+    macro_rules! pair {
+        ($pair:literal) => {
+            (
+                (|handler| plain_row::<H, { crate::staged::FUSED_ROWS[$pair].0 }>(handler)) as fn(*const ()) -> bool,
+                [test!($pair, 0), test!($pair, 1), test!($pair, 2)],
+            )
+        };
+    }
+    let pairs = [pair!(31), pair!(32), pair!(33), pair!(37)];
+    const _: () = assert!(BACK_EDGE_PAIRS.len() == 4 && crate::staged::FUSED_TARGET_ROWS.len() == 3);
+    let back = jump_row::<H, JUMP>(true) as *const ();
+    let record = std::mem::size_of::<LaneInstruction>() as isize;
+    for pc in 0..records.len().saturating_sub(1) {
+        let (first, second) = (records[pc].handler, records[pc + 1].handler);
+        if second != back {
+            continue;
+        }
+        let Some((_, tests)) = pairs.iter().find(|(a, _)| a(first)) else {
+            continue;
+        };
+        if osr_loop && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first)) {
+            continue;
+        }
+        // The jump's target record: its distance is in bytes from the jump record, as `take_jump` reads it.
+        let Ok(target) = usize::try_from(pc as isize + 1 + records[pc + 1].jump() / record) else {
+            continue;
+        };
+        let Some(target_handler) = records.get(target).map(|record_at| record_at.handler) else {
+            continue;
+        };
+        if let Some((_, handler)) = tests.iter().find(|(test, _)| test(target_handler)) {
+            records[pc].handler = *handler as *const ();
         }
     }
 }
