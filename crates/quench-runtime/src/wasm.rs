@@ -1654,7 +1654,7 @@ impl ModuleBindings<'_> {
         let constant_neutral = |index: usize| {
             matches!(lowering_constants.get(settled, index), Some(Constant::WasmBits64(bits)) if crate::Value::from_bits64(*bits).is_some())
         };
-        let returns_wide = matches!(signature.results.as_slice(), [WasmType::I64]);
+        let returns_wide = matches!(signature.results.as_slice(), [WasmType::I64 | WasmType::F64]);
         crate::compile::liveness::raw_webs::use_raw_forms(&mut function, &constant_neutral, returns_wide);
         *constants = lowering_constants;
         Ok(function)

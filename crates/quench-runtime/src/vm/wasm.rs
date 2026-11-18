@@ -1339,6 +1339,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn encode_raw_wasm_value(&mut self, value: crate::WasmValue) -> Value {
         match value {
             crate::WasmValue::I64(word) => Value::from_bits(word as u64),
+            crate::WasmValue::F64(bits) => Value::from_bits(bits),
             value => self.encode_wasm_value(value),
         }
     }

@@ -145,11 +145,26 @@ impl F64BinaryOperator {
     pub(crate) const fn widen(self) -> Self {
         self
     }
+
+    /// Whether a NaN operand matters to the result only as a NaN (Wasm leaves the payload
+    /// of such a result open): any word of an f64 register reads as its operand.
+    pub(crate) const fn nan_agnostic(self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide | Self::Equal | Self::NotEqual
+                | Self::Less | Self::Greater | Self::LessEqual | Self::GreaterEqual
+        )
+    }
 }
 
 impl F64UnaryOperator {
     pub(crate) const fn widen(self) -> Self {
         self
+    }
+
+    /// `F64BinaryOperator::nan_agnostic` of a unary operator.
+    pub(crate) const fn nan_agnostic(self) -> bool {
+        matches!(self, Self::SquareRoot | Self::Ceiling | Self::Floor | Self::Truncate | Self::Nearest)
     }
 }
 
