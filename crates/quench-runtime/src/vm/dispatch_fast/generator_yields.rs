@@ -57,7 +57,7 @@ script_handler! {
             if job.kind == SuspendKind::AsyncGenerator {
                 // The yield awaits its value, converted as an `await`'s source is.
                 // SAFETY: the context's program outlives the lane run.
-                let Some(source) = vm.lane_await_source(unsafe { &*(*cx).code }, value) else {
+                let Some(source) = vm.await_source_in_lane(unsafe { &*(*cx).code }, value) else {
                     return exit(ip);
                 };
                 value = source;
@@ -86,7 +86,7 @@ impl<H: Host> Vm<H> {
     /// where that observes nothing: a non-object as it is, an object by `lane_promise_resolve`.
     /// `None` leaves a conversion that could run guest code, or throw into the frame's
     /// handlers, to the general path.
-    fn lane_await_source(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
+    fn await_source_in_lane(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
         if self.is_object_like(awaited) {
             return self.lane_promise_resolve(code, self.intrinsic_promise_constructor(), awaited);
         }
@@ -96,7 +96,7 @@ impl<H: Host> Vm<H> {
 
 /// `Await` of the activation a promise job's lane run is rooted in (`LaneRoot::Job`): the frame
 /// suspends into its owner, resuming after the record with the awaited value (converted as
-/// `Vm::lane_await_source` converts it) in `destination`, the activation pops, and the run ends for
+/// `Vm::await_source_in_lane` converts it) in `destination`, the activation pops, and the run ends for
 /// the job to attach the await's reactions (`Vm::suspend_job_window`). Any other `await`, and a
 /// conversion that could run guest code, leave to the general step (`None`, nothing changed).
 ///
@@ -110,7 +110,7 @@ pub(super) unsafe fn await_in_lane<H: Host>(cx: *mut (), record: *const LaneInst
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let value = vm.lane_await_source(code, r.get(source))?;
+    let value = vm.await_source_in_lane(code, r.get(source))?;
     // The source may be a fresh promise, which the safepoints after the run collect.
     note_allocation(vm);
     // SAFETY: the record lies in the running view.
