@@ -147,6 +147,16 @@ impl<H: Host> Vm<H> {
     pub(super) fn own_constant_hint_live(&self, index: u16) -> bool {
         self.holder_hints.own.get(usize::from(index)).is_some_and(|hint| hint.watch.is_published())
     }
+
+    /// The first live own-constant hint for a read of `atom` (`own_constant_hint_live`): the
+    /// constant-marked object it holds, its exact shape, which a write to the object retires
+    /// (`Object::note_constant_write`), and the value the member held. A lane body folds the read
+    /// under an identity guard on the object, so a hint for another object only costs the guard.
+    pub(super) fn own_constant_of(&self, atom: Atom) -> Option<super::compiled::OwnConstant> {
+        let hint = self.holder_hints.own.iter().find(|hint| hint.atom == atom && hint.watch.is_published())?;
+        let shape = self.heap.object(hint.holder)?.exact_shape();
+        Some(super::compiled::OwnConstant { object: hint.holder, shape, value: hint.value })
+    }
 }
 
 thread_local! {
