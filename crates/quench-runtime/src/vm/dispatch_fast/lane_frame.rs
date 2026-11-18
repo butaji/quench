@@ -918,6 +918,17 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
         CallOut::Protocol { step: Protocol::IteratorClose, .. } => {
             vm.iterator_close_absent(second?).then_some(Value::UNDEFINED)
         }
+        // The intrinsic values iterator of an array whose iteration is intact, made without looking
+        // up or calling `@@iterator`.
+        CallOut::Protocol { step: Protocol::GetIterator, .. } => {
+            let source = second?;
+            if !vm.array_iteration_intact(source) {
+                return None;
+            }
+            let iterator = vm.array_iterator_of(crate::heap::IteratorKind::ArrayValues, source);
+            note_allocation(vm);
+            Some(iterator)
+        }
         // A spread onto the literal's array with no elisions before it, from a source whose
         // iteration runs no guest code: the append defines no register, so its value is unused.
         CallOut::Protocol { step: Protocol::AppendArray { length: 0, spread: true }, .. } => {

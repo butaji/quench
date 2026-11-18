@@ -3814,23 +3814,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// `GetIterator` of a plain array whose iteration is intact (`Vm::array_iteration_intact`):
-    /// the intrinsic values iterator, made without looking up or calling `@@iterator`; any other
-    /// operand takes the general step in place.
-    fn lane_get_iterator<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let source = r.get(i.b);
-        if !vm.array_iteration_intact(source) {
-            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        let iterator = vm.array_iterator_of(super::IteratorKind::ArrayValues, source);
-        note_allocation(vm);
-        r.set(i.a, iterator);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// `ToPropertyKey` of a string, which is itself (the staged fast arm), of a symbol, which is
     /// itself, or of an integer, its decimal string; any other value, which may run guest code
     /// or format a float, takes the general step in place.
@@ -21159,7 +21142,6 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// that ends without a call, and the bookkeeping of the iterators a frame must close.
 const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
-        Class::GetIterator => Some(lane_get_iterator::<H>),
         Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
         Class::RequireIteratorResult => Some(lane_require_iterator_result::<H>),
         Class::IteratorCleanupPop => Some(lane_iterator_cleanup_pop::<H>),
