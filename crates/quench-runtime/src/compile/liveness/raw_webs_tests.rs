@@ -15,7 +15,7 @@ fn webs(bodies: Vec<WasmFunctionBody<Vec<Result<Operator<'static>, BinaryReaderE
     let function = program.function(index);
     let transfers = crate::compile::liveness::all_transfers(function, program, &program.field_sites, &program.superinstructions);
     let live = crate::compile::liveness::analyze(function, program, &program.field_sites, &program.superinstructions).expect("liveness");
-    let constant_wide = |at: usize| matches!(program.constants.get(at), Some(crate::bytecode::Constant::WasmBits64(_)));
+    let constant_wide = |at: usize| matches!(program.constants.get(at), Some(crate::bytecode::Constant::WasmBits64(bits)) if crate::Value::from_bits64(*bits).is_some());
     (raw_webs(function, &live, &transfers, &constant_wide, returns_wide), function.instructions().collect())
 }
 
@@ -43,9 +43,11 @@ fn an_i64_loop_runs_raw_and_its_counter_and_parameter_stay_boxed() {
         true,
     );
     let raw: Vec<_> = instructions.iter().zip(&webs.raw_ops).filter(|(_, raw)| **raw).map(|(instruction, _)| instruction.op()).collect();
-    assert!(raw.iter().filter(|op| op.class() == crate::bytecode::Class::WasmI64BinaryImmediate).count() == 2, "{raw:?}");
-    assert!(raw.iter().filter(|op| op.class() == crate::bytecode::Class::WasmI64Binary).count() == 2, "{raw:?}");
-    assert!(raw.contains(&crate::bytecode::Op::Return), "{raw:?}");
+    // The lowering switched them to their raw forms, whose webs the analysis finds again.
+    assert!(raw.iter().filter(|op| op.class() == crate::bytecode::Class::WasmI64BinaryImmediateRaw).count() == 2, "{raw:?}");
+    assert!(raw.iter().filter(|op| op.class() == crate::bytecode::Class::WasmI64BinaryRaw).count() == 2, "{raw:?}");
+    assert!(raw.contains(&crate::bytecode::Op::WasmReturn64), "{raw:?}");
+    assert!(!instructions.iter().any(|instruction| matches!(instruction.op().class(), crate::bytecode::Class::WasmI64Binary | crate::bytecode::Class::WasmI64BinaryImmediate)), "every i64 op of the loop is raw");
     // The i32 parameter and the counter are never raw.
     let parameter = function_parameter_register(&instructions);
     assert!(webs.raw_live.iter().all(|set| !set.contains(parameter)));

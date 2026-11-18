@@ -8,10 +8,17 @@
 //! another; its webs are separate. Every instruction touches each register it reads or writes
 //! (`uses`, `definitions`: generated from the opcode table, never listed here) in one of three
 //! roles:
-//! - *wide*: an i64/f64 operand or result of an op that has a raw form (`raw_capable`). All wide
+//! - *wide*: an i64 operand or result of an op that has a raw form (`raw_form`). All wide
 //!   operands of one instruction share a web class, so its raw form reads and writes raw words only;
 //! - *copy*: a move or select, which carries bits without reading them: its result joins its sources;
+//! - *neutral*: a constant load or fill whose `Value` is the constant's own word, which a raw and
+//!   a boxed register hold alike: it joins whatever web its register's uses decide;
 //! - *boxed*: everything else, including the entry's parameters and the initial registers.
+//!
+//! A raw word a tag claims would read as a reference; the collector reads registers through
+//! liveness masks and marks a handle only where it names an occupied record (bounds- and
+//! occupancy-checked, as for a stale word above a window's fill), so such a word at worst keeps
+//! a record alive until its register is overwritten.
 //!
 //! A web touched in the boxed role holds `Value`s; every other web holds raw words. The
 //! collector scans a register at a pc only where it is live and its web there is boxed
@@ -20,6 +27,7 @@
 
 use super::RegisterSet;
 use crate::bytecode::{Class, Function, Op, Successors, WideInstruction};
+use crate::compile::liveness::MethodSite;
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::WasmType;
 
@@ -33,7 +41,23 @@ pub(crate) struct RawWebs {
 }
 
 const fn wide(ty: WasmType) -> bool {
-    matches!(ty, WasmType::I64 | WasmType::F64)
+    matches!(ty, WasmType::I64)
+}
+
+/// The raw form of `op`: the opcode that runs the same operation over raw i64 registers.
+pub(crate) const fn raw_form(op: Op) -> Option<Op> {
+    Some(match op {
+        Op::WasmI64Binary => Op::WasmI64BinaryRaw,
+        Op::WasmI64BinaryImmediate => Op::WasmI64BinaryImmediateRaw,
+        Op::WasmI64Unary => Op::WasmI64UnaryRaw,
+        Op::Return => Op::WasmReturn64,
+        _ => return None,
+    })
+}
+
+/// Whether `op` is a raw form: analyzing code the lowering already switched finds its webs again.
+const fn is_raw(op: Op) -> bool {
+    matches!(op, Op::WasmI64BinaryRaw | Op::WasmI64BinaryImmediateRaw | Op::WasmI64UnaryRaw | Op::WasmReturn64)
 }
 
 /// How an instruction touches its registers, where it is not all boxed.
@@ -42,14 +66,19 @@ enum Roles {
     Wide { uses: Vec<u16>, definitions: Vec<u16> },
     /// A copy of `sources` into `destination`.
     Copy { destination: u16, sources: Vec<u16> },
+    /// Definitions whose word reads the same raw and boxed.
+    Neutral,
 }
 
-/// The roles of `instruction`, or `None` where it touches every register boxed. `constant_wide`
-/// says a constant-pool entry is an i64/f64 scalar; `returns_wide` that the function's result is.
-fn roles(instruction: WideInstruction, constant_wide: &dyn Fn(usize) -> bool, returns_wide: bool) -> Option<Roles> {
+/// The roles of `instruction`, or `None` where it touches every register boxed. `constant_neutral`
+/// says a constant-pool entry's `Value` is its own word (`Value::from_bits64`); `returns_wide`
+/// that the function's result is an i64.
+fn roles(instruction: WideInstruction, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) -> Option<Roles> {
     let op = instruction.op();
     let (a, b) = (instruction.a(), instruction.b());
-    if let Some(operation) = WasmOperation::of(op, instruction.imm()) {
+    if (raw_form(op).is_some() || is_raw(op))
+        && let Some(operation) = WasmOperation::of(op, instruction.imm())
+    {
         let operand_wide = wide(operation.operand_type());
         let result_wide = wide(operation.result_type());
         let mut uses = Vec::new();
@@ -80,10 +109,9 @@ fn roles(instruction: WideInstruction, constant_wide: &dyn Fn(usize) -> bool, re
     match op.class() {
         Class::Move => Some(Roles::Copy { destination: a, sources: vec![b] }),
         Class::WasmSelect => Some(Roles::Copy { destination: a, sources: vec![b, instruction.c()] }),
-        Class::LoadConst if constant_wide(instruction.constant_index()) => {
-            Some(Roles::Wide { uses: vec![], definitions: vec![a] })
-        }
+        Class::LoadConst | Class::WasmFillRegisters if constant_neutral(instruction.constant_index()) => Some(Roles::Neutral),
         Class::Return if returns_wide && op == Op::Return => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
+        Class::WasmReturn64 => Some(Roles::Wide { uses: vec![a], definitions: vec![] }),
         _ => None,
     }
 }
@@ -140,7 +168,7 @@ pub(crate) fn raw_webs(
     function: &Function,
     live: &[RegisterSet],
     transfers: &[(RegisterSet, RegisterSet)],
-    constant_wide: &dyn Fn(usize) -> bool,
+    constant_neutral: &dyn Fn(usize) -> bool,
     returns_wide: bool,
 ) -> RawWebs {
     let instructions: Vec<WideInstruction> = function.instructions().collect();
@@ -169,7 +197,7 @@ pub(crate) fn raw_webs(
     let mut wide_group: Vec<Option<u32>> = vec![None; count];
     for (pc, instruction) in instructions.iter().enumerate() {
         let (uses, definitions) = transfers[pc];
-        let roles = roles(*instruction, constant_wide, returns_wide);
+        let roles = roles(*instruction, constant_neutral, returns_wide);
         // Each definition is a node, flowing into the successors where its register is live.
         let mut defined = vec![None; registers];
         for register in (0..registers).filter(|register| definitions.contains(*register)) {
@@ -225,6 +253,7 @@ pub(crate) fn raw_webs(
                     covered_definitions.insert(usize::from(*destination));
                 }
             }
+            Some(Roles::Neutral) => covered_definitions = definitions,
             None => {}
         }
         // Every other register the instruction touches, it touches boxed.
@@ -256,6 +285,29 @@ pub(crate) fn raw_webs(
         })
         .collect();
     RawWebs { raw_ops, raw_live }
+}
+
+/// Switches each op of the Wasm function `function` whose wide web is raw to its raw form
+/// (`raw_form`). `constant_neutral` and `returns_wide` are as `raw_webs`'. A function past the
+/// liveness budget or the root-map width keeps every op boxed.
+pub(crate) fn use_raw_forms(function: &mut Function, constant_neutral: &dyn Fn(usize) -> bool, returns_wide: bool) {
+    let no_method_sites: &[MethodSite] = &[];
+    let Some(transfers) = super::transfers(function, no_method_sites, &[], &[]) else { return };
+    let live = super::solve::analyze_wide(function, &transfers, &Successors::of_code(function));
+    let webs = raw_webs(function, &live, &transfers, constant_neutral, returns_wide);
+    for (pc, raw) in webs.raw_ops.iter().enumerate() {
+        if !raw {
+            continue;
+        }
+        let packed = function.code[pc];
+        let op = function.instruction_at(pc).op();
+        let Some(raw_op) = raw_form(op) else { continue };
+        if packed.is_wide() {
+            function.wide[packed.wide_index()].set_op(raw_op);
+        } else {
+            function.code[pc].set_op(raw_op);
+        }
+    }
 }
 
 #[cfg(test)]

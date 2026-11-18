@@ -11702,13 +11702,29 @@ lane_handler! {
     }
 }
 
+/// An i64 operand: a raw register's word as it is (`RAW`), else the bits a `Value` holds in place.
+#[inline(always)]
+fn wide_operand<const RAW: bool>(value: Value) -> Option<u64> {
+    if RAW { Some(value.to_bits()) } else { value.bits64() }
+}
+
+/// An i64 operation's result: into a raw register as its word (`RAW`), else as a `Value`. An i32
+/// result (a comparison) is a `Value` either way: only i64 words are raw.
+#[inline(always)]
+fn wide_result<const RAW: bool>(view: Carried, value: crate::WasmValue) -> Option<Value> {
+    match value {
+        crate::WasmValue::I64(word) if RAW => Some(Value::from_bits(word as u64)),
+        value => lane_encode(view, value),
+    }
+}
+
 lane_handler! {
     /// An i64 operator; a trap leaves the lane, where the general loop
-    /// raises it.
-    fn lane_i64_binary<ACC: u8>(cx, r, ip, i, view) {
+    /// raises it. `RAW`: the raw form, whose i64 registers hold words (no tag checks).
+    fn lane_i64_binary<RAW: bool, ACC: u8>(cx, r, ip, i, view) {
         let (Some(left), Some(right), Some(operator)) = (
-            read::<ACC, ACC_B>(r, i.b, view).bits64(),
-            read::<ACC, ACC_C>(r, i.c, view).bits64(),
+            wide_operand::<RAW>(read::<ACC, ACC_B>(r, i.b, view)),
+            wide_operand::<RAW>(read::<ACC, ACC_C>(r, i.c, view)),
             I64BinaryOperator::from_tag(i.imm()),
         ) else {
             return exit(ip);
@@ -11716,7 +11732,7 @@ lane_handler! {
         let Ok(value) = operator.evaluate(left as i64, right as i64) else {
             return exit(ip);
         };
-        let Some(value) = lane_encode(view, value) else {
+        let Some(value) = wide_result::<RAW>(view, value) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -11724,9 +11740,9 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_i64_binary_immediate<ACC: u8>(cx, r, ip, i, view) {
+    fn lane_i64_binary_immediate<RAW: bool, ACC: u8>(cx, r, ip, i, view) {
         let (Some(left), Some(operator)) = (
-            read::<ACC, ACC_B>(r, i.b, view).bits64(),
+            wide_operand::<RAW>(read::<ACC, ACC_B>(r, i.b, view)),
             I64BinaryOperator::from_tag(i.imm()),
         ) else {
             return exit(ip);
@@ -11734,7 +11750,7 @@ lane_handler! {
         let Ok(value) = operator.evaluate(left as i64, i64::from(i.c as i16)) else {
             return exit(ip);
         };
-        let Some(value) = lane_encode(view, value) else {
+        let Some(value) = wide_result::<RAW>(view, value) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -11742,14 +11758,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_i64_unary<ACC: u8>(cx, r, ip, i, view) {
+    fn lane_i64_unary<RAW: bool, ACC: u8>(cx, r, ip, i, view) {
         let (Some(input), Some(operator)) = (
-            read::<ACC, ACC_B>(r, i.b, view).bits64(),
+            wide_operand::<RAW>(read::<ACC, ACC_B>(r, i.b, view)),
             I64UnaryOperator::from_tag(i.imm()),
         ) else {
             return exit(ip);
         };
-        let Some(value) = lane_encode(view, operator.evaluate(input as i64)) else {
+        let Some(value) = wide_result::<RAW>(view, operator.evaluate(input as i64)) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -19135,7 +19151,22 @@ fn wasm_lane_handler<H: Host>(op: Op) -> Option<Option<LaneHandler>> {
         Class::Call => Some(Some(call)),
         Class::StoreCapture => Some(None),
         Class::Return => Some(Some(ret)),
+        Class::WasmReturn64 => Some(Some(LaneHandler { handler: lane_return_wasm64::<H>, produces: false })),
         _ => None,
+    }
+}
+
+lane_handler! {
+    /// `lane_return_wasm` of a raw i64 register: its word is the returned `Value` where no tag
+    /// claims it; one a tag claims leaves the lane, whose general step boxes it.
+    fn lane_return_wasm64<>(cx, r, ip, i, view) {
+        let Some(value) = Value::from_bits64(r.get(i.a).to_bits()) else {
+            return exit(ip);
+        };
+        if let Some(resumed) = lane_complete_wasm_activation(cx, value) {
+            resume!(cx, resumed)
+        }
+        sibling!(lane_return_general::<H>, r, ip, view)
     }
 }
 
@@ -21226,9 +21257,12 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
             Class::WasmFloatUnary32 | Class::WasmFloatUnary64 => {
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
-            Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, ACC>),
-            Class::WasmI64BinaryImmediate => return LaneHandler::producer(lane_i64_binary_immediate::<H, ACC>),
-            Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, ACC>),
+            Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, false, ACC>),
+            Class::WasmI64BinaryImmediate => return LaneHandler::producer(lane_i64_binary_immediate::<H, false, ACC>),
+            Class::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, false, ACC>),
+            Class::WasmI64BinaryRaw => return LaneHandler::producer(lane_i64_binary::<H, true, ACC>),
+            Class::WasmI64BinaryImmediateRaw => return LaneHandler::producer(lane_i64_binary_immediate::<H, true, ACC>),
+            Class::WasmI64UnaryRaw => return LaneHandler::producer(lane_i64_unary::<H, true, ACC>),
             Class::WasmScalarConvert => {
                 return LaneHandler::producer(lane_scalar_convert::<H, ACC>);
             }
