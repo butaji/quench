@@ -2960,7 +2960,7 @@ impl<'a> Compiler<'a> {
         mut context: replay::ObjectMethodContext,
     ) -> u32 {
         // A class method's chunk compiles it as an object literal's (`ChunkText::of`).
-        self.take_outer(context.property_span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
+        self.adopt_outer_method(&mut context);
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
