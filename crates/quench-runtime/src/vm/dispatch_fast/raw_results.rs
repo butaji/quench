@@ -115,10 +115,7 @@ fn raw_result_reaches(decoded: &[WideInstruction], live: &RegisterMasks, produce
 /// constant, a copy or a capture read. Calls, windows and jumps stop the search.
 fn passes_raw(instruction: WideInstruction) -> bool {
     instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
-        || matches!(
-            instruction.op().class(),
-            Class::GetIndex | Class::IncDec | Class::Binary | Class::LoadConst | Class::Move | Class::GetField | Class::LoadCapture
-        )
+        || crate::staged::yields_raw_word(instruction.op())
 }
 
 /// Whether the arithmetic at `operation` writes a plain register that only the next
@@ -148,7 +145,7 @@ fn passes_over(decoded: &[WideInstruction], operation: usize, register: u16) -> 
     let (Some(&update), Some(&read)) = (decoded.get(operation + NEXT_UPDATE), decoded.get(operation + NEXT_READ)) else {
         return false;
     };
-    update.op().class() == Class::IncDec
+    crate::staged::increments(update.op())
         && read.op().is_get_index()
         && !names_register(update, register)
         && !names_register(read, register)
@@ -157,7 +154,7 @@ fn passes_over(decoded: &[WideInstruction], operation: usize, register: u16) -> 
 /// Whether an update, a read and an arithmetic operation start at `pc`: the shape of a fused
 /// update, read and operation (`specialize_updated_index_operators`).
 fn is_triple(decoded: &[WideInstruction], pc: usize) -> bool {
-    decoded[pc].op().class() == Class::IncDec
+    crate::staged::increments(decoded[pc].op())
         && decoded[pc + NEXT_READ - NEXT_UPDATE].op().is_get_index()
         && is_arithmetic(decoded[pc + OPERATION])
 }
