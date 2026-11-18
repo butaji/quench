@@ -7761,9 +7761,10 @@ fn general_handler<H: Host>(base: u16) -> Handler {
 }
 
 /// The VM's general read of `atom` of `object` through cache `site`, as the row's host path
-/// (`LaneFrame::field_get_host`): a register's hint answers first (`primary_record_holder_field_hit`,
+/// (`lane_row`'s `GENERAL_*` answer): a register's hint answers first (`primary_record_holder_field_hit`,
 /// `proved_inherited_field_hit`), then the caches' probe (`lane_field_step`), with `record` the
 /// instruction's address for a private name's site. `None` leaves to `row_get_field_general`.
+#[inline(always)]
 pub(super) fn general_field_read<H: Host>(context: *mut (), record: usize, register: bool, object: Value, atom: u32,
     site: u16) -> Option<Value> {
     let cx = context.cast::<LaneContext<H>>();

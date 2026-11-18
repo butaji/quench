@@ -233,39 +233,6 @@ impl FieldStores {
     }
 }
 
-/// The VM's field reads a planned named read of the running lane runs at its record, erased of
-/// its host like `FieldStores`: the cached read of a site (`FieldPlan::Host`), and the private
-/// field of the record's address (`FieldPlan::Private`, its store `LaneFrame::private_store`).
-#[derive(Clone, Copy)]
-struct FieldReads {
-    context: *mut (),
-    /// The record's address, which names its private-name site (`LaneFrame::private_slot`).
-    record: usize,
-    cached: fn(*mut (), Value, u32, u16) -> Option<Value>,
-    private: fn(*mut (), usize, Value, u32) -> Option<Value>,
-}
-
-impl FieldReads {
-    /// The field reads of the running lane's `cx` for the record at address `record`.
-    #[inline(always)]
-    fn of<H: Host>(cx: *mut LaneContext<H>, record: usize) -> Self {
-        Self { context: cx.cast(), record,
-            cached: |context, object, atom, site| {
-                let cx = context.cast::<LaneContext<H>>();
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                LaneFrame::<ACC_NONE>::cached_read::<H>(cx, code, object, atom, site, 0)
-            },
-            private: |context, record, object, atom| {
-                let cx = context.cast::<LaneContext<H>>();
-                // SAFETY: as above.
-                let code = unsafe { &*(*cx).code };
-                LaneFrame::<ACC_NONE>::private_value::<H>(cx, record, code, object, atom)
-            },
-        }
-    }
-}
-
 /// The interpreter's frame: the live register file and the accumulator view a producer
 /// carries. `ACC` names the record's accumulator field (`read`).
 pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
@@ -304,8 +271,6 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     proofs: Option<*mut crate::heap::ArrayStorageProofs>,
     /// The VM's stores and adds a named store row joins to, for a store record (`FieldStores`).
     stores: Option<FieldStores>,
-    /// The general read's host path of a `GENERAL_*` row (`HostReads`); none elsewhere.
-    host_reads: Option<HostReads>,
     /// The form hint the VM's own-field store left for the store record, which the row writes to
     /// the record once the store completes (`PropertyFrame::field_store_host`).
     stored: Option<crate::vm::FieldCache>,
@@ -317,9 +282,6 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The VM's entry lookups the running lane makes at the row's site, for a row whose plan takes
     /// one (`PropertyFrame::field_entry`); none elsewhere.
     entries: Option<EntryReads>,
-    /// The VM's cached and private field reads of the record a planned read runs at
-    /// (`FieldReads`), for a read row that names a cached or a private field.
-    field_reads: Option<FieldReads>,
 }
 
 /// The VM's entry lookups of the running lane at the row's site `ip`, erased of its host so the
@@ -355,28 +317,6 @@ impl ElementSteps {
     #[inline(always)]
     fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Self {
         Self { context: cx.cast(), site: ip, read: row_index_read::<H>, write: row_index_write::<H> }
-    }
-}
-
-/// The general read's host path of a `GENERAL_*` row, erased of its host so the frame names no `H`:
-/// the VM's cached read of `atom` through `site` (`general_field_read`), which the row's plan
-/// `FieldPlan::Host` reads through (`LaneFrame::field_get_host`). `record` is the instruction's
-/// address (a private name's site), `register` whether the base is a register (its hint answers first).
-#[derive(Clone, Copy)]
-struct HostReads {
-    context: *mut (),
-    record: usize,
-    register: bool,
-    atom: u32,
-    site: u16,
-    read: fn(*mut (), usize, bool, Value, u32, u16) -> Option<Value>,
-}
-
-impl HostReads {
-    /// The general reads of the running lane's `cx` at the row's site `ip`, of `atom` through `site`.
-    #[inline(always)]
-    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip, register: bool, atom: u32, site: u16) -> Self {
-        Self { context: cx.cast(), record: ip.addr(), register, atom, site, read: super::general_field_read::<H> }
     }
 }
 
@@ -642,7 +582,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, geometry: None, proofs: None, stores: None, host_reads: None, stored: None, typed: None, math: None, entries: None, field_reads: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -666,13 +606,12 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, geometry: None, proofs: None, stores: None, host_reads: None, stored: None, typed: None, math: None, entries: None, field_reads: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None, geometry: None, proofs: None, stores: None, stored: None, typed: None, math: None, entries: None }
     }
 }
 
-/// The field reads a planned named read runs over the running lane's record (`FieldReads`): the
-/// cached read of a site, the private field of a record, and the private store. Each is a
-/// function of the lane's context, so the frame's erased reads call it.
+/// The field reads a planned named read runs over the running lane's record: the cached read of
+/// a site, the private field of a record, and the private store.
 impl<const ACC: u8> LaneFrame<ACC> {
     /// `cached_read` of a read whose private name, if any, has the private-name site
     /// `private_site` (`private_slot`); `0` for none, which reads it uncached.
@@ -1007,8 +946,7 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
             read: self.plan.filter(|plan| plan.host.is_none()).map(|plan| (plan.ops, plan.len)),
             store: self.plan.and_then(|plan| plan.store),
             nested: self.plan.and_then(|plan| plan.nested.map(|(hops, _)| hops)),
-            host: self.plan.and_then(|plan| plan.host)
-                .or_else(|| self.host_reads.map(|reads| crate::staged::property::FieldPlan::Host { atom: reads.atom, site: reads.site })),
+            host: self.plan.and_then(|plan| plan.host),
             entry: self.plan.and_then(|plan| plan.entry),
         }
     }
@@ -1086,16 +1024,6 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         (entries.read)(entries.context, entries.site, Value::from_bits(object), kind).map(Value::to_bits)
     }
 
-    /// The private field `atom` of `object` under the record's brand (`FieldPlan::Private`,
-    /// `LaneFrame::private_value`).
-    #[inline(always)]
-    fn private_field(&mut self, _stage: &mut Concrete, object: u64, atom: u32, _miss: ()) -> Option<u64> {
-        let reads = self.field_reads?;
-        let object = Value::from_bits(object);
-        if object.is_deleted() { return None; }
-        (reads.private)(reads.context, reads.record, object, atom).map(Value::to_bits)
-    }
-
     /// The VM's own-field store of `value` to `atom` through `site` (`LaneHelper::FieldSet`): the
     /// form hint it leaves is the record's, which the row writes once the store completes.
     #[inline(always)]
@@ -1155,20 +1083,6 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         let added = (stores.proved)(stores.context, object, atom, site, value)
             || (stores.primary)(stores.context, object, atom, site, value);
         added.then_some(())
-    }
-
-    /// The general read's host path (`FieldPlan::Host`): the VM's cached read of `atom` of `object`
-    /// through `site`, which a `GENERAL_*` row's frame holds (`host_reads`); a miss leaves at the row's miss.
-    #[inline(always)]
-    fn field_get_host(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, _miss: ()) -> Option<u64> {
-        if let Some(reads) = self.host_reads {
-            return (reads.read)(reads.context, reads.record, reads.register, Value::from_bits(object), atom, site).map(Value::to_bits);
-        }
-        // A cached row (`CACHED_FIELD_*`): the general cached read, which declines a deleted `this` as no object.
-        let reads = self.field_reads?;
-        let object = Value::from_bits(object);
-        if object.is_deleted() { return None; }
-        (reads.cached)(reads.context, object, atom, site).map(Value::to_bits)
     }
 
     /// The VM's Math call of `callee` on the first `count` of `arguments` (`MathCalls`), which a
@@ -1664,6 +1578,33 @@ lane_handler! {
                 std::hint::assert_unchecked(i.c <= crate::bytecode::REGISTER_MASK);
             }
         }
+        // The cached, private and general reads answer at their record before the staged plan runs: a
+        // direct call of the lane's own read, with no erased host. A miss takes the site's miss.
+        if const { super::cached_field_site(FLAG) || super::private_field_site(FLAG) || super::general_site(FLAG) } {
+            let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            // The base: `this` for a `this` site, else the register the record names.
+            let receiver = if const { super::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
+            // A deleted `this` is no object for a cached or private read; the general read takes it as before.
+            if const { !super::general_site(FLAG) } && receiver.is_deleted() { property_miss!() }
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*script).code };
+            let read = if const { super::cached_field_site(FLAG) } {
+                LaneFrame::<ACC>::cached_read::<H>(script, code, receiver, i.imm(), i.c, 0)
+            } else if const { super::private_field_site(FLAG) } {
+                LaneFrame::<ACC>::private_value::<H>(script, ip.addr(), code, receiver, i.imm())
+            } else {
+                super::general_field_read::<H>(script.cast(), ip.addr(), const { !super::own_site_this(FLAG) }, receiver, i.imm(), i.c)
+            };
+            match read {
+                Some(value) => {
+                    // The general read's word decodes as the staged row decodes its value (`own_site_decodes`).
+                    let value = if const { super::own_site_decodes(FLAG) } { crate::value_vec::decode_staged_word(value.to_bits()) } else { value };
+                    r.set(i.a, value);
+                    next!(script, r, following(ip), Carried::script_in(script, view))
+                }
+                None => property_miss!(),
+            }
+        }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);
         let decoded = match const { LaneFields::<OP, FLAG>::OPCODE.staged() } {
@@ -1744,12 +1685,7 @@ lane_handler! {
                 // The Math call the read's value feeds, computed by the VM's functions (`PropertyFrame::math_call`).
                 frame.math = Some(MathCalls::of::<H>(script));
             }
-            if const { super::general_site(FLAG) } {
-                // The general read's host path (`FieldPlan::Host`): the VM's cached read of the atom
-                // through the site's cache, from the record's base (`this` or a register).
-                if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.host_reads = Some(HostReads::of::<H>(script, ip, const { !super::own_site_this(FLAG) }, i.imm(), i.c));
-            } else if const { super::inherited_site(FLAG) } {
+            if const { super::inherited_site(FLAG) } {
                 // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
                 // last answered); at the other site, of any receiver's object part.
                 let machine = unsafe { vm(script) };
@@ -1788,12 +1724,10 @@ lane_handler! {
             } else if const { super::private_field_site(FLAG) } {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.field_reads = Some(FieldReads::of::<H>(script, ip.addr()));
                 frame.plan = Some(RecordPlan::private(i.imm()));
             } else if const { super::cached_field_site(FLAG) } {
                 // The cached read of the site's atom, which the VM answers (`FieldPlan::Host`).
                 if const { super::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.field_reads = Some(FieldReads::of::<H>(script, ip.addr()));
                 frame.plan = Some(RecordPlan::host_read(crate::staged::property::FieldPlan::Host { atom: i.imm(), site: i.c }));
             } else if const { super::returning_field_site(FLAG) } {
                 // A returning own read of the record's hint (`RecordPlan::own`); the lane's unbound
