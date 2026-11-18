@@ -279,6 +279,7 @@ pub(crate) struct UniqueElements(ArrayElements);
 
 impl ArrayElements {
     /// No values, in the shared empty header.
+    #[inline(always)]
     pub(crate) fn new() -> Self {
         Self {
             header: NonNull::from(&EMPTY),
@@ -658,6 +659,7 @@ impl ArrayElements {
     }
 
     /// The bytes the values take (capacity times the value width: 4 narrow, 8 wide).
+    #[inline]
     pub(crate) fn value_bytes(&self) -> usize {
         self.capacity() * if self.is_narrow() { size_of::<u32>() } else { size_of::<Value>() }
     }

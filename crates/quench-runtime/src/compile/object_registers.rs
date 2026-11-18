@@ -25,7 +25,7 @@ pub(super) fn promote(
     { return; }
     let mut pc = 0;
     while pc < function.code.len() {
-        if function.code[pc].op() == Op::MakeObject2
+        if let Some(width) = literal_values(function.code[pc]).map(|values| values.len() as u16)
             && let Some(replacements) = replacement(function, pc, methods, fields, supers, objects)
         {
             let old = std::mem::take(&mut function.code);
@@ -43,9 +43,23 @@ pub(super) fn promote(
                 &mut function.parameter_end_pc, &mut function.binding_sites,
                 &mut function.source_positions, &old);
             function.code = code;
-            function.registers += 2;
-            pc = map[pc] + 2;
+            function.registers += width;
+            pc = map[pc] + usize::from(width);
         } else { pc += 1; }
+    }
+}
+
+/// The registers a plain object literal's allocation takes its values from, in its object
+/// site's atom order: a pair's two operands, or a literal's register window. `None` for any
+/// other instruction.
+fn literal_values(make: Instr) -> Option<smallvec::SmallVec<[u16; 4]>> {
+    match make.op() {
+        Op::MakeObject2 => Some(smallvec::smallvec![make.b(), make.c()]),
+        Op::MakeObjectLiteral => {
+            let window = make.register_window();
+            Some((window.base..window.base + window.count).collect())
+        }
+        _ => None,
     }
 }
 
@@ -55,17 +69,16 @@ fn replacement(
 ) -> Option<Vec<Option<smallvec::SmallVec<[Instr; 2]>>>> {
     // Reuse the authoritative register-transfer domain. Exhausting its mask
     // representation leaves the original allocation intact.
-    if function.registers.checked_add(2)? > liveness::ROOT_MAP_REGISTERS { return None; }
     let make = function.code[allocation];
+    let values = literal_values(make)?;
+    if function.registers.checked_add(values.len() as u16)? > liveness::ROOT_MAP_REGISTERS { return None; }
     if make.result_flags() != 0 { return None; }
     let atoms = &objects.get(make.object_site_index())?.atoms;
-    if atoms.len() != 2 || atoms[0] == atoms[1] { return None; }
+    let distinct = atoms.iter().enumerate().all(|(index, atom)| !atoms[..index].contains(atom));
+    if atoms.is_empty() || atoms.len() != values.len() || !distinct { return None; }
     let transfers = liveness::transfers(function, methods, fields, supers)?;
     let instructions: Vec<_> = function.instructions().collect();
     let successors = crate::bytecode::Successors::of(function, &instructions);
-    let repeated_allocation = (allocation..instructions.len())
-        .any(|pc| successors.at(pc).any(|(target, _)| target <= allocation));
-    if repeated_allocation { return None; }
     let mut incoming = vec![None; instructions.len()];
     incoming[0] = Some(Aliases { may: RegisterSet::default(), must: RegisterSet::default() });
     loop {
@@ -100,7 +113,13 @@ fn replacement(
         function.local_registers.iter().filter(|local| local.local < function.params)
             .fold(RegisterSet::default(), |mask, local| mask | register_bit(local.register))
     };
-    incoming[allocation]?;
+    // An allocation a loop repeats makes a fresh object each time; the promoted registers
+    // stand for the latest one. That is exact while no other register still names an
+    // earlier one where the allocation runs again: the only live alias it may find is the
+    // result register, which the allocation redefines (dead copies are redefined before use).
+    let reached = incoming[allocation]?;
+    let live = liveness::analyze(function, methods, fields, supers)?;
+    if reached.may & !register_bit(make.result_register()) & live[allocation] != 0 { return None; }
     let mut replacements = vec![None; instructions.len()];
     let scalar = |atom| atoms.iter().position(|candidate| *candidate == atom)
         .map(|index| function.registers + index as u16);
@@ -110,10 +129,8 @@ fn replacement(
         let uses = transfers[pc].0 & aliases.may;
         if pc == allocation {
             if uses != 0 || register_bit(make.result_register()) & observable != 0 { return None; }
-            replacements[pc] = Some(smallvec::smallvec![
-                Instr::new(Op::Move, function.registers, make.b(), 0, 0),
-                Instr::new(Op::Move, function.registers + 1, make.c(), 0, 0),
-            ]);
+            replacements[pc] = Some(values.iter().enumerate()
+                .map(|(index, value)| Instr::new(Op::Move, function.registers + index as u16, *value, 0, 0)).collect());
         } else if uses != 0 {
             if uses & !aliases.must != 0 { return None; }
             replacements[pc] = Some(match instruction.op() {
@@ -150,7 +167,7 @@ mod tests {
                 .is_some_and(|name| &program.atoms[name as usize] == "subject")).unwrap();
             let body = program.function(id);
             if !generic {
-                assert_eq!(body.instructions().any(|i| i.op() == Op::MakeObject2), !promoted,
+                assert_eq!(body.instructions().any(|i| matches!(i.op(), Op::MakeObject2 | Op::MakeObjectLiteral)), !promoted,
                     "{}", program.disassemble());
             }
             program.validate().unwrap();
@@ -193,6 +210,68 @@ mod tests {
                 if (subject(n,seed) !== reference(n,seed)) throw Error('field state');
             }
         "#, true);
+    }
+
+    #[test]
+    fn promotes_an_allocation_each_loop_iteration_repeats() {
+        check(r#"
+            function subject(n) {
+                let s = 0;
+                for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; p.y = (p.y + i) | 0; s = (s + p.x + p.y) | 0; }
+                return s;
+            }
+            for (const n of [0, 1, 2, 100]) {
+                let r = 0; for (let i = 0; i < n; i++) r = (r + i + 1 + i) | 0;
+                if (subject(n) !== r) throw Error('loop allocation ' + n);
+            }
+        "#, true);
+    }
+
+    #[test]
+    fn promotes_wider_literals() {
+        check(r#"
+            function subject(n) {
+                let s = 0;
+                for (let i = 0; i < n; i++) {
+                    const p = { x: i, y: 1, z: 2, w: i };
+                    p.z = (p.z + p.w) | 0;
+                    s = (s + p.x + p.y + p.z) | 0;
+                }
+                return s;
+            }
+            for (const n of [0, 1, 3, 50]) {
+                let r = 0; for (let i = 0; i < n; i++) r = (r + i + 1 + 2 + i) | 0;
+                if (subject(n) !== r) throw Error('wide literal ' + n);
+            }
+        "#, true);
+    }
+
+    #[test]
+    fn keeps_a_literal_read_through_its_prototype() {
+        check(r#"
+            function subject(n) {
+                let s = '';
+                for (let i = 0; i < n; i++) { const p = { x: i, y: 1, z: 2 }; s = typeof p.toString; }
+                return s;
+            }
+            if (subject(2) !== 'function') throw Error('prototype read');
+        "#, false);
+    }
+
+    #[test]
+    fn keeps_an_allocation_whose_earlier_instance_stays_live() {
+        check(r#"
+            function subject(n) {
+                let s = 0, previous = { x: -1, y: -1 };
+                for (let i = 0; i < n; i++) {
+                    const p = { x: i, y: i };
+                    s = (s + previous.x) | 0;
+                    previous = p;
+                }
+                return s;
+            }
+            if (subject(4) !== (-1 + 0 + 1 + 2)) throw Error('earlier instance');
+        "#, false);
     }
 
     #[test]

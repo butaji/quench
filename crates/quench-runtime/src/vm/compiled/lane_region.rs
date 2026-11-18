@@ -1701,6 +1701,7 @@ pub(super) fn lower(
     let heap = literals::heap_primitive_pcs(entry_pc, &initial, &instructions, &leaders, &program.constants, lowering.native_calls);
     if !numeric {
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
+        scalar::declared_entry_types(function, &lowering.written, &mut initial);
     }
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
@@ -1723,7 +1724,8 @@ pub(super) fn lower(
         // Backedge definitions choose a numeric entry signature. Conformance
         // proves the external input once; every subsequent edge carries the
         // same verified SSA view. This is an admission requirement, not a fact
-        // assumed about the source program or a TypeScript annotation.
+        // assumed about the source program (a declared parameter type is checked
+        // the same way: `scalar::declared_entry_types`).
         let mut refined = false;
         for (input, carried) in initial.iter_mut().take(usize::from(unit.caller_registers)).zip(lowering.facts.backedge().iter().map(|ty| ty.machine())) {
             if matches!(carried, Type::INT32 | Type::NUMBER) && *input != carried {

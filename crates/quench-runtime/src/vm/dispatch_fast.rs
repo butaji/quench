@@ -1108,6 +1108,18 @@ impl LaneView {
         }
     }
 
+    /// The own-field hint of the field record at `pc`, as the whole auxiliary word
+    /// (`Object::hint_shape`) of the receiver it last answered: what a specializer guards in
+    /// one compare to read the record's storage form with no test (`NativeFieldLoad::formed`).
+    /// `None` where the record holds no own hint, or is no hinted field record.
+    pub(super) fn own_field_hint(&self, pc: usize) -> Option<u32> {
+        let pc = u32::try_from(pc).ok()?;
+        if !self.field_records.contains(&pc) { return None; }
+        // SAFETY: each listed record's operand is `field` (`holds_field_hint`).
+        let shape = unsafe { (*self.records[pc as usize].get()).operand.field.shape };
+        (shape < HOLDER_HINT).then_some(shape)
+    }
+
     /// Clears the global-object hints of its by-name loads and stores: a global
     /// lexical name was declared (`Vm::note_global_lexical_names`).
     pub(super) fn clear_name_hints(&self) {
@@ -7408,7 +7420,7 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         let vm = unsafe { vm(cx) };
         let Some((object, value)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| vm.primary_own_field_hit(code, object, i.c).map(|value| (object, value)))
+            .and_then(|object| own_entry_hit(vm, code, object, i.c).map(|value| (object, value)))
         else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
@@ -7425,21 +7437,45 @@ script_handler! {
     }
 }
 
+/// The value the primary own entry of site `site` reads in `object`, in whatever storage form
+/// the object keeps it: the site row (`primary_own_field_hit`) reads arena runs and packed
+/// values; an object whose values a collection narrowed (`NARROW_FORM`) is read through the
+/// entry formed to its word (`form_hint`), so its record settles on the narrow handler instead
+/// of missing on every read.
+#[inline(always)]
+fn own_entry_hit<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, object: Value, site: u16) -> Option<Value> {
+    if let Some(value) = vm.primary_own_field_hit(code, object, site) {
+        return Some(value);
+    }
+    let entry = vm.field_cache_entry(site);
+    let receiver = vm.heap.record_object_value(object)?;
+    if entry.holder != super::NO_FIELD_HOLDER || receiver.exact_shape() != entry.receiver {
+        return None;
+    }
+    vm.own_field_hint_hit::<HINTED_FORM>(vm.form_hint(entry, object), receiver)
+}
+
 /// The bound own-field read (`lane_get_field_own_bound`) for the storage form the hint word
 /// `hint`'s bits name: an arena run, extras or packed inline values, whose layout it then
 /// reads untested.
 fn own_formed_handler<H: Host, const THIS: bool>(hint: u32) -> Handler {
+    use crate::staged::TAGGED_SLOTS;
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     // A narrow run's hint names neither inline values nor extras: those tests fold away and
-    // the read takes the run's halves.
+    // the read takes the run's halves. Packed and narrow slots never hold a raw double; the
+    // other forms skip the decode where float slots are off for the process.
     if hint & NARROW_FORM != 0 {
         return lane_get_field_own_bound::<H, THIS, NARROW_FORM>;
     }
-    match hint & (INLINE_FORM | EXTRAS_FORM) {
-        0 => lane_get_field_own_bound::<H, THIS, 0>,
-        EXTRAS_FORM => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
-        INLINE_FORM => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
-        _ => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
+    let tagged = !crate::vm::switches::float_slots();
+    match (hint & (INLINE_FORM | EXTRAS_FORM), tagged) {
+        (0, true) => lane_get_field_own_bound::<H, THIS, TAGGED_SLOTS>,
+        (0, false) => lane_get_field_own_bound::<H, THIS, 0>,
+        (EXTRAS_FORM, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | TAGGED_SLOTS }>,
+        (EXTRAS_FORM, false) => lane_get_field_own_bound::<H, THIS, EXTRAS_FORM>,
+        (INLINE_FORM, _) => lane_get_field_own_bound::<H, THIS, INLINE_FORM>,
+        (_, true) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS }>,
+        (_, false) => lane_get_field_own_bound::<H, THIS, { EXTRAS_FORM | INLINE_FORM }>,
     }
 }
 
@@ -7858,7 +7894,12 @@ script_handler! {
             requicken::<H>(ip, lane_get_private_field::<H>);
             sibling!(lane_get_private_field::<H>, r, ip, Carried::script_in(cx, view))
         }
-        if vm.reads_function_info(i.imm()) {
+        // `name` reads take the own-field handlers: an own hit needs the receiver's exact shape
+        // to hold `name` as a data slot the general read recorded, which a function's unprepared
+        // `name` never is (it is no slot until `prepare_function_info_prototypes` makes it one),
+        // and every miss still reaches the general read, which prepares it. `user.name` then
+        // costs an own read, not the general probe.
+        if vm.reads_function_info(i.imm()) && i.imm() == vm.length_atom {
             // A register's `length` is most often an array's, which no function information
             // can answer.
             let handler: Handler = if i.imm() == vm.length_atom
@@ -7942,6 +7983,24 @@ script_handler! {
             if let Some(length) = vm.typed_array_geometry_read(receiver, vm.length_atom) {
                 requicken::<H>(ip, lane_get_length_typed::<H>);
                 r.set(i.a, length);
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
+            // A plain object's own `length` data slot (`{ length: n }`), as the site's primary
+            // entry recorded it; a miss takes the general read, which prepares function info.
+            // SAFETY: the context's program outlives the lane run.
+            let code = unsafe { &*(*cx).code };
+            if let Some(value) = vm.primary_own_field_hit(code, receiver, i.c) {
+                // A site that read a plain object's own `length` mostly reads such objects: it
+                // takes the own-field handler, whose misses still reach the general read.
+                if crate::bytecode::FieldBase(i.b).register_index().is_some() && i.b != crate::bytecode::FieldBase::NESTED {
+                    let own: Handler = if unsafe { (*cx).binding.object_base.is_null() } {
+                        lane_get_field_own::<H, false>
+                    } else {
+                        lane_get_field_own_bound::<H, false, HINTED_FORM>
+                    };
+                    requicken::<H>(ip, own);
+                }
+                r.set(i.a, value);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
             }
             sibling!(lane_get_field::<H>, r, ip, Carried::script_in(cx, view))
@@ -19728,14 +19787,16 @@ enum FieldHit {
 }
 
 /// Every bound own-field read (`own_formed_handler`), of `this` and of a register.
-fn own_bound_handlers<H: Host>() -> [*const (); 12] {
+fn own_bound_handlers<H: Host>() -> [*const (); 18] {
+    use crate::staged::TAGGED_SLOTS;
     use crate::value_vec::{EXTRAS_FORM, INLINE_FORM, NARROW_FORM};
     macro_rules! forms {
         ($($form:expr),*) => {
             [$(lane_get_field_own_bound::<H, true, { $form }> as *const (), lane_get_field_own_bound::<H, false, { $form }> as *const ()),*]
         };
     }
-    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM)
+    forms!(HINTED_FORM, 0, EXTRAS_FORM, INLINE_FORM, EXTRAS_FORM | INLINE_FORM, NARROW_FORM,
+        TAGGED_SLOTS, EXTRAS_FORM | TAGGED_SLOTS, EXTRAS_FORM | INLINE_FORM | TAGGED_SLOTS)
 }
 
 impl FieldHit {

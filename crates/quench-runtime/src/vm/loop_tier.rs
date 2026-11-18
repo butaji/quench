@@ -234,7 +234,9 @@ pub(super) fn lane_loop_compile<H: Host>(
     let function = site.function();
     let helpers = super::super::compiled::process_lane_helpers::<H>();
     machine.host.before_native_compilation();
-    let (native_field_loads, store_loads) = (native_field_loads(machine, region), native_store_loads(machine, region));
+    // SAFETY: the program's views outlive the lane run.
+    let own = unsafe { &*(*cx).views }.get(function as usize).and_then(super::super::program_store::derived_lane_view);
+    let (native_field_loads, store_loads) = (native_field_loads(machine, own, region), native_store_loads(machine, region));
     let (ints, doubles) = entry_number_registers(region, r);
     let operand_kinds = machine.region_operand_kinds(machine.active_program, function, region.header as usize..=region.backedge as usize);
     let frame_captures: Vec<(usize, usize)> = region.inlining.as_deref()
@@ -283,13 +285,21 @@ fn unit_region_calls<H: Host>(cx: *mut LaneContext<H>, machine: &mut Vm<H>, prog
 }
 
 /// The descriptors of the dynamic field reads of `region` native code makes itself.
-fn native_field_loads<H: Host>(machine: &Vm<H>, region: &super::super::compiled::LoopRegion)
+fn native_field_loads<H: Host>(machine: &Vm<H>, own: Option<&super::LaneView>, region: &super::super::compiled::LoopRegion)
     -> Vec<Vec<super::super::compiled::NativeFieldLoad>> {
     let (properties_base, properties_len) = machine.heap.native_property_values();
     let available = machine.heap.object_record_base().is_some() && !properties_base.is_null() && properties_len > 0;
+    // Each read's lane record hint names the storage form its receivers had (`own_field_hint`),
+    // which code that embeds its shapes guards whole. Base regions read the live cache instead,
+    // whose entries name no form.
+    let own = own.filter(|_| !crate::jit_mode::base_regions());
+    let reads: std::collections::HashMap<usize, usize> = region.field_reads().iter()
+        .map(|(offset, index)| (*index, region.header as usize + *offset as usize)).collect();
     region.fields.iter().enumerate()
         .map(|(index, field)| if available && region.inlining.is_none() && region.is_dynamic_field(index) {
-            machine.native_field_load_descriptors(field.cache_site)
+            let hint = own.zip(reads.get(&index)).and_then(|(view, pc)| view.own_field_hint(*pc));
+            machine.native_field_load_descriptors(field.cache_site).into_iter()
+                .map(|load| super::super::compiled::NativeFieldLoad { formed: hint, ..load }).collect()
         } else {
             Default::default()
         })

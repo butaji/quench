@@ -389,6 +389,28 @@ pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: 
     layout_of(stage, record, payload, inline, extras, form, storage_len, access, miss)
 }
 
+/// The layout of the record at `record` whose whole auxiliary word a guard proved equal to a
+/// word with storage-form bits `bits` (`Object::hint_shape`): the form is a static input, so
+/// neither the inline flag, the extras tag nor a narrow run is tested. `None` for a form with
+/// extras, whose run the payload's extras word holds, which the caller reads its own way.
+#[inline(always)]
+pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, record: S::Word, bits: u32, storage_len: usize)
+    -> Option<Layout<S::Word, S::Cond>> {
+    let slots = match bits {
+        bits if bits == OBJECT.inline_form => Slots::Packed(Packed::Record(record)),
+        0 => {
+            let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+            Slots::Flat(arena_run(stage, payload))
+        }
+        bits if bits == OBJECT.narrow_form => {
+            let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+            Slots::Narrow(arena_run(stage, payload))
+        }
+        _ => return None,
+    };
+    Some(Layout { slots, storage_len })
+}
+
 /// `own_layout` past its loads: `payload` is the record's payload word, `inline` and `extras`
 /// its inline flag and extras tag.
 #[inline(always)]
@@ -520,6 +542,56 @@ pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S
             |stage| { let number = flat_read(stage, flat, slot, rep); stage.box_number(number) }),
         _ => read_slot(stage, layout, slot, Rep::Tagged),
     }
+}
+
+/// `read_slot` at a run-time `index` (a for-in key's listed slot): value `index` of an object
+/// of `layout`, which the caller proved holds it (`index < layout.storage_len`), as the word
+/// its owner's `rep` encodes.
+#[allow(dead_code)] // The for-in keyed-read row is its first caller.
+#[inline(always)]
+pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, index: S::Word, rep: Rep) -> S::Word {
+    match layout.slots {
+        Slots::Flat(base) => flat_read_at(stage, base, index, rep),
+        Slots::Packed(packed) => packed_read_at(stage, packed, index, rep),
+        Slots::Either { packed, inline, flat } => stage.choose(inline,
+            |stage| packed_read_at(stage, packed, index, rep), |stage| flat_read_at(stage, flat, index, rep)),
+        Slots::Narrow(base) => {
+            debug_assert!(rep != Rep::Float64, "a narrow run holds narrow values, never a raw double");
+            let offset = stage.mul_imm(index, u64::from(u32::BITS / 8));
+            let address = stage.add(base, offset);
+            let narrow = stage.load_u32(Region::ObjectSlots.mutable(), address, 0);
+            decode_narrow(stage, narrow)
+        }
+    }
+}
+
+/// Flat value `index` of the run at `base`, `index` a run-time word.
+#[allow(dead_code)] // The for-in keyed-read row is its first caller.
+#[inline(always)]
+fn flat_read_at<S: Stage>(stage: &mut S, base: S::Word, index: S::Word, rep: Rep) -> S::Word {
+    let offset = stage.mul_imm(index, OBJECT.property_value_size as u64);
+    let address = stage.add(base, offset);
+    match rep {
+        Rep::Float64 => stage.load_f64(Region::ObjectSlots.mutable(), address, 0),
+        Rep::Int32 | Rep::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
+    }
+}
+
+/// Packed value `index` (0 or 1, a run-time word): its half of the payload word, decoded.
+#[allow(dead_code)] // The for-in keyed-read row is its first caller.
+#[inline(always)]
+fn packed_read_at<S: Stage>(stage: &mut S, packed: Packed<S::Word>, index: S::Word, rep: Rep) -> S::Word {
+    const _: () = assert!(OBJECT.inline_property_count == 2, "a packed index selects one of two halves");
+    debug_assert!(rep != Rep::Float64, "a packed slot holds a narrow value, never a raw double");
+    let payload = match packed {
+        Packed::Snapshot(payload) => payload,
+        Packed::Record(record) => stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32),
+    };
+    let upper = stage.shr_imm(payload, u64::from(u32::BITS));
+    let second = stage.ne_imm(index, 0u32);
+    let half = stage.select(second, upper, payload);
+    let narrow = stage.and_imm(half, u64::from(u32::MAX));
+    decode_narrow(stage, narrow)
 }
 
 /// Narrow value `slot` of the run whose word zero is at `base`, decoded.

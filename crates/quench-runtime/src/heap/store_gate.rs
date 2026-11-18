@@ -9,11 +9,21 @@ impl Heap {
     /// store's gate (`staged::Stage::store_gate`).
     #[inline(always)]
     pub(crate) fn store_unlogged(&self, space: RecordSpace, record_id: u32, value: Value) -> bool {
+        // The common store: nothing watches, and the value names no record a log could need.
+        if !self.store_watched && value.heap_index().is_none() {
+            return true;
+        }
         let logs = match space {
             RecordSpace::Object => self.object_records.store_logs(record_id, value),
             RecordSpace::Function => self.function_records.store_logs(record_id, value),
         };
         !self.tracks_slot_values() && !logs
+    }
+
+    /// Recomputes `store_watched` after a gate input changed: the snapshot barrier
+    /// (`set_satb`), reference counts (`set_rc`) or slot observation (`track_slot_representations`).
+    pub(super) fn refresh_store_watch(&mut self) {
+        self.store_watched = self.satb_active || self.rc_active || self.properties.tracks();
     }
 
     /// Whether the property arena records its slots' value classes (`ValueArena::tracks`), which

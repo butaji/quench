@@ -81,11 +81,13 @@ impl Heap {
         Some((Value::direct_object(id), self.object_records.record_ptr(id)))
     }
 
-    /// `alloc_object` of an object with no properties, which admit no slot values.
+    /// `alloc_object` of a fresh object of `prototype` with no properties (`Object::new`),
+    /// which admits no slot values: the prototype as given, not decoded back from the layout.
     #[inline(always)]
-    pub(crate) fn alloc_empty_object(&mut self, object: Object) -> Value {
+    pub(crate) fn alloc_empty_object(&mut self, prototype: Value) -> Value {
+        let object = Object::new(prototype);
         debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
-        self.mark_prototype(object.proto());
+        self.mark_prototype(prototype);
         self.insert_admitted_object_record(object)
     }
 

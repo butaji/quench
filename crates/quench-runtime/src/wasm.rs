@@ -1624,6 +1624,7 @@ impl ModuleBindings<'_> {
             length: params,
             parameter_end_pc: 0,
             parameter_atoms: vec![].into(),
+            declared_parameters: vec![].into(),
             rest: false,
             is_async: false,
             is_generator: false,

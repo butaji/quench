@@ -62,18 +62,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn keep_alive(&mut self, value: Value) {
-        if !self
-            .kept_alive
-            .iter()
-            .any(|root| self.heap.root_value(*root) == Some(value))
-        {
+        if !self.kept_alive.contains_key(&value.to_bits()) {
             let root = self.heap.root(value);
-            self.kept_alive.push(root);
+            self.kept_alive.insert(value.to_bits(), root);
         }
     }
 
     pub(crate) fn clear_kept_objects(&mut self) {
-        for root in self.kept_alive.drain(..) {
+        for (_, root) in self.kept_alive.drain() {
             self.heap.release_root(root);
         }
     }

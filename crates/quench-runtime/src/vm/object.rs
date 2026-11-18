@@ -1204,7 +1204,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn hole_array(&mut self, length: usize) -> Value {
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let elements = crate::heap::ArrayElements::from_fn(length, |_| Value::DELETED);
-        self.heap.alloc(Cell::Array { object: crate::heap::ArrayObject::fresh(prototype, elements) })
+        self.heap.alloc_fresh_array(prototype, elements)
     }
 
     /// An array literal of `length` elements, each the value `element` gives for its index:
@@ -1704,7 +1704,7 @@ impl<H: Host> Vm<H> {
             .and_then(Object::plain_property_storage);
         Some(super::compiled::NativeFieldLoad {
             shape: cache.receiver, holder: None, slot: cache.slot, storage_len, storage, ty,
-            inherited: None, function_shape: false, raw_double,
+            inherited: None, function_shape: false, raw_double, formed: None,
         })
     }
 
@@ -1765,7 +1765,7 @@ impl<H: Host> Vm<H> {
                 storage: None,
                 ty: crate::typed_ir::Type::ANY,
                 inherited: super::compiled::InheritedConstant::of([(cache.proved_prototype.bits(), value)]), function_shape: false,
-                raw_double: false,
+                raw_double: false, formed: None,
             });
         }
         loads
@@ -1819,7 +1819,7 @@ impl<H: Host> Vm<H> {
         Some(super::compiled::NativeFieldLoad {
             shape: entry.receiver, holder, slot: entry.slot, storage_len, storage: None, ty,
             inherited: holder.and_then(|holder| self.inherited_constant(holder, entry.slot)), function_shape: false,
-            raw_double,
+            raw_double, formed: None,
         })
     }
 
@@ -2136,6 +2136,15 @@ impl<H: Host> Vm<H> {
                 && (receiver.boxed_primitive().is_some() || receiver.stack_data().is_some() || receiver.has_error_data()))
         {
             return false;
+        }
+        // A define of a name the receiver's shape already holds as a default data property
+        // (`record_field_define_overwrite`) is CreateDataProperty's plain value write: an object
+        // update's `{...state, n}` overwrites the copied `n`.
+        let overwrite = self.field_cache_entry(site);
+        if overwrite.holder == NO_FIELD_HOLDER && overwrite.receiver == receiver.exact_shape() && !self.method_caches_may_name(atom) {
+            self.heap.property_set(object, usize::from(overwrite.slot), value);
+            self.profile.field_cache_hit(0, 0);
+            return true;
         }
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), receiver.exact_shape(), atom) else {
             return false;
@@ -4644,6 +4653,11 @@ impl<H: Host> Vm<H> {
             self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
             return Ok(());
         }
+        if let Some(entry) = self.field_define_overwrite(object, atom) {
+            self.define_class_field(p, object, key, value)?;
+            self.record_field_cache(site, entry);
+            return Ok(());
+        }
         let plain = self.class_field_is_plain_add(object, key);
         let layout = self.object_data(object).map_or(0, Object::layout_id);
         self.define_class_field(p, object, key, value)?;
@@ -4668,6 +4682,22 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    /// The own entry a define of `atom` on `object` may take next time as a plain value write
+    /// (`proved_field_define_hit`): its exact shape holds `atom` as a data property that is
+    /// writable, enumerable and configurable, which CreateDataProperty leaves as it is but its
+    /// value. A shape names its slots' attributes, so the exact shape proves them again.
+    /// `None` for any other property, a dictionary or an object with side descriptors.
+    fn field_define_overwrite(&self, object: Value, atom: Atom) -> Option<FieldCache> {
+        let data = self.object_data(object)?;
+        if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) {
+            return None;
+        }
+        let slot = self.shape_slot(data.shape(), atom)?;
+        let attributes = self.slot_attributes(data, slot)?;
+        (!attributes.accessor && attributes.writable && attributes.enumerable && attributes.configurable)
+            .then(|| Some(FieldCache::own(data.exact_shape(), u16::try_from(slot).ok()?))).flatten()
     }
 
     /// The prototype shapes a cached add of `key` to `object` must find again, as the depth and

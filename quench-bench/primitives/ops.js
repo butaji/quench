@@ -82,6 +82,13 @@ ops.k_nbody_pair = function (n) {
   }
   return a.vx + b.vz;
 };
+// Allocation: an object literal, a function constructor's instance and a class instance per
+// iteration, each read back; the C twins allocate the same struct on the heap (malloc + free).
+ops.alloc_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; s = (s + p.x + p.y) | 0; } return s; };
+function Pair(x, y) { this.x = x; this.y = y; }
+ops.alloc_ctor = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; } return s; };
+class Triple { constructor(x, y, z) { this.x = x; this.y = y; this.z = z; } }
+ops.alloc_class = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Triple(i, 1, 2); s = (s + p.x + p.z) | 0; } return s; };
 ops.k_struct_sum = function (n) { const pts = []; for (let i = 0; i < 64; i++) pts.push({ x: i, y: i + 1 }); let s = 0; for (let i = 0; i < n; i++) { const p = pts[i & 63]; s = (s + p.x * p.y) | 0; } return s; };
 class KernelTaskA { constructor(k) { this.k = k; } run(x) { return (x + this.k) | 0; } }
 class KernelTaskB { constructor(k) { this.k = k; this.j = 1; } run(x) { return (x ^ this.k) | 0; } }
@@ -182,4 +189,20 @@ ops.k20_switch = function (n) {
   }
   return acc;
 };
+// Kernels 4, 5, 6 and 8 of the C-parity table: a shape proven once with unboxed double fields,
+// an in-place double field store in a loop, a pointer chase whose `next` is the same shape or
+// null, and a literal consumed locally (escape analysis and scalar replacement).
+ops.k_dist2 = function (n) { const pts = []; for (let i = 0; i < 64; i++) pts.push({ x: i + 0.5, y: i + 0.25 }); let s = 0; for (let i = 0; i < n; i++) { const p = pts[i & 63]; s += p.x * p.x + p.y * p.y; } return s; };
+ops.k_field_acc = function (n) { const p = { x: 0.5, y: 0.25 }; const dx = 0.125; for (let i = 0; i < n; i++) { p.x += dx; } return p.x + p.y; };
+ops.k_list_walk = function (n) { let head = null; for (let i = 63; i >= 0; i--) head = { val: i, next: head }; let s = 0, node = head; for (let i = 0; i < n; i++) { s = (s + node.val) | 0; node = node.next; if (node === null) node = head; } return s; };
+ops.k_vec_local = function (n) { const a = { x: 1.5, y: 2.5 }, b = { x: 0.25, y: 0.75 }; let s = 0; for (let i = 0; i < n; i++) { const c = { x: a.x + i, y: a.y + b.y }; s += c.x * b.x + c.y; } return s; };
+// Object spread of a typical state record with one field replaced (`{...state, n}`), the
+// immutable-update pattern of reducers and option merging: a copy of five fields.
+ops.obj_spread = function (n) { let state = { a: 1, b: 2, c: 3, d: 4, n: 0 }; for (let i = 0; i < n; i++) { state = { ...state, n: i }; } return state.n + state.a; };
+// Reads of `name` and `length` from plain objects (`user.name`, `{ length }`), the names a
+// function answers from its information: a plain object's are own data fields.
+function nameRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.name) | 0; } return a; }
+function lengthRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.length) | 0; } return a; }
+ops.field_name = function (n) { return nameRead(n, { id: 3, name: 4 }); };
+ops.field_length = function (n) { return lengthRead(n, { id: 3, length: 4 }); };
 globalThis.PRIMITIVE_OPS = ops;

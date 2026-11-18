@@ -111,6 +111,7 @@ impl Heap {
     /// Turns counting on, from a recount of the live records, or off.
     pub(crate) fn set_rc(&mut self, on: bool) {
         self.rc_active = on;
+        self.refresh_store_watch();
         for_each_space_mut!(self, |space, _handle| space.set_rc(on));
         if on {
             self.rc_pin_epoch += 1;

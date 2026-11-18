@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
             weak_map_proto: Value::NULL,
             weak_set_proto: Value::NULL,
             weak_ref_proto: Value::NULL,
-            kept_alive: Vec::new(),
+            kept_alive: rustc_hash::FxHashMap::default(),
             finalization_registry_proto: Value::NULL, iterator_proto: Value::NULL,
             string_iterator_proto: Value::NULL, regexp_string_iterator_proto: Value::NULL,
             generator_proto: Value::NULL, iterator_helper_proto: Value::NULL,
