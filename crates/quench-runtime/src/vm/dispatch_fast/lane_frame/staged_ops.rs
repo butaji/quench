@@ -271,3 +271,52 @@ pub(in crate::vm::dispatch_fast) fn staged_jump(r: Registers, view: Carried) -> 
         _ => unreachable!("a jump produces no value"),
     }
 }
+
+/// What the staged `await` conversion (`staged::await_source`) asks the lane context, erased of
+/// its host so the frame names no `H`: whether a value is an object, and PromiseResolve where it
+/// observes nothing (`Vm::lane_promise_resolve`).
+#[derive(Clone, Copy)]
+pub(in crate::vm::dispatch_fast) struct AwaitSource {
+    object_like: fn(*mut (), Value) -> bool,
+    resolve: fn(*mut (), Value) -> Option<Value>,
+}
+
+impl AwaitSource {
+    /// The conversion of a lane context of host `H`.
+    pub(in crate::vm::dispatch_fast) fn of<H: Host>() -> Self {
+        Self {
+            object_like: |context, value| unsafe { vm(context.cast::<LaneContext<H>>()) }.is_object_like(value),
+            resolve: |context, value| {
+                let cx = context.cast::<LaneContext<H>>();
+                let vm = unsafe { vm(cx) };
+                let promise = vm.intrinsic_promise_constructor();
+                // SAFETY: the context's program outlives the lane run.
+                vm.lane_promise_resolve(unsafe { &*(*cx).code }, promise, value)
+            },
+        }
+    }
+}
+
+impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {
+    /// Whether `value` is an object, by the lane context's VM; `None` without a context.
+    fn object_like(&mut self, _stage: &mut Concrete, value: u64) -> Option<bool> {
+        let host = self.host?;
+        Some((host.awaits.object_like)(host.cx, Value::from_bits(value)))
+    }
+
+    /// PromiseResolve(%Promise%, `value`) where it observes nothing; `None` leaves a resolution
+    /// that could run guest code, or throw into the frame's handlers, to the general path.
+    fn promise_resolve(&mut self, _stage: &mut Concrete, value: u64) -> Option<u64> {
+        let host = self.host?;
+        (host.awaits.resolve)(host.cx, Value::from_bits(value)).map(Value::to_bits)
+    }
+}
+
+/// What `await` of `awaited` waits on in the lane context `cx` (registers `r`): the staged
+/// conversion (`staged::await_source`) over the lane's own PromiseResolve. `None` leaves a
+/// conversion that could run guest code, or throw into the frame's handlers, to the general path.
+pub(in crate::vm::dispatch_fast) fn lane_await_source<H: Host>(cx: *mut LaneContext<H>, r: Registers, awaited: Value) -> Option<Value> {
+    let mut stage = Concrete::new(std::ptr::null());
+    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
+    crate::staged::await_source(&mut stage, &mut frame, awaited.to_bits()).map(Value::from_bits)
+}

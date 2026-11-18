@@ -236,18 +236,25 @@ impl<H: Host> Vm<H> {
 }
 
 /// The interpreter's frame for staged rows: the running frame's live registers, and the VM that
-/// answers a row's call-out in place.
-struct HostFrame<'a, H: Host> {
-    vm: &'a mut Vm<H>,
-    program: &'a ResidualProgram,
-    site: CallSite,
+/// answers a row's call-out in place. Its suspension hooks are `suspension`'s.
+pub(super) struct HostFrame<'a, H: Host> {
+    pub(super) vm: &'a mut Vm<H>,
+    pub(super) program: &'a ResidualProgram,
+    pub(super) site: CallSite,
     /// What the VM raised, for the step's caller to throw.
-    raised: Option<JsError>,
+    pub(super) raised: Option<JsError>,
+}
+
+/// Where a row on the interpreter's frame sends control: an edge, or a suspension of the running
+/// activation (`Vm::staged_suspend`).
+pub(super) enum HostControl {
+    Edge(Edge),
+    Suspend(crate::staged::Suspending<u64>),
 }
 
 impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
     type Fact = ();
-    type Control = Edge;
+    type Control = HostControl;
 
     fn fact(&self, _register: Register) {}
 
@@ -269,11 +276,11 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn truthiness(&mut self, _stage: &mut Concrete, _register: Register) -> Option<bool> { None }
 
-    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> Edge {
-        if condition { Edge::Target } else { Edge::Following }
+    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> HostControl {
+        HostControl::Edge(if condition { Edge::Target } else { Edge::Following })
     }
 
-    fn jump(&mut self, _stage: &mut Concrete) -> Edge { Edge::Target }
+    fn jump(&mut self, _stage: &mut Concrete) -> HostControl { HostControl::Edge(Edge::Target) }
 
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
         (Value::boolean(condition).to_bits(), ())
@@ -301,8 +308,6 @@ impl<H: Host> PropertyFrame<Concrete> for HostFrame<'_, H> {
 }
 
 impl<H: Host> crate::staged::ElementFrame<Concrete> for HostFrame<'_, H> {}
-
-impl<H: Host> crate::staged::CallFrame<Concrete> for HostFrame<'_, H> {}
 
 impl<H: Host> NumericFrame<Concrete> for HostFrame<'_, H> {
     fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> {

@@ -109,11 +109,38 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
-    /// Suspend the activation at `kind` with the value of `value`, resuming into `destination`;
+    /// Suspend the activation as `suspending` names (`suspend`): the control the step ends in;
     /// `None` where the frame cannot, leaving the suspension to the interpreter
-    /// (`dispatch_fast::generator_yields`, `Vm::step`).
+    /// (`dispatch_fast::generator_yields`, `Vm::staged_suspend`).
     #[inline(always)]
-    fn suspend(&mut self, _stage: &mut S, _kind: super::Suspension, _destination: Register, _value: Register) -> Option<Self::Control> {
+    fn suspend(&mut self, _stage: &mut S, _suspending: super::Suspending<S::Word>) -> Option<Self::Control> {
+        None
+    }
+
+    /// Whether the running function is async, a fact of the function the frame runs; `None` where
+    /// the frame does not hold it.
+    #[inline(always)]
+    fn asynchronous(&self) -> Option<bool> {
+        None
+    }
+
+    /// Whether `value` is an object (`Vm::is_object_like`), which its heap cell decides; `None`
+    /// where the frame cannot read the heap.
+    #[inline(always)]
+    fn object_like(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Cond> {
+        None
+    }
+
+    /// PromiseResolve(%Promise%, `value`); `None` where the frame cannot make it, or it raised.
+    #[inline(always)]
+    fn promise_resolve(&mut self, _stage: &mut S, _value: S::Word) -> Option<S::Word> {
+        None
+    }
+
+    /// The word a step of `yield*`'s delegation defines (`delegation`), with the fact the frame
+    /// keeps of it; `None` where the frame cannot make it, or it raised.
+    #[inline(always)]
+    fn delegation(&mut self, _stage: &mut S, _step: super::DelegationStep<S::Word>) -> Option<(S::Word, Self::Fact)> {
         None
     }
 

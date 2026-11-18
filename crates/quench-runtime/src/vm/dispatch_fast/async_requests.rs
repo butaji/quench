@@ -90,7 +90,7 @@ pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, r: Register
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let Some(value) = vm.lane_await_source(code, r.get(i.b)) else {
+    let Some(value) = super::lane_frame::lane_await_source(cx, r, r.get(i.b)) else {
         return Resumed::Exit(exit(ip));
     };
     note_allocation(vm);

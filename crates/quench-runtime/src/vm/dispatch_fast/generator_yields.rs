@@ -5,6 +5,7 @@
 use super::*;
 use super::generator_windows::{lane_yield_in_window, lane_yield_star_in_window, running_generator};
 use super::async_requests::running_request;
+use super::lane_frame::lane_await_source;
 use super::super::activation::{JobRoot, SuspendKind};
 
 script_handler! {
@@ -33,8 +34,7 @@ script_handler! {
             let destination = i.a & crate::bytecode::REGISTER_MASK;
             if job.kind == SuspendKind::AsyncGenerator {
                 // The yield awaits its value, converted as an `await`'s source is.
-                // SAFETY: the context's program outlives the lane run.
-                let Some(source) = vm.lane_await_source(unsafe { &*(*cx).code }, value) else {
+                let Some(source) = lane_await_source(cx, r, value) else {
                     return exit(ip);
                 };
                 value = source;
@@ -63,17 +63,6 @@ script_handler! {
 }
 
 impl<H: Host> Vm<H> {
-    /// What `await` of `awaited` waits on, as `PromiseResolve(%Promise%, awaited)` converts it
-    /// where that observes nothing: a non-object as it is, an object by `lane_promise_resolve`.
-    /// `None` leaves a conversion that could run guest code, or throw into the frame's
-    /// handlers, to the general path.
-    pub(super) fn lane_await_source(&mut self, code: &ResidualProgram, awaited: Value) -> Option<Value> {
-        if self.is_object_like(awaited) {
-            return self.lane_promise_resolve(code, self.intrinsic_promise_constructor(), awaited);
-        }
-        Some(awaited)
-    }
-
     /// What an `await` of `source` (`lane_await_source`) by the activation of `job` evaluates
     /// to without suspending: its reaction would be the only queued job, so suspending, queueing
     /// it and resuming observes nothing more. Only an async function a microtask drain resumed
@@ -111,9 +100,7 @@ script_handler! {
         let (LaneRoot::Job(job), Some(Completion::ResumesJob)) = (unsafe { (*cx).root }, completion) else {
             return exit(ip);
         };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = vm.lane_await_source(code, r.get(i.b)) else {
+        let Some(value) = lane_await_source(cx, r, r.get(i.b)) else {
             return exit(ip);
         };
         // The source may be a fresh promise, which the safepoints after the run collect.
@@ -159,7 +146,7 @@ fn lane_await_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     // SAFETY: the call record belongs to the caller's live view.
     let returns = unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER != 0;
-    let Some(value) = (!script.forwards && !returns).then(|| vm.lane_await_source(code, r.get(i.b))).flatten() else {
+    let Some(value) = (!script.forwards && !returns).then(|| lane_await_source(cx, r, r.get(i.b))).flatten() else {
         return Resumed::Exit(exit(ip));
     };
     note_allocation(vm);

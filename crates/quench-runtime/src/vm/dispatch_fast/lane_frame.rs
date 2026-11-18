@@ -46,6 +46,8 @@ struct LaneHost {
     allocate: AllocationMaker,
     delete: PropertyDeleter,
     read_name: NameReader,
+    /// What an `await`'s source conversion asks (`staged_ops::lane_await_source`).
+    awaits: AwaitSource,
     /// What the by-name load the frame runs resolved its name to, if it runs one.
     name: Option<NameBinding>,
 }
@@ -122,7 +124,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
         let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, delete: lane_delete_value::<H>,
-            read_name: lane_name_value::<H>, name: None };
+            read_name: lane_name_value::<H>, awaits: AwaitSource::of::<H>(), name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
 
@@ -275,8 +277,6 @@ impl<const ACC: u8> crate::staged::GlobalFrame<Concrete> for LaneFrame<ACC> {
         Some(())
     }
 }
-
-impl<const ACC: u8> crate::staged::CallFrame<Concrete> for LaneFrame<ACC> {}
 
 impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     type Plans = crate::staged::NoPlans;

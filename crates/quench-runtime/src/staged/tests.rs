@@ -218,21 +218,25 @@ fn every_staged_opcode_decodes_to_one_operation() {
 }
 
 /// `await`, `yield` and `yield*` decode to their suspension rows, with the registers the general
-/// step reads (`b` the value, `c` the delegate's iterator) and resumes into (`a`), and a frame that
-/// cannot suspend leaves the row to the interpreter.
+/// step reads (`b` the value, `c` the delegate's iterator, the immediate's pair its state and `next`
+/// method) and resumes into (`a`), and a frame that answers none of the call-outs leaves the row to
+/// the interpreter.
 #[test]
 fn suspensions_decode_to_rows_a_plain_frame_leaves_unresolved() {
     use crate::bytecode::{Op, WideInstruction};
     let context = crate::staged::DecodeContext::of_constants(&[]);
-    for (op, expected) in [(Op::Await, Suspension::Await), (Op::Yield, Suspension::Yield), (Op::YieldStar, Suspension::YieldStar { iterator: 3 })] {
-        let row = Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 2, 3, 0), context);
+    let pair = crate::bytecode::ImmediateLayout::register_pair_immediate(4, 5);
+    let delegation = Suspension::YieldStar { iterator: 3, state: 4, next: 5 };
+    for (op, expected) in [(Op::Await, Suspension::Await), (Op::Yield, Suspension::Yield), (Op::YieldStar, delegation)] {
+        let imm = if op == Op::YieldStar { pair } else { 0 };
+        let row = Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 2, 3, imm), context);
         let Some(Operation::Suspend { kind, destination: 1, value: 2 }) = row else { panic!("{op:?} decodes to a suspension row") };
         assert_eq!(kind, expected, "{op:?}");
-        if let Suspension::YieldStar { iterator } = kind {
-            assert_eq!(iterator, 3, "the delegate's iterator is `c`");
+        if let Suspension::YieldStar { iterator, state, next } = kind {
+            assert_eq!((iterator, state, next), (3, 4, 5), "the delegate's iterator is `c`, its state and method the pair");
         }
         let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = ConcreteFrame { registers: vec![0; 4], heap: None };
+        let mut frame = ConcreteFrame { registers: vec![0; 6], heap: None };
         assert!(matches!(step(&mut stage, &mut frame, Operation::Suspend { kind, destination: 1, value: 2 }), Step::Unresolved), "{op:?}");
     }
 }
