@@ -47,11 +47,30 @@ pub(crate) enum EnumConstant {
     String(Box<str>),
 }
 
+/// A declared class field: the language types its TypeScript type admits (a bit per
+/// `ValueType`, `compile::typescript::DECLARED_ANY` where it names no closed set).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DeclaredField {
+    /// The class's source span start: `class.span.start` of the class declaring the field.
+    /// The class's explicit constructor `Function` source span starts at the same offset,
+    /// and so does an implicit constructor's (both come from `class.span` in `compile::class`).
+    pub(crate) class_start: u32,
+    /// The field's name: a non-computed identifier key, or a constructor parameter property's
+    /// parameter name. Private `#name` keys are not recorded.
+    pub(crate) name: Box<str>,
+    /// Language bits (`1 << ValueType as u16`) the declared type admits for the field's value.
+    pub(crate) languages: u16,
+    /// `static` class member (a static field is not an instance field).
+    pub(crate) is_static: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct DeclaredTypes {
     pub(crate) declared: Vec<Declared>,
     /// `(enum, member, value)` for each member that folds, in declaration order.
     pub(crate) enum_constants: Vec<(Box<str>, Box<str>, EnumConstant)>,
+    /// The declared class fields (instance and static), in declaration order.
+    pub(crate) fields: Vec<DeclaredField>,
 }
 
 impl DeclaredTypes {
@@ -59,8 +78,12 @@ impl DeclaredTypes {
         self.declared.push(Declared { kind, name: name.map(Box::from), start: span.start, end: span.end });
     }
 
+    pub(crate) fn declare_field(&mut self, class_start: u32, name: &str, languages: u16, is_static: bool) {
+        self.fields.push(DeclaredField { class_start, name: Box::from(name), languages, is_static });
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.declared.is_empty() && self.enum_constants.is_empty()
+        self.declared.is_empty() && self.enum_constants.is_empty() && self.fields.is_empty()
     }
 
     /// The folded value of `enumeration.member`, when the program declares one.
@@ -69,5 +92,14 @@ impl DeclaredTypes {
         self.enum_constants.iter().rev()
             .find(|(name, key, _)| &**name == enumeration && &**key == member)
             .map(|(_, _, value)| value)
+    }
+
+    /// The declared language types of instance field `name` of the class starting at
+    /// `class_start`, when the program declares one (the last declaration wins).
+    #[cfg_attr(not(test), expect(dead_code, reason = "the object model seeds field slot types from it next"))]
+    pub(crate) fn declared_field(&self, class_start: u32, name: &str) -> Option<u16> {
+        self.fields.iter().rev()
+            .find(|field| !field.is_static && field.class_start == class_start && &*field.name == name)
+            .map(|field| field.languages)
     }
 }

@@ -43,7 +43,7 @@ pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::{DecodeContext, Fields};
-pub(crate) use compare::{Comparison, Nullish};
+pub(crate) use compare::{nullish_of, Comparison};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
