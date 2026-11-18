@@ -3544,7 +3544,7 @@ impl Lowering<'_, '_> {
                 // A `length` read is made once, natively where its base is a direct array.
                 match register.filter(|_| super::names_length(self.program, atom)) {
                     Some(register) => {
-                        let length = self.array_length(state, register, (atom, cache_site), exit);
+                        let length = self.length_read(state, pc, register, (atom, cache_site), exit, Some(header));
                         (int_tagged(&mut self.builder, length), true)
                     }
                     None => {
@@ -3937,17 +3937,7 @@ impl Lowering<'_, '_> {
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
             && super::names_length(self.program, first.0)
         {
-            // A typed array its loop's entry proved (`hoist_arrays`) has the view's element count:
-            // no store in the loop resizes it, so the read is that word, as C's length is.
-            if let Some(array) = self.loop_array(pc, Some(register)).filter(|array| matches!(array.views, ElementViews::Typed(_))) {
-                let (_, count) = self.hoisted_view(array);
-                let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
-                emit_js_guard(&mut self.builder, fits, exit);
-                let length = self.raw_unary(Unary::Narrow(Lane::I32), count);
-                self.set_int(state, destination, length);
-                return Some(true);
-            }
-            let length = self.array_length(state, register, *first, exit);
+            let length = self.length_read(state, pc, register, *first, exit, None);
             self.set_int(state, destination, length);
             return Some(true);
         }
@@ -4008,6 +3998,24 @@ impl Lowering<'_, '_> {
     /// array's from its record (`emit_array_length_read`), a flat string's from its own
     /// (`string_length`), any other's the VM's read, which leaves through `exit` where it
     /// misses or is not an int32.
+    /// The `length` read at `pc` of `register`: a typed array a loop's entry proved
+    /// (`hoist_arrays`) has the view's element count, which no store in the loop resizes, so the
+    /// read is that word, as C's length is; any other base is `array_length`'s. On the entry
+    /// edge of `entering`, only a view that edge already proved counts (captures are proved
+    /// after the invariant reads).
+    fn length_read(&mut self, state: &mut State, pc: usize, register: Register, read: (Atom, u16), exit: ir::Block,
+        entering: Option<usize>) -> ir::Value {
+        let proved = |array: &LoopArray| matches!(array.views, ElementViews::Typed(_))
+            && (entering != Some(array.header) || matches!(array.source, ArraySource::Register(_)));
+        if let Some(array) = self.loop_array(pc, Some(register)).filter(proved) {
+            let (_, count) = self.hoisted_view(array);
+            let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
+            emit_js_guard(&mut self.builder, fits, exit);
+            return self.raw_unary(Unary::Narrow(Lane::I32), count);
+        }
+        self.array_length(state, register, read, exit)
+    }
+
     fn array_length(&mut self, state: &mut State, register: Register, read: (Atom, u16), exit: ir::Block) -> ir::Value {
         let base = self.tagged(state, register);
         let (generic, join) = (self.builder.create_block(), self.builder.create_block());
