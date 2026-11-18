@@ -130,10 +130,30 @@ fn element_reads_and_stores_run_in_a_body() {
 fn capture_reads_run_in_a_body() {
     assert_bodies_never_leave(
         "function make(k) { return function (x) { return x * k + 1; }; }
+         function drive() { const f = make(3); let t = 0;
+         for (let i = 0; i < 300; i++) t = (t + f(i)) | 0;
+         return t; }
+         print(drive());",
+    );
+}
+
+/// The same loop as `capture_reads_run_in_a_body` in a Script's root runs whole in the root's
+/// loop region: the root's block bindings are registers, its global declarations environment
+/// slots, and nothing leaves.
+#[test]
+fn a_script_root_loop_over_a_closure_runs_whole_in_a_region() {
+    let run = assert_tier_agrees_after(
+        &[],
+        "function make(k) { return function (x) { return x * k + 1; }; }
          const f = make(3); let t = 0;
          for (let i = 0; i < 300; i++) t = (t + f(i)) | 0;
          print(t);",
+        Tier::BJit,
+        Expect::ENGAGED,
     );
+    assert_eq!(run.events.count(Event::OsrLeft), 0);
+    assert_eq!(run.events.count(Event::LeftAt), 0);
+    assert!(run.events.count(Event::OsrEntered) >= 1);
 }
 
 /// A `while` loop whose test and back edge are rows runs in the body, as does the `ToNumeric` of
@@ -216,9 +236,10 @@ fn array_length_runs_in_a_body() {
 fn capture_writes_run_in_a_body() {
     assert_bodies_never_leave(
         "function counter() { let n = 0; return function () { n = n + 1; return n; }; }
-         const next = counter(); let t = 0;
+         function drive(next) { let t = 0;
          for (let k = 0; k < 300; k++) t = (t + next()) | 0;
-         print(t); print(next());",
+         return t; }
+         const next = counter(); print(drive(next)); print(next());",
     );
 }
 
@@ -462,3 +483,4 @@ fn a_global_redefined_as_an_accessor_retires_the_bodies_that_held_it() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the body ran {runs} times");
 }
+
