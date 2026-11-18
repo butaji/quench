@@ -96,10 +96,11 @@ impl Lowering<'_, '_> {
             self.step(state, frame::Edges::Value, crate::staged::Operation::Safepoint { proof });
             return;
         }
+        // The shared back-edge poll (`staged::poll`): one flag load and one guard. The exit is cold;
+        // whatever an interrupted loop does afterwards runs there, not on the edge.
         let interrupt = self.interrupt;
         let exit = self.guard_exit(state, pc);
-        let proof = super::super::EmitProof::Safepoint { interrupt, miss: Some(exit), fault_poll: false };
-        self.step(state, frame::Edges::ValueGuarded { miss: exit }, crate::staged::Operation::Safepoint { proof });
+        crate::staged::poll::back_edge_poll(&mut super::super::object_slots::emit(&mut self.builder), interrupt, exit).expect("a guard always emits");
     }
 
     pub(super) fn emit_fault_poll(&mut self) {

@@ -88,6 +88,7 @@ pub(crate) mod property;
 mod property_write;
 pub(crate) use property::{NoPlans, PropertyFrame};
 pub(crate) mod value;
+pub(crate) mod poll;
 mod steps;
 mod control;
 mod generic;
