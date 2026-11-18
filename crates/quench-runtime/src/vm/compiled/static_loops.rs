@@ -54,7 +54,8 @@ fn operand(program: &ResidualProgram, values: &[Option<Value>], operand: Operand
 /// remain dynamic; no guest conversion or effect is executed by the compiler.
 fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: WideInstruction) {
     if !scalar_body(program, instruction) {
-        if instruction.op().loads_frame_local() && instruction.numeric_local_target().is_none() {
+        if matches!(Operation::<u64, ()>::of(instruction), Some(Operation::LoadLocalPlain { .. } | Operation::LoadLocalChecked { .. }))
+            && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
