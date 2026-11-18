@@ -204,6 +204,32 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
         || function.local_registers.iter().any(|entry| entry.local < function.params && entry.register == register)
 }
 
+/// Each parameter's declared TypeScript type (`Function::declared_parameters`) as its entry type
+/// where the unit never writes it and nothing narrower is required of it: the entry proves it
+/// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
+/// an annotation that lies costs an exit, never a wrong result. Number is the declared type
+/// entry conformance checks today; wider sets stay `ANY` until it checks them.
+pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
+    for (index, declared) in function.declared_parameters.iter().enumerate() {
+        if Type::languages(*declared) != Type::NUMBER { continue; }
+        let Some(register) = parameter_register(function, index) else { continue };
+        let register = usize::from(register);
+        if written.contains(register) { continue; }
+        if let Some(entry) = initial.get_mut(register).filter(|entry| **entry == Type::ANY) {
+            *entry = Type::NUMBER;
+        }
+    }
+}
+
+/// The register parameter `index` enters in.
+fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
+    let index = u16::try_from(index).ok().filter(|index| *index < function.params)?;
+    match function.parameter_registers {
+        Some(base) => base.checked_add(index),
+        None => function.local_registers.iter().find(|entry| entry.local == index).map(|entry| entry.register),
+    }
+}
+
 /// The type `initial` gives each parameter the unit never writes (`written`) that its instructions
 /// (but those `skipped`) read as numbers: an int32 where any needs one, else a Number.
 pub(super) fn require_entry_types(program: &ResidualProgram, function: &crate::bytecode::Function, instructions: &[WideInstruction],

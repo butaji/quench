@@ -170,6 +170,7 @@ impl Compiler<'_> {
                 .count() as u16,
             parameter_end_pc: 0,
             parameter_atoms,
+            declared_parameters: super::typescript::declared_parameters(&value.params).into(),
             rest: value.params.rest.is_some(),
             is_async: value.r#async,
             is_generator: false,

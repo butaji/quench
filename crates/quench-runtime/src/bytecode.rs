@@ -1350,6 +1350,11 @@ pub struct Function {
     pub length: u16,
     pub parameter_end_pc: u32,
     pub(crate) parameter_atoms: crate::heap::ThinBoxSlice<Atom>,
+    /// The language types (`typed_ir::Type::language` bits) each parameter's TypeScript
+    /// annotation declares, by argument index; empty where none declares one. A seed, not a
+    /// proof: a tier that relies on one checks it once where the argument enters
+    /// (`compile::typescript::declared_parameters`).
+    pub(crate) declared_parameters: crate::heap::ThinBoxSlice<u16>,
     pub rest: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -1445,7 +1450,8 @@ pub struct Function {
 // once compiled sit behind thin slices. `code`, `wide` and `source_positions` stay as the
 // compiler builds them: its passes rewrite them, and its rewrite loop measured slower when
 // their layout changed.
-const _: () = assert!(size_of::<Function>() == 368);
+// `declared_parameters` (8 bytes) carries TypeScript parameter types into the fact store.
+const _: () = assert!(size_of::<Function>() == 376);
 
 /// The facts about a function that are read before its first call: when its closure is
 /// made, by `IsConstructor` and brand checks, by `Function.prototype.toString`, and by an
