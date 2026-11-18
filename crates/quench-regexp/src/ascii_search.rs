@@ -56,7 +56,7 @@ impl Regex {
     /// `None` where the pattern did not compile to the backtracking matcher.
     fn ascii_program(&self, bytes: &[u8], start: usize, sticky: bool) -> Option<Option<&backtrack::Program>> {
         let complete = self.complete();
-        let program = complete.backtracking.as_ref()?;
+        let program = &complete.backtracking;
         if start > bytes.len() || bytes.len() - start < complete.min_length {
             return Some(None);
         }
