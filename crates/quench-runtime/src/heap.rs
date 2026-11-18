@@ -7,6 +7,82 @@ use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
+
+/// Every record space, listed once, in `Heap`'s field order. Each row is `field: Type => handle`:
+/// the space's `Heap` field and type, and the `Value` constructor naming its records
+/// (`Heap::record_families`). `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
+/// is what the caller passes (nothing, or the heap for `mark_bits!`). The `Heap` struct still
+/// declares these fields by hand, since a macro cannot expand into a struct body that also holds
+/// other fields: a new space is added there as well.
+macro_rules! for_each_record_space {
+    ($m:ident, $($pre:tt)*) => {
+        $m! {
+            $($pre)* ;
+            object_records: ObjectRecordSpace => Value::direct_object,
+            array_records: ArrayRecordSpace => Value::direct_array,
+            function_records: FunctionRecordSpace => Value::direct_function,
+            promise_records: PromiseRecordSpace => Value::direct_promise,
+            await_records: AwaitRecordSpace => Value::direct_await,
+            iterator_records: IteratorRecordSpace => Value::direct_iterator,
+            collection_records: CollectionRecordSpace => Value::direct_collection,
+            string_records: StringRecordSpace => Value::direct_string,
+            small_strings: small_strings::SmallStringSpace => small_strings::small_string_value,
+            v128_records: V128RecordSpace => Value::direct_v128,
+            environment_records: EnvironmentRecordSpace => Value::direct_environment,
+            symbol_records: SymbolRecordSpace => Value::direct_symbol,
+        }
+    };
+}
+
+/// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
+macro_rules! mark_bits_struct {
+    (; $($field:ident : $space:ty => $handle:path,)*) => {
+        /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
+        #[derive(Clone, Copy)]
+        pub(super) struct MarkBits<'a> {
+            $($field: &'a $space,)*
+            marks: &'a [AtomicU64],
+        }
+    };
+}
+
+/// The `MarkBits` literal over `$heap`'s mark fields (`mark_bits!`).
+macro_rules! mark_bits_literal {
+    ($heap:tt ; $($field:ident : $space:ty => $handle:path,)*) => {
+        MarkBits {
+            $($field: &$heap.$field,)*
+            marks: &$heap.marks,
+        }
+    };
+}
+
+/// `record_families` and `record_families_mut`, over every record space.
+macro_rules! record_families_fns {
+    (; $($field:ident : $space:ty => $handle:path,)*) => {
+        /// Every record family, with the `Value` constructor naming its records.
+        fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+            [$((&self.$field, $handle),)*]
+        }
+
+        /// `record_families`, mutably.
+        fn record_families_mut(
+            &mut self,
+        ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+            [$((&mut self.$field, $handle),)*]
+        }
+    };
+}
+
+/// `Heap::reset`'s empty record spaces.
+macro_rules! reset_record_spaces {
+    (; $($field:ident : $space:ty => $handle:path,)*) => {
+        /// Replaces every record space with an empty one (`Heap::reset`).
+        fn reset_record_spaces(&mut self) {
+            $(self.$field = <$space>::default();)*
+        }
+    };
+}
+
 mod access;
 mod array_elements;
 pub(crate) mod layouts;
@@ -373,23 +449,7 @@ struct SweepOutput {
 /// The record families `Heap::record_families` lists.
 const RECORD_FAMILIES: usize = 12;
 
-/// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
-#[derive(Clone, Copy)]
-pub(super) struct MarkBits<'a> {
-    object_records: &'a ObjectRecordSpace,
-    array_records: &'a ArrayRecordSpace,
-    function_records: &'a FunctionRecordSpace,
-    promise_records: &'a PromiseRecordSpace,
-    await_records: &'a AwaitRecordSpace,
-    iterator_records: &'a IteratorRecordSpace,
-    collection_records: &'a CollectionRecordSpace,
-    string_records: &'a StringRecordSpace,
-    small_strings: &'a small_strings::SmallStringSpace,
-    v128_records: &'a V128RecordSpace,
-    environment_records: &'a EnvironmentRecordSpace,
-    symbol_records: &'a SymbolRecordSpace,
-    marks: &'a [AtomicU64],
-}
+for_each_record_space!(mark_bits_struct,);
 
 impl MarkBits<'_> {
     /// Whether `value` is a heap value marked so far.
@@ -422,22 +482,8 @@ impl MarkBits<'_> {
 
 /// `MarkBits` of a heap, borrowing only its mark fields.
 macro_rules! mark_bits {
-    ($heap:expr) => {
-        MarkBits {
-            object_records: &$heap.object_records,
-            array_records: &$heap.array_records,
-            function_records: &$heap.function_records,
-            promise_records: &$heap.promise_records,
-            await_records: &$heap.await_records,
-            iterator_records: &$heap.iterator_records,
-            collection_records: &$heap.collection_records,
-            string_records: &$heap.string_records,
-            small_strings: &$heap.small_strings,
-            v128_records: &$heap.v128_records,
-            environment_records: &$heap.environment_records,
-            symbol_records: &$heap.symbol_records,
-            marks: &$heap.marks,
-        }
+    ($heap:tt) => {
+        for_each_record_space!(mark_bits_literal, $heap)
     };
 }
 use mark_bits;
@@ -768,90 +814,64 @@ impl Default for GcProfile {
     }
 }
 
-#[repr(usize)]
-#[derive(Clone, Copy)]
-pub(crate) enum CellKind {
-    Object,
-    Array,
-    Map,
-    Set,
-    Iterator,
-    WeakMap,
-    WeakSet,
-    WeakRef,
-    Function,
-    Environment,
+/// Every cell kind, once, in discriminant order: `Variant = "name"` rows, each with its attributes.
+/// `CellKind`, its `COUNT` and its `NAMES` are generated from these rows.
+macro_rules! cell_kinds {
+    ($($(#[$meta:meta])* $kind:ident = $name:literal,)*) => {
+        #[repr(usize)]
+        #[derive(Clone, Copy)]
+        pub(crate) enum CellKind {
+            $($(#[$meta])* $kind,)*
+        }
+        impl CellKind {
+            pub(crate) const COUNT: usize = [$(stringify!($kind)),*].len();
+            #[cfg(feature = "profile-memory")]
+            pub(crate) const NAMES: [&'static str; Self::COUNT] = [$($name,)*];
+        }
+    };
+}
+
+cell_kinds! {
+    Object = "object",
+    Array = "array",
+    Map = "map",
+    Set = "set",
+    Iterator = "iterator",
+    WeakMap = "weak_map",
+    WeakSet = "weak_set",
+    WeakRef = "weak_ref",
+    Function = "function",
+    Environment = "environment",
     /// String records; only the allocation profile counts them by kind.
     #[cfg_attr(not(feature = "profile-aggregate"), allow(dead_code))]
-    String,
-    BigInt,
-    Symbol,
-    Date,
-    Error,
-    RegExp,
-    ArrayFromAsync,
-    AwaitState,
-    TemporalDuration,
-    TemporalPlainDate,
-    TemporalPlainDateTime,
-    TemporalPlainMonthDay,
-    TemporalPlainYearMonth,
-    TemporalZonedDateTime,
-    TemporalInstant,
-    WasmGlobal,
-    WasmMemory,
-    WasmTable,
-    WasmElements,
-    WasmBits64,
-    WasmHostFunction,
-    WasmV128,
-    WasmGc,
-    WasmExtern,
-    WasmTag,
-    WasmException,
+    String = "string",
+    BigInt = "bigint",
+    Symbol = "symbol",
+    Date = "date",
+    Error = "error",
+    RegExp = "regexp",
+    ArrayFromAsync = "array_from_async",
+    AwaitState = "await_state",
+    TemporalDuration = "temporal_duration",
+    TemporalPlainDate = "temporal_plain_date",
+    TemporalPlainDateTime = "temporal_plain_date_time",
+    TemporalPlainMonthDay = "temporal_plain_month_day",
+    TemporalPlainYearMonth = "temporal_plain_year_month",
+    TemporalZonedDateTime = "temporal_zoned_date_time",
+    TemporalInstant = "temporal_instant",
+    WasmGlobal = "wasm_global",
+    WasmMemory = "wasm_memory",
+    WasmTable = "wasm_table",
+    WasmElements = "wasm_elements",
+    WasmBits64 = "wasm_bits64",
+    WasmHostFunction = "wasm_host_function",
+    WasmV128 = "wasm_v128",
+    WasmGc = "wasm_gc",
+    WasmExtern = "wasm_extern",
+    WasmTag = "wasm_tag",
+    WasmException = "wasm_exception",
 }
-impl CellKind {
-    pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
-    #[cfg(feature = "profile-memory")]
-    pub(crate) const NAMES: [&'static str; Self::COUNT] = [
-        "object",
-        "array",
-        "map",
-        "set",
-        "iterator",
-        "weak_map",
-        "weak_set",
-        "weak_ref",
-        "function",
-        "environment",
-        "string",
-        "bigint",
-        "symbol",
-        "date",
-        "error",
-        "regexp",
-        "array_from_async",
-        "await_state",
-        "temporal_duration",
-        "temporal_plain_date",
-        "temporal_plain_date_time",
-        "temporal_plain_month_day",
-        "temporal_plain_year_month",
-        "temporal_zoned_date_time",
-        "temporal_instant",
-        "wasm_global",
-        "wasm_memory",
-        "wasm_table",
-        "wasm_elements",
-        "wasm_bits64",
-        "wasm_host_function",
-        "wasm_v128",
-        "wasm_gc",
-        "wasm_extern",
-        "wasm_tag",
-        "wasm_exception",
-    ];
-}
+
 #[derive(Default)]
 struct SparseElements {
     values: FxHashMap<usize, Value>,
@@ -1004,48 +1024,12 @@ impl Heap {
         false
     }
 
-    /// Every record family, with the `Value` constructor naming its records.
-    fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-        [
-            (&self.object_records, Value::direct_object),
-            (&self.array_records, Value::direct_array),
-            (&self.function_records, Value::direct_function),
-            (&self.promise_records, Value::direct_promise),
-            (&self.await_records, Value::direct_await),
-            (&self.iterator_records, Value::direct_iterator),
-            (&self.collection_records, Value::direct_collection),
-            (&self.string_records, Value::direct_string),
-            (&self.small_strings, small_strings::small_string_value),
-            (&self.v128_records, Value::direct_v128),
-            (&self.environment_records, Value::direct_environment),
-            (&self.symbol_records, Value::direct_symbol),
-        ]
-    }
+    for_each_record_space!(record_families_fns,);
 
     /// Record and payload bytes occupied now: live plus unswept garbage before a sweep.
     fn occupied_resident_bytes(&mut self) -> usize {
         let payload = self.payload_bytes;
         self.record_families_mut().iter().map(|(family, _)| family.occupied_bytes()).sum::<usize>() + payload
-    }
-
-    /// `record_families`, mutably.
-    fn record_families_mut(
-        &mut self,
-    ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-        [
-            (&mut self.object_records, Value::direct_object),
-            (&mut self.array_records, Value::direct_array),
-            (&mut self.function_records, Value::direct_function),
-            (&mut self.promise_records, Value::direct_promise),
-            (&mut self.await_records, Value::direct_await),
-            (&mut self.iterator_records, Value::direct_iterator),
-            (&mut self.collection_records, Value::direct_collection),
-            (&mut self.string_records, Value::direct_string),
-            (&mut self.small_strings, small_strings::small_string_value),
-            (&mut self.v128_records, Value::direct_v128),
-            (&mut self.environment_records, Value::direct_environment),
-            (&mut self.symbol_records, Value::direct_symbol),
-        ]
     }
 
     /// Each program a live cell or function can still run or resolve names in
@@ -2206,23 +2190,14 @@ impl Heap {
             );
         }
     }
+    for_each_record_space!(reset_record_spaces,);
+
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
-        self.object_records = ObjectRecordSpace::default();
-        self.array_records = ArrayRecordSpace::default();
-        self.function_records = FunctionRecordSpace::default();
-        self.promise_records = PromiseRecordSpace::default();
-        self.await_records = AwaitRecordSpace::default();
-        self.environment_records = EnvironmentRecordSpace::default();
-        self.symbol_records = SymbolRecordSpace::default();
-        self.iterator_records = IteratorRecordSpace::default();
-        self.collection_records = CollectionRecordSpace::default();
-        self.string_records = StringRecordSpace::default();
-        self.small_strings = small_strings::SmallStringSpace::default();
+        self.reset_record_spaces();
         self.small_views = small_strings::SmallViews::default();
         self.small_templates = small_strings::SmallTemplates::default();
         self.clear_string_atoms();
-        self.v128_records = V128RecordSpace::default();
         self.marks.clear();
         self.aged.clear();
         self.free_by_slab.clear();

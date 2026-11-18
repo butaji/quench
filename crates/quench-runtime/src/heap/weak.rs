@@ -112,19 +112,6 @@ impl Heap {
         age: PromotionAge,
     ) -> Vec<(Value, Value)> {
         let Self {
-            object_records,
-            array_records,
-            function_records,
-            promise_records,
-            await_records,
-            iterator_records,
-            collection_records,
-            string_records,
-            small_strings,
-            v128_records,
-            environment_records,
-            symbol_records,
-            marks,
             aged,
             slots,
             young_weak,
@@ -132,21 +119,7 @@ impl Heap {
             remembered,
             ..
         } = self;
-        let mark_bits = MarkBits {
-            object_records,
-            array_records,
-            function_records,
-            promise_records,
-            await_records,
-            iterator_records,
-            collection_records,
-            string_records,
-            small_strings,
-            v128_records,
-            environment_records,
-            symbol_records,
-            marks,
-        };
+        let mark_bits = mark_bits!(self);
         let mut finalization_jobs = Vec::new();
         let is_marked = |value: Value| mark_bits.is_marked(value);
         if full {
