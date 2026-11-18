@@ -375,9 +375,9 @@ fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>) -> Verdi
 const TIERS_VARIABLE: &str = "QUENCH_IR_BUDGET_TIERS";
 
 /// The C floor (`ir_floor`): the interpreter's waste above C + dispatch, its records ratchet, and
-/// on a run of every op the b-jit and u-jit ceilings. Writes the floor file only when nothing grew
-/// (the caller fails the run otherwise, and a failing run records nothing).
-fn c_floor(config: &Config, ops: &[String], measured: &[Measured], rows: &BTreeMap<String, Row>) -> Result<(String, Vec<String>), String> {
+/// on a run of every op the b-jit and u-jit ceilings. Returns the report, the rows that grew, and
+/// the floor file's text before and its rows after, which the caller writes only on a passing run.
+fn c_floor(config: &Config, ops: &[String], measured: &[Measured], rows: &BTreeMap<String, Row>) -> Result<(String, Vec<String>, String, BTreeMap<String, ir_floor::Floor>), String> {
     let (before, mut floors) = ir_floor::read(config);
     let c: BTreeMap<String, f64> = rows.iter().map(|(name, row)| (name.clone(), row.c)).collect();
     let interpreted: Vec<ir_floor::Op> = measured.iter().map(|(name, count, split, records)| ir_floor::Op { name, count: *count, split, records: *records }).collect();
@@ -391,10 +391,7 @@ fn c_floor(config: &Config, ops: &[String], measured: &[Measured], rows: &BTreeM
             grown.extend(tier_grown);
         }
     }
-    if grown.is_empty() {
-        ir_floor::write(config, &before, &floors)?;
-    }
-    Ok((report, grown))
+    Ok((report, grown, before, floors))
 }
 
 pub fn run(config: &Config) -> Verdict {
@@ -416,13 +413,14 @@ pub fn run(config: &Config) -> Verdict {
         return Ok(format!("{mode}: {over} of {} ops over budget (ceilings hold for --no-jit only)\n{report}", measured.len()));
     }
     let mut grown = ratchet(config, &measured, &mut rows, &recorded, ops.is_empty());
-    let (floor_report, floor_grown) = c_floor(config, &ops, &measured, &rows)?;
+    let (floor_report, floor_grown, floors_before, floors) = c_floor(config, &ops, &measured, &rows)?;
     grown.extend(floor_grown);
     let report = format!("{report}\n\n{floor_report}");
     // A failing run records nothing: a ceiling it lowered would hide the trade it made.
     if !grown.is_empty() {
         return Err(format!("{}\n\n{report}", grown.join("\n")));
     }
+    ir_floor::write(config, &floors_before, &floors)?;
     let after = render(&header(&before), &rows);
     if after != before {
         fs::write(&path, &after).map_err(|error| format!("{}: {error}", path.display()))?;
