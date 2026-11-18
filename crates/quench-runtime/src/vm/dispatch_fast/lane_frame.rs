@@ -281,6 +281,9 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     window: Option<*mut Value>,
     /// The plan of the named read the frame runs, as its record holds it (`RecordPlan`).
     plan: Option<RecordPlan>,
+    /// The object a `GetField` of a local slot reads, where the local holds a plain value
+    /// (`plain_local_operand`); `PropertyFrame::local_base` answers it. `None` otherwise.
+    local_object: Option<u64>,
 }
 
 /// The proof span of an array a proved element row names (`dispatch_fast::proof_span`): the lane
@@ -475,7 +478,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -501,7 +504,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, yields: None, transfer: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, local_object: None }
     }
 }
 
@@ -1107,6 +1110,10 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     #[inline(always)]
     fn field_this(&mut self, _stage: &mut Concrete, _miss: ()) -> Option<u64> { Some(self.this.to_bits()) }
 
+    /// The plain local a `GetField` of a local slot reads (`row_frame`'s `local_object`).
+    #[inline(always)]
+    fn local_base(&mut self, _stage: &mut Concrete, _slot: u16, _miss: ()) -> Option<u64> { self.local_object }
+
     /// A direct object's record in the table, or, where the plan runs over any object part
     /// (`RecordPlan::other`), the object part of an array, function or builtin, out of line.
     #[inline(always)]
@@ -1557,6 +1564,12 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
             alloc: super::wasm_instance::wasm_vector_alloc::<H> };
         return LaneFrame::<ACC> { vectors: Some(vectors), ..LaneFrame::<ACC>::new(r, view) };
     }
+    // A `GetField` of a local slot reads the plain local its record names (`plain_local_operand`), which
+    // the row's base is; any other local leaves to the record's miss (`local_field_miss`).
+    if const { FLAG == super::LOCAL_FIELD_SITE } {
+        let local = crate::bytecode::FieldBase(i.b).local_index().and_then(|slot| super::plain_local_operand(cx, slot));
+        return LaneFrame::<ACC> { local_object: local.map(Value::to_bits), ..LaneFrame::<ACC>::new(r, view) };
+    }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
@@ -1853,6 +1866,10 @@ lane_handler! {
         // through the site's cache and rebinds the hint; a held read, the site's holder entry.
         macro_rules! property_miss { () => {{
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
+            // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
+            if const { FLAG == super::LOCAL_FIELD_SITE } {
+                sibling!(super::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::held_site(FLAG) && !super::held_other_site(FLAG) } {
                 // A direct object's miss; the read of any other receiver's object part.
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
@@ -1914,7 +1931,7 @@ lane_handler! {
                 std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
                 if (const { super::own_site_this(FLAG) } || (const { super::runtime_base(FLAG) } && i.b == crate::bytecode::FieldBase::THIS.0)) {
                     std::hint::assert_unchecked(i.b == crate::bytecode::FieldBase::THIS.0);
-                } else {
+                } else if const { FLAG != super::LOCAL_FIELD_SITE } {
                     std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
                 }
             }
@@ -1973,7 +1990,16 @@ lane_handler! {
             // installed only once the lane bound the object records (`lane_get_field_own_refresh`).
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             debug_assert_eq!(script, cx, "a JavaScript view carries its context");
-            if const { super::inherited_site(FLAG) } {
+            if const { FLAG == super::LOCAL_FIELD_SITE } {
+                // A local's read through the own-field hint its record holds (`local_field_handler`): the hint's
+                // layout over the bound object records. An unbound table or hint leaves to the local's miss.
+                let records = unsafe { (*script).binding.object_base } as u64;
+                let hint = i.field_hint();
+                if records == 0 || hint.receiver == super::super::NO_FIELD_RECEIVER {
+                    sibling!(super::local_field_miss::<H>, r, ip, Carried::script_in(script, view))
+                }
+                frame.plan = Some(RecordPlan::own(hint.receiver, hint.slot, records));
+            } else if const { super::inherited_site(FLAG) } {
                 // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
                 // last answered); at the other site, of any receiver's object part.
                 let machine = unsafe { vm(script) };

@@ -3708,7 +3708,7 @@ lane_handler! {
 #[path = "dispatch_fast/lane_frame.rs"]
 mod lane_frame;
 mod local_fields;
-use local_fields::local_field_handler;
+use local_fields::{local_field_handler, local_field_miss};
 mod window_bodies;
 pub(super) use window_bodies::body_locals;
 mod lane_reads;
@@ -5610,6 +5610,11 @@ pub(super) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
 /// is the slot load past the layout guard.
 pub(super) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
 pub(super) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
+
+/// The site fact of a `GetField` of a local slot's row (`local_field_handler`): an own-field read of a
+/// plain local, whose hint the record binds like an own read's. `u8::MAX` is past every own-field
+/// site, which `own_site` numbers from one.
+pub(super) const LOCAL_FIELD_SITE: u8 = u8::MAX;
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }

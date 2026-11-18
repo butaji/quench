@@ -251,6 +251,11 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn hold_prototype(&mut self, _stage: &mut S, _shape: u32, _miss: S::Miss) -> Option<()> { None }
 
+    /// The word of local slot `slot` a field read's base names (`FieldBase::local`), which a
+    /// frame that holds no readable local answers `None` (the read leaves at its miss).
+    #[inline(always)]
+    fn local_base(&mut self, _stage: &mut S, _slot: u16, _miss: S::Miss) -> Option<S::Word> { None }
+
     /// The value an earlier read of `owner`'s field proved, which no write has retired.
     #[inline(always)]
     fn known_value(&mut self, _stage: &mut S, _owner: Owner) -> Option<S::Word> { None }
@@ -470,10 +475,19 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     miss: S::Miss) -> Option<S::Word> {
     if let Some(word) = frame.hoisted(stage, lookup) { return Some(word); }
     if let Some(word) = frame.entry_field(stage, lookup) { return Some(word); }
-    let owner = Owner::of(base)?;
+    // A local base is read through the frame's local (`PropertyFrame::local_base`), which keeps no
+    // proof of its object, as a temporary's.
+    let local = base.local_index();
+    let owner = match local {
+        Some(_) => Owner::Temporary,
+        None => Owner::of(base)?,
+    };
     let plans = frame.plans();
     let plan = plans.field_plan(lookup)?;
-    let object = base_word(stage, frame, base, miss)?;
+    let object = match local {
+        Some(slot) => frame.local_base(stage, slot, miss)?,
+        None => base_word(stage, frame, base, miss)?,
+    };
     // A plan of ops over the receiver's own record, the one a lane record's hint holds, inline;
     // every other plan through `read_with`, which recurses through nested plans.
     if let FieldPlan::Ops(ops) = plan {
