@@ -205,6 +205,9 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the next key of the for-in state in register `state`; continue
     /// at the jump target once none is left.
     ForInNext { destination: Register, state: Register },
+    /// `base[key]` in the body of the for-in whose state register is `state`: the key's listed
+    /// slot where the state's memo answers (`iteration::for_in_keyed_get`), else the element read.
+    EnumeratedGet { destination: Register, state: Register, base: Register, key: Register },
     /// The VM field-store helper for `object.atom = value` through cache `site`.
     #[cfg_attr(not(test), allow(dead_code))] // no tier builds it until the call-out rows land
     FieldStoreMiss { object: W, atom: u32, site: u16, value: W, proof: P },
@@ -273,6 +276,13 @@ impl<W, P> Operation<W, P> {
             Decoder::Names => names::decode(instruction),
             Decoder::Proved => None,
         }
+    }
+
+    /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
+    /// record's wide fields (`Fields::wide`).
+    #[inline(always)]
+    pub(crate) fn decode_names(instruction: WideInstruction) -> Option<Self> {
+        names::decode(instruction)
     }
 
     /// The register moves and control transfers of `decode`, from any record a tier holds

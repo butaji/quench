@@ -547,7 +547,6 @@ pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S
 /// `read_slot` at a run-time `index` (a for-in key's listed slot): value `index` of an object
 /// of `layout`, which the caller proved holds it (`index < layout.storage_len`), as the word
 /// its owner's `rep` encodes.
-#[allow(dead_code)] // The for-in keyed-read row is its first caller.
 #[inline(always)]
 pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, index: S::Word, rep: Rep) -> S::Word {
     match layout.slots {
@@ -566,7 +565,6 @@ pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::C
 }
 
 /// Flat value `index` of the run at `base`, `index` a run-time word.
-#[allow(dead_code)] // The for-in keyed-read row is its first caller.
 #[inline(always)]
 fn flat_read_at<S: Stage>(stage: &mut S, base: S::Word, index: S::Word, rep: Rep) -> S::Word {
     let offset = stage.mul_imm(index, OBJECT.property_value_size as u64);
@@ -578,7 +576,6 @@ fn flat_read_at<S: Stage>(stage: &mut S, base: S::Word, index: S::Word, rep: Rep
 }
 
 /// Packed value `index` (0 or 1, a run-time word): its half of the payload word, decoded.
-#[allow(dead_code)] // The for-in keyed-read row is its first caller.
 #[inline(always)]
 fn packed_read_at<S: Stage>(stage: &mut S, packed: Packed<S::Word>, index: S::Word, rep: Rep) -> S::Word {
     const _: () = assert!(OBJECT.inline_property_count == 2, "a packed index selects one of two halves");
