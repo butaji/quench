@@ -5,7 +5,7 @@ use super::lane_reads::{RecordOperand, Reads};
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
-use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, read_initialized_local, write_initialized_local, write_local};
+use crate::staged::{Allocation, CallOut, Comparison, Concrete, Constant, Edge, Frame, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep, read_initialized_local, write_initialized_local, write_local};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -423,6 +423,33 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let storage = unsafe { write(context, slot) }?;
         unsafe { crate::staged::environment::concrete_environment_slot_store(storage, slot, Value::from_bits(value)) }
             .then_some(())
+    }
+
+    /// A Wasm scalar read straight from the register file (never the carried accumulator, which
+    /// stands for one operand only). An i32 or f32 is its encoded integer; a 64-bit payload is held
+    /// in place where untagged; a raw f64 is its word.
+    #[inline(always)]
+    fn wasm_read(&mut self, _stage: &mut Concrete, register: Register, rep: WasmRep) -> Option<u64> {
+        let value = self.registers.get(register);
+        Some(match rep {
+            WasmRep::Int32 => u64::from(value.as_int()? as u32),
+            WasmRep::Bits64 => value.bits64()?,
+            WasmRep::RawBits64 | WasmRep::Tagged => value.to_bits(),
+        })
+    }
+
+    /// Define `register` with a Wasm scalar `word` in `rep`'s representation: an i32 or f32 as an
+    /// encoded integer, a boxed 64-bit payload only where it is untagged (else the row leaves), a
+    /// raw f64 or a tagged word as it is.
+    #[inline(always)]
+    fn wasm_write(&mut self, _stage: &mut Concrete, register: Register, word: u64, rep: WasmRep) -> Option<u64> {
+        let value = match rep {
+            WasmRep::Int32 => self.view.integers.encode(word as u32 as i32),
+            WasmRep::Bits64 => Value::from_bits64(word)?,
+            WasmRep::RawBits64 | WasmRep::Tagged => Value::from_bits(word),
+        };
+        self.registers.set(register, value);
+        Some(value.to_bits())
     }
 }
 
@@ -905,6 +932,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::Keyed) } { crate::staged::step_keyed($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Generic) } { crate::staged::step_generic($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmInt) } { crate::staged::step_wasm_int($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::WasmFloat) } { crate::staged::step_wasm_float($stage, $frame, $operation) }
         else { crate::staged::step($stage, $frame, $operation) }
     }};
 }
@@ -994,6 +1022,8 @@ lane_handler! {
             Operation::decode_wasm_int(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             Operation::decode_names(crate::staged::Fields::wide(fields))
+        } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmFloat)) } {
+            Operation::decode_wasm_float(crate::staged::Fields::wide(fields))
         } else if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
             // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
             // proof is the unit.
