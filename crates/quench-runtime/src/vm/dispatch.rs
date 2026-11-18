@@ -568,6 +568,11 @@ impl<H: Host> Vm<H> {
         pc: &mut usize,
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
+        if let Some(operation) = crate::staged::Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::EMPTY)
+            && self.step_flow_row(p, f, i, operation, pc)
+        {
+            return Ok(StepResult::Continue);
+        }
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
@@ -587,24 +592,9 @@ impl<H: Host> Vm<H> {
                 let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocalPlain => {
-                // SAFETY: validated bytecode bounds the slot by Function.locals,
-                // and frame setup sizes locals to that count.
-                let value = unsafe { self.read_validated_local(f, i.local_slot()) };
-                self.write(f, i.result_register(), value);
-            }
             Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
             | Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
             | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
-            Op::StoreLocalPlain => {
-                let value = self.read(f, i.register_a());
-                // SAFETY: validated bytecode bounds the slot by Function.locals,
-                // and frame setup sizes locals to that count.
-                unsafe { self.write_validated_local(f, i.local_slot(), value) };
-                if let Some(register) = i.optional_register_b() {
-                    self.write(f, register, value);
-                }
-            }
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.result_register(), this);
@@ -1144,7 +1134,6 @@ impl<H: Host> Vm<H> {
                 let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
                 self.define_array_literal_element(p, array, i.array_index() as usize, value)?;
             }
-            Op::Move => self.write(f, i.result_register(), self.read(f, i.register_b())),
             Op::Binary | Op::NumericAdd | Op::NumericMultiply => {
                 let operator = i.binary_operator();
                 let left_operand = i.operand_b();
@@ -1211,22 +1200,6 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.result_register(), v);
-            }
-            Op::Jump => {
-                *pc = i.jump_target() as usize;
-                self.frames[f].pc = *pc;
-                self.frames[f].pc_is_resume = true;
-                self.maybe_collect(p);
-            }
-            Op::JumpFalse | Op::JumpTrue => {
-                let value = self.read(f, i.register_a());
-                let truthy = self.truthy(value);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .branch_value(value.profile_kind() as usize, truthy);
-                if truthy == (i.op() == Op::JumpTrue) {
-                    *pc = i.jump_target() as usize;
-                }
             }
             Op::ForInNext => match self.for_in_next(p, self.read(f, i.register_b()))? {
                 Some(key) => self.write(f, i.result_register(), key),
@@ -1585,6 +1558,39 @@ impl<H: Host> Vm<H> {
             _ => return self.step_unlisted(p, f, i, pc),
         }
         Ok(StepResult::Continue)
+    }
+
+    /// The register moves, local slot accesses and jumps `step` runs first, each as its staged row
+    /// on the running frame (`InterpreterFrame`). `false` for any other operation, which `step` runs.
+    #[inline(always)]
+    fn step_flow_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, operation: crate::staged::Operation<u64, ()>, pc: &mut usize) -> bool {
+        use crate::staged::{Edge, Operation, Step};
+        let outcome = match operation {
+            Operation::Move { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
+                | Operation::Jump | Operation::JumpIf { .. } => super::dispatch_frame::InterpreterFrame::step_row(&mut self.frames[f], operation),
+            _ => return false,
+        };
+        match outcome {
+            Step::Control(Edge::Target) => {
+                *pc = i.jump_target() as usize;
+                if matches!(operation, Operation::Jump) {
+                    self.frames[f].pc = *pc;
+                    self.frames[f].pc_is_resume = true;
+                    self.maybe_collect(p);
+                }
+            }
+            Step::Value(_) | Step::Control(Edge::Following) => {}
+            Step::Unresolved => match operation {
+                // A heap value's truthiness is the VM's, which runs no guest code.
+                Operation::JumpIf { register, taken } => {
+                    if self.truthy(self.read(f, register)) == taken {
+                        *pc = i.jump_target() as usize;
+                    }
+                }
+                _ => unreachable!("validated bytecode bounds the registers and slots of a register row"),
+            },
+        }
+        true
     }
 
     /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and
