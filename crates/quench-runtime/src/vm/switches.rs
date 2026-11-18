@@ -61,3 +61,17 @@ pub(crate) fn with_float_slots<R>(body: impl FnOnce() -> R) -> R {
     FLOAT_SLOTS_FOR_TEST.set(false);
     result
 }
+
+/// `QUENCH_PROFILE_RETAIN_BYTECODE`: a function-level profile keeps every replayable function's
+/// instruction records after compilation, where they would otherwise be released.
+#[cfg(feature = "profile-aggregate")]
+pub(crate) fn profile_retain_bytecode() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| named("QUENCH_PROFILE_RETAIN_BYTECODE"))
+}
+
+/// `QUENCH_CLIF_CENSUS`: prints each lane lowering's CLIF per bytecode op (the CLIF-per-op budget).
+pub(crate) fn clif_census() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| named("QUENCH_CLIF_CENSUS"))
+}
