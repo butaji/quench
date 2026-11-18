@@ -666,6 +666,11 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: 
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
         return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::hosted::<H>(r, view, cx) };
     }
+    // A deletion's staged row makes the host's deleter (`LaneFrame::delete_property`), which a hosted frame carries.
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property))
+        && OP != super::FIELD_LEAF_READ && LaneFields::<OP>::OPCODE.field_store().is_none() } {
+        return LaneFrame::<ACC>::hosted::<H>(r, view, cx);
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
         let read: unsafe fn(*mut ()) -> Option<Value> = |context| {
@@ -763,7 +768,10 @@ lane_handler! {
             }
             sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(script, view))
         }} }
-        let property = const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property)) };
+        // A deletion shares the property decoder but reads no named property: its misses and results are
+        // the generic ones (the call-out's, below), not a named read's plan.
+        let property = const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Property))
+            && (OP == super::FIELD_LEAF_READ || LaneFields::<OP, FLAG>::OPCODE.field_store().is_some()) };
         // A named store (`SetField` and its `this` and strict forms): its record's own-field hint
         // as a layout store (`RecordPlan::own_store`); whatever it refuses, the store handlers.
         let store = const { LaneFields::<OP, FLAG>::OPCODE.field_store().is_some() };
@@ -1084,15 +1092,6 @@ pub(super) fn staged_allocate<H: Host>(cx: *mut LaneContext<H>, r: Registers, de
     let mut stage = Concrete::new(std::ptr::null());
     let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::Allocate { destination, allocation, proof: () }), Step::Value(_))
-}
-
-/// `delete base[key]` into `destination` by the staged operation, in the lane context `cx`'s own
-/// run; false, writing nothing, where the general path must make it.
-#[inline(always)]
-pub(super) fn staged_delete<H: Host>(cx: *mut LaneContext<H>, r: Registers, [destination, base, key]: [u16; 3], strict: bool) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::hosted::<H>(r, Carried::script(cx), cx);
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::Delete { destination, base, key, strict }), Step::Value(_))
 }
 
 /// The by-name load of record `i` (a call's, with a receiver, where `call`) by the staged

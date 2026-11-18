@@ -6019,18 +6019,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// `delete base[key]` by the staged row: a string key on an ordinary object runs no guest
-    /// code (`lane_delete_value`); any other deletion takes the general path.
-    #[inline(never)]
-    fn lane_delete<>(cx, r, ip, i, view) {
-        if !lane_frame::staged_delete(cx, r, [i.a, i.b, i.c], i.imm() != 0) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// A lane `GetIndex` of a symbol key whose proof records an inherited getter
 /// (`Vm::proved_symbol_getter`): the getter runs as a frameless activation of the read's
 /// record, as `lane_getter_activation` runs a field's, with the base as receiver. `Err`
@@ -21834,7 +21822,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::Call => Some(lane_script_call::<H, ANY_ARGC, false>),
         Class::CallArray => Some(lane_call_array::<H>),
         Class::CallSpread => Some(lane_call_spread::<H>),
-        Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
         Class::LoadName => Some(lane_load_name_resolve::<H, LOAD_NAME>),
         Class::LoadNameCall => Some(lane_load_name_resolve::<H, LOAD_NAME_CALL>),
