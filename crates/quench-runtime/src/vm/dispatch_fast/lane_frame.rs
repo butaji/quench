@@ -245,6 +245,15 @@ impl RecordPlan {
         let held = IcOp::HeldString { watch, value };
         Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false }
     }
+
+    /// The read of a number receiver through a `Number.prototype` hint whose operands are `watch`
+    /// and `value` (`IcOp::HeldNumber`), from the receiver's word.
+    #[inline(always)]
+    pub(in crate::vm::dispatch_fast) fn held_number(watch: u64, value: u64) -> Self {
+        use crate::staged::ic::IcOp;
+        let held = IcOp::HeldNumber { watch, value };
+        Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, functions: false }
+    }
 }
 
 /// The plans a lane frame holds: the record's own, or none.
@@ -787,6 +796,9 @@ lane_handler! {
             if const { FLAG == super::STRING_SITE } {
                 sibling!(lane_get_field_string_refresh::<H>, r, ip, Carried::script_in(script, view))
             }
+            if const { FLAG == super::NUMBER_SITE } {
+                sibling!(super::lane_get_field_number_refresh::<H>, r, ip, Carried::script_in(script, view))
+            }
             if const { super::own_constant_site(FLAG) } {
                 // Another object, or the object was written: the site reads as its tier decides
                 // and never holds an own constant again.
@@ -955,6 +967,11 @@ lane_handler! {
                 let machine = unsafe { vm(script) };
                 let Some((watch, value)) = machine.string_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
                 frame.plan = Some(RecordPlan::held_string(watch, value));
+            } else if const { FLAG == super::NUMBER_SITE } {
+                // A number receiver's read through the record's `Number.prototype` hint.
+                let machine = unsafe { vm(script) };
+                let Some((watch, value)) = machine.number_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
+                frame.plan = Some(RecordPlan::held_number(watch, value));
             } else if const { super::held_site(FLAG) } {
                 // A read through the record's prototype hint (`IcOp::Held`): the hint's operands,
                 // where the lane bound its records and the hint is the read's; else the hint's own

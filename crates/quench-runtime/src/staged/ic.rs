@@ -55,6 +55,11 @@ pub(crate) enum IcOp<'a> {
     /// guards, and the watch at `watch` on the prototype's values still holds, else the read
     /// misses. The read starts from the receiver's word, not an object record. It ends the read.
     HeldString { watch: u64, value: u64 },
+    /// The value `Number.prototype` answered for a number primitive's read (`number_read`): the
+    /// reached word is a Number (an int32 or a double), whose one prototype stands for the shape
+    /// and link guards, and the watch at `watch` on the prototype's values still holds, else the
+    /// read misses. The read starts from the receiver's word, not an object record. It ends the read.
+    HeldNumber { watch: u64, value: u64 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -117,6 +122,7 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
                 return super::string_length::string_length(stage, records, at.record, miss);
             }
             IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
+            IcOp::HeldNumber { watch, value } => return number_read(stage, at.record, watch, value, miss),
         }
     }
     None
@@ -178,6 +184,23 @@ fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
 pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
     let string = super::value::is_direct_string(stage, word);
     stage.guard(string, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
+}
+
+/// The value the number hint `(watch, value)` records for the receiver word `word`: `None`
+/// (leaving at `miss`) for any receiver but a Number, an int32 or a binary64, or once the watch
+/// on `Number.prototype`'s values no longer holds.
+#[inline(always)]
+pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
+    let integer = super::value::is_int(stage, word);
+    let double = super::value::is_double(stage, word);
+    let number = stage.any(integer, double);
+    stage.guard(number, miss)?;
     let watch = stage.site(watch);
     let holds = stage.assumption(watch);
     stage.guard(holds, miss)?;

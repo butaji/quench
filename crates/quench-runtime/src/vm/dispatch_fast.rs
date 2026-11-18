@@ -7532,6 +7532,10 @@ pub(super) const ARRAY_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 9);
 pub(super) const STRING_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 10);
 pub(super) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
 
+/// The site fact of a number receiver's read through a `Number.prototype` hint (`IcOp::HeldNumber`),
+/// as `n.toFixed`: own-form index 14.
+pub(super) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
+
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
 }
@@ -7561,7 +7565,7 @@ pub(super) const fn own_site_form(site: u8) -> u32 {
 /// Whether the word own-field site `site` reads is a slot word to decode (`decode_staged_word`):
 /// every form but a fixed tagged one and packed or narrow values, which hold no raw double.
 pub(super) const fn own_site_decodes(site: u8) -> bool {
-    if held_site(site) || site == STRING_SITE || inherited_site(site) || own_constant_site(site) || length_site(site) { return false; }
+    if held_site(site) || site == STRING_SITE || site == NUMBER_SITE || inherited_site(site) || own_constant_site(site) || length_site(site) { return false; }
     let form = own_site_form(site);
     form == HINTED_FORM || (form & crate::staged::TAGGED_SLOTS == 0 && form != crate::value_vec::INLINE_FORM
         && form != crate::value_vec::NARROW_FORM)
@@ -7812,18 +7816,17 @@ script_handler! {
 }
 
 script_handler! {
-    /// `GetField` of a number primitive, which `Number.prototype` answers through the site's
-    /// cache (`Vm::number_prototype_field_hit`), a method read as `n.toString`, at a site
-    /// `Vm::number_field_site_cacheable` admits. A miss moves the record on as
-    /// `lane_get_field_miss` decides, whose general read records the site's entry.
-    fn lane_get_field_number<>(cx, r, ip, i, view) {
+    /// The generated number read (`lane_row` at `NUMBER_SITE`) past its hint: the site's `Number.prototype`
+    /// entry (`Vm::number_prototype_field_hit`), whose answer becomes the hint. Any other read
+    /// takes `lane_get_field_miss`, which decides the record's tier.
+    #[inline(never)]
+    fn lane_get_field_number_refresh<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .filter(|object| object.as_number().is_some())
-            .and_then(|_| vm.number_prototype_field_hit(i.c))
-        else {
+        let base = r.get(i.b);
+        let Some(value) = base.as_number().is_some().then(|| vm.number_prototype_field_hit(i.c)).flatten() else {
             sibling!(lane_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
         };
+        set_prototype_hint(ip, |owned| vm.hold_number_hint(owned, i.imm(), value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -8068,10 +8071,17 @@ script_handler! {
                 ))
             }
             _ if string_base => Some(lane_get_field::<H>),
+            // A number primitive reads `Number.prototype` where the site admits that read, as the
+            // string arm does; a `this` or nested base takes the general read.
             _ if base.is_some_and(|base| base.as_number().is_some())
                 && (unsafe { vm(cx) }).number_field_site_cacheable(code, i.imm()) =>
             {
-                Some(lane_get_field_number::<H>)
+                Some(single_base_handler(
+                    i.b,
+                    lane_get_field::<H>,
+                    lane_row::<H, FIELD_LEAF_READ, ACC_NONE, NUMBER_SITE>,
+                    lane_get_field::<H>,
+                ))
             }
             FieldSiteTier::Nested => Some(lane_get_field_nested::<H>),
             FieldSiteTier::General => Some(lane_get_field::<H>),
