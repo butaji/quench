@@ -483,6 +483,14 @@ impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
     /// The lane keeps no views: a read takes the element of any backing in place.
     #[inline(always)]
     fn reads_any_backing(&self) -> bool { true }
+
+    /// The array's write barrier admits `value` unlogged (`Heap::array_store_unlogged`).
+    #[inline(always)]
+    fn array_store_gate(&mut self, _stage: &mut Concrete, base: u64, value: u64, _miss: ()) -> Option<()> {
+        // SAFETY: as `array_records`.
+        let heap = unsafe { &*self.heap? };
+        heap.array_store_unlogged(Value::from_bits(base), Value::from_bits(value)).then_some(())
+    }
 }
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
@@ -731,7 +739,8 @@ lane_handler! {
         }
         if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
             // A keyed read's row is installed for a register base and key without result flags
-            // (`element_read_row`): stated so the decode's operand tests fold.
+            // (`element_read_row`), a keyed write's operands are three registers, as the
+            // handlers these rows replaced read them: stated so the decode's operand tests fold.
             unsafe {
                 std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
                 std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
@@ -852,7 +861,9 @@ lane_handler! {
             Step::Value(value) => {
                 // A names row answers its value without defining its register (its call-out defines it):
                 // the register is written here, as every producer writes it beside the carried value.
-                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names | crate::bytecode::Decoder::Element)) } {
+                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names))
+                    || (matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element))
+                        && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister)) } {
                     r.set(i.a, Value::from_bits(value));
                 }
                 next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
@@ -860,7 +871,11 @@ lane_handler! {
             // An element read past its in-place arm: the record's keyed paths (a slot, a getter).
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
-                sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
+                if const { matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } {
+                    sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
+                }
+                // A keyed write past its in-place replacement: an append, a hole, a typed array, a key.
+                sibling!(super::lane_set_index_slot::<H>, r, ip, Carried::script_in(script, view))
             }
             Step::Control(_) | Step::Unresolved => sibling!(lane_general_step::<H>, r, ip, view),
         }

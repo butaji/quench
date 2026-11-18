@@ -6048,20 +6048,7 @@ fn lane_index_getter_activation<H: Host>(
 }
 
 script_handler! {
-    /// Replacing a present dense element; any other write takes the general path.
-    /// An array whose object is a record runs here, saving no registers; any other object
-    /// takes `lane_set_index_slot`.
-    fn lane_set_index<>(cx, r, ip, i, view) {
-        let (object, key) = (r.get(i.b), r.get(i.c));
-        if !(unsafe { vm(cx) }).try_replace_record_element(object, key, r.get(i.a)) {
-            sibling!(lane_set_index_slot::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index` whose stored value the next record, a register `Move`, copies, the
+    /// `element_write_row` whose stored value the next record, a register `Move`, copies, the
     /// `t = a[i] = v` of compiled code (`specialize_store_moves`): the store and the copy as
     /// one record, the copy carried as `lane_row` carries a `Move`. A store the fast path leaves
     /// runs the store's own slow path, which continues at the `Move` record.
@@ -6125,7 +6112,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_set_index` of a base its loop does not redefine: the replacement through the
+    /// `element_write_row` of a base its loop does not redefine: the replacement through the
     /// run's proof of the array's storage (`lane_proved_store`), else `lane_proof_miss`.
     fn lane_set_index_proved<>(cx, r, ip, i, view) {
         if lane_proved_store(cx, r, i).is_none() {
@@ -6150,7 +6137,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_set_index` past a record array, appending to a dense array at its length,
+    /// `element_write_row` past a record array, appending to a dense array at its length,
     /// filling one of its holes, a Number stored into a typed array
     /// (`Vm::typed_array_set_number`), or a plain symbol-, string- or integer-keyed write. A
     /// symbol write repeats the step its site recorded for the receiver's shape first
@@ -7467,6 +7454,28 @@ const ELEMENT_READ: u16 = {
         }
     }
 };
+
+/// The opcode of the catalog's keyed write: the element row whose record's `a` is the stored
+/// value's register (`Decoder::Element` without a result register).
+const ELEMENT_WRITE: u16 = {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) if matches!(op.staged(), Some(crate::bytecode::Decoder::Element))
+                && !matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister) => break index as u16,
+            Some(_) => index += 1,
+            None => panic!("the catalog names a keyed write"),
+        }
+    }
+};
+
+/// The generated keyed write (`lane_row` of `ELEMENT_WRITE`): a present dense element replaced in
+/// place, any other write `lane_set_index_slot`.
+/// The write's boolean immediate (its strictness) is no operand of the in-place row, whose misses
+/// read it from the record: the row is installed at its cleared flag, so the passes that
+/// recognise the record's handler (`specialize_proved_arrays`) find it before a first run
+/// would requicken it.
+const fn element_write_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_CLEAR> }
 
 /// The generated keyed read (`lane_row` of `ELEMENT_READ`) of a register base and key.
 const fn element_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
@@ -21661,7 +21670,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
-        Class::SetIndex => Some(lane_set_index::<H>),
+        Class::SetIndex => Some(element_write_row::<H>()),
         Class::LoadCapture => Some(lane_load_capture::<H>),
         Class::MakeConstArray => Some(lane_make_const_array::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
@@ -23982,7 +23991,7 @@ fn specialize_typed_addresses<H: Host>(records: &mut [LaneInstruction]) {
     let add = lane_operator_integer_constant::<H, ADDITION> as Handler as *const ();
     let shift = lane_operator_integer_constant::<H, SHIFT_RIGHT> as Handler as *const ();
     let read = element_read_row::<H>() as *const ();
-    let write = lane_set_index::<H> as Handler as *const ();
+    let write = element_write_row::<H>() as *const ();
     for pc in 0..records.len() {
         if records[pc].handler != add {
             continue;
@@ -24069,8 +24078,8 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
         (element_read_row::<H>(), lane_get_index_proved::<H> as Handler, 0),
         (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
         (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
-        (lane_set_index::<H> as Handler, lane_set_index_proved::<H> as Handler, 0),
-        (lane_set_index::<H> as Handler, lane_set_index_proved_heap::<H> as Handler, 0),
+        (element_write_row::<H>(), lane_set_index_proved::<H> as Handler, 0),
+        (element_write_row::<H>(), lane_set_index_proved_heap::<H> as Handler, 0),
         (lane_set_index_move::<H> as Handler, lane_set_index_move_proved::<H> as Handler, 0),
     ]
     .into_iter()
@@ -24370,7 +24379,7 @@ fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
 /// fused store and copy (`lane_set_index_move`). The `Move` record stays, for a jump that
 /// enters it and for the store's own slow path.
 fn specialize_store_moves<H: Host>(records: &mut [LaneInstruction]) {
-    let store = lane_set_index::<H> as Handler as *const ();
+    let store = element_write_row::<H>() as *const ();
     let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == store && records[pc + 1].handler == copy && records[pc + 1].b == records[pc].a {
