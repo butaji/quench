@@ -118,3 +118,40 @@ fn a_chunk_without_room_compiles_as_its_own_program() {
     let source = format!("(0, eval)('function big() {{ return [{}].length; }} globalThis.result = big();')", table.join(","));
     assert_eq!(result_and_programs(&source), ("400".to_string(), 3));
 }
+
+/// A large classic script its host compiles on every run stubs its functions as an indirect
+/// eval does, and their chunks append to the program it runs from: calls into them stay in
+/// one program. A recursive function from a chunk lowers on its first read, as the program's
+/// decoded records do.
+#[test]
+fn a_large_host_scripts_chunks_append_to_the_program_it_runs() {
+    let padding = "/* padding */\n".repeat(20 << 10);
+    let source = format!("{padding}function a(x) {{ return b(x) + 1; }} function b(y) {{ return y * 2 + k; }} var k = 4; \
+                          function walk(n) {{ return n === 0 ? 0 : 1 + walk(n - 1); }} \
+                          globalThis.result = a(3) + ',' + a(5) + ',' + walk(50);");
+    assert!(source.len() >= 256 << 10);
+    let entry = Engine::specialize("", "entry.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&entry).unwrap();
+    let programs = vm.programs.len();
+    vm.evaluate_embedding_specialized_script(&source, "large-script.js").unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&entry, value).unwrap(), "11,15,50");
+    assert_eq!(vm.programs.len(), programs + 1, "every chunk appended to the script's program");
+}
+
+/// Block scopes add locals past a function's own: one past the 16-bit local count is a
+/// syntax error, not a frame whose count wrapped to none.
+#[test]
+fn a_function_past_the_local_slot_limit_is_rejected() {
+    let classes: String = (0..16_384).map(|index| format!("class C{index} {{}} ")).collect();
+    assert!(Engine::specialize(&classes, "many-classes.js").is_err());
+    let fewer: String = (0..16_000).map(|index| format!("class C{index} {{}} ")).collect();
+    let program = Engine::specialize(&format!("{fewer} globalThis.result = typeof C15999;"), "fewer-classes.js").unwrap();
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("result");
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(vm.to_string(&program, value).unwrap(), "function");
+}

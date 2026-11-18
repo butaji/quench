@@ -635,7 +635,8 @@ impl<H: Host> Vm<H> {
         // A program keeping only static text cannot compile its functions again from it. One
         // that runs from its kept form encodes each record its load releases.
         let released = if cache_key.is_some() { crate::compile::ReleasedRecords::Encoded } else { crate::compile::ReleasedRecords::Dropped };
-        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released);
+        let every_run = !self.host.keeps_compiled_programs();
+        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released, every_run);
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
@@ -682,7 +683,12 @@ impl<H: Host> Vm<H> {
             // whole cold typescript-eslint run's CPU unchanged).
             let kept = self.kept_script(source, name, goal, origin)
                 .or_else(|| self.decode_kept_script(Rc::new(bytes) as crate::KeptBytes, source, name, origin));
-            if let Some(kept) = kept {
+            if let Some(mut kept) = kept {
+                // The kept form carries no replay; the compilation that made it does, and its
+                // tables are the kept program's, so a first-call chunk appends to it.
+                if let Some(program) = Rc::get_mut(&mut kept.program) {
+                    program.adopt_chunk_room(&mut residual);
+                }
                 drop(residual);
                 drop(scratch);
                 return Ok(kept);

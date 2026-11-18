@@ -768,14 +768,19 @@ impl Engine {
         )
     }
 
+    /// A host script's program. Where `every_run` (its host keeps no compiled programs) the
+    /// program it runs keeps the compilation's replay, so a classic script's functions may
+    /// compile on first call (`ParsedProgramShape::FirstCallScript`).
     pub(crate) fn specialize_host_script(
         source: &str, name: &str, prefix: &dyn AtomPrefix,
-        options: HostScriptOptions, released: ReleasedRecords,
+        options: HostScriptOptions, released: ReleasedRecords, every_run: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         if options.typescript {
             Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
         } else if options.keep_records {
             Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
+        } else if every_run {
+            Self::specialize_script_shaped(source, name, prefix, ParsedProgramShape::FirstCallScript, released, SourceType::script())
         } else {
             Self::specialize_script_with_atom_prefix(source, name, prefix, released)
         }
@@ -1123,7 +1128,7 @@ impl Engine {
         .flatten();
         let parsed_text = located.as_ref().map_or(&*normalized, |literal| literal.substituted.as_str());
         let allocator = lazy_bodies::sized_arena(parsed_text);
-        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len());
+        let stubbing = expected_shape.stubbing(expected_shape.replayable(private_name_overrides, annex_b_forbidden_names), source.len(), source_type.is_module());
         // A recognized body's check needs its call-only facts deferred, or none to find
         // (`BodyFacts::check`): only bodies with no function inside are recognized then.
         let recognize = if stubbing.functions { annex_b_targets::Recognize::All } else { annex_b_targets::Recognize::Flat };
@@ -1217,7 +1222,7 @@ impl Engine {
         let wrapped_eval = matches!(expected_shape, ParsedProgramShape::Eval(context, _)
             if context.home_atom.is_some()) || ordinary_private_context;
         let dynamic_function_shape = match expected_shape {
-            ParsedProgramShape::Any | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
+            ParsedProgramShape::Any | ParsedProgramShape::FirstCallScript | ParsedProgramShape::KeptRecords | ParsedProgramShape::FirstCallChunk(_) => true,
             ParsedProgramShape::Eval(_, expected_span) => {
                 !wrapped_eval || eval_method_body(&mut parsed.program, ordinary_private_context)
                     .is_some_and(|body| Some(body.span) == expected_span)
@@ -4236,6 +4241,11 @@ impl<'a> Compiler<'a> {
                 .unwrap_or_else(|| function.literal(Constant::Undefined))
         };
         function.emit(Op::Return, result, 0, 0, 0);
+        // Block scopes add locals after the function's own were counted (`FunctionCompiler::new`):
+        // a frame's local count is 16-bit, so one more would wrap it to an empty frame.
+        if function.locals.len() > usize::from(u16::MAX) {
+            function.owner.reject(Span::default(), "function exceeds the local-slot limit");
+        }
         let captures_locals = function
             .code
             .iter()
