@@ -1300,7 +1300,7 @@ impl ProgramStore {
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
         #[cfg(feature = "profile-aggregate")]
-        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        let retain_profile_records = crate::vm::switches::profile_retain_bytecode();
         #[cfg(not(feature = "profile-aggregate"))]
         let retain_profile_records = false;
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {

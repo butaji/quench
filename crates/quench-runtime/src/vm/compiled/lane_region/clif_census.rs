@@ -16,8 +16,7 @@ pub(super) struct Census {
 }
 
 pub(super) fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("QUENCH_CLIF_CENSUS").is_some())
+    crate::vm::switches::clif_census()
 }
 
 impl Census {

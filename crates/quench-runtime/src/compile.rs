@@ -2631,7 +2631,7 @@ impl<'a> Compiler<'a> {
     /// give it binding sites: its layout then depends on nothing compiled after it.
     fn finish_early(&mut self, id: u32) {
         #[cfg(feature = "profile-aggregate")]
-        if std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some() {
+        if crate::vm::switches::profile_retain_bytecode() {
             // A function-level profile needs each replayable function's instruction records.
             return;
         }
