@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>We deleted our benchmark-specific fast paths · Quench blog</title>
+<meta name="description" content="Our Richards score was good because the engine recognised the workload. We removed every path like that, took the lower numbers, and wrote the rule into the repository." />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#EF5102" />
+<link rel="canonical" href="https://quench.run/blog/deleting-our-benchmark-wins/" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111716'/%3E%3Ctext x='8' y='46' font-family='Arial,sans-serif' font-weight='700' font-size='44' fill='%23EDEDED'%3EQ%3C/text%3E%3Ccircle cx='50' cy='42' r='6' fill='%23EF5102'/%3E%3C/svg%3E" />
+<link rel="alternate" type="application/atom+xml" title="Quench blog" href="https://quench.run/blog/feed.xml" />
+<meta property="og:site_name" content="Quench" />
+<meta property="og:url" content="https://quench.run/blog/deleting-our-benchmark-wins/" />
+<meta property="og:title" content="We deleted our benchmark-specific fast paths · Quench blog" />
+<meta property="og:description" content="Our Richards score was good because the engine recognised the workload. We removed every path like that, took the lower numbers, and wrote the rule into the repository." />
+<meta property="og:image" content="https://quench.run/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-08-27" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;700&amp;display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/blog/blog.css" />
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BlogPosting", "headline": "We deleted our benchmark-specific fast paths", "description": "Our Richards score was good because the engine recognised the workload. We removed every path like that, took the lower numbers, and wrote the rule into the repository.", "datePublished": "2026-08-27", "dateModified": "2026-08-27", "url": "https://quench.run/blog/deleting-our-benchmark-wins/", "image": "https://quench.run/og.png", "author": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "publisher": {"@type": "Organization", "name": "Quench", "url": "https://quench.run"}, "mainEntityOfPage": "https://quench.run/blog/deleting-our-benchmark-wins/", "keywords": "benchmark gaming, Octane, Richards, DeltaBlue, JavaScript engine benchmarks"}</script>
+</head>
+<body>
+<div class="wrap">
+<header class="topbar">
+<a class="brand" href="/" aria-label="Quench home">Quench<span>.</span></a>
+<nav class="badges" aria-label="Links">
+<a class="badge" href="/blog/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10.5L20 7.5V21H5V3zm2 2v14h11V8.5h-3.5V5H7zm2 6h7v1.6H9V11zm0 3.2h7v1.6H9v-1.6zM9 7.8h3.5v1.6H9V7.8z"/></svg>Blog</a>
+<a class="badge" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a>
+</nav>
+</header>
+<main>
+<article>
+<header class="frame hero">
+<div class="tile orange side"><div class="stripes"></div><div class="vt"><span>HONEST</span><span>NUMBERS</span></div></div>
+<div class="tile title">
+<p class="mono meta"><a href="/blog/">blog</a> / <time datetime="2026-08-27">27 August 2026</time> · 2 min read · performance</p>
+<h1>We deleted our benchmark-specific fast paths</h1>
+<p class="lead">Our Richards score was good because the engine recognised the workload. We removed every path like that, took the lower numbers, and wrote the rule into the repository.</p>
+</div>
+<div class="tile metal" aria-hidden="true"></div>
+</header>
+<div class="frame"><div class="tile prose">
+<p>By late August 2026 Quench had benchmark numbers we liked and should not have trusted. Some hot paths in the runtime were shaped like the benchmarks they ran. Richards had a native scheduler, task and packet kernel built from a snapshot of the workload. There was a dispatch path that knew about the Octane suite.</p>
+<p>None of that is unusual. Engines have recognised benchmarks for as long as there have been benchmarks. But it meant our scores described how well we had modelled eight programs, not how fast we ran JavaScript.</p>
+<p>On 26 and 27 August we deleted all of it.</p>
+<h2 id="what-it-cost">What it cost</h2>
+<p>The commit messages from those two days record the give-back plainly. One reads: "honest score give-back to median 146 after deleting the private snapshot". Another: "Honest RayTrace median after deletion: 43.7; schema trace timed out at the enforced 180s limit".</p>
+<figure class="fig"><div class="fig-scroll"><svg viewBox="0 0 720 132" width="720" height="132" role="img" aria-label="Scores recorded after removing workload-shaped paths, 26 August 2026" xmlns="http://www.w3.org/2000/svg"><title>Scores recorded after removing workload-shaped paths, 26 August 2026</title><text x="180" y="21" text-anchor="end" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">DeltaBlue before</text><rect x="190" y="6" width="440.0" height="20" rx="4" fill="#3C3C3C"/><text x="638.0" y="21" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" font-weight="700" fill="#1C1C1E">206</text><text x="180" y="51" text-anchor="end" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">DeltaBlue after</text><rect x="190" y="36" width="416.5" height="20" rx="4" fill="#EF5102"/><text x="614.5" y="51" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" font-weight="700" fill="#1C1C1E">195</text><text x="180" y="81" text-anchor="end" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">Richards after</text><rect x="190" y="66" width="311.8" height="20" rx="4" fill="#EF5102"/><text x="509.8" y="81" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" font-weight="700" fill="#1C1C1E">146</text><text x="180" y="111" text-anchor="end" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" fill="#1C1C1E">RayTrace after</text><rect x="190" y="96" width="93.3" height="20" rx="4" fill="#EF5102"/><text x="291.3" y="111" font-size="13" font-family="'JetBrains Mono',ui-monospace,monospace" font-weight="700" fill="#1C1C1E">43.7</text></svg></div><figcaption>Scores as written in commits 26e7046d63, 8584ac565c and f4d288fad7. These are from the engine of that week, long before the current interpreter, and are not comparable to later boards.</figcaption></figure>
+<p>The fixed kernels were replaced by generic building blocks where property names stay ordinary operands, so the same mechanism works for any program with that shape. On 27 August the last commit in the series, "remove benchmark-specific execution bypasses", took out the suite-aware dispatch and the checksum paths.</p>
+<h2 id="the-rule">The rule</h2>
+<p>The repository rules now carry this sentence:</p>
+<aside class="note">Production behavior must never depend on benchmark identity, fixture source, scores, checksums, suite markers or the comparison engine.</aside>
+<p>There is a lint for it. Nothing in the engine may be keyed on function or property names from a workload, on source text, on instruction counts or on bytecode shapes, and the allowance for exceptions is zero.</p>
+<h2 id="why-a-whitelist-cannot-win">Why a whitelist cannot win</h2>
+<p>The deeper reason came into focus months later, when we started running JetStream 3 instead of the eight older V8 benchmarks. A design review in November put it this way: speed had been built as a whitelist. Each benchmark's hot handler got a fast variant, and every new program met a new edge of the whitelist. JetStream 3 has more than sixty workloads using modern JavaScript, and no whitelist covers that.</p>
+<p>You cannot special-case your way out of a flat profile. The only thing that helps is making the general mechanism cheap: one way to call, one way to read a field, one way to allocate.</p>
+<h2 id="what-we-do-instead">What we do instead</h2>
+<ul><li><b>Tests stand in for programs, never the other way round.</b> A benchmark is there to expose a general cost. When a fix helps only one row, it is suspect.</li><li><b>A change must help a whole benchmark.</b> Later we made this a keep rule: a change stays only if fixed-work instructions drop on a whole benchmark, measured, with no other row regressing beyond a small budget.</li><li><b>Publish the losses.</b> Every post on this blog that shows a number shows the ones that went the wrong way too.</li></ul>
+<p>Deleting your best numbers is unpleasant for about a day. After that it is a relief, because every number you have left means something.</p>
+</div></div>
+</article>
+<nav class="frame cols-2" aria-label="More posts"><a class="tile navt" href="/blog/thirty-five-thousand-commits/"><span class="mono">← earlier · 16 August 2026</span><b>35,000 commits in a month</b></a><a class="tile navt right" href="/blog/the-day-we-deleted-405013-lines/"><span class="mono">later · 8 October 2026 →</span><b>The day we deleted 405,013 lines</b></a></nav>
+<section class="frame cols-3 cta-frame" aria-label="Get involved">
+<div class="tile orange"><h2>Try it</h2><p>Quench builds from source with Cargo and runs TypeScript, JavaScript and WebAssembly.</p><a class="btn" href="/#start">Build and run</a></div>
+<div class="tile"><h2>Work on it</h2><p>Interpreter, JIT, AOT, GC, Node APIs. Every claim on this blog has a measurement you can rerun.</p><a class="btn" href="/#contribute">Where to start</a></div>
+<div class="tile"><h2>Follow it</h2><p>New posts land here as the engine moves. Star the repository or subscribe to the feed.</p><a class="btn" href="https://github.com/butaji/quench" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>Star on GitHub</a> <a class="btn ghost" href="/blog/feed.xml"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4a16 16 0 0116 16h-3A13 13 0 004 7V4zm0 6a10 10 0 0110 10h-3a7 7 0 00-7-7v-3zm2.2 6.6a2.2 2.2 0 110 4.4 2.2 2.2 0 010-4.4z"/></svg>Feed</a></div>
+</section>
+</main>
+<footer class="foot">Quench · MIT licensed · <a href="/">home</a> · <a href="/blog/">blog</a> · <a href="/blog/feed.xml">feed</a> · <a href="https://github.com/butaji/quench">github.com/butaji/quench</a></footer>
+</div>
+</body>
+</html>
