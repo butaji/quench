@@ -24,7 +24,11 @@ use crate::bytecode::{DeclaredKind, DeclaredTypes, EnumConstant};
 
 /// Admit a typed tree: the declared environment out, run-time meaning in.
 pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
-    let mut admit = Admit { allocator, declarations, type_names: FxHashSet::default(), lexical: false };
+    let mut admit = Admit {
+        allocator, declarations, type_names: FxHashSet::default(), lexical: false,
+        bindings: if program.source_text.contains("const enum") { binding_counts(program) } else { FxHashMap::default() },
+        const_enums: FxHashMap::default(),
+    };
     admit.visit_program(program);
     admit.drop_type_exports(&mut program.body);
 }
@@ -37,6 +41,11 @@ struct Admit<'a, 'd> {
     /// The current statement list is a block's (or a namespace body's): its generated
     /// bindings are `let`, so they stay in it as tsc's function-scoped ones do.
     lexical: bool,
+    /// How many bindings of each name the program declares.
+    bindings: FxHashMap<String, u32>,
+    /// The folded members of each `const enum` whose name binds nothing else: tsc's
+    /// semantics inline their reads, so `E.X` is the constant (no load at run time).
+    const_enums: FxHashMap<String, FxHashMap<String, String>>,
 }
 
 /// How a declaration is exported: not, from the module, or from namespace `N`.
@@ -336,6 +345,13 @@ impl<'a> Admit<'a, '_> {
         }).collect();
         self.declarations.enum_constants.extend(constants.into_iter().map(|(member, value)| (Box::from(name.as_str()), Box::from(member), value)));
         self.declare(DeclaredKind::Enum, Some(&name), enumeration.span);
+        if enumeration.r#const && self.bindings.get(&name) == Some(&1) {
+            let literals = members.iter().filter_map(|(member, value)| match value {
+                Member::Constant(value) => enums::literal(value).map(|literal| (member.clone(), literal)),
+                Member::Computed(_) => None,
+            });
+            self.const_enums.entry(name.clone()).or_default().extend(literals);
+        }
         let keyword = self.keyword();
         let text = object_enum(&name, &members, first, how, keyword).unwrap_or_else(|| incremental_enum(&name, &members, first, how, keyword));
         let mut statements = self.javascript(&text, enumeration.span);
@@ -556,6 +572,36 @@ impl<'a> Admit<'a, '_> {
     }
 }
 
+/// `E.X` or `E["X"]`: the enum and member a read names.
+fn enum_member_read<'e>(expression: &'e Expression<'_>) -> Option<(&'e str, &'e str)> {
+    match expression {
+        Expression::StaticMemberExpression(member) => match &member.object {
+            Expression::Identifier(object) => Some((object.name.as_str(), member.property.name.as_str())),
+            _ => None,
+        },
+        Expression::ComputedMemberExpression(member) => match (&member.object, &member.expression) {
+            (Expression::Identifier(object), Expression::StringLiteral(key)) => Some((object.name.as_str(), key.value.as_str())),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// How many bindings of each name `program` declares (an inlined `const enum` name must
+/// denote the enum wherever it is read).
+fn binding_counts(program: &Program<'_>) -> FxHashMap<String, u32> {
+    use oxc_ast_visit::Visit;
+    struct Counts(FxHashMap<String, u32>);
+    impl<'a> Visit<'a> for Counts {
+        fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+            *self.0.entry(identifier.name.to_string()).or_default() += 1;
+        }
+    }
+    let mut counts = Counts(FxHashMap::default());
+    counts.visit_program(program);
+    counts.0
+}
+
 /// The assignment target an expression under type assertions denotes, if it denotes one.
 fn plain_target(expression: Expression<'_>) -> Result<SimpleAssignmentTarget<'_>, Expression<'_>> {
     match expression {
@@ -613,6 +659,18 @@ impl<'a> VisitMut<'a> for Admit<'a, '_> {
     fn visit_class(&mut self, class: &mut Class<'a>) {
         self.class_members(class);
         walk_mut::walk_class(self, class);
+    }
+
+    fn visit_expression(&mut self, expression: &mut Expression<'a>) {
+        if !self.const_enums.is_empty()
+            && let Some((enumeration, member)) = enum_member_read(expression)
+            && let Some(literal) = self.const_enums.get(enumeration).and_then(|members| members.get(member))
+        {
+            let span = expression.span();
+            *expression = self.javascript_expression(&literal.clone(), span);
+            return;
+        }
+        walk_mut::walk_expression(self, expression);
     }
 
     /// `x! = v`, `(x as T) = v`: the target is the expression the assertion wraps.

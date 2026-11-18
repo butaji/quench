@@ -144,6 +144,7 @@ mod tests {
         let lines = run_typescript(r#"
             enum E { A, B, C = A + 10, D = "d" }
             const enum Flags { X = 1 << 3, Y = X | 1 }
+            function shadow(Flags: { Y: number }) { return Flags.Y; }
             enum Computed { Len = "abc".length, Next }
             enum E { Late = 20 }
             namespace N { export const k = 1; export function g() { return k + 1; } export namespace M { export enum Q { R } } }
@@ -154,12 +155,12 @@ mod tests {
             const q = new Q(1, "w");
             import alias = N.M;
             console.log([E.A, E[1], E.C, E[10], E.D, E.Late, E[20], Flags.Y, Computed.Len, Computed.Next, Computed[4]].join(" "));
-            console.log([N.k, N.g(), N.M.Q.R, N.M.Q[0], N.k2, A.B.C.deep, alias.Q.R].join(" "));
+            console.log([N.k, N.g(), N.M.Q.R, N.M.Q[0], N.k2, A.B.C.deep, alias.Q.R, shadow({ Y: 7 })].join(" "));
             console.log([new P(3).sum(), q.sum(), Object.keys(q).join()].join(" "));
         "#);
         assert_eq!(lines, [
             "0 B 10 C d 20 Late 9 3 4 Next",
-            "1 2 0 R 2 deep 0",
+            "1 2 0 R 2 deep 0 7",
             "5 3 x,y,extra,w",
         ]);
     }
@@ -185,6 +186,12 @@ mod tests {
         assert_eq!(declared.enum_constant("E", "B"), Some(&EnumConstant::Number(3.0)));
         assert_eq!(declared.enum_constant("E", "C"), Some(&EnumConstant::String("c".into())));
         assert!(Engine::specialize("const plain = 1;", "plain.cjs").unwrap().declared_types.is_none());
+    }
+
+    #[test]
+    fn const_enum_reads_are_their_constants() {
+        let lines = run_typescript("const enum Dir { Up = 1, Down = Up * 2, Name = \"dir\" }\nconst read = () => Dir.Down + Dir[\"Up\"];\nconsole.log(read() + Dir.Name + read.toString().includes(\"Dir\"));");
+        assert_eq!(lines, ["3dirtrue"]);
     }
 
     #[test]
