@@ -4436,6 +4436,39 @@ impl std::ops::Deref for SymbolData {
     }
 }
 
+/// A legacy heap slot's cell. Kinds with a typed record family (`for_each_record_space!` in
+/// `heap.rs`) are allocated in that family. A variant such as `Array`, `Promise` or `AwaitState`
+/// remains here only as the fallback for a full record space, and a variant with no family
+/// (for example `Proxy`) lives here by design.
+///
+/// Classification of `Cell::Object` (ordinary objects), as of the record-only commit:
+///
+/// - Allocation. Every ordinary object is requested as `Cell::Object` (or `alloc_object`) and
+///   stored only in the object record space (`Heap::alloc_cell`, `insert_admitted_object_record`).
+///   A full space panics ("object records exhausted"), as functions and iterators do. Before,
+///   the only reason for a legacy `Cell::Object` was that full-space fallback. No production
+///   path now stores one.
+/// - Brands are not kinds. Arguments, module namespace, raw JSON, Error and boxed primitives are
+///   `ObjectBrand` values (or the `Object` payload) on an ordinary object record, so they need no
+///   cell of their own.
+/// - Snapshot restore reads object records directly (`Heap::read_snapshot`), so it never needed a
+///   legacy `Cell::Object`. Only the `tag::OBJECT` reader survives, for older snapshots.
+/// - Tests and staged fixtures build `Cell::Object` as a constructor argument only.
+///
+/// Still needed, and what blocks each:
+///
+/// - `Cell::Object` itself (the variant): it is the input type of `alloc` for ~200 `vm/` call
+///   sites and ~250 test and staged sites. Removing it means switching each to `alloc_object`,
+///   and deleting the match arms in `heap.rs` (GC trace, `cell_kind`, payload bytes, census),
+///   `heap/access.rs` (`Cell::object`, `object_mut`), `vm/embedding.rs`, `vm/json.rs`,
+///   `vm/field_cache.rs`, `vm/object_template.rs` and `heap/memory_profile.rs`.
+/// - The `tag::OBJECT` snapshot tag: dropping it changes the snapshot format, so it needs a
+///   `ResidualProgram::FORMAT_VERSION` and `RUNTIME_ABI_FINGERPRINT` bump, as the realm change did.
+/// - Exotic kinds that carry an `Object` next to their own payload keep a legacy cell because the
+///   payload does not fit an object record: `Proxy` (target and handler), `TypedArray`,
+///   `DataView`, `ArrayBuffer` (bytes), `Date`, `RegExp` (shared meta), `ShadowRealm`, `WeakMap`,
+///   `WeakSet`, `WeakRef`, `FinalizationRegistry` (entries), `Temporal*` (fields), `Wasm*`
+///   (handles and headers), `Error(String)`. Each needs its own record family before it can move.
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {

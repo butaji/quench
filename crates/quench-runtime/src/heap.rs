@@ -1348,15 +1348,15 @@ impl Heap {
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
         let cell = match cell {
-            Cell::Object(object) => match self.object_records.try_insert(object) {
-                Ok(record_id) => {
-                    let value = Value::direct_object(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(object) => Cell::Object(object),
-            },
+            Cell::Object(object) => {
+                let Ok(record_id) = self.object_records.try_insert(object) else {
+                    panic!("object records exhausted");
+                };
+                let value = Value::direct_object(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                return value;
+            }
             Cell::Array { object } => match self.array_records.try_insert(object) {
                 Ok(record_id) => {
                     let value = Value::direct_array(record_id);
@@ -1622,25 +1622,18 @@ impl Heap {
         self.insert_admitted_object_record(object)
     }
     /// `insert_object_record` of an object whose initial values the caller already admitted.
+    /// The object record space holds as many records as `RECORD_SPACE_CAPACITY`, so a full
+    /// space is a panic, as for functions and iterators; no legacy slot takes an object.
     #[inline(always)]
     fn insert_admitted_object_record(&mut self, object: Object) -> Value {
         self.allocated += 1;
-        match self.object_records.try_insert(object) {
-            Ok(record_id) => {
-                let value = Value::direct_object(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            Err(mut object) => {
-                // A young run's owner is a record (`YoungOwner`): an object that takes a legacy slot takes an ordinary run first.
-                if self.properties.holds_young_run(object.properties()) {
-                    let storage = self.properties.duplicate(object.properties());
-                    object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
-                }
-                self.alloc_in_slot(Cell::Object(object), self.tracks_young_cells())
-            }
-        }
+        let Ok(record_id) = self.object_records.try_insert(object) else {
+            panic!("object records exhausted");
+        };
+        let value = Value::direct_object(record_id);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
     }
 
     /// Admit initial named properties before any object-bearing cell or record
