@@ -23,7 +23,8 @@ pub(super) fn rerooted(caller: &[WideInstruction], read: usize, receiver: Regist
         return Some((path.root, receiver));
     }
     let copy = caller[read.checked_sub(1)?];
-    (copy.op().copies_register() && copy.defined_register() == Some(receiver) && !defines(copy.register_b()))
+    (matches!(crate::vm::compiled::decoded(copy), Some(crate::staged::Operation::Move { .. }))
+        && copy.defined_register() == Some(receiver) && !defines(copy.register_b()))
         .then(|| (FieldReceiver::Register(copy.register_b()), copy.register_b()))
 }
 
@@ -34,7 +35,9 @@ pub(super) fn captured(instructions: &[WideInstruction], header_live: RegisterSe
     let mut slots = BTreeMap::<Register, Option<u16>>::new();
     for instruction in instructions {
         let Some(register) = instruction.defined_register() else { continue };
-        let slot = (instruction.op().addresses_capture() && instruction.capture_depth() == 0 && instruction.result_flags() == 0)
+        let captures = matches!(crate::vm::compiled::decoded(instruction),
+            Some(crate::staged::Operation::LoadCapture { .. } | crate::staged::Operation::StoreCapture { .. }));
+        let slot = (captures && instruction.capture_depth() == 0 && instruction.result_flags() == 0)
             .then(|| instruction.capture_slot());
         slots.entry(register).and_modify(|held| if *held != slot { *held = None }).or_insert(slot);
     }

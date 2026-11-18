@@ -31,19 +31,27 @@ mod global;
 pub(crate) mod division;
 pub(crate) mod math;
 mod names;
+pub(crate) mod protocol_literals;
+pub(crate) mod protocol_classes;
+pub(crate) mod protocol_values;
+pub(crate) mod protocol_owned;
+pub(crate) mod protocol_wasm;
 mod callout;
 mod spread;
 mod admission;
 mod delete;
 mod decode;
+pub(crate) mod meaning_fast;
+pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
+pub(crate) mod meaning_dispatch;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
 pub(crate) use spread::Passing;
 pub(crate) use decode::{DecodeContext, Fields};
-pub(crate) use compare::{Comparison, Nullish};
+pub(crate) use compare::{nullish_of, Comparison};
 pub(crate) use concrete::Concrete;
 pub(crate) use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub(crate) mod builtins;
@@ -79,6 +87,8 @@ pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, R
 #[cfg(test)]
 pub(crate) use plan::Bound;
 pub(crate) use invoke::{CallFrame, Entered, Room};
+mod suspend;
+pub(crate) use suspend::Suspension;
 mod allocation;
 pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
@@ -96,12 +106,14 @@ pub(crate) mod function_plan;
 pub(crate) mod region;
 pub(crate) mod wasm;
 pub(crate) mod wasm_float;
-mod wasm_concrete;
+pub(crate) mod wasm_concrete;
+pub(crate) mod wasm_gc;
 pub(crate) mod wasm_call;
 pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;
@@ -117,7 +129,7 @@ pub(crate) use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_hinted_own_field_hit, co
 pub(crate) use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
 mod stage;
-pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_bytes, word_offset};
+pub(crate) use stage::{fill_by_rows, Passed, StagedRecordSpace, Stage, Table, word_bytes, word_offset};
 
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
@@ -156,6 +168,8 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the activation's `this`; where the activation does not
     /// hold it, leave at the frame's miss edge.
     LoadThis { destination: Register },
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
+    Nop,
     /// A Number operation (`numeric`).
     Number(NumberOperation),
     /// Continue where register `register` is neither `null` nor `undefined`; those leave at
@@ -179,8 +193,6 @@ pub(crate) enum Operation<W, P> {
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
-    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
-    Nop,
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
@@ -233,7 +245,7 @@ pub(crate) enum Operation<W, P> {
     GetField { base: FieldBase, lookup: FieldLookup },
     /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
     /// `base` is `this` for `None`.
-    SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
+    SetField { value: Register, base: Option<Register>, atom: u32, site: u16, strict: bool },
     /// `base.atom = value` of a word no register names, of type `fact`, through cache site
     /// `site`'s store plan (`property_write::store_word`); `base` is `this` for `None`.
     StoreField { base: Option<Register>, value: W, fact: Type, atom: u32, site: u16 },
@@ -259,9 +271,20 @@ pub(crate) enum Operation<W, P> {
     SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
     /// Complete the activation with the value of `source` (`invoke::ret`).
     Return { source: Register },
+    /// Suspend the activation (`Suspension`) with the value of `value`, resuming with what it
+    /// receives next in `destination` (`suspend::suspend`).
+    Suspend { kind: Suspension, destination: Register, value: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
+    /// An indexed read whose base is a frame local, not a register (`GetIndex` over a numeric
+    /// local operand): the tier's exact path makes it (`element_rows::step` leaves it unresolved).
+    #[allow(dead_code)]
+    ElementReadOperand { destination: Register, base: Operand, key: Operand },
+    /// A numeric increment or decrement whose result goes to the frame local `local` instead of a
+    /// register (`IncDec` with a numeric local target): the tier's exact path makes it.
+    #[allow(dead_code)]
+    IncDecLocal { local: Register, source: Register, decrement: bool },
     /// `base[key] = value`, replacing a present dense element in place where the array owns its
     /// backing alone and the value needs no barrier log, else the VM's store.
     ElementWrite { value: Register, base: Register, key: Register },
@@ -295,6 +318,23 @@ impl<W, P> Operation<W, P> {
         }
     }
 
+    /// The staged operation `instruction` makes apart from how its result completes the frame
+    /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
+    /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
+    /// operation with no completion.
+    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+        use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
+        // A numeric local target is where the result goes, not how it completes: it stays.
+        // (It shares its bit with the `this` write: only `ReturnableAndThis` reads that bit as one.)
+        let layout = instruction.op().result_layout();
+        let completing = (layout.allowed_flags() & RETURN_REGISTER)
+            | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
+        let flags = instruction.result_flags() & completing;
+        if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
+        let plain = if flags != 0 { instruction.without_result_flags() } else { instruction };
+        Some((Self::decode(plain, context)?, flags))
+    }
+
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
     /// record's wide fields (`Fields::wide`).
     #[inline(always)]
@@ -312,12 +352,13 @@ impl<W, P> Operation<W, P> {
             Op::LoadConst => Self::LoadConst {
                 destination: instruction.result_register(),
                 constant: instruction.constant(context)? },
-            Op::Jump => Self::Jump,
             Op::Nop => Self::Nop,
+            Op::Jump => Self::Jump,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction),
             _ => Self::Return { source: instruction.register_a() },
         })
     }
@@ -348,7 +389,7 @@ impl<W, P> Operation<W, P> {
                 key: instruction.register_c(), strict: instruction.boolean_flag()? }),
             op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
                 base: instruction.field_store_register(), atom: instruction.atom_index(),
-                site: instruction.cache_site_index() }),
+                site: instruction.cache_site_index(), strict: op.is_strict_field_store() }),
             _ => None,
         }
     }
@@ -374,11 +415,17 @@ impl<W, P> Operation<W, P> {
                 destination: instruction.result_register() },
             Op::RequireObjectCoercible => Self::RequireObjectCoercible {
                 register: instruction.register_b() },
+            Op::RequireIteratorResult => Self::RequireIteratorResult {
+                register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
-            Op::IncDec if instruction.numeric_local_target().is_none() => Self::Number(NumberOperation::IncDec {
-                destination: instruction.result_register(), source: instruction.register_b(),
-                decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+            Op::IncDec => match instruction.numeric_local_target() {
+                None => Self::Number(NumberOperation::IncDec {
+                    destination: instruction.result_register(), source: instruction.register_b(),
+                    decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+                Some(local) => Self::IncDecLocal { local, source: instruction.register_b(),
+                    decrement: instruction.boolean_flag()? },
+            },
             Op::LoadCapture if instruction.result_flags() == 0 => Self::LoadCapture {
                 destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot(),
                 root: false },
@@ -464,6 +511,8 @@ mod wasm_memory_tests;
 mod wasm_flow_tests;
 #[cfg(test)]
 mod wasm_call_tests;
+#[cfg(test)]
+mod wasm_gc_tests;
 #[cfg(test)]
 mod wasm_simd_tests;
 #[cfg(test)]

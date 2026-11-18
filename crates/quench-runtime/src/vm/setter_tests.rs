@@ -1,4 +1,4 @@
-//! Stores that meet a setter, as the lane activates it (`setters::lane_store_setter`),
+//! Stores that meet a setter, as the lane activates it (`AccessorCall::store_setter`),
 //! against Node's output.
 use crate::test_host::printed;
 

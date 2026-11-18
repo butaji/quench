@@ -837,12 +837,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn wasm_memory_pages(&self, memory: Value) -> Result<u64, JsError> {
-        let Some(Cell::WasmMemory { bytes, header, .. }) = self.heap.get(memory) else {
+    /// Runs a staged read rule over the bytes of the linear memory `memory`, on the
+    /// interpreter's `ConcreteBytes` stage.
+    pub(super) fn wasm_memory_read<R>(
+        &self,
+        memory: Value,
+        rule: impl FnOnce(&mut crate::staged::wasm_machine::ConcreteBytes<'_>) -> R,
+    ) -> Result<R, JsError> {
+        let Some(Cell::WasmMemory { bytes, .. }) = self.heap.get(memory) else {
             return Err(JsError::validation("invalid Wasm memory binding".into()));
         };
-        let ty = &header.ty;
-        Ok((bytes.len() / ty.page_size() as usize) as u64)
+        let guard = bytes.lock();
+        Ok(rule(&mut crate::staged::wasm_machine::ConcreteBytes { memory: &guard }))
     }
 
     #[inline] pub(super) fn wasm_memory_index_type(&self, memory: Value) -> Result<crate::WasmType, JsError> {
@@ -887,61 +893,6 @@ impl<H: Host> Vm<H> {
                 "invalid mutable Wasm memory binding".into(),
             )),
         }
-    }
-
-    /// An i32 operator on a validated i32 register and an i32 right operand.
-    #[inline(always)]
-    pub(super) fn wasm_i32_binary(
-        &mut self,
-        f: usize,
-        i: crate::bytecode::WideInstruction,
-        operator: crate::wasm::integer::I32BinaryOperator,
-        right: i32,
-    ) -> Result<(), JsError> {
-        let left = self.read(f, i.register_b()).wasm_bits32() as i32;
-        let value = operator
-            .evaluate(left, right)
-            .map_err(JsError::wasm_trap_error)?;
-        self.write(f, i.result_register(), Value::integer(value));
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(super) fn wasm_i32_jump(
-        &mut self,
-        p: &ResidualProgram,
-        f: usize,
-        i: crate::bytecode::WideInstruction,
-        pc: &mut usize,
-        comparison: crate::wasm::integer::I32BinaryOperator,
-    ) -> Result<(), JsError> {
-        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
-        let right = self.read(f, i.register_b()).wasm_bits32() as i32;
-        let taken = comparison
-            .evaluate(left, right)
-            .map_err(JsError::wasm_trap_error)?
-            != 0;
-        self.wasm_jump(p, f, i, pc, taken);
-        Ok(())
-    }
-
-    #[inline(always)]
-    pub(super) fn wasm_i32_constant_jump(
-        &mut self,
-        p: &ResidualProgram,
-        f: usize,
-        i: crate::bytecode::WideInstruction,
-        pc: &mut usize,
-        comparison: crate::wasm::integer::I32BinaryOperator,
-    ) -> Result<(), JsError> {
-        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
-        let right = i32::from(i.b() as i16);
-        let taken = comparison
-            .evaluate(left, right)
-            .map_err(JsError::wasm_trap_error)?
-            != 0;
-        self.wasm_jump(p, f, i, pc, taken);
-        Ok(())
     }
 
     /// Take a Wasm conditional jump. Backward edges are collection safepoints,
@@ -1060,6 +1011,17 @@ impl<H: Host> Vm<H> {
         input: u64,
         length: u64,
     ) -> Result<(), JsError> {
+        if let Some(source) = source
+            && let (Some(Cell::WasmMemory { bytes: destination_bytes, .. }), Some(Cell::WasmMemory { bytes: source_bytes, .. })) =
+                (self.heap.get(destination), self.heap.get(source))
+        {
+            let mut stage = crate::staged::wasm_machine::ConcretePair {
+                destination: destination_bytes,
+                source: source_bytes,
+            };
+            return crate::staged::wasm_memory::copy_across(&mut stage, output, input, length)
+                .map_err(JsError::wasm_trap_error);
+        }
         let length = usize::try_from(length)
             .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsMemory))?;
         let available = source
@@ -1078,32 +1040,23 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let source = source.expect("nonempty source range");
-        if source == destination {
-            self.wasm_memory_mut(destination)?
-                .0
-                .copy_within(input, output.start);
-        } else {
-            let Some(Cell::WasmMemory {
-                bytes: destination, ..
-            }) = self.heap.get(destination)
-            else {
-                unreachable!("validated destination binding")
-            };
-            match self.heap.get(source) {
-                Some(Cell::WasmMemory { bytes: source, .. }) => {
-                    destination.copy_from(source, input, output)
+        let Some(Cell::WasmMemory {
+            bytes: destination, ..
+        }) = self.heap.get(destination)
+        else {
+            unreachable!("validated destination binding")
+        };
+        match self.heap.get(source) {
+            Some(Cell::ArrayBuffer { bytes: source, .. }) => {
+                if source.is_wasm_view_of(destination) {
+                    destination.lock().copy_within(input, output.start);
+                } else if let (crate::wasm::memory::MemoryStorage::Shared(destination), Some(source)) = (&**destination, source.shared_backing()) {
+                    destination.0.copy_from(&source, input, output);
+                } else {
+                    destination.lock()[output].copy_from_slice(&source.read()[input]);
                 }
-                Some(Cell::ArrayBuffer { bytes: source, .. }) => {
-                    if source.is_wasm_view_of(destination) {
-                        destination.lock().copy_within(input, output.start);
-                    } else if let (crate::wasm::memory::MemoryStorage::Shared(destination), Some(source)) = (&**destination, source.shared_backing()) {
-                        destination.0.copy_from(&source, input, output);
-                    } else {
-                        destination.lock()[output].copy_from_slice(&source.read()[input]);
-                    }
-                }
-                _ => unreachable!("validated source binding"),
             }
+            _ => unreachable!("validated source binding"),
         }
         Ok(())
     }
@@ -1339,6 +1292,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn encode_raw_wasm_value(&mut self, value: crate::WasmValue) -> Value {
         match value {
             crate::WasmValue::I64(word) => Value::from_bits(word as u64),
+            crate::WasmValue::F64(bits) => Value::from_bits(bits),
             value => self.encode_wasm_value(value),
         }
     }

@@ -130,7 +130,9 @@ impl LoweringJob<'_> {
         let shape_stable = |shape: u32| self.tables.shape_stable(shape);
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &self.method_cache_atoms,
             invalidation: self.invalidation, constants: &self.constants, instanceofs: &instanceofs, shape_stable: &shape_stable,
-            names: Some(&names) }), ..self.facts };
+            // TODO(merge): wyc2t0's own-constant fold and the scalar construct plans read the VM
+            // live; they need FactTables entries before the off-thread lowering can answer them.
+            names: Some(&names), own_constant: &|_| None }), ..self.facts };
         lane_region::lower_body(&self.program, self.function, &self.unit, self.helpers, &self.fields, &self.global_reads, facts,
             &self.leaves, &self.direct_sites, &self.frame_captures, self.entry, &self.number_reads)
     }
@@ -354,9 +356,9 @@ impl<H: Host> Vm<H> {
         let unit = self.lane_plan_unit(program, function, targets, trips, generic, budget)?;
         let entry = entry_pc(&unit, entry).or_else(|| { plan_miss(self, Miss::PlanNoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
-        let mut fields = self.lane_unit_fields(program, &unit, &left_at);
+        let mut fields = self.lane_unit_fields(program, &unit, &left_at, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
-        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at); }
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.lane_unit_fields(program, &unit, &left_at, view); }
         let global_reads = self.lane_global_reads(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         // What decides against a plan from its unit alone decides before its lowering, the most
@@ -405,7 +407,7 @@ impl<H: Host> Vm<H> {
         self.host.before_native_compilation();
         let mut budget = lane_unit::MAX_UNIT_INLINED_INSTRUCTIONS;
         let method = loop {
-            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], &|_, _, _, _| true)
+            let Some((mut plan, native)) = self.plan_lane_method(program, function, targets, &|_, _| None, captures, &direct, generic, budget, None, &[], None, &|_, _, _, _| true)
             else { break None };
             match image::compile(native, plan.lowered.scalar.take(), super::jit_backend::CompileLevel::run_default()) {
                 Ok(code) => break plan.finish(&code.code, code.scalar),
@@ -678,7 +680,7 @@ impl LanePlan {
         let entry = unsafe { std::mem::transmute::<*mut u8, BodyEntry>(memory.pointer()) };
         let scalar = scalar.map(|at| memory.pointer().addr() + at);
         Some(LaneMethod {
-            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, recovery_space,
+            dependencies, stable, invalidation: self.invalidation, _code: memory, entry, scalar, rows: None, recovery_space,
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
@@ -704,7 +706,7 @@ impl LaneMethod {
         let calls_here = self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc);
         let constructs_here = program.function_get(inlined.target.function as usize)
             .and_then(|body| body.instructions().nth(pc as usize))
-            .is_some_and(|instruction| instruction.op().class() == crate::bytecode::Class::Construct);
+            .is_some_and(|instruction| crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct));
         if !calls_here && !constructs_here {
             return exit;
         }

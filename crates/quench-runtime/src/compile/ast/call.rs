@@ -69,10 +69,7 @@ impl FunctionCompiler<'_, '_> {
     /// The value `typeof` examines: an unresolvable name reads as undefined rather than
     /// throwing (ECMA-262 13.5.3.1 step 2), which `LoadNameTypeof` does.
     pub(super) fn typeof_operand(&mut self, argument: &Expression<'_>) -> Register {
-        let mut operand = argument;
-        while let Expression::ParenthesizedExpression(parenthesized) = operand {
-            operand = &parenthesized.expression;
-        }
+        let operand = super::super::binding_time::evaluated(argument);
         if let Expression::Identifier(identifier) = operand {
             let atom = self.owner.atom(identifier.name.as_str());
             if !self.binds_name(atom) {
@@ -291,7 +288,7 @@ impl FunctionCompiler<'_, '_> {
             );
             self.after_super_call(dst);
         } else {
-            let op = if Self::forwards_arguments(value) {
+            let op = if self.forwards_arguments(value) {
                 Op::CallForwardingArguments
             } else {
                 Op::Call
@@ -315,14 +312,14 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    /// `f.apply(receiver, arguments)`: the call passes the activation's `arguments` binding
-    /// on, which the activation may then never materialize (`CallPlan::forwards_arguments`).
-    fn forwards_arguments(value: &CallExpression<'_>) -> bool {
+    /// `f.apply(receiver, arguments)`, or of a rest alias (`compile::rest_alias`): passes the
+    /// `arguments` binding on, never materialized then (`CallPlan::forwards_arguments`).
+    fn forwards_arguments(&self, value: &CallExpression<'_>) -> bool {
         matches!(&value.callee, Expression::StaticMemberExpression(member)
             if !member.optional && member.property.name == "apply")
             && matches!(
                 value.arguments.as_slice(),
-                [_, Argument::Identifier(arguments)] if arguments.name == "arguments"
+                [_, Argument::Identifier(arguments)] if self.names_arguments(arguments.name.as_str())
             )
     }
 
@@ -599,7 +596,14 @@ impl FunctionCompiler<'_, '_> {
             Expression::StaticMemberExpression(item) => self.static_member_callee(item),
             Expression::PrivateFieldExpression(item) => self.private_field_callee(item),
             Expression::ChainExpression(item) => self.chain_callee(&item.expression),
-            Expression::ParenthesizedExpression(item) => self.callee(&item.expression),
+            // Parentheses and TypeScript's type-only wrappers keep the reference: `(obj.m)()`
+            // and `obj.m!()` call with `this` = `obj`.
+            Expression::ParenthesizedExpression(_)
+            | Expression::TSAsExpression(_)
+            | Expression::TSSatisfiesExpression(_)
+            | Expression::TSTypeAssertion(_)
+            | Expression::TSNonNullExpression(_)
+            | Expression::TSInstantiationExpression(_) => self.callee(super::super::binding_time::evaluated(value)),
             Expression::ComputedMemberExpression(item) => self.computed_member_callee(item),
             Expression::Identifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());

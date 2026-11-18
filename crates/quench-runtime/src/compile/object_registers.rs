@@ -117,9 +117,14 @@ fn replacement(
     // stand for the latest one. That is exact while no other register still names an
     // earlier one where the allocation runs again: the only live alias it may find is the
     // result register, which the allocation redefines (dead copies are redefined before use).
+    // The solve is needed only when an earlier alias may reach the allocation at all: with none,
+    // the test below holds whatever the live set is, and `transfers` already proved it solvable.
     let reached = incoming[allocation]?;
-    let live = liveness::analyze(function, methods, fields, supers)?;
-    if reached.may & !register_bit(make.result_register()) & live[allocation] != 0 { return None; }
+    let escaping = reached.may & !register_bit(make.result_register());
+    if escaping != 0 {
+        let live = liveness::analyze(function, methods, fields, supers)?;
+        if escaping & live[allocation] != 0 { return None; }
+    }
     let mut replacements = vec![None; instructions.len()];
     let scalar = |atom| atoms.iter().position(|candidate| *candidate == atom)
         .map(|index| function.registers + index as u16);

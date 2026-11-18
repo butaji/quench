@@ -56,9 +56,7 @@ impl PoolSlot {
     const COUNT: usize = Self::Buffer as usize + 1;
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 /// The `buffer` module (`buffer_module`), over the canonical `Buffer`.
 pub(crate) fn module(c: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -253,6 +251,11 @@ pub(crate) fn fast_buffer(c: &mut Context<'_>) -> Result<RootId, RootedError> {
 
 /// A new Buffer holding a copy of `bytes`. A class's `prototype` is non-writable and
 /// non-configurable, so FastBuffer's is read rather than stored again.
+/// The bytes of an ArrayBuffer view, or none when the value is not a view.
+pub(crate) fn view_bytes(c: &mut Context<'_>, value: RootId) -> Vec<u8> {
+    c.view_bytes_rooted(value).unwrap_or_default()
+}
+
 pub(crate) fn from_bytes(c: &mut Context<'_>, bytes: &[u8]) -> Result<RootId, RootedError> {
     from_vec(c, bytes.to_vec())
 }

@@ -30,6 +30,10 @@ pub(in crate::compile) struct BodyFacts {
     pub(in crate::compile) free_names: crate::compile::first_call::FreeNames,
     /// The bodies checked whose free names do not bound what they reach by name.
     unbounded: FxHashSet<u32>,
+    /// The functions whose bodies the semantic analysis of `check` found free of early errors, by
+    /// start. A first-call chunk of one takes that verdict instead of checking its text again
+    /// (`ProgramReplay::checked_bodies`).
+    pub(in crate::compile) checked: Vec<u32>,
     /// The functions whose bodies compile as a stream of statement runs (`statement_stream`).
     pub(in crate::compile) streamed: FxHashSet<u32>,
     /// The functions checked without their tree whose bodies may stream, which their
@@ -85,6 +89,7 @@ impl BodyFacts {
             self.failed = true;
             return true;
         }
+        self.checked.push(program.span.start);
         let inner = self.compose_released(program, built.semantic.scoping());
         if verify_early()
             && let Some(early) = early

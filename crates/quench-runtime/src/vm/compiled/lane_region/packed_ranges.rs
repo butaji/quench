@@ -66,7 +66,7 @@ impl State {
     /// The state on the edge of `instruction` that is taken where its comparison is `truth`;
     /// `None` where no value reaches the edge.
     fn branch(&mut self, program: &ResidualProgram, instruction: WideInstruction, truth: bool) -> Option<()> {
-        if !instruction.op().is_jump_binary_false() { return Some(()); }
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) { return Some(()); }
         let Some(relation) = NumberRelation::from_operator(instruction.binary_operator_field()) else { return Some(()) };
         let operands = [instruction.operand_b(), instruction.operand_c()];
         let edge = Edge::of(&|operand| self.operand(program, operand), relation, truth, operands);

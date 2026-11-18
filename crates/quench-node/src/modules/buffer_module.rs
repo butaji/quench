@@ -5,6 +5,7 @@
 use crate::host::NodeHost;
 use crate::modules::buffer_binding_shared_vm as binding;
 use crate::modules::buffer_codec as codec;
+use crate::modules::util_shared_vm::validate_number;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -37,9 +38,7 @@ fn arg(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     }
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn is_undefined(c: &Context<'_>, value: RootId) -> bool {
     c.rooted_value(value).is_some_and(|value| value.is_undefined())
@@ -92,14 +91,6 @@ fn unknown_encoding(c: &mut Context<'_>, encoding: RootId) -> Result<RootedError
 
 fn not_a_buffer(c: &mut Context<'_>, value: RootId, name: &str) -> Result<RootedError, RootedError> {
     super::util_shared_vm::argument_type_error_with_expected(c, value, name, "an instance of Buffer or Uint8Array")
-}
-
-/// `validateNumber(value, name)`.
-fn validate_number(c: &mut Context<'_>, value: RootId, name: &str) -> Result<f64, RootedError> {
-    match number_of(c, value) {
-        Some(number) => Ok(number),
-        None => Err(super::util_shared_vm::argument_type_error(c, value, name, "number")?),
-    }
 }
 
 /// `validateOffset(value, name, 0, maximum)`.

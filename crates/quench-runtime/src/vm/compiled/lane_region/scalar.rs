@@ -143,7 +143,7 @@ pub(super) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_
     direct: &DirectSites) -> bool {
     unit.frames.is_empty() && unit.instructions.iter().enumerate().all(|(pc, instruction)|
         numeric_instruction(program, *instruction)
-            || scalar && (direct.contains_key(&pc) || instruction.op().is_throwing_name_load()
+            || scalar && (direct.contains_key(&pc) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::ThrowingNameLoad)
                 || callee_capture(unit, direct, pc).is_some()))
 }
 
@@ -152,7 +152,7 @@ pub(super) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_
 fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectCallee> {
     let read = unit.instructions[pc];
     let own = |at: usize| matches!(unit.origins[at], super::super::lane_unit::Origin::Caller(_));
-    if !read.op().is_load_capture() || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
+    if !matches!(crate::vm::compiled::decoded(read), Some(crate::staged::Operation::LoadCapture { .. })) || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
     let call = direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1;
     // SAFETY: the body owns its direct callees for as long as its code runs.
     Some(unsafe { &**call })
@@ -162,7 +162,7 @@ fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSi
 /// a parameter: an int32 for a bitwise operator or a comparison with an integer, a Number for arithmetic.
 fn requirement(program: &ResidualProgram, instruction: WideInstruction) -> Option<([Operand; 2], Type)> {
     let (operands, required) = match instruction.op() {
-        opcode if opcode.is_jump_binary_false() => relation_requirement(program, instruction)?,
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => relation_requirement(program, instruction)?,
         _ if instruction.op().js_denotation() == JsDenotation::NumericBinary =>
             ([instruction.operand_b(), instruction.operand_c()], operator_requirement(instruction)?),
         _ => return None,
@@ -204,25 +204,42 @@ fn is_parameter(function: &crate::bytecode::Function, register: Register) -> boo
         || function.local_registers.iter().any(|entry| entry.local < function.params && entry.register == register)
 }
 
+/// The language bits entry conformance checks exactly (`conform_language`): a Boolean,
+/// `undefined`, `null`, a direct object, a direct function, and a string (a direct string by its
+/// tag, any other string by the VM's `typeof`). A set with any other bit (Number, BigInt, Symbol)
+/// is not checkable here.
+const CHECKABLE: u16 = crate::typed_ir::language_bit(crate::ValueType::Boolean)
+    | crate::typed_ir::language_bit(crate::ValueType::Undefined)
+    | crate::typed_ir::language_bit(crate::ValueType::Null)
+    | crate::typed_ir::language_bit(crate::ValueType::Object)
+    | crate::typed_ir::language_bit(crate::ValueType::Function)
+    | crate::typed_ir::language_bit(crate::ValueType::String);
+
+/// Whether the non-empty language set `bits` is one entry conformance tests exactly.
+pub(super) fn checkable(bits: u16) -> bool {
+    bits != 0 && bits & !CHECKABLE == 0
+}
+
 /// Each parameter's declared TypeScript type (`Function::declared_parameters`) as its entry type
 /// where the unit never writes it and nothing narrower is required of it: the entry proves it
 /// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
-/// an annotation that lies costs an exit, never a wrong result. Number is the declared type
-/// entry conformance checks today; wider sets stay `ANY` until it checks them.
+/// an annotation that lies costs an exit, never a wrong result. A Number set, or a set
+/// `checkable` names, is such a type; any other set stays `ANY`.
 pub(super) fn declared_entry_types(function: &crate::bytecode::Function, written: &CompoundBitSet, initial: &mut [Type]) {
     for (index, declared) in function.declared_parameters.iter().enumerate() {
-        if Type::languages(*declared) != Type::NUMBER { continue; }
+        let ty = Type::languages(*declared);
+        if ty != Type::NUMBER && !checkable(*declared) { continue; }
         let Some(register) = parameter_register(function, index) else { continue };
         let register = usize::from(register);
         if written.contains(register) { continue; }
         if let Some(entry) = initial.get_mut(register).filter(|entry| **entry == Type::ANY) {
-            *entry = Type::NUMBER;
+            *entry = ty;
         }
     }
 }
 
 /// The register parameter `index` enters in.
-fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
+pub(super) fn parameter_register(function: &crate::bytecode::Function, index: usize) -> Option<Register> {
     let index = u16::try_from(index).ok().filter(|index| *index < function.params)?;
     match function.parameter_registers {
         Some(base) => base.checked_add(index),
@@ -292,7 +309,7 @@ impl Lowering<'_, '_> {
     /// holds the function as a Stable fact, and the arguments are proved the numbers the entry takes.
     pub(super) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
         let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.callee)) else { return false };
-        if !instruction.op().is_call() || instruction.result_flags() != 0 { return false; }
+        if !crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) || instruction.result_flags() != 0 { return false; }
         let window = usize::from(ImmediateLayout::call_window_base(instruction.imm()));
         let held = state.values[usize::from(instruction.register_b())].value.ty.function_identity();
         held.map(|identity| identity.to_bits()) == Some(callee.to_bits())
@@ -339,13 +356,13 @@ impl Lowering<'_, '_> {
     /// Whether `instruction` at `pc` loads the callee of a self-call by the scalar entry: its
     /// capture, in the entry or in the body that calls it, or its global binding, in the entry.
     pub(super) fn is_scalar_callee_load(&self, pc: usize, instruction: WideInstruction) -> bool {
-        if instruction.op().is_load_capture() { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
-        instruction.op().is_throwing_name_load() && matches!(self.completion, Completion::Scalar(_))
+        if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) { return self.scalar_abi().is_some() && callee_capture(self.unit, self.direct, pc).is_some(); }
+        crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::ThrowingNameLoad) && matches!(self.completion, Completion::Scalar(_))
     }
 
     /// The load `is_scalar_callee_load` admits.
     pub(super) fn scalar_callee_load(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        if instruction.op().is_load_capture() { self.scalar_callee_capture(state, pc, instruction) } else { self.scalar_callee(state, pc, instruction) }
+        if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) { self.scalar_callee_capture(state, pc, instruction) } else { self.scalar_callee(state, pc, instruction) }
     }
 
     /// The address of each capture slot a callee read names, from the entry's dense slots: their

@@ -47,11 +47,7 @@ impl State {
         self.endpoints.values().any(|s| s.io.has_work())
     }
 }
-fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
-    let k = c.string_rooted(n);
-    c.define_data_property_rooted(o, k, v, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 pub(crate) fn identity(c: &mut Context<'_>, receiver: RootId) -> Result<Option<u64>, RootedError> {
     let entries = c.host_mut().shared_state().borrow().udp.identities.clone();
     for (weak, id) in entries {

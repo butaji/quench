@@ -59,12 +59,12 @@ impl<H: Host> Vm<H> {
     }
 
     /// The words an entry of `run` binds in the thread's lane frame: those of its run
-    /// (`LaneFrame::bind_run`), its registers and its stack's room, past the `pending`
+    /// (`BodyRunContext::bind_run`), its registers and its stack's room, past the `pending`
     /// activations. The frame's context.
     ///
     /// # Safety
     /// `frame` is the thread's lane frame; no reference into it is live.
-    unsafe fn bind_body_entry(&mut self, frame: *mut LaneFrame, run: &BodyRun) -> *mut CallContext {
+    unsafe fn bind_body_entry(&mut self, frame: *mut BodyRunContext, run: &BodyRun) -> *mut CallContext {
         // SAFETY: as the caller promises.
         unsafe {
             debug_assert!((*frame).scratch.len() >= run.method.scratch_width, "a body's publication sized the scratch window");

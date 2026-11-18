@@ -109,6 +109,9 @@ fn follows_decorator(before: &str) -> bool {
 /// The decorator sigil, an ILLEGAL character to V8.
 const DECORATOR: char = '@';
 
+/// V8's report for a numeric literal where a token cannot appear.
+const UNEXPECTED_NUMBER: &str = "Unexpected number";
+
 /// `Unexpected ...` for the token that starts `rest` after whitespace and comments.
 fn unexpected_token(rest: &str) -> String {
     let rest = skip_trivia(rest);
@@ -129,8 +132,8 @@ fn unexpected_token(rest: &str) -> String {
     }
     let second = rest[first.len_utf8()..].chars().next();
     match first {
-        '0'..='9' => return "Unexpected number".to_owned(),
-        '.' if second.is_some_and(|character| character.is_ascii_digit()) => return "Unexpected number".to_owned(),
+        '0'..='9' => return UNEXPECTED_NUMBER.to_owned(),
+        '.' if second.is_some_and(|character| character.is_ascii_digit()) => return UNEXPECTED_NUMBER.to_owned(),
         '"' | '\'' => return "Unexpected string".to_owned(),
         '`' => return "Unexpected template string".to_owned(),
         _ => {}

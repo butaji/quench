@@ -4,7 +4,7 @@
 //! read what it proves; this file is the one meaning of a range.
 
 use super::{immediate, operand_type, set};
-use crate::bytecode::{Class, Constant, JsDenotation, Operand, WideInstruction};
+use crate::bytecode::{Constant, JsDenotation, Operand, WideInstruction};
 use crate::typed_ir::{IntRange, Type};
 use crate::value::Value;
 use super::super::super::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
@@ -57,7 +57,9 @@ fn stepped(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange>
 /// int32 never overflows, whatever int32 operands reach it.
 pub(in crate::vm::compiled) fn exact(lookup: Lookup<'_>, instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if instruction.op().class().eq(Class::IncDec) { return stepped(lookup, instruction); }
+    let decoded = crate::vm::compiled::decoded(instruction);
+    if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })
+        | crate::staged::Operation::IncDecLocal { .. })) { return stepped(lookup, instruction); }
     let (operation, left, right) = operation(lookup, instruction)?;
     arithmetic(operation, left, right)
 }
@@ -139,7 +141,7 @@ pub(super) fn bitwise(lookup: Lookup<'_>, operation: NumberBitwise, operands: [O
 /// operation or a step that fits int32, a bitwise result; `None` for any other.
 pub(in crate::vm::compiled) fn result(lookup: Lookup<'_>, constants: &[Constant], instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if instruction.op().is_load_const() {
+    if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() {
         return constants.get(instruction.constant_index()).and_then(immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
     let bitwise_operation = (instruction.op().js_denotation() == JsDenotation::NumericBinary)

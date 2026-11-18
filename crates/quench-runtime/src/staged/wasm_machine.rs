@@ -8,8 +8,12 @@
 use super::wasm_concrete::scalar_stage;
 use super::wasm_call::WasmTable;
 use super::wasm_instance::{Storage, WasmInstance};
+#[cfg(not(stencil_build))]
+use super::wasm_memory::WasmMemoryPair;
 use super::wasm_memory::{Access, WasmMemory, WasmMemoryWrite};
 use crate::heap::TableTarget;
+#[cfg(not(stencil_build))]
+use crate::wasm::memory::MemoryStorage;
 use crate::wasm::memory::checked_range;
 use crate::Value;
 
@@ -21,6 +25,15 @@ pub(crate) struct ConcreteBytes<'a> {
 /// A stage over a linear memory's bytes, which it reads and writes.
 pub(crate) struct ConcreteMemory<'a> {
     pub(crate) memory: &'a mut [u8],
+}
+
+/// A stage over two linear memories, the source's storage it reads the length of and the
+/// destination's it writes. The transfer runs through `MemoryStorage::copy_from`, which takes
+/// the locks of shared memory, so no lock is held across the two memories.
+#[cfg(not(stencil_build))]
+pub(crate) struct ConcretePair<'a> {
+    pub(crate) destination: &'a MemoryStorage,
+    pub(crate) source: &'a MemoryStorage,
 }
 
 /// A stage over an instance: the native slots of its globals by environment slot and its
@@ -65,6 +78,16 @@ impl WasmTable for ConcreteTable<'_> {
     #[inline(always)]
     fn signature_accepts(&mut self, reference: u64, signature: u64, expected: u64) -> u64 {
         u64::from(signature == expected || (self.related)(Value::from_bits(reference)))
+    }
+
+    #[inline(always)]
+    fn unless_equal(
+        &mut self,
+        signature: u64,
+        expected: u64,
+        otherwise: impl FnOnce(&mut Self) -> Result<u64, Self::Exit>,
+    ) -> Result<u64, Self::Exit> {
+        if signature == expected { Ok(1) } else { otherwise(self) }
     }
 }
 
@@ -169,3 +192,29 @@ macro_rules! writable_memory {
 
 readable_memory!(ConcreteBytes<'_>, ConcreteMemory<'_>, ConcreteInstance<'_>);
 writable_memory!(ConcreteMemory<'_>, ConcreteInstance<'_>);
+
+#[cfg(not(stencil_build))]
+scalar_stage!(ConcretePair<'_>);
+
+#[cfg(not(stencil_build))]
+impl WasmMemoryPair for ConcretePair<'_> {
+    #[inline(always)]
+    fn source_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
+        range_past(self.source.len(), index, extent)
+    }
+
+    #[inline(always)]
+    fn destination_range_exceeds(&mut self, index: u64, extent: u64) -> u64 {
+        range_past(self.destination.len(), index, extent)
+    }
+
+    #[inline(always)]
+    fn memory_transfer(&mut self, destination: u64, source: u64, length: u64) {
+        if length == 0 {
+            return;
+        }
+        let input = source as usize..(source + length) as usize;
+        let output = destination as usize..(destination + length) as usize;
+        self.destination.copy_from(self.source, input, output);
+    }
+}

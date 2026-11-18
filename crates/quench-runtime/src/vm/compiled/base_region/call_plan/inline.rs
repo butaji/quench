@@ -20,19 +20,24 @@
 //!   rows would read the caller's globals.
 //! * Each row names the registers of the callee that are live before it (`SiteRow::live`), renamed
 //!   into the window, so the stitch derives what is live at every row of the flat program.
+//! * The callee's receiver is the call's `this` register (`CallShape::this`), which the caller's
+//!   rows hold live across the site. A `this` read is that register (`LoadThis` a move, a field
+//!   read through `this` a `Heap::Site` on it), which holds only for a strict callee: an arrow's
+//!   `this` is lexical and a sloppy callee binds an `undefined` receiver to the global object, so
+//!   a callee of either kind that reads `this` is refused (`Refused::Receiver`).
 //!
 //! Jump targets of the rows are local to the site (`0 ..= rows.len()`, where `rows.len()` is the
 //! continuation); the stitcher adds the row index the first is placed at.
 
 use super::{choose, CallShape, Choice, DirectFacts};
-use crate::bytecode::{Class, Register, WideInstruction, REGISTER_MASK};
+use crate::bytecode::{Class, FieldBase, FieldLookup, Register, WideInstruction, REGISTER_MASK};
 use crate::compile::liveness::RegisterMasks;
 use crate::heap::GlobalFact;
 use crate::value::Value;
 use super::super::super::lane_unit::{CallRecovery, CallTarget, CalleeBinding, Frame};
 use super::super::super::osr_loop::{inlined_returning, renamed};
 use super::super::super::tier_policy::Stitch;
-use super::super::decode::{numeric_row, register_of, Decoded, Numbers, Source};
+use super::super::decode::{numeric_row, register_of, site_read_row, Decoded, Numbers, Source};
 use super::super::super::base_rows::Heap;
 use quench_bjit::numeric::Kind;
 
@@ -101,6 +106,9 @@ pub(in super::super) enum Refused {
     /// A register that is no parameter is read before the callee writes it: the window holds
     /// no initial value for it.
     Uninitialized,
+    /// The callee reads `this` where the call does not bind it to the call's receiver: an arrow (its
+    /// lexical `this`), or a sloppy callee (an `undefined` receiver is the global object).
+    Receiver,
     /// An opcode class outside the stitch's set.
     Opcode(Class),
     /// The instruction at this callee pc takes no row.
@@ -158,13 +166,25 @@ fn admit(shape: &CallShape, facts: &DirectFacts, callee: &Callee, context: &Cont
         (window > context.limit, Refused::Registers),
         (callee.homes.iter().any(|(argument, _)| *argument >= shape.argc), Refused::Arguments),
         ((0..callee.registers).any(|register| callee.live.is_live(0, register) && callee.homes.iter().all(|(_, home)| *home != register)), Refused::Uninitialized),
+        ((facts.lexical || facts.global_this.is_some()) && callee.code.iter().any(|instruction| reads_receiver(*instruction)), Refused::Receiver),
     ];
     if let Some((_, why)) = refusals.into_iter().find(|(refused, _)| *refused) {
         return Err(why);
     }
-    match callee.code.iter().map(|instruction| instruction.op().class()).find(|class| !policy.classes.contains(class)) {
-        Some(class) => Err(Refused::Opcode(class)),
+    // The opcode a callee body may hold: the numeric rows of the stencil library, its jumps (the
+    // site's own rows), and the `Return` that becomes a move and a jump to the continuation.
+    match callee.code.iter().find(|instruction| !crate::vm::compiled::meaning_compiled::stitchable(**instruction)) {
+        Some(instruction) => Err(Refused::Opcode(instruction.op().class())),
         None => Ok(()),
+    }
+}
+
+/// Whether `instruction` reads the callee's `this`: a `LoadThis`, or a field read whose base is `this`.
+fn reads_receiver(instruction: WideInstruction) -> bool {
+    match instruction.op().class() {
+        Class::LoadThis => true,
+        Class::GetField => instruction.b() == FieldBase::THIS.0,
+        _ => false,
     }
 }
 
@@ -235,7 +255,8 @@ impl Emitter<'_> {
     fn capture_row(&self, instruction: WideInstruction) -> Option<Decoded> {
         let (values, len) = self.callee.captures;
         let slot = usize::from(instruction.capture_slot());
-        (instruction.op().class() == Class::LoadCapture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
+        let capture = matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. }));
+        (capture && instruction.capture_depth() == 0 && values != 0 && slot < len).then(|| Decoded {
             hole: (values + slot * std::mem::size_of::<Value>()) as u64,
             ..Decoded::heap(Heap::CalleeCapture, Some(instruction.result_register()), None, None)
         })
@@ -243,11 +264,29 @@ impl Emitter<'_> {
 
     fn renamed(&self, pc: u32, instruction: WideInstruction) -> Result<WideInstruction, Refused> {
         let target = |target: u32| self.starts.get(target as usize).copied();
-        renamed(instruction, &|register| self.register(register), 0, &target).ok_or(Refused::Row(pc))
+        renamed(instruction, &|register| self.register(register), self.shape.this, &target).ok_or(Refused::Row(pc))
+    }
+
+    /// The row of a receiver read or of a plain field read: `LoadThis` is a move of the call's receiver
+    /// (`shape.this`, already in the caller's frame, so not renamed), and a `GetField` reads its object
+    /// (the renamed base, which a `this` base made the receiver) through its cache site with no facts.
+    /// A nested field lookup names the program's sites, which an inlined callee does not carry.
+    fn receiver_row(&self, plain: WideInstruction, renamed: WideInstruction) -> Option<Decoded> {
+        if plain.result_flags() != 0 {
+            return None;
+        }
+        match renamed.op().class() {
+            Class::LoadThis => Some(Decoded::number(Kind::Move, Some(renamed.result_register()), Some(Source::Register(self.shape.this)), None, None)),
+            Class::GetField => match renamed.field_lookup()? {
+                FieldLookup::Atom { base, cache_site, .. } => Some(site_read_row(base.register_index()?, cache_site, renamed.result_register())),
+                FieldLookup::Site(_) => None,
+            },
+            _ => None,
+        }
     }
 
     fn instruction(&mut self, pc: u32, instruction: WideInstruction) -> Result<(), Refused> {
-        if instruction.op().class() == Class::Return {
+        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
             if instruction.result_flags() != 0 {
                 return Err(Refused::Row(pc));
             }
@@ -261,7 +300,7 @@ impl Emitter<'_> {
             instruction
         };
         let renamed = self.renamed(pc, plain)?;
-        let row = numeric_row(self.callee.numbers, renamed).flatten().or_else(|| self.capture_row(renamed)).ok_or(Refused::Row(pc))?;
+        let row = numeric_row(self.callee.numbers, renamed).flatten().or_else(|| self.capture_row(renamed)).or_else(|| self.receiver_row(plain, renamed)).ok_or(Refused::Row(pc))?;
         // A leave between the computation and the return resumes at the instruction, which a row
         // reading what it wrote would apply twice.
         if returning && rereads(&row) {
@@ -286,7 +325,7 @@ fn starts(shape: &CallShape, callee: &Callee, register: &dyn Fn(Register) -> Reg
         let completion = |value: Register| u32::from(value != shape.result) + u32::from(reached_after(reached, pc, callee.code.len()));
         at += if !reached.contains(pc) {
             0
-        } else if instruction.op().class() == Class::Return {
+        } else if matches!(crate::vm::compiled::decoded(*instruction), Some(crate::staged::Operation::Return { .. })) {
             completion(register(instruction.register_a()))
         } else if inlined_returning(*instruction) {
             1 + completion(register(instruction.result_register()))
@@ -373,7 +412,7 @@ mod tests {
     const CALLEE: u32 = 101;
 
     fn facts() -> DirectFacts {
-        let cell = CellFacts { registers: 4, room: 4, params: 2, entry: ENTRY_ACTIVATES as u8 };
+        let cell = CellFacts { registers: 4, room: 4, params: 2, fill: crate::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
         DirectFacts { callee: IDENTITY, cell: 0x1000, validity: 5, facts: cell, descriptor: 0x2000, captures: 0, global_this: None, lexical: false, registers: 4, construction: false, frame_bytes: 32 }
     }
 

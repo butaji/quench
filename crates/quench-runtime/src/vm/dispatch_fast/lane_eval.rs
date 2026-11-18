@@ -19,7 +19,7 @@ impl LaneStack {
     fn own_record(&mut self, depth: usize, record: Box<FrameRecord>) -> *mut FrameRecord {
         self.records.push((depth, record));
         let record: *mut FrameRecord = &mut *self.records.last_mut().expect("the record just pushed").1;
-        if let Some(Activation { kind: ActivationKind::Script(script), .. }) = self.activations.get_mut(depth) {
+        if let Some(ActivationKind::Script(script)) = self.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
             script.record = record;
         }
         record
@@ -49,8 +49,8 @@ fn promote_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, parame
     // SAFETY: the running lane's context, which nothing else accesses.
     let (this, env) = unsafe { ((*cx).registers.this(), (*cx).registers.env()) };
     let record = if scope.record.is_null() {
-        let depth = vm.lane_stack.activations.len() - 1;
-        let callee = vm.lane_stack.activations.last().and_then(Activation::script)?.callee;
+        let depth = vm.lane_stack.activation_count() - 1;
+        let callee = vm.lane_stack.activations().last().and_then(Activation::script)?.callee;
         vm.lane_stack.own_record(depth, FrameRecord::for_eval(scope.program, scope.function, callee, this, env))
     } else {
         scope.record

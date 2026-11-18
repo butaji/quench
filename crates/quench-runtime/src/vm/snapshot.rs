@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
             lane_completion: _,
             lane_raise_site: _,
             lane_native: _,
-            active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, field_entries_epoch: _,
+            active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, cache_epochs: _,
             active_program: _,
             profile: _,
             shapes,

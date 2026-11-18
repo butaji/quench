@@ -143,7 +143,12 @@ impl<H: Host> Vm<H> {
         let continuation = Continuation::suspend(frame, Completion::Await(Value::UNDEFINED), None, promise);
         let kind = AwaitKind::function(continuation);
         let state = self.heap.alloc_await_state(AwaitState::arm(kind, self.realm.globals, promise));
-        self.with_call_roots([state], |vm| vm.resume_await(p, state, false, Value::UNDEFINED)).map(drop)
+        // A due collection runs first, where none of the body is on the stack (`resume_await`).
+        self.with_call_roots([state], |vm| {
+            vm.maybe_collect(p);
+            vm.resume_await(p, state, false, Value::UNDEFINED)
+        })
+        .map(drop)
     }
 
     /// `call_user_maybe_async` of async function `id` of `p` that a lane run calls: its frame
@@ -317,7 +322,7 @@ impl<H: Host> Vm<H> {
             && !self.is_promise(source)
             && !self.is_object_like(source)
         {
-            self.with_call_roots([Some(source), Some(promise), generator].into_iter().flatten(), |vm| {
+            self.with_call_roots([source, promise, generator.unwrap_or(Value::UNDEFINED)], |vm| {
                 let parent = vm.promise_record(promise).and_then(|record| record.host_context().get());
                 let awaited = vm.promise_object_with_parent(parent)?;
                 vm.with_call_roots([awaited], |vm| vm.promise_resolve_value(p, awaited, source))?;
@@ -366,4 +371,5 @@ impl<H: Host> Vm<H> {
 }
 
 mod job_resume;
+mod requests;
 mod settle;

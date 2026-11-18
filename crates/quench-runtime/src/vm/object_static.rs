@@ -211,7 +211,8 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
                 _ if self.heap.is_string(value)  => "String",
-                Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
+                Some(Cell::BigInt(_)) => "Object",
+                _ if self.heap.is_symbol(value) => "Object",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::ArrayBuffer { .. }) => "ArrayBuffer",
@@ -674,10 +675,12 @@ impl<H: Host> Vm<H> {
                     let raw_key = self.heap.root_value(key).unwrap();
                     let property_key = self.to_property_key(p, raw_key)?;
                     self.heap.update_root(key, property_key);
-                    let key = match self.heap.get(property_key).cloned() {
-                        Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
-                        _ if let Some(atom) = self.string_key_atom(property_key) => PropertyKey::string(atom),
-                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
+                    let key = if self.heap.is_symbol(property_key) {
+                        PropertyKey::symbol(property_key)
+                    } else if let Some(atom) = self.string_key_atom(property_key) {
+                        PropertyKey::string(atom)
+                    } else {
+                        unreachable!("ToPropertyKey returns a string or symbol")
                     };
                     let object = self.heap.root_value(result).unwrap();
                     let value = self.heap.root_value(value).unwrap();

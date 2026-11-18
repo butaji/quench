@@ -49,7 +49,7 @@ use crate::staged::add_plan::{AddSite, Transition, concrete_add_property, concre
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
+    CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,
     IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind,
     WeakHandle,
 };
@@ -131,6 +131,7 @@ pub(crate) mod array_buffer;
 mod array_builtins;
 mod array_copy;
 mod array_dense;
+mod inplace;
 mod array_flatten;
 mod array_group;
 mod array_indexed;
@@ -141,11 +142,17 @@ mod atomics;
 mod bigint;
 mod boolean;
 mod builtins;
+mod native_rows;
 mod call_arguments;
 mod call_printer;
 pub(crate) use call_printer::{freeze_call_sites, freeze_source_call_sites};
 mod call_out;
 mod call_out_calls;
+mod call_out_literals;
+mod call_out_classes;
+mod call_out_values;
+mod call_out_owned;
+mod call_out_wasm;
 mod coercion;
 mod collection_intake;
 mod collections;
@@ -212,6 +219,7 @@ mod number;
 mod object_template;
 mod object;
 mod shape_memo;
+mod cache_epochs;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
@@ -511,6 +519,17 @@ impl Frame {
         self.initialized_registers = self.initialized_registers.max(usize::from(count));
     }
 
+    /// Gives a generator or async activation's register file room for the environment window
+    /// its lane resumes lay after the registers (`open_environment_window`) in one allocation,
+    /// not a reallocation at its first resume.
+    #[inline(always)]
+    fn reserve_suspension_window(&mut self, function: &crate::bytecode::Function) {
+        if function.is_generator || function.is_async {
+            self.registers.clear();
+            self.registers.reserve(usize::from(function.registers) + usize::from(dispatch_fast::WINDOW_LOCALS) + usize::from(function.locals));
+        }
+    }
+
     /// Sizes the register file for `function`. Compiled code writes every register before
     /// reading it, so stale values from a pooled frame are unobservable to the program; they
     /// matter only to a collector that scans the whole file. A function with a liveness root
@@ -527,6 +546,7 @@ impl Frame {
             || function.is_async
             || function.initial_register != crate::bytecode::InitialRegister::Undefined
         {
+            self.reserve_suspension_window(function);
             self.prepare_registers(function.registers, function.initial_register);
         } else {
             if register_count <= self.initialized_registers {
@@ -1914,7 +1934,7 @@ pub(crate) struct Vm<H> {
     /// carries any.
     with_scope_entered: bool,
     /// What lane reads of names past an eval's scope rely on (`name_scope`).
-    scope_names: name_scope::ScopeNames,
+    scope_names: name_scope::DynamicScopeNames,
     test262_agent: Test262AgentState,
     shared_async_waiters:Vec<atomics::SharedAsyncWaiter>,
     programs: ProgramStore,
@@ -1960,13 +1980,14 @@ pub(crate) struct Vm<H> {
     program_contexts: Vec<Box<ProgramContext>>,
     /// The context active before any program is, which `active_context` names until then.
     idle_context: Box<ProgramContext>,
-    /// The active program's field cache entries (`SiteTable::entries_from` of its
+    /// The active program's field cache entries (`CacheSiteTable::entries_from` of its
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
     active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
-    /// The number of times the field cache table's mapping moved (`field_caches_moved`): a run
-    /// that kept a pointer into it across code that may install a program compares it.
-    field_entries_epoch: u64,
+    /// The VM's invalidation counters (`cache_epochs`): the collection count caches key on, and
+    /// the field cache table's moves (`CacheEpochs::field_entries`), which a run that kept a
+    /// pointer into the table across code that may install a program compares.
+    cache_epochs: cache_epochs::CacheEpochs,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -2053,20 +2074,20 @@ pub(crate) struct Vm<H> {
     bound_parts_layout: std::cell::Cell<Option<(u32, [u16; 3])>>,
     call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     frameless: compiled::Frameless,
-    field_caches: site_table::SiteTable<FieldCache>,
+    field_caches: site_table::CacheSiteTable<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
     /// Per cache site, the index of its inherited entry (`Dependencies::inherited`), or
     /// `NO_INHERITED_FIELD`.
-    inherited_field_indices: site_table::SiteTable<u32>,
+    inherited_field_indices: site_table::CacheSiteTable<u32>,
     /// Per cache site, the index of its newest accessor entry in `accessor_fields`, or
     /// `NO_ACCESSOR_FIELD`.
-    accessor_field_indices: site_table::SiteTable<u32>,
+    accessor_field_indices: site_table::CacheSiteTable<u32>,
     /// Accessor reads (`AccessorFieldCache`), each site's linked newest first through
     /// `next`, up to `ACCESSOR_FIELD_CACHE_WAYS` receiver shapes a site, as an inherited
     /// method's site sees one shape per subclass; cleared with the field caches.
     accessor_fields: Vec<AccessorFieldCache>,
-    field_add_indices: site_table::SiteTable<u32>,
+    field_add_indices: site_table::CacheSiteTable<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     /// The layouts and strings JSON parses share within a collection epoch.
     json_parse_cache: json::JsonParseCache,
@@ -2074,7 +2095,7 @@ pub(crate) struct Vm<H> {
     /// site's keys vary, so the entries are shared, indexed by source shape and atom
     /// (`keyed_add_index`); cleared with the field caches.
     keyed_adds: Box<[FieldAddCache; KEYED_ADD_ENTRIES]>,
-    megamorphic_field_indices: site_table::SiteTable<u32>,
+    megamorphic_field_indices: site_table::CacheSiteTable<u32>,
     /// The cache sites whose per-site entries (`field_caches`, `megamorphic_field_indices`,
     /// `field_add_indices`, `inherited_field_indices`) were written since the last
     /// `invalidate_field_caches`, which then resets only those; `None` once they outnumber
@@ -2180,7 +2201,7 @@ pub(crate) struct Vm<H> {
     method_cache_sites: FxHashMap<Atom, Vec<u32>>,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
-    object_shapes: site_table::SiteTable<u32>,
+    object_shapes: site_table::CacheSiteTable<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
     // Weak identities; captured environments remain authoritative in function cells.
     function_values: function_cache::FunctionValues,
@@ -3093,17 +3114,17 @@ impl<H: Host> Vm<H> {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
         }
         self.runtime_atoms = self.intern_runtime_atoms();
-        self.field_caches = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.field_caches = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_cache_writes = Some(Vec::new());
         program.prime_loop_decoding();
         self.heap.dependencies_mut().clear_inherited();
-        self.inherited_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
-        self.accessor_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.inherited_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.accessor_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.accessor_fields.clear();
-        self.field_add_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.field_add_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.field_add_sets.clear();
         self.keyed_adds.fill(FieldAddCache::EMPTY);
-        self.megamorphic_field_indices = site_table::SiteTable::with_empty(usize::from(program.cache_sites.capacity()));
+        self.megamorphic_field_indices = site_table::CacheSiteTable::with_empty(usize::from(program.cache_sites.capacity()));
         self.megamorphic_fields.clear();
         self.holder_hints.clear();
         self.length_atom = self.intern_atom("length");
@@ -3114,7 +3135,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_methods.clear();
         self.method_cache_atoms.clear();
         self.method_cache_sites.clear();
-        self.object_shapes = site_table::SiteTable::with_empty(program.object_sites.capacity());
+        self.object_shapes = site_table::CacheSiteTable::with_empty(program.object_sites.capacity());
         self.descriptors.clear();
         self.function_values.clear();
         self.wasm_exported_functions.clear();
@@ -3425,10 +3446,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether cached lane calls are refused (`dispatch_fast::LaneStack::set_refused`): under a
-    /// `with` scope or a pending construction, whose calls the lane does not make from a cache.
+    /// pending construction, whose calls the lane does not make from a cache.
     #[inline]
     pub(super) fn refresh_call_refusal(&mut self) {
-        let refused = self.with_scope_entered || self.construct_target.is_some();
+        let refused = self.construct_target.is_some();
         self.lane_stack.set_refused(refused);
     }
 
@@ -3463,7 +3484,7 @@ impl<H: Host> Vm<H> {
     /// generated code reads (`rebind_lane_field_entries`), and the epoch a run that kept one
     /// across a program install compares (`run_nested_lane_method`).
     fn field_caches_moved(&mut self) {
-        self.field_entries_epoch += 1;
+        self.cache_epochs.bump_field_entries();
         self.refresh_active_field_entries();
         self.rebind_lane_field_entries();
     }

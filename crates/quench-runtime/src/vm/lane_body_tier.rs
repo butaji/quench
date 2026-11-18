@@ -233,7 +233,12 @@ impl LaneView {
     /// none, specializes again at its next entry and calls this one by its entry
     /// (`compiled::DirectCallee`). A caller's running body keeps its code (`retired`).
     fn respecialize_callers(&self) {
-        for caller in self.tier().callers.take() {
+        let callers = self.tier().callers.take();
+        // A caller's code keeps running while it waits to specialize again (a loop it entered
+        // never returns to its entry), and calls through the lane's helper until then: its
+        // demand outlives this body, so a later recompile of it is still wanted whatever its length.
+        if !callers.is_empty() { self.tier().history.set(LaneBodyHistory { demanded: true, ..self.tier().history.get() }); }
+        for caller in callers {
             unsafe { &*caller }.respecialize();
         }
     }

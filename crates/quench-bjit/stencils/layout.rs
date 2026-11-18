@@ -330,8 +330,8 @@ pub(crate) const JS_STEP_LANE_VALUES_END: usize = 296;
 pub(crate) const JS_STEP_LANE_ACTIVATIONS_TOP: usize = 304;
 pub(crate) const JS_STEP_LANE_FRAMES_END: usize = 312;
 /// An activation's size, and where its kind tag lies; `KIND_NATIVE` marks a frame a direct call wrote.
-pub(crate) const ACTIVATION_BYTES: usize = 128;
-pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
+pub(crate) const ACTIVATION_BYTES: usize = crate::staged::frame::ACTIVATION_BYTES;
+pub(crate) const ACTIVATION_KIND_OFFSET: usize = crate::staged::frame::ACTIVATION_KIND_OFFSET;
 /// The entry cell's run counters, and the unit a raised run adds (`entry_cell::RAISED_RUN`).
 pub(crate) const CELL_COUNTERS_AT: usize = crate::staged::call::ENTRY_CELL.counters_offset as usize;
 pub(crate) const RAISED_RUN: u64 = 1 << 32;
@@ -339,13 +339,14 @@ pub(crate) const RAISED_RUN: u64 = 1 << 32;
 /// The context words below every lane window's register 0 (the runtime's
 /// `register_file::FRAME_CONTEXT`): a pushed window leaves them free past its registers for the
 /// next. Checked against the runtime by `stencil_layout_matches`.
-pub(crate) const FRAME_CONTEXT_WORDS: usize = 3;
+pub(crate) const FRAME_CONTEXT_WORDS: usize = crate::staged::frame::CONTEXT_WORDS;
 
 /// The entry cell's entry, recovery and body words (`EntryCell`), and the recovery space's
 /// values and activations (`LaneRecoverySpace`).
 pub(crate) const CELL_ENTRY_AT: usize = crate::staged::call::ENTRY_CELL.entry_offset as usize;
 pub(crate) const CELL_RECOVERY_AT: usize = crate::staged::call::ENTRY_CELL.recovery_offset as usize;
 pub(crate) const CELL_BODY_AT: usize = crate::staged::call::ENTRY_CELL.body_offset as usize;
+pub(crate) const CELL_ROWS_AT: usize = crate::staged::call::ENTRY_CELL.rows_offset as usize;
 pub(crate) const RECOVERY_VALUES_AT: usize = 0;
 pub(crate) const RECOVERY_ACTIVATIONS_AT: usize = 8;
 

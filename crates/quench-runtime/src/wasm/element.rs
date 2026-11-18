@@ -88,17 +88,7 @@ impl Lowering<'_> {
         if self.path == Reachability::Dead {
             return Ok(());
         }
-        let depth = self.depth;
-        let dropped = self.push()?;
-        self.emit(Op::LoadConst, dropped, 0, 0, super::VOID_RESULT_CONSTANT)?;
-        self.emit(
-            Op::StoreCapture,
-            dropped,
-            0,
-            0,
-            ImmediateLayout::capture_immediate(0, slot),
-        )?;
-        self.depth = depth;
+        self.emit(Op::WasmSegmentDrop, 0, 0, 0, u32::from(slot))?;
         Ok(())
     }
 

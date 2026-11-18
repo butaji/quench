@@ -5,7 +5,7 @@
 pub(crate) use crate::layout::{INLINE_PROPERTIES as _INLINE, words};
 
 /// A tagged word. Only its constants and bit conversions exist here.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Value(u64);
 
 impl Value {
@@ -29,31 +29,44 @@ impl Value {
     }
 }
 
+/// The runtime's `ValueType` (`api_native.rs`): the same variants in the same order, so each
+/// discriminant the lattice's bit rows shift by is the runtime's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ValueType {
+    Undefined,
+    Null,
+    Boolean,
+    Number,
+    String,
+    Symbol,
+    BigInt,
+    Object,
+    Function,
+}
+
+// The runtime's type lattice (`quench-runtime/src/typed_ir`), included unchanged: `lattice.rs`
+// holds `Type`, `int_range.rs` `IntRange`, `int_type.rs` the integer-range operations, and
+// `representation.rs` the slot encodings. Their `crate::` paths resolve to the items here.
+#[path = "../../quench-runtime/src/typed_ir/lattice.rs"]
+mod lattice;
+#[path = "../../quench-runtime/src/typed_ir/int_range.rs"]
+mod int_range;
+#[path = "../../quench-runtime/src/typed_ir/int_type.rs"]
+mod int_type;
+#[path = "../../quench-runtime/src/typed_ir/representation.rs"]
+mod representation;
+
+/// The stencil's view of the runtime's `typed_ir`: the same `Type`, `TypeKind`, `IntRange` and
+/// `Representation` the interpreter and the u-jit use, so a row folds the same facts.
 pub(crate) mod typed_ir {
-    /// An element kind's integer range, which only the runtime's seeds read.
-    #[derive(Clone, Copy)]
-    pub(crate) struct IntRange {
-        pub(crate) min: i64,
-        pub(crate) max: i64,
-    }
-    /// The fact a stage keeps of a word: a stencil keeps only the one a row states, that its word
-    /// is a Number (`ic_rows::write`), which is immediate.
-    #[derive(Clone, Copy)]
-    pub(crate) struct Type(bool);
-    impl Type {
-        pub(crate) const ANY: Self = Self(false);
-        pub(crate) const IMMEDIATE: Self = Self(false);
-        pub(crate) const NUMBER: Self = Self(true);
-        pub(crate) const fn int(_range: IntRange) -> Self { Self(false) }
-        pub(crate) const fn is_int32(self) -> bool { false }
-        /// A stencil proves no subtype but a stated Number's of Number and immediate: every other
-        /// gate is the stage's.
-        pub(crate) const fn is_subtype(self, _of: Self) -> bool { self.0 }
-    }
+    pub(crate) use super::int_range::IntRange;
+    pub(crate) use super::lattice::{Type, TypeKind};
+    pub(crate) use super::representation::Representation;
 }
 
 pub(crate) mod value {
     use crate::layout::words;
+    pub(crate) use super::operations::WORD32_SHIFT_MASK;
     pub(crate) const LOWER_WORD: u64 = words::LOWER_WORD;
     pub(crate) const HEAP_FAMILY_BITS: u64 = words::HEAP_FAMILY_BITS;
     pub(crate) const HEAP_FAMILY_SHIFT: u32 = words::HEAP_FAMILY_SHIFT;

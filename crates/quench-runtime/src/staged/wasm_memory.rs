@@ -18,7 +18,7 @@ use crate::wasm::V128_BYTES;
 use crate::wasm::conversion::ScalarConversionOperator;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 #[cfg(not(stencil_build))]
-use crate::wasm::memory::{MemoryLoad, MemoryStore, WASM_PAGE_BITS, checked_range};
+use crate::wasm::memory::{MemoryLoad, MemoryStore, checked_range};
 use crate::{WasmTrap, WasmType};
 #[cfg(not(stencil_build))]
 use crate::WasmValue;
@@ -267,14 +267,38 @@ pub(crate) fn effective_address<S: WasmMemory>(
     stage.operate(Binary::Add, Width::I64, index, offset)
 }
 
-/// `memory.size`: the length in pages, an `I32` word.
+/// The length in pages of `1 << page_bits` bytes each, as an `I64` word: `page_bits` is the
+/// memory type's page size (`page_size_log2`), 0 for one-byte pages.
 #[cfg(not(stencil_build))]
 #[inline(always)]
-pub(crate) fn size<S: WasmMemory>(stage: &mut S) -> S::Word {
+pub(crate) fn pages<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
     let length = stage.memory_length();
-    let bits = stage.constant(Width::I64, i64::from(WASM_PAGE_BITS));
-    let pages = stage.operate(Binary::ShiftRightUnsigned, Width::I64, length, bits);
-    stage.convert(ScalarConversionOperator::WrapI64, pages)
+    let bits = stage.constant(Width::I64, i64::from(page_bits));
+    stage.operate(Binary::ShiftRightUnsigned, Width::I64, length, bits)
+}
+
+/// `memory.size`: the length in pages of `1 << page_bits` bytes, an `I32` word.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn size<S: WasmMemory>(stage: &mut S, page_bits: u32) -> S::Word {
+    let count = pages(stage, page_bits);
+    stage.convert(ScalarConversionOperator::WrapI64, count)
+}
+
+/// `WasmMemoryAddress`: the effective address of a scalar access, the `I64` `index` of the
+/// address plus its static `offset`. A sum that wraps traps, as the arm's checked add did.
+#[inline(always)]
+pub(crate) fn scalar_address<S: WasmStage>(
+    stage: &mut S,
+    index: S::Word,
+    offset: u64,
+) -> Result<S::Word, S::Exit> {
+    let offset = stage.constant(Width::I64, offset as i64);
+    let effective = stage.operate(Binary::Add, Width::I64, index, offset);
+    // Adding a non-negative offset wraps exactly when the sum falls below the index.
+    let wrapped = stage.operate(Binary::GreaterUnsigned, Width::I64, index, effective);
+    stage.trap_when(wrapped, WasmTrap::OutOfBoundsMemory)?;
+    Ok(effective)
 }
 
 /// `memory.fill`: the range checks before any byte is written.
@@ -305,6 +329,38 @@ pub(crate) fn copy<S: WasmMemoryWrite>(
     check_range(stage, destination, length)?;
     check_range(stage, source, length)?;
     stage.memory_copy(destination, source, length);
+    Ok(())
+}
+
+/// The two memories of a cross-memory copy (multi-memory `memory.copy`): the one it reads and
+/// the one it writes. Each has its own length, and the transfer between them is the stage's
+/// primitive, since shared and buffer-backed bytes move through their own storage.
+#[cfg(not(stencil_build))]
+pub(crate) trait WasmMemoryPair: WasmStage {
+    /// The flag that `extent` bytes from `index` pass the end of the source memory.
+    fn source_range_exceeds(&mut self, index: Self::Word, extent: Self::Word) -> Self::Word;
+    /// The flag that `extent` bytes from `index` pass the end of the destination memory.
+    fn destination_range_exceeds(&mut self, index: Self::Word, extent: Self::Word) -> Self::Word;
+    /// `length` bytes from `source` in the source memory to `destination` in the destination
+    /// memory, both ranges in range; a zero length moves nothing.
+    fn memory_transfer(&mut self, destination: Self::Word, source: Self::Word, length: Self::Word);
+}
+
+/// `memory.copy` between two memories: the source's range checks, then the destination's, and
+/// only then do bytes move. A trap leaves both memories untouched.
+#[cfg(not(stencil_build))]
+#[inline(always)]
+pub(crate) fn copy_across<S: WasmMemoryPair>(
+    stage: &mut S,
+    destination: S::Word,
+    source: S::Word,
+    length: S::Word,
+) -> Result<(), S::Exit> {
+    let past = stage.source_range_exceeds(source, length);
+    stage.trap_when(past, WasmTrap::OutOfBoundsMemory)?;
+    let past = stage.destination_range_exceeds(destination, length);
+    stage.trap_when(past, WasmTrap::OutOfBoundsMemory)?;
+    stage.memory_transfer(destination, source, length);
     Ok(())
 }
 

@@ -1,8 +1,10 @@
 //! Lane handlers of a Wasm instance's state: its bindings, linear memory, SIMD values and
 //! globals.
 use super::*;
+use crate::staged::wasm_memory::scalar_address;
 use crate::staged::wasm_simd::WasmSimd as _;
 use crate::staged::wasm_simd_concrete::ConcreteSimd;
+use crate::staged::ConcreteWasm;
 
 lane_handler! {
     /// Load an instance binding; loading the function's memory register
@@ -46,7 +48,7 @@ lane_handler! {
         ) else {
             return exit(ip);
         };
-        let Some(effective) = address.checked_add(offset) else {
+        let Ok(effective) = scalar_address(&mut ConcreteWasm, address, offset) else {
             return exit(ip);
         };
         let value = vm.encode_bits64(effective);

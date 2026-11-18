@@ -63,11 +63,7 @@ fn nullish(c: &Context<'_>, value: RootId) -> bool {
     c.rooted_value(value).is_none_or(|value| value.is_null() || value.is_undefined())
 }
 
-fn put(c: &mut Context<'_>, target: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
-    let key = c.string_rooted(name);
-    c.define_data_property_rooted(target, key, value, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 
 fn hidden(c: &mut Context<'_>, target: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
     let key = c.string_rooted(name);

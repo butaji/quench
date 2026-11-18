@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `typed_array_geometry_read` inlined into its caller: a typed array's `length` site
-    /// (`lane_get_length_typed`) reads it once per loop test.
+    /// (`TYPED_LENGTH_SITE`) reads it once per loop test.
     #[inline(always)]
     pub(super) fn typed_array_geometry_read_inline(&mut self, object: Value, atom: Atom) -> Option<Value> {
         let data = self.virtual_field_view(object)?;
@@ -1040,7 +1040,7 @@ impl<H: Host> Vm<H> {
             match self.heap.get(this) {
                 Some(Cell::DataView { .. }) => "#<DataView>".to_owned(),
                 Some(Cell::Date { .. }) => "[object Date]".to_owned(),
-                Some(Cell::Symbol(description)) => {
+                _ if let Some(description) = self.heap.symbol_data(this) => {
                     format!("Symbol({})", description.as_deref().unwrap_or(""))
                 }
                 Some(Cell::BigInt(_)) => self.to_string(p, this)?,

@@ -1,6 +1,7 @@
 use super::*;
 
 mod window;
+pub(in crate::vm) mod stage;
 
 pub(super) enum ArrayInitialization {
     Repeated { count: u32, value: Value },
@@ -158,18 +159,6 @@ impl<H: Host> Vm<H> {
         crate::wasm::gc::GcField::new(0, storage).expect("index 0 fits").store(value)
     }
 
-    /// The trap of a field access that found no field: a null reference, or an array index
-    /// past the end. Validation rules out every other miss.
-    pub(super) fn wasm_gc_field_trap(reference: Value, location: GcFieldIndex) -> JsError {
-        JsError::wasm_trap_error(match (reference.is_null(), location) {
-            (true, GcFieldIndex::Struct(_)) => crate::WasmTrap::NullStructReference,
-            (true, GcFieldIndex::Array(_)) => crate::WasmTrap::NullArrayReference,
-            (false, GcFieldIndex::Array(_)) => crate::WasmTrap::OutOfBoundsArray,
-            (false, GcFieldIndex::Struct(_)) => {
-                return JsError::validation("invalid Wasm aggregate reference".into());
-            }
-        })
-    }
     pub(super) fn wasm_array_new(
         &mut self,
         declarations: &crate::WasmTypes,
@@ -371,93 +360,5 @@ impl<H: Host> Vm<H> {
             .array_field(*ty)
             .ok_or_else(|| JsError::validation("invalid Wasm array reference".into()))?;
         Ok((field, declarations, fields))
-    }
-
-    /// Validation proved `reference` an array, so its length is its field count.
-    pub(super) fn wasm_array_len(&self, reference: Value) -> Result<u32, JsError> {
-        match self.heap.get(reference) {
-            Some(Cell::WasmGc { fields, .. }) => Ok(fields.len() as u32),
-            _ => Err(Self::wasm_gc_field_trap(reference, GcFieldIndex::Array(0))),
-        }
-    }
-
-    pub(super) fn wasm_array_fill(
-        &mut self,
-        reference: Value,
-        output: u32,
-        value: Value,
-        count: u32,
-    ) -> Result<(), JsError> {
-        let (field, _, fields) = self.wasm_array_fields(reference)?;
-        if !field.mutable {
-            return Err(JsError::validation(
-                "immutable Wasm array fill destination".into(),
-            ));
-        }
-        let output =
-            crate::wasm::memory::checked_range(u64::from(output), count as usize, fields.len())
-                .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsArray))?;
-        let value = Self::wasm_storage_value(value, field.element_type);
-        let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(reference) else {
-            unreachable!("validated live array")
-        };
-        fields[output].fill(value);
-        Ok(())
-    }
-
-    pub(super) fn wasm_array_copy(
-        &mut self,
-        destination: Value,
-        source: Value,
-        output: u32,
-        input: u32,
-        count: u32,
-    ) -> Result<(), JsError> {
-        let (destination_field, destination_owner, destination_fields) =
-            self.wasm_array_fields(destination)?;
-        let (source_field, source_owner, source_fields) = self.wasm_array_fields(source)?;
-        if !destination_field.mutable
-            || !crate::wasm::gc::storage_subtype(
-                source_field.element_type,
-                source_owner,
-                destination_field.element_type,
-                destination_owner,
-            )
-        {
-            return Err(JsError::validation(
-                "incompatible Wasm array copy storage".into(),
-            ));
-        }
-        // Both complete ranges, including empty slices, are checked before any write.
-        let output = crate::wasm::memory::checked_range(
-            u64::from(output),
-            count as usize,
-            destination_fields.len(),
-        )
-        .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsArray))?;
-        let input = crate::wasm::memory::checked_range(
-            u64::from(input),
-            count as usize,
-            source_fields.len(),
-        )
-        .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsArray))?;
-        if destination == source {
-            let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(destination) else {
-                unreachable!("validated live array")
-            };
-            fields.copy_within(input, output.start);
-        } else {
-            // Distinct owners cannot alias: the destination's fields leave their cell for one pass.
-            let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(destination) else {
-                unreachable!("validated live destination")
-            };
-            let mut to = std::mem::take(fields);
-            let Some(Cell::WasmGc { fields: from, .. }) = self.heap.get(source) else { unreachable!("validated live source") };
-            to[output].copy_from_slice(&from[input]);
-            if let Some(Cell::WasmGc { fields, .. }) = self.heap.get_mut(destination) {
-                *fields = to;
-            }
-        }
-        Ok(())
     }
 }

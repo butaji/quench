@@ -159,7 +159,7 @@ impl Stage for Emit<'_, '_> {
     /// Whether the store needs no barrier log: the shared tag and mark test. A value the frame
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
     /// the store leaves at its miss.
-    fn store_gate(&mut self, space: crate::staged::RecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+    fn store_gate(&mut self, space: crate::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
         let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);

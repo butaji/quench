@@ -3,27 +3,6 @@
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 
-/// `charCodeAt` of a flat string at an integer index (`staged::builtins::char_code_at`): the
-/// unit there, or NaN outside the string. `None` for any other receiver or index, which the
-/// native coerces, and for a rope, which it flattens.
-#[inline(always)]
-pub(super) fn string_char_code_at<H: Host>(vm: &Vm<H>, receiver: Value, index: Value) -> Option<Value> {
-    let records = vm.heap.string_record_base().unwrap_or(std::ptr::null());
-    crate::staged::strings::concrete_string_char_code_at(records, receiver, index).or_else(|| crate::staged::builtins::concrete_char_code_at(vm.heap.flat_text(receiver)?.units(), index))
-}
-
-/// `charAt` of a flat string at an integer index of an ASCII unit
-/// (`staged::builtins::char_at_ascii`): the unit's shared string (`Vm::ascii_byte_string`).
-/// Any other receiver, index or unit takes the native.
-pub(super) fn string_char_at_ascii<H: Host>(vm: &mut Vm<H>, receiver: Value, index: Value) -> Option<Value> {
-    let (records, table) = (vm.heap.string_record_base().unwrap_or(std::ptr::null()), vm.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null()));
-    if let Some(character) = crate::staged::strings::concrete_string_char_at(records, table, receiver, index) {
-        return Some(character);
-    }
-    let byte = crate::staged::builtins::concrete_char_at_ascii(vm.heap.flat_text(receiver)?.units(), index)?;
-    Some(vm.ascii_byte_string(byte))
-}
-
 /// The natives whose steady case (`Vm::steady_native_value`) a `Call` site makes under its own
 /// handler, one instantiation of `lane_call_builtin` per row: the native is a constant of the
 /// handler, so its entry is a direct call and the site tests only the callee's identity.
@@ -58,27 +37,21 @@ macro_rules! math_rows {
         fn math_handler<H: Host>(native: Native) -> Option<Handler> {
             match native { $(Native::$native => Some(lane_call_math_native::<H, $row>),)* _ => None }
         }
-        fn math_field_call_handler<H: Host>(native: Native) -> Option<Handler> {
-            match native { $(Native::$native => Some(lane_get_field_math_call::<H, $row>),)* _ => None }
-        }
-        fn math_field_call2_handler<H: Host>(native: Native, constant_second: bool) -> Option<Handler> {
-            match (native, constant_second) {
-                $((Native::$native, false) => Some(lane_get_field_math_call2::<H, $row, false>),
-                  (Native::$native, true) => Some(lane_get_field_math_call2::<H, $row, true>),)*
-                _ => None,
-            }
-        }
-        pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3 * [$($row),*].len()] {
-            [$(lane_get_field_math_call::<H, $row> as *const (),
-               lane_get_field_math_call2::<H, $row, false> as *const (),
-               lane_get_field_math_call2::<H, $row, true> as *const ()),*]
-        }
     };
 }
 math_rows!(
     0 => MathSqrt, 1 => MathAbs, 2 => MathFloor, 3 => MathCeil, 4 => MathRound, 5 => MathTrunc,
     6 => MathMin, 7 => MathMax, 8 => MathImul, 9 => MathFround, 10 => MathSign,
 );
+
+/// The handlers of a Math call's field read: `GetField` rows (`lane_row`) at the three Math call
+/// sites (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`). `FieldHit` reads a record
+/// of these as an own-field read.
+pub(super) fn math_field_call_handlers<H: Host>() -> [*const (); 3] {
+    [lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as *const (),
+        lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as *const (),
+        lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as *const ()]
+}
 
 script_handler! {
     /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): its
@@ -101,74 +74,45 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// The `GetField` of `Math.f(x)`: the field read, the argument's `Move` into the call's
-    /// window and the call of Math row `ROW` (`lane_call_math_native`) as one dispatch, each
-    /// register written as the three records write it (`install_math_field_call`). A read the
-    /// hint misses takes the field's own refresh; another callee or argument, the `Move`
-    /// record, so the call's own handler decides.
-    fn lane_get_field_math_call<ROW: u8>(cx, r, ip, i, view) {
-        let Some(callee) = own_bound_value::<H, false, HINTED_FORM>(cx, r, i) else {
-            sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, callee);
-        let move_ip = following(ip);
-        // SAFETY: the installer matched the `Move` and the `Call` that follow in this view.
-        let (copy, call_ip) = (unsafe { &*move_ip }, following(move_ip));
-        let call = unsafe { &*call_ip };
-        let native = const { math_row_native(ROW) };
-        let argument = r.get(copy.b);
-        let value = if callee_is_native(unsafe { vm(cx) }, callee, native) {
-            super::number::math_inline_call(native, std::slice::from_ref(&argument))
-        } else {
-            None
-        };
-        let Some(value) = value else {
-            next!(cx, r, move_ip, Carried::script_in(cx, view))
-        };
-        r.set(copy.a, argument);
-        r.set(call.a, value);
-        next!(cx, r, following(call_ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_math_call` of a two-argument call (`Math.min(i, 777)`): the field read,
-    /// the first argument's `Move`, the second's `Move` (or `LoadConst` where `CONST_SECOND`)
-    /// and the call as one dispatch, each register written as the four records write it.
-    fn lane_get_field_math_call2<ROW: u8, CONST_SECOND: bool>(cx, r, ip, i, view) {
-        let Some(callee) = own_bound_value::<H, false, HINTED_FORM>(cx, r, i) else {
-            sibling!(lane_get_field_own_refresh::<H, false, true>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, callee);
-        let first_ip = following(ip);
-        let second_ip = following(first_ip);
-        let call_ip = following(second_ip);
-        // SAFETY: the installer matched the copies and the `Call` that follow in this view.
-        let (first, second, call) = unsafe { (&*first_ip, &*second_ip, &*call_ip) };
-        let native = const { math_row_native(ROW) };
-        let arguments = [r.get(first.b), if CONST_SECOND { second.constant() } else { r.get(second.b) }];
-        let value = if callee_is_native(unsafe { vm(cx) }, callee, native) {
-            super::number::math_inline_call(native, &arguments)
-        } else {
-            None
-        };
-        let Some(value) = value else {
-            next!(cx, r, first_ip, Carried::script_in(cx, view))
-        };
+/// The rest of the Math call whose callee the field read `ip` (math site `SITE`) produced: the
+/// argument copies and the call, as the records write them (the fused handler's three writes). The
+/// callee's value is computed by the VM's Math function (`PropertyFrame::math_call`); a call the
+/// frame does not compute continues at the record after the read, which makes the call as before.
+/// Returns the record the row continues at.
+#[inline(always)]
+pub(super) fn math_row_resume<F: crate::staged::PropertyFrame<crate::staged::Concrete>, const SITE: u8>(
+    frame: &mut F, stage: &mut crate::staged::Concrete, r: Registers, ip: Ip, callee: u64) -> Ip {
+    let first_ip = following(ip);
+    // SAFETY: the installer matched the copies and the `Call` that follow in this view.
+    unsafe {
+        if const { math_arity(SITE) == 1 } {
+            let (copy, call_ip) = (&*first_ip, following(first_ip));
+            let call = &*call_ip;
+            let argument = r.get(copy.b);
+            let Some(value) = frame.math_call(stage, callee, [argument.to_bits(), 0], 1) else { return first_ip };
+            r.set(copy.a, argument);
+            r.set(call.a, Value::from_bits(value));
+            return following(call_ip);
+        }
+        let (second_ip, call_ip) = (following(first_ip), following(following(first_ip)));
+        let (first, second, call) = (&*first_ip, &*second_ip, &*call_ip);
+        let second_value = if const { SITE == MATH_CALL2_CONST_SITE } { second.constant() } else { r.get(second.b) };
+        let arguments = [r.get(first.b), second_value];
+        let Some(value) = frame.math_call(stage, callee, [arguments[0].to_bits(), arguments[1].to_bits()], 2) else { return first_ip };
         r.set(first.a, arguments[0]);
         r.set(second.a, arguments[1]);
-        r.set(call.a, value);
-        next!(cx, r, following(call_ip), Carried::script_in(cx, view))
+        r.set(call.a, Value::from_bits(value));
+        following(call_ip)
     }
 }
 
 /// Fuses the call `call_ip`, which `native_call_handler` just gave Math row handler `handler`,
-/// with the `GetField` of its callee and the `Move` of its one argument before it
-/// (`lane_get_field_math_call`): the field record a register's bound own read, writing the
-/// callee register; the copy a plain `Move` into the call's one-value window.
+/// with the `GetField` of its callee and the `Move` of its one argument before it: the field
+/// record's row (`MATH_CALL_SITE`) runs the read and the call (`math_row_resume`). The callee
+/// register is the field's own read (`own_bound_handlers`), the copy a plain `Move` into the
+/// call's one-value window.
 pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip: Ip, native: Native) {
-    let Some(fused) = math_field_call_handler::<H>(native) else { return };
+    if math_handler::<H>(native).is_none() { return }
     // SAFETY: `call_ip` is a record of the running view, which starts at the context's base.
     let pc = unsafe { call_ip.offset_from((*cx).base) };
     if pc < 2 {
@@ -178,7 +122,7 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     let call = unsafe { &*call_ip };
     if ImmediateLayout::argument_count(call.imm()) == 2 {
         if pc >= 3 {
-            install_math_field_call2::<H>(call_ip, native);
+            install_math_field_call2::<H>(call_ip);
         }
         return;
     }
@@ -191,13 +135,13 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
     let reads_callee = field.a == call.b
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
-        requicken::<H>(field_ip, fused);
+        requicken::<H>(field_ip, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE> as Handler);
     }
 }
 
 /// `install_math_field_call` of a two-argument call: a field record, a `Move` of the first
 /// argument and a `Move` or `LoadConst` of the second into the call's two-value window.
-fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
+fn install_math_field_call2<H: Host>(call_ip: Ip) {
     // SAFETY: the three records precede the call in the same view (the caller checked).
     let (second_ip, first_ip, field_ip) = unsafe { (call_ip.sub(1), call_ip.sub(2), call_ip.sub(3)) };
     let (call, second, first, field) = unsafe { (&*call_ip, &*second_ip, &*first_ip, &*field_ip) };
@@ -208,8 +152,10 @@ fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
         && first.a == window && second.a == window + 1;
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
         && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
-    if shaped && reads_callee && let Some(fused) = math_field_call2_handler::<H>(native, constant_second) {
-        requicken::<H>(field_ip, fused);
+    if shaped && reads_callee {
+        let row = if constant_second { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE> as Handler }
+            else { lane_row::<H, FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE> as Handler };
+        requicken::<H>(field_ip, row);
     }
 }
 

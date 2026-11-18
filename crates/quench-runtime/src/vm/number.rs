@@ -654,8 +654,8 @@ pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> 
         [first, second] => {
             if let (Some(x), Some(y)) = (first.as_int(), second.as_int()) {
                 match native {
-                    Native::MathMax => return Some(Value::integer(x.max(y))),
-                    Native::MathMin => return Some(Value::integer(x.min(y))),
+                    Native::MathMax | Native::MathMin =>
+                        return Some(Value::integer(crate::staged::math::int_extreme(native == Native::MathMax, x, y))),
                     // ToInt32 of an int32 is itself: the product's low 32 bits.
                     Native::MathImul => return Some(Value::integer(crate::staged::math::int_multiply(x, y))),
                     _ => {}
@@ -667,8 +667,8 @@ pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> 
             // An int32's absolute value is an int32 but at -2^31: no conversion to a double and
             // back. (The integral functions keep their double path: their arguments are
             // doubles far more often, and a test first costs those.)
-            if native == Native::MathAbs && let Some(x) = only.as_int() && x != i32::MIN {
-                return Some(Value::integer(x.abs()));
+            if native == Native::MathAbs && let Some(x) = only.as_int() && let Some(absolute) = crate::staged::math::int_abs(x) {
+                return Some(Value::integer(absolute));
             }
             let number = only.as_number()?;
             math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
@@ -717,20 +717,13 @@ fn math_unary_operation(native: Native) -> Option<fn(f64) -> f64> {
         Native::MathFround => |value| crate::staged::math::float_unary(FloatUnary::Fround, value),
         Native::MathLog10 => f64::log10,
         Native::MathLog1p => f64::ln_1p,
+        Native::MathLog => f64::ln,
         Native::MathLog2 => f64::log2,
         Native::MathSinh => f64::sinh,
         Native::MathTanh => f64::tanh,
-        Native::MathClz32 => |value| f64::from(crate::value::number_to_u32(value).leading_zeros()),
+        Native::MathClz32 => crate::staged::math::clz32,
         Native::MathF16Round => f16_round,
-        Native::MathSign => |value| {
-            if value.is_nan() || value == 0.0 {
-                value
-            } else if value.is_sign_negative() {
-                -1.0
-            } else {
-                1.0
-            }
-        },
+        Native::MathSign => crate::staged::math::sign,
         _ => return None,
     })
 }
@@ -746,21 +739,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .map(|value| self.to_number(p, value))
             .collect::<Result<Vec<_>, _>>()?;
-        if numbers.iter().any(|value| value.is_infinite()) {
-            return Ok(Value::number(f64::INFINITY));
-        }
-        if numbers.iter().any(|value| value.is_nan()) {
-            return Ok(Value::number(f64::NAN));
-        }
-        let largest = numbers.iter().copied().map(f64::abs).fold(0.0, f64::max);
-        if largest == 0.0 {
-            return Ok(Value::number(0.0));
-        }
-        let squares = numbers
-            .iter()
-            .map(|value| (value / largest).powi(2))
-            .sum::<f64>();
-        Ok(Value::number(largest * squares.sqrt()))
+        Ok(Value::number(crate::staged::math::hypot(&numbers)))
     }
 
     pub(super) fn math_sum_precise(

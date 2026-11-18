@@ -18,7 +18,7 @@ fn read_operands(kind: u8, dst: u8, a: u8, b: u8) -> (u8, u8, u8) {
         _ if is_copy(kind) => (dst, a, MEM),
         _ if is_compare(kind) => (MEM, a, b),
         JUMP | JUMP_POLL | JUMP_WATCH | POLL | TAG_INIT => (MEM, MEM, MEM),
-        GUARD | NOT | NEG | SQRT => (dst, a, MEM),
+        GUARD | NOT | NEG | MATH_FIRST..=MATH_LAST => (dst, a, MEM),
         JUMP_TRUE | JUMP_FALSE | SPILL => (MEM, a, MEM),
         _ => (dst, a, b),
     }
@@ -111,11 +111,11 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
     let bitwise: Vec<u8> = (AND..=USHR).collect();
     let compare: Vec<u8> = (LT..=NE).collect();
     let copy: Vec<u8> = (MOVE..=COPY).collect();
-    for kinds in [&arith, &bitwise, &compare, &copy, &vec![REM]] {
+    for kinds in [&arith, &bitwise, &compare, &copy, &vec![REM], &vec![IMUL]] {
         product(rows, kinds, &places.ints_dst, &places.ints_src, &[true, false]);
     }
     let double_arith: Vec<u8> = (ADD..=DIV).collect();
-    for kinds in [&double_arith, &compare, &copy] {
+    for kinds in [&double_arith, &compare, &copy, &vec![MIN, MAX]] {
         product(rows, kinds, &places.floats_dst, &places.floats_src, &[false]);
     }
 }
@@ -144,7 +144,7 @@ fn truthiness(places: &Places, rows: &mut BTreeSet<Code>) {
     }
     let dsts: Vec<u8> = places.ints_dst.iter().chain(&places.floats_dst).copied().collect();
     let srcs: Vec<u8> = places.ints_src.iter().copied().chain(double_pins()).collect();
-    product(rows, &[NEG, SQRT], &dsts, &srcs, &[true]);
+    product(rows, &[NEG, SQRT, FLOOR, CEIL, TRUNC, ABS, ROUND], &dsts, &srcs, &[true]);
 }
 
 /// Every row the library holds, canonical, once.

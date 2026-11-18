@@ -428,12 +428,17 @@ impl<H: Host> Vm<H> {
     /// second wide object of one layout (a 150K-unit string's wrapper, SunSpider tagcloud)
     /// cost time and index memory quadratic in its width.
     fn carry_lookup_index(&mut self, parent: u32, child: u32) {
-        if self.shapes[child as usize].lookup_index.get().is_some() {
-            return;
-        }
+        // The parent's index leaves it either way. Kept on the parent beside a child that
+        // already has one, it stays for good: every later build of the same wide layout
+        // (an object filled key by key each run) strands one more chain-sized index one
+        // shape further up (SunSpider string-unpack-code: +0.23 MB per iteration, peak RSS
+        // linear in the run length). Dropping it keeps at most one index per walk.
         let Some(index) = self.shapes[parent as usize].lookup_index.take() else {
             return;
         };
+        if self.shapes[child as usize].lookup_index.get().is_some() {
+            return;
+        }
         let mut steps = smallvec::SmallVec::<[ShapeTransition; 2]>::new();
         let mut current = child;
         while current != parent {
@@ -1689,7 +1694,7 @@ impl<H: Host> Vm<H> {
         debug_assert!(self.field_cache_index(site) < self.field_caches.len());
         // SAFETY: `active_field_entries` is re-derived whenever the active program or the
         // table changes, and the active program's layout reserves every compiler-emitted site.
-        unsafe { super::site_table::SiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
+        unsafe { super::site_table::CacheSiteTable::<FieldCache>::load_from(self.active_field_entries, usize::from(site)) }
     }
 
     /// The primary holderless shape and slot the field cache proves for this bytecode site,
@@ -2411,6 +2416,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
+    /// Whether the site cached no entry yet: its first read has not recorded one.
+    pub(super) fn field_site_empty(&self, site: u16) -> bool {
+        let entry = self.field_caches.get(self.field_cache_index(site));
+        entry.receiver == EMPTY_CACHE.receiver && entry.holder == EMPTY_CACHE.holder
+    }
+
+    /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
     }
@@ -2471,6 +2483,15 @@ impl<H: Host> Vm<H> {
             .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
     }
 
+    /// The operands of number hint `index` for a read of `atom` (`IcOp::HeldNumber`): its watch's
+    /// address and its value's bits; `None` where no `Number.prototype` hint of that atom is held.
+    #[inline(always)]
+    pub(super) fn number_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64)> {
+        let hint = self.holder_hints.holder.get(usize::from(index))?;
+        (hint.atom == atom && hint.holder == self.number_proto)
+            .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
+    }
+
     /// The object part of a direct object, array, function or ordinary builtin, whose own
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
@@ -2483,6 +2504,7 @@ impl<H: Host> Vm<H> {
     /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
     /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
     /// proves the shape, form and prototype link of a function's or cell's record too.
+    #[allow(dead_code)]
     pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
         self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
@@ -2503,6 +2525,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn hold_string_hint(&mut self, owned: Option<u16>, atom: Atom, value: Value, limit: u16) -> Option<u16> {
         // No object's auxiliary word is `NO_FIELD_RECEIVER`, so no object matches the guard.
         self.hold_prototype_hint(owned, atom, u64::from(NO_FIELD_RECEIVER) << u32::BITS, self.string_proto, value, limit)
+    }
+
+    /// Makes `value`, which `Number.prototype` answered for a number primitive's read of `atom`, a
+    /// record's hint (`hold_prototype_hint`).
+    pub(super) fn hold_number_hint(&mut self, owned: Option<u16>, atom: Atom, value: Value, limit: u16) -> Option<u16> {
+        // As `hold_string_hint`: no object's auxiliary word is `NO_FIELD_RECEIVER`.
+        self.hold_prototype_hint(owned, atom, u64::from(NO_FIELD_RECEIVER) << u32::BITS, self.number_proto, value, limit)
     }
 
     /// Makes `value`, which `prototype` answered for a read of `atom` from a receiver of
@@ -2776,9 +2805,9 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            // Function and iterator records have no cell; their shape answers like the
-            // slot forms' (`shape_property_lookup`).
-            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_)) => {
+            // Function, iterator and collection records have no cell; their shape answers like
+            // the slot forms' (`shape_property_lookup`).
+            Some(HeapReference::FunctionRecord(_) | HeapReference::IteratorRecord(_) | HeapReference::CollectionRecord(_)) => {
                 let lookup = if self.specialized && p.specialized {
                     self.receiver_field_cache_read(self.shape_property_lookup(object, atom), atom, site)
                 } else {
@@ -2807,7 +2836,8 @@ impl<H: Host> Vm<H> {
                 | HeapReference::PromiseRecord(_)
                 | HeapReference::AwaitRecord(_)
                 | HeapReference::V128Record(_)
-                | HeapReference::EnvironmentRecord(_),
+                | HeapReference::EnvironmentRecord(_)
+                | HeapReference::SymbolRecord(_),
             )
             | None => None,
         };
@@ -3402,14 +3432,8 @@ impl<H: Host> Vm<H> {
                 let value = if native == Native::DataViewByteLengthGetter { length } else { offset };
                 Some(Value::number(value as f64))
             }
-            Native::MapSizeGetter => match self.heap.get(this) {
-                Some(Cell::Map { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
-            Native::SetSizeGetter => match self.heap.get(this) {
-                Some(Cell::Set { entries, .. }) => Some(Value::number(entries.len() as f64)),
-                _ => None,
-            },
+            Native::MapSizeGetter => self.heap.map_entries(this).map(|entries| Value::number(entries.len() as f64)),
+            Native::SetSizeGetter => self.heap.set_entries(this).map(|entries| Value::number(entries.len() as f64)),
             _ => None,
         }
     }
@@ -4674,6 +4698,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        function: u32,
     ) -> Result<(), JsError> {
         let key = PropertyKey::string(atom);
         let cacheable = self.specialized && p.specialized && self.field_cache_atom_eligible(atom);
@@ -4703,6 +4728,11 @@ impl<H: Host> Vm<H> {
             && slot == self.shapes[shape as usize].storage_len()
             && let Ok(slot) = u16::try_from(slot)
         {
+            // Once per transition: the add that creates `target_shape` seeds its slot from the
+            // class's declared type; later adds of the shape reuse this entry and its seed.
+            if let Some(ty) = declared_field_type(p, function, atom) {
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty);
+            }
             self.record_field_add_cache(
                 site,
                 FieldAddCache {
@@ -5232,4 +5262,20 @@ impl<H> Vm<H> {
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
         )
     }
+}
+
+/// The slot type seed of `atom`, added to an instance of the class whose constructor is `function`
+/// of `p`, from its declared field type (`DeclaredTypes::declared_field`): the class's constructor
+/// carries the class's source span, whose start names the class. `None` where the declaration
+/// holds no fact: no declaration, an open set (`ANY_LANGUAGES`), an empty set, or a set whose
+/// slot class is `SlotType::Tagged` (exactly `Type::ANY`, which a seed would only widen to).
+fn declared_field_type(p: &ResidualProgram, function: u32, atom: Atom) -> Option<crate::typed_ir::Type> {
+    let declared = p.declared_types.as_deref()?;
+    let class_start = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start)?;
+    let bits = declared.declared_field(class_start, &p.atoms[atom as usize])?;
+    if bits == crate::typed_ir::ANY_LANGUAGES || bits == crate::typed_ir::Languages::EMPTY.bits() {
+        return None;
+    }
+    let ty = crate::typed_ir::Type::languages(bits);
+    (crate::typed_ir::SlotType::from_type(ty) != crate::typed_ir::SlotType::Tagged).then_some(ty)
 }

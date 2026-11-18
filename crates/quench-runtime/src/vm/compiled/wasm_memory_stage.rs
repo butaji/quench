@@ -17,6 +17,7 @@ use crate::staged::wasm_memory::{
     Access, Memory, WasmMemory, WasmMemoryGrow, WasmMemoryWrite, copy, fill, load, size, store,
 };
 use crate::wasm::INDEX_GROW_FAILURE;
+use crate::wasm::memory::WASM_PAGE_BITS;
 use cranelift_codegen::ir::{self, MemFlagsData};
 
 impl<H: Host> WasmMemory for Emitter<'_, '_, H> {
@@ -77,7 +78,7 @@ impl<H: Host> WasmMemoryWrite for Emitter<'_, '_, H> {
 /// in pages before, or the failure word where it cannot grow. The memory's length in the
 /// context is read again after it, the event that changes it; its base never moves, the bytes
 /// being a reservation (`Analysis::callouts` is off for any other memory).
-unsafe extern "C" fn memory_grow_callout<H: Host>(context: *mut CallContext, pages: u64) -> u64 {
+pub(super) unsafe extern "C" fn memory_grow_callout<H: Host>(context: *mut CallContext, pages: u64) -> u64 {
     // SAFETY: compiled code passes the context `run_compiled` made, whose VM is suspended in
     // that call.
     let context = unsafe { &mut *context };
@@ -136,7 +137,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 infallible(store(self, access, index, instruction.imm(), value, true));
             }
             Memory::Size => {
-                let pages = size(self);
+                // Compiled memory is admitted only at the default page size
+                // (`supports_compiled_memory`, `needs_compiled_memory`), so this is the bound
+                // memory's page size.
+                let pages = size(self, WASM_PAGE_BITS);
                 self.write(a, Kind::I32, pages);
             }
             Memory::Grow => {

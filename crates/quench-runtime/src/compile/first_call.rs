@@ -33,6 +33,16 @@ impl ReplayViews {
     }
 }
 
+/// The line starts and UTF-16 excess table of `source`'s text, which its first-call chunks
+/// compile with: made once per source and shared by its copies (`ProgramSource::layout`).
+pub(super) fn source_layout(source: &crate::bytecode::ProgramSource) -> (&[usize], &[(usize, usize)]) {
+    let layout = source.layout.get_or_init(|| std::sync::Arc::new(crate::bytecode::SourceLayout {
+        line_starts: crate::bytecode::source_line_starts(&source.text).collect(),
+        utf16_excess: super::source_utf16_excess(&source.text).into(),
+    }));
+    (&layout.line_starts, &layout.utf16_excess)
+}
+
 /// A body the compiler makes for a function whose source gives it none to run.
 #[derive(Clone, Copy)]
 pub(super) enum ImplicitBody {
@@ -59,12 +69,20 @@ pub(super) struct ChunkWindow<'a> {
     utf16_excess: &'a [(usize, usize)],
     /// The run of a streamed body the chunk compiles.
     run: Option<&'a super::statement_stream::StreamRun>,
+    /// The load checked the function's body alone (`ProgramReplay::checked_at_load`), so its early
+    /// errors are settled and the chunk's analysis skips their check.
+    checked: bool,
 }
 
 impl<'a> ChunkWindow<'a> {
     /// Whether the chunk compiles the first run of a streamed body.
     pub(super) fn first_run(&self) -> bool {
         self.run.is_some_and(|run| run.from.is_none())
+    }
+
+    /// Whether the load checked the function's body (`checked`).
+    pub(super) fn checked(&self) -> bool {
+        self.checked
     }
 
     pub(super) fn start(&self) -> u32 {
@@ -187,12 +205,12 @@ impl Engine {
         let Some((source, chunk)) = source.and_then(|source| Some((source, chunk_text(source, span, run, method)?))) else {
             return Err(vec![Diagnostic::unsupported(name, "a first-call stub keeps no source")]);
         };
-        let views = ReplayViews::default();
-        let (line_starts, utf16_excess) = program.replay.as_deref().map_or(&views, |replay| &replay.views).layout(&source.text);
+        let (line_starts, utf16_excess) = source_layout(source);
         let stubs = &program.first_call_scopes;
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
-        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run };
-        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
+        let checked = program.replay.as_deref().is_some_and(|replay| replay.checked_at_load(span.start));
+        let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run, checked };
+        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script(), None)
     }
 }
 
@@ -212,7 +230,9 @@ impl ParsedProgramShape<'_> {
     /// The starts of the function declarations of `program`, of this shape, that may compile
     /// as first-call stubs: an eval's whose functions compile again from their text alone
     /// (`replayable`), or a large classic script's (`stubbing`), when its root is sloppy and
-    /// declares no lexical binding.
+    /// declares no lexical binding. A Function-constructor body's declarations are not roots:
+    /// their free names are the body's own bindings, which a root's chunk, compiled as a script,
+    /// would resolve in the global environment. They stub as nested stubs (`nested_stub_captures`).
     pub(super) fn first_call_roots(self, replayable: bool, program: &Program<'_>, inherited_strict: bool) -> Starts {
         let strict = inherited_strict || program.directives.iter().any(|directive| directive.directive == "use strict");
         let lexical = program.body.iter().any(|statement| match statement {
@@ -338,6 +358,7 @@ impl Stubs<'_> {
         self.direct = stubbing.arrows;
         self.free_names = free_names;
         self.call_only_found = call_only_found;
+        super::call_only::deferred::normalize_spans(&mut self.call_only_found);
     }
 
     /// Whether a program keeps a replay: it has functions a replay compiles (unless

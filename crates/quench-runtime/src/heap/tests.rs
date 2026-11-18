@@ -64,6 +64,22 @@ fn direct_array_record_base_resolves_the_current_live_array_value() {
 }
 
 #[test]
+fn symbol_records_live_while_named_and_free_their_descriptions() {
+    for_each_promotion_age(|heap, _age| {
+        let kept = heap.alloc_symbol(SymbolData::public(Some("kept".to_owned())));
+        let dead = heap.alloc_symbol(SymbolData::public(Some("dead".to_owned())));
+        assert!(heap.is_symbol(kept) && heap.is_symbol(dead));
+        assert!(!heap.is_symbol(Value::heap(0)), "a legacy cell is never a symbol record");
+        collect_minor(heap, [kept]);
+        assert!(heap.is_live(kept) && !heap.is_live(dead));
+        heap.collect([kept]);
+        assert!(heap.is_live(kept) && !heap.is_live(dead));
+        assert_eq!(heap.symbol_data(kept).and_then(|symbol| symbol.description.as_deref()), Some("kept"));
+        assert!(heap.symbol_data(dead).is_none());
+    });
+}
+
+#[test]
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     for_each_promotion_age(|heap, _| minor_collection_traces_remembered_edges(heap));
 }
@@ -1052,14 +1068,11 @@ fn promoted_owner_remembers_its_young_child(
 fn promoted_cells_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
         |heap| {
-            heap.alloc(Cell::Set {
-                object: plain_object(),
-                entries: Default::default(),
-            })
+            heap.alloc_set(plain_object(), Default::default())
         },
         |heap| heap.alloc(Cell::Error("young child".into())),
         |heap, owner, child| {
-            if let Some(Cell::Set { entries, .. }) = heap.get_mut(owner) {
+            if let Some(entries) = heap.set_entries_mut(owner) {
                 // The set is only traced, never searched, so the key hash is immaterial.
                 entries.push(child, 0);
             }
@@ -1535,26 +1548,31 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             let value = Value::number(0.5);
             let (properties, inline) = heap.initial_object_storage(1, &[value], false);
             let object = Object::with_property_storage(Value::NULL, properties, inline);
-            let cell = match family {
-                Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },
-                Family::Function => Cell::Function(Box::new(FunctionRecord {
-                    object, realm: Value::NULL, env: Value::NULL,
-                    kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
-                })),
-                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
-                Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
+            // Iterators and functions have no cell: their records are allocated directly, both ways.
+            let published = if let Family::Iterator = family {
+                heap.alloc_iterator(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
                     ext: IteratorExt::default(),
-                })),
-                Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
-            };
-            let published = if generic { heap.alloc_cell(cell) } else {
-                match cell {
-                    Cell::Array { object } => heap.alloc_array(object),
-                    Cell::Function(function) => heap.alloc_function(*function),
-                    Cell::Promise(promise) => heap.alloc_promise(*promise),
-                    Cell::Iterator(iterator) => heap.alloc_iterator(*iterator),
-                    cell => heap.alloc(cell),
+                })
+            } else if let Family::Function = family {
+                heap.alloc_function(FunctionRecord {
+                    object, realm: Value::NULL, env: Value::NULL,
+                    kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
+                })
+            } else {
+                let cell = match family {
+                    Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },
+                    Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
+                    Family::Function => unreachable!("a function is allocated as a record"),
+                    Family::Iterator => unreachable!("an iterator is allocated as a record"),
+                    Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
+                };
+                if generic { heap.alloc_cell(cell) } else {
+                    match cell {
+                        Cell::Array { object } => heap.alloc_array(object),
+                        Cell::Promise(promise) => heap.alloc_promise(*promise),
+                        cell => heap.alloc(cell),
+                    }
                 }
             };
             assert!(!reader.is_published(), "{family:?}, generic={generic}");

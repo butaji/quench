@@ -4,6 +4,7 @@
 //! one default channel; only how a completion is delivered differs.
 
 use crate::host::NodeHost;
+use crate::modules::util_shared_vm::{validate_boolean, validate_function};
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -167,20 +168,6 @@ fn method(c: &mut Context<'_>, target: RootId, name: &str, operation: &str, data
     let key = c.string_rooted(name);
     c.define_data_property_rooted(target, key, function, true, false, true)?;
     Ok(())
-}
-
-fn validate_function(c: &mut Context<'_>, value: RootId, name: &str) -> Result<(), RootedError> {
-    if c.is_callable_rooted(value)? {
-        return Ok(());
-    }
-    Err(super::util_shared_vm::argument_type_error(c, value, name, "function")?)
-}
-
-fn validate_boolean(c: &mut Context<'_>, value: RootId, name: &str) -> Result<bool, RootedError> {
-    match c.rooted_value(value).and_then(|value| value.as_bool()) {
-        Some(flag) => Ok(flag),
-        None => Err(super::util_shared_vm::argument_type_error(c, value, name, "boolean")?),
-    }
 }
 
 /// `isIP(text)`: 4, 6 or 0.

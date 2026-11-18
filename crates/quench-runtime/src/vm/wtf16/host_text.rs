@@ -3,21 +3,36 @@
 /// First UTF-16 unit that is not ASCII.
 const FIRST_NON_ASCII: u16 = 0x80;
 
-/// `String::from_utf16_lossy`, with each ASCII run copied as bytes instead of decoded unit
-/// by unit: most source text is ASCII. A run of non-ASCII units never splits a surrogate
-/// pair, so each decodes as the standard conversion would.
+/// `String::from_utf16_lossy`: a surrogate pair decodes to its character, and a lone
+/// surrogate to U+FFFD.
 pub(super) fn utf16_lossy(units: &[u16]) -> String {
-    let mut text = String::with_capacity(units.len());
-    let mut rest = units;
-    while !rest.is_empty() {
-        let (ascii, tail) = rest.split_at(rest.iter().position(|&unit| unit >= FIRST_NON_ASCII).unwrap_or(rest.len()));
-        // SAFETY: every unit of `ascii` is below 0x80, so each byte is one UTF-8 character.
-        unsafe { text.as_mut_vec() }.extend(ascii.iter().map(|&unit| unit as u8));
-        let (wide, tail) = tail.split_at(tail.iter().take_while(|&&unit| unit >= FIRST_NON_ASCII).count());
-        text.extend(char::decode_utf16(wide.iter().copied()).map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER)));
-        rest = tail;
+    // One pass that encodes each unit in place: a split at every change between ASCII and
+    // other units scanned each run twice and decoded the rest through `char`.
+    let mut bytes = Vec::with_capacity(units.len() + units.len() / 2);
+    let mut at = 0;
+    while at < units.len() {
+        let unit = units[at];
+        at += 1;
+        if unit < FIRST_NON_ASCII {
+            bytes.push(unit as u8);
+            continue;
+        }
+        let code = if (0xD800..0xDC00).contains(&unit) && units.get(at).is_some_and(|next| (0xDC00..0xE000).contains(next)) {
+            let low = units[at];
+            at += 1;
+            0x10000 + ((u32::from(unit) - 0xD800) << 10) + (u32::from(low) - 0xDC00)
+        } else if (0xD800..0xE000).contains(&unit) {
+            u32::from(char::REPLACEMENT_CHARACTER)
+        } else {
+            u32::from(unit)
+        };
+        // SAFETY: `code` is a scalar value: a non-surrogate unit, a decoded pair or U+FFFD.
+        let character = unsafe { char::from_u32_unchecked(code) };
+        let mut buffer = [0; 4];
+        bytes.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
     }
-    text
+    // SAFETY: every byte sequence pushed is a whole UTF-8 encoding.
+    unsafe { String::from_utf8_unchecked(bytes) }
 }
 
 #[cfg(test)]

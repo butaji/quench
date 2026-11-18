@@ -626,38 +626,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     fn collect_binding_names(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
-        match pattern {
-            BindingPattern::BindingIdentifier(identifier) => {
-                names.push(identifier.name.to_string());
-            }
-            BindingPattern::AssignmentPattern(pattern) => {
-                Self::collect_binding_names(&pattern.left, names);
-            }
-            BindingPattern::ArrayPattern(pattern) => {
-                for element in pattern.elements.iter().flatten() {
-                    Self::collect_binding_names(element, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-            BindingPattern::ObjectPattern(pattern) => {
-                for property in &pattern.properties {
-                    Self::collect_binding_names(&property.value, names);
-                }
-                if let Some(rest) = &pattern.rest {
-                    Self::collect_binding_names(&rest.argument, names);
-                }
-            }
-        }
+        super::early::collect_pattern_names(pattern, names);
     }
 
     pub(super) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
-        match expression {
+        // TypeScript's type-only wrappers name as parentheses do: `const f = (() => {}) as T`.
+        match super::binding_time::evaluated(expression) {
             Expression::FunctionExpression(function) => function.id.is_none(),
             Expression::ArrowFunctionExpression(_) => true,
             Expression::ClassExpression(class) => class.id.is_none(),
-            Expression::ParenthesizedExpression(expression) => Self::anonymous_function_definition(&expression.expression),
             _ => false,
         }
     }
@@ -936,14 +913,22 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    pub(super) fn clone_lexical_environment(&mut self) {
+    /// The plan of the clone emitted; none when the scope has no environment slots.
+    pub(super) fn clone_lexical_environment(&mut self) -> Option<usize> {
         let slots = self.lexical_scope_slots();
-        self.clone_environment_slots(slots);
+        self.clone_environment_slots(slots)
+    }
+
+    /// The next-iteration clone of the innermost (loop head) scope, with the slots its body
+    /// block joined to the head plan (`iteration_body`).
+    pub(super) fn clone_lexical_iteration_environment(&mut self, body: &[u16]) {
+        let slots = self.lexical_scope_slots();
+        self.clone_iteration_environment(slots, body);
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {
         let slots = self.lexical_scope_slots();
-        self.clone_environment_slots(slots.clone());
+        self.clone_block_environment_slots(slots.clone());
         self.initialize_tdz_slots(slots);
     }
 

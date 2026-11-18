@@ -6,6 +6,8 @@ use quench_runtime::{HostCallback, HostFunctionDescriptor, NativeContext, Rooted
 pub(crate) mod commonjs;
 pub(crate) mod commonjs_exports;
 mod esm_errors;
+pub(crate) mod typescript_files;
+use typescript_files::TypeScriptFile;
 mod operation_index;
 pub(crate) mod esm_wasm;
 pub(crate) use commonjs::source_kind;
@@ -2985,7 +2987,7 @@ impl NodeHost {
         } else if kind == quench_runtime::SourceKind::Module {
             let source = String::from_utf8(bytes)
                 .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?;
-            if matches!(extension, "ts" | "mts") {
+            if TypeScriptFile::of_extension(extension).is_some_and(TypeScriptFile::loads_as_module) {
                 crate::host::ts_checker::prepare(path, &source, 0..source.len(), 0);
             }
             source
@@ -3025,7 +3027,7 @@ impl NodeHost {
         // objects only for WebAssembly. So a CommonJS or JSON interop wrapper keeps only the
         // text it compiles, never the file it wraps.
         Ok(quench_runtime::ModuleSource::text(name, source).with_typescript(
-            kind == quench_runtime::SourceKind::Module && matches!(extension, "ts" | "mts"),
+            kind == quench_runtime::SourceKind::Module && TypeScriptFile::of_extension(extension).is_some_and(TypeScriptFile::loads_as_module),
         ))
     }
 }

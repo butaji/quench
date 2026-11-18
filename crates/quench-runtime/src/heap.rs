@@ -7,8 +7,127 @@ use rayon::ThreadPool;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use rc_drop::{StoppedCellDrop, cell_rc_drop_lock};
+
+/// Every record space, listed once, in `Heap`'s field order. Each row is
+/// `Family = field: Space [Elem] view => handle`: `Family` names the space's `RecordSpaceId`
+/// variant (whose index is the family's number, in this order); `field: Space` is the space's
+/// `Heap` field and type; `Elem` is the type its records hold; `view` is its field in
+/// `ParallelMarkView`; and `handle` is the `Value` constructor naming its records
+/// (`Heap::record_families`). `$m` is a callback called as `$m! { $pre ; rows }`, where `$pre`
+/// is what the caller passes (nothing, or the heap for `mark_bits!`). The `Heap` struct still
+/// declares these fields by hand, since a macro cannot expand into a struct body that also holds
+/// other fields: a new space is added there as well.
+macro_rules! for_each_record_space {
+    ($m:ident, $($pre:tt)*) => {
+        $m! {
+            $($pre)* ;
+            Object = object_records: ObjectRecordSpace [Object] objects => Value::direct_object,
+            Array = array_records: ArrayRecordSpace [ArrayObject] arrays => Value::direct_array,
+            Function = function_records: FunctionRecordSpace [FunctionRecord] functions => Value::direct_function,
+            Promise = promise_records: PromiseRecordSpace [PromiseCell] promises => Value::direct_promise,
+            Await = await_records: AwaitRecordSpace [AwaitState] awaits => Value::direct_await,
+            Iterator = iterator_records: IteratorRecordSpace [IteratorRecord] iterators => Value::direct_iterator,
+            Collection = collection_records: CollectionRecordSpace [CollectionRecord] collections => Value::direct_collection,
+            String = string_records: StringRecordSpace [JsString] strings => Value::direct_string,
+            SmallString = small_strings: small_strings::SmallStringSpace [SmallParts] small_strings => small_strings::small_string_value,
+            V128 = v128_records: V128RecordSpace [[u8; crate::wasm::V128_BYTES]] v128s => Value::direct_v128,
+            Environment = environment_records: EnvironmentRecordSpace [EnvironmentRecord] environments => Value::direct_environment,
+            Symbol = symbol_records: SymbolRecordSpace [SymbolData] symbols => Value::direct_symbol,
+        }
+    };
+}
+
+/// The record arms of a per-family test (`MarkBits::is_marked`, `Heap::is_live`): `$method` asked
+/// of the space that holds each record reference. Strings (split between small and large) and
+/// legacy slots are the caller's, matched before this; `$otherwise` answers what is left.
+macro_rules! record_reference_test {
+    ($s:expr, $reference:expr, $method:ident, $otherwise:expr) => {
+        match $reference {
+            Some(HeapReference::ObjectRecord(id)) => $s.object_records.$method(id),
+            Some(HeapReference::ArrayRecord(id)) => $s.array_records.$method(id),
+            Some(HeapReference::FunctionRecord(id)) => $s.function_records.$method(id),
+            Some(HeapReference::PromiseRecord(id)) => $s.promise_records.$method(id),
+            Some(HeapReference::AwaitRecord(id)) => $s.await_records.$method(id),
+            Some(HeapReference::IteratorRecord(id)) => $s.iterator_records.$method(id),
+            Some(HeapReference::CollectionRecord(id)) => $s.collection_records.$method(id),
+            Some(HeapReference::V128Record(id)) => $s.v128_records.$method(id),
+            Some(HeapReference::EnvironmentRecord(id)) => $s.environment_records.$method(id),
+            Some(HeapReference::SymbolRecord(id)) => $s.symbol_records.$method(id),
+            _ => $otherwise,
+        }
+    };
+}
+
+/// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
+macro_rules! mark_bits_struct {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
+        #[derive(Clone, Copy)]
+        pub(super) struct MarkBits<'a> {
+            $($field: &'a $space,)*
+            marks: &'a [AtomicU64],
+        }
+    };
+}
+
+/// The `MarkBits` literal over `$heap`'s mark fields (`mark_bits!`).
+macro_rules! mark_bits_literal {
+    ($heap:tt ; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        MarkBits {
+            $($field: &$heap.$field,)*
+            marks: &$heap.marks,
+        }
+    };
+}
+
+/// `record_families` and `record_families_mut`, over every record space.
+macro_rules! record_families_fns {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// Every record family, with the `Value` constructor naming its records.
+        fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+            [$((&self.$field, $handle),)*]
+        }
+
+        /// `record_families`, mutably.
+        fn record_families_mut(
+            &mut self,
+        ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
+            [$((&mut self.$field, $handle),)*]
+        }
+    };
+}
+
+/// `RecordSpaceId`, the family numbering every record-space lookup shares (`locate`, `with_space!`,
+/// `record_families`), and `RECORD_FAMILIES`, its count. A variant's index is its row's position
+/// in `for_each_record_space!`. Environments and symbols are numbered but never counted, so no
+/// lookup names them.
+macro_rules! record_space_ids {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// A record space's family, named by its row in `for_each_record_space!`.
+        #[allow(dead_code)]
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(super) enum RecordSpaceId {
+            $($family,)*
+        }
+
+        /// The number of record families (`Heap::record_families`).
+        const RECORD_FAMILIES: usize = [$(RecordSpaceId::$family),*].len();
+    };
+}
+
+/// `Heap::reset`'s empty record spaces.
+macro_rules! reset_record_spaces {
+    (; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident => $handle:path,)*) => {
+        /// Replaces every record space with an empty one (`Heap::reset`).
+        fn reset_record_spaces(&mut self) {
+            $(self.$field = <$space>::default();)*
+        }
+    };
+}
+
 mod access;
 mod array_elements;
+pub(crate) mod growth;
 pub(crate) mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;
@@ -70,7 +189,7 @@ pub(crate) use buffer_bytes::{BufferBytes, BufferRead, buffer_relocations_addres
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
 use external::array_payload_bytes;
 use records::{
-    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, IteratorRecordSpace, V128RecordSpace,
+    ArrayRecordSpace, AwaitRecordSpace, EnvironmentRecordSpace, FunctionRecordSpace, CollectionRecordSpace, IteratorRecordSpace, SymbolRecordSpace, V128RecordSpace,
     ObjectRecordSpace, PromiseRecordSpace, RecordFamily, StringRecordSpace, RecordId, RecordSweep,
 };
 use records::RECORD_SPACE_CAPACITY;
@@ -370,71 +489,46 @@ struct SweepOutput {
     swept_slots: usize,
 }
 
-/// The record families `Heap::record_families` lists.
-const RECORD_FAMILIES: usize = 10;
+for_each_record_space!(record_space_ids,);
 
-/// Every family's mark bits, borrowed apart from the slot a trace holds (`mark_bits!`).
-#[derive(Clone, Copy)]
-pub(super) struct MarkBits<'a> {
-    object_records: &'a ObjectRecordSpace,
-    array_records: &'a ArrayRecordSpace,
-    function_records: &'a FunctionRecordSpace,
-    promise_records: &'a PromiseRecordSpace,
-    await_records: &'a AwaitRecordSpace,
-    iterator_records: &'a IteratorRecordSpace,
-    string_records: &'a StringRecordSpace,
-    small_strings: &'a small_strings::SmallStringSpace,
-    v128_records: &'a V128RecordSpace,
-    environment_records: &'a EnvironmentRecordSpace,
-    marks: &'a [AtomicU64],
-}
+for_each_record_space!(mark_bits_struct,);
 
 impl MarkBits<'_> {
     /// Whether `value` is a heap value marked so far.
     pub(super) fn is_marked(self, value: Value) -> bool {
         match value.heap_reference() {
-            Some(HeapReference::ObjectRecord(id)) => self.object_records.is_marked(id),
-            Some(HeapReference::ArrayRecord(id)) => self.array_records.is_marked(id),
-            Some(HeapReference::FunctionRecord(id)) => self.function_records.is_marked(id),
-            Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_marked(id),
-            Some(HeapReference::AwaitRecord(id)) => self.await_records.is_marked(id),
-            Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_marked(id),
             Some(HeapReference::StringRecord(id)) => match small_strings::small_string_local(id) {
                 Some(local) => self.small_strings.is_marked(local),
                 None => self.string_records.is_marked(id),
             },
-            Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
-            Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
                     word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
                 })
             }
-            None => false,
+            reference => record_reference_test!(self, reference, is_marked, false),
         }
     }
 }
 
 /// `MarkBits` of a heap, borrowing only its mark fields.
 macro_rules! mark_bits {
-    ($heap:expr) => {
-        MarkBits {
-            object_records: &$heap.object_records,
-            array_records: &$heap.array_records,
-            function_records: &$heap.function_records,
-            promise_records: &$heap.promise_records,
-            await_records: &$heap.await_records,
-            iterator_records: &$heap.iterator_records,
-            string_records: &$heap.string_records,
-            small_strings: &$heap.small_strings,
-            v128_records: &$heap.v128_records,
-            environment_records: &$heap.environment_records,
-            marks: &$heap.marks,
-        }
+    ($heap:tt) => {
+        for_each_record_space!(mark_bits_literal, $heap)
     };
 }
 use mark_bits;
+
+/// The bookkeeping that ends the serial visit of a value newly marked: its ephemerons are
+/// told (`EphemeronWork::newly_marked`), with `$cell` its legacy cell when it has one. Only
+/// the mark fields are borrowed (`mark_bits!`), so `$cell` may borrow from `slots`.
+macro_rules! ephemeron_tail {
+    ($heap:expr, $ctx:ident, $value:expr, $cell:expr) => {{
+        let mark_bits = mark_bits!($heap);
+        $ctx.ephemerons.newly_marked($value, $cell, |target| mark_bits.is_marked(target), $ctx.work);
+    }};
+}
 
 /// The ASCII code units, one past the last (`Heap::ascii_unit_strings`).
 pub(crate) const ASCII_UNITS: usize = 0x80;
@@ -457,6 +551,8 @@ pub(crate) struct Heap {
     promise_records: PromiseRecordSpace,
     await_records: AwaitRecordSpace,
     iterator_records: IteratorRecordSpace,
+    /// Maps and Sets: an object and its entries, with no legacy-slot form (`alloc_map`).
+    collection_records: CollectionRecordSpace,
     /// Strings: immutable leaves, never prototypes, with no legacy-slot form.
     string_records: StringRecordSpace,
     /// Small strings (`small_strings`): ids of the string records' hole, and the texts read.
@@ -467,6 +563,8 @@ pub(crate) struct Heap {
     /// Wasm vectors: immutable leaves (`Heap::alloc_v128`), in a slot when this is full.
     v128_records: V128RecordSpace,
     environment_records: EnvironmentRecordSpace,
+    /// Symbols (`alloc_symbol`): immutable leaves that hold no edges, never prototypes.
+    symbol_records: SymbolRecordSpace,
     /// Allocations per cell variant (`Cell::profile_variant_name`), finer than `CellKind`.
     #[cfg(feature = "profile-aggregate")]
     allocated_variants: std::collections::BTreeMap<&'static str, u64>,
@@ -748,90 +846,64 @@ impl Default for GcProfile {
     }
 }
 
-#[repr(usize)]
-#[derive(Clone, Copy)]
-pub(crate) enum CellKind {
-    Object,
-    Array,
-    Map,
-    Set,
-    Iterator,
-    WeakMap,
-    WeakSet,
-    WeakRef,
-    Function,
-    Environment,
+/// Every cell kind, once, in discriminant order: `Variant = "name"` rows, each with its attributes.
+/// `CellKind`, its `COUNT` and its `NAMES` are generated from these rows.
+macro_rules! cell_kinds {
+    ($($(#[$meta:meta])* $kind:ident = $name:literal,)*) => {
+        #[repr(usize)]
+        #[derive(Clone, Copy)]
+        pub(crate) enum CellKind {
+            $($(#[$meta])* $kind,)*
+        }
+        impl CellKind {
+            pub(crate) const COUNT: usize = [$(stringify!($kind)),*].len();
+            #[cfg(feature = "profile-memory")]
+            pub(crate) const NAMES: [&'static str; Self::COUNT] = [$($name,)*];
+        }
+    };
+}
+
+cell_kinds! {
+    Object = "object",
+    Array = "array",
+    Map = "map",
+    Set = "set",
+    Iterator = "iterator",
+    WeakMap = "weak_map",
+    WeakSet = "weak_set",
+    WeakRef = "weak_ref",
+    Function = "function",
+    Environment = "environment",
     /// String records; only the allocation profile counts them by kind.
     #[cfg_attr(not(feature = "profile-aggregate"), allow(dead_code))]
-    String,
-    BigInt,
-    Symbol,
-    Date,
-    Error,
-    RegExp,
-    ArrayFromAsync,
-    AwaitState,
-    TemporalDuration,
-    TemporalPlainDate,
-    TemporalPlainDateTime,
-    TemporalPlainMonthDay,
-    TemporalPlainYearMonth,
-    TemporalZonedDateTime,
-    TemporalInstant,
-    WasmGlobal,
-    WasmMemory,
-    WasmTable,
-    WasmElements,
-    WasmBits64,
-    WasmHostFunction,
-    WasmV128,
-    WasmGc,
-    WasmExtern,
-    WasmTag,
-    WasmException,
+    String = "string",
+    BigInt = "bigint",
+    Symbol = "symbol",
+    Date = "date",
+    Error = "error",
+    RegExp = "regexp",
+    ArrayFromAsync = "array_from_async",
+    AwaitState = "await_state",
+    TemporalDuration = "temporal_duration",
+    TemporalPlainDate = "temporal_plain_date",
+    TemporalPlainDateTime = "temporal_plain_date_time",
+    TemporalPlainMonthDay = "temporal_plain_month_day",
+    TemporalPlainYearMonth = "temporal_plain_year_month",
+    TemporalZonedDateTime = "temporal_zoned_date_time",
+    TemporalInstant = "temporal_instant",
+    WasmGlobal = "wasm_global",
+    WasmMemory = "wasm_memory",
+    WasmTable = "wasm_table",
+    WasmElements = "wasm_elements",
+    WasmBits64 = "wasm_bits64",
+    WasmHostFunction = "wasm_host_function",
+    WasmV128 = "wasm_v128",
+    WasmGc = "wasm_gc",
+    WasmExtern = "wasm_extern",
+    WasmTag = "wasm_tag",
+    WasmException = "wasm_exception",
 }
-impl CellKind {
-    pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
-    #[cfg(feature = "profile-memory")]
-    pub(crate) const NAMES: [&'static str; Self::COUNT] = [
-        "object",
-        "array",
-        "map",
-        "set",
-        "iterator",
-        "weak_map",
-        "weak_set",
-        "weak_ref",
-        "function",
-        "environment",
-        "string",
-        "bigint",
-        "symbol",
-        "date",
-        "error",
-        "regexp",
-        "array_from_async",
-        "await_state",
-        "temporal_duration",
-        "temporal_plain_date",
-        "temporal_plain_date_time",
-        "temporal_plain_month_day",
-        "temporal_plain_year_month",
-        "temporal_zoned_date_time",
-        "temporal_instant",
-        "wasm_global",
-        "wasm_memory",
-        "wasm_table",
-        "wasm_elements",
-        "wasm_bits64",
-        "wasm_host_function",
-        "wasm_v128",
-        "wasm_gc",
-        "wasm_extern",
-        "wasm_tag",
-        "wasm_exception",
-    ];
-}
+
 #[derive(Default)]
 struct SparseElements {
     values: FxHashMap<usize, Value>,
@@ -841,6 +913,19 @@ struct SparseElements {
 /// before another trims (`Heap::live_at_environment_trim`): one live set, so what closures
 /// over-capture since can at most double what a trimmed heap holds.
 const ENVIRONMENT_TRIM_GROWTH: pacing::Ratio = pacing::Ratio::new(1, 1);
+
+/// The state a serial mark shares down its visit (`mark_work`, `mark_work_in_rounds`,
+/// `drain_work`, `mark_value`), built once by `mark_work`: the worklist, the object-root
+/// callback, the ephemeron work, the trace kind, the environment trace, and the protos the
+/// last visit pushed.
+struct MarkCtx<'a, 's, R> {
+    work: &'a mut Vec<Value>,
+    object_roots: &'a mut R,
+    ephemerons: &'a mut weak::EphemeronWork,
+    trace_kind: GcTraceKind,
+    environments: &'a mut EnvironmentTrace<'s>,
+    last_proto: PushedProtos,
+}
 
 impl Heap {
     pub fn new() -> Self {
@@ -971,44 +1056,12 @@ impl Heap {
         false
     }
 
-    /// Every record family, with the `Value` constructor naming its records.
-    fn record_families(&self) -> [(&dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-        [
-            (&self.object_records, Value::direct_object),
-            (&self.array_records, Value::direct_array),
-            (&self.function_records, Value::direct_function),
-            (&self.promise_records, Value::direct_promise),
-            (&self.await_records, Value::direct_await),
-            (&self.iterator_records, Value::direct_iterator),
-            (&self.string_records, Value::direct_string),
-            (&self.small_strings, small_strings::small_string_value),
-            (&self.v128_records, Value::direct_v128),
-            (&self.environment_records, Value::direct_environment),
-        ]
-    }
+    for_each_record_space!(record_families_fns,);
 
     /// Record and payload bytes occupied now: live plus unswept garbage before a sweep.
     fn occupied_resident_bytes(&mut self) -> usize {
         let payload = self.payload_bytes;
         self.record_families_mut().iter().map(|(family, _)| family.occupied_bytes()).sum::<usize>() + payload
-    }
-
-    /// `record_families`, mutably.
-    fn record_families_mut(
-        &mut self,
-    ) -> [(&mut dyn RecordFamily, fn(RecordId) -> Value); RECORD_FAMILIES] {
-        [
-            (&mut self.object_records, Value::direct_object),
-            (&mut self.array_records, Value::direct_array),
-            (&mut self.function_records, Value::direct_function),
-            (&mut self.promise_records, Value::direct_promise),
-            (&mut self.await_records, Value::direct_await),
-            (&mut self.iterator_records, Value::direct_iterator),
-            (&mut self.string_records, Value::direct_string),
-            (&mut self.small_strings, small_strings::small_string_value),
-            (&mut self.v128_records, Value::direct_v128),
-            (&mut self.environment_records, Value::direct_environment),
-        ]
     }
 
     /// Each program a live cell or function can still run or resolve names in
@@ -1045,6 +1098,18 @@ impl Heap {
             for slot in slab.iter() {
                 if let Some(cell) = &slot.cell {
                     visit(cell);
+                }
+            }
+        }
+    }
+
+    /// Visits the elements of every Wasm table in the slot heap, mutably: the same walk as
+    /// `for_each_cell`, for the writers that rewrite rows (`WasmTableElements::refresh_bodies`).
+    pub(crate) fn for_each_wasm_table_mut(&mut self, mut visit: impl FnMut(&mut WasmTableElements)) {
+        for (_, slab) in self.slots.slabs_mut() {
+            for slot in slab.iter_mut() {
+                if let Some(Cell::WasmTable { elements, .. }) = &mut slot.cell {
+                    visit(&mut **elements);
                 }
             }
         }
@@ -1103,6 +1168,15 @@ impl Heap {
         self.prototypes.iter().map(|(prototype, _)| *prototype).filter(move |prototype| {
             prototype.direct_object_index().is_some() && self.object(*prototype).is_some_and(|object| object.exact_shape() == shape)
         })
+    }
+
+    /// Marks the object `object`'s values as held by code (`Object::mark_constant`): its next
+    /// value write or layout change retires the readers subscribed under its exact shape and
+    /// clears the mark. No extras are made, so once written it takes every fast store again
+    /// (a prototype mark's extras would keep it off them for good). `None` for a non-object.
+    pub(crate) fn mark_own_constant(&mut self, object: Value) -> Option<()> {
+        self.object_mut(object)?.mark_constant();
+        Some(())
     }
 
     #[inline] pub(crate) fn mark_prototype(&mut self, prototype: Value) {
@@ -1325,27 +1399,9 @@ impl Heap {
                 }
                 Err(promise) => Cell::Promise(Box::new(promise)),
             },
-            Cell::Iterator(iterator) => match self.iterator_records.try_insert(*iterator) {
-                Ok(record_id) => {
-                    let value = Value::direct_iterator(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(iterator) => Cell::Iterator(Box::new(iterator)),
-            },
             Cell::AwaitState(state) => match self.await_records.try_insert(*state) {
                 Ok(record_id) => return Value::direct_await(record_id),
                 Err(state) => Cell::AwaitState(Box::new(state)),
-            },
-            Cell::Function(function) => match self.function_records.try_insert(*function) {
-                Ok(record_id) => {
-                    let value = Value::direct_function(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
-                }
-                Err(function) => Cell::Function(Box::new(function)),
             },
             cell => cell,
         };
@@ -1631,12 +1687,10 @@ impl Heap {
         self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::RegExp { object, meta })
     }
 
-    /// `alloc(Cell::Function(..))` without boxing the function first: a function record
-    /// while one is free.
+    /// A new function record of `function`, with no payload or external bytes. The function
+    /// space holds as many records as `RECORD_SPACE_CAPACITY`, so a full space is a panic, as
+    /// for symbols.
     pub(crate) fn alloc_function(&mut self, function: FunctionRecord) -> Value {
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Function(Box::new(function)));
-        }
         self.mark_prototype(function.object.proto());
         self.insert_function_record(function)
     }
@@ -1645,35 +1699,26 @@ impl Heap {
     /// `alloc_unfilled_object_under_flagged_prototype` allocates an object.
     pub(crate) fn alloc_function_under_flagged_prototype(&mut self, function: FunctionRecord) -> Value {
         debug_assert!(self.prototype_flagged(function.object.proto()));
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Function(Box::new(function)));
-        }
         self.insert_function_record(function)
     }
 
-    /// A function record of `function`, else a slot: one allocation, with no payload or
-    /// external bytes.
+    /// A function record of `function`: one allocation, admitted and charged as an object
+    /// record is (`alloc_object_record`).
     #[inline(always)]
     fn insert_function_record(&mut self, function: FunctionRecord) -> Value {
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = function.object.allocated_extra_bytes() + size_of::<FunctionRecord>();
         self.admit_object_contents(&function.object);
         self.allocated += 1;
-        match self.function_records.try_insert(function) {
-            Ok(record_id) => {
-                let value = Value::direct_function(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            Err(mut function) => {
-                // A young run's owner is a record (`YoungOwner`): a function that takes a
-                // legacy slot takes an ordinary run first.
-                if self.properties.holds_young_run(function.object.properties()) {
-                    let storage = self.properties.duplicate(function.object.properties());
-                    function.object.replace_property_storage(storage, [Value::UNDEFINED; INLINE_PROPERTY_COUNT], &mut self.properties);
-                }
-                self.alloc_in_slot(Cell::Function(Box::new(function)), self.tracks_young_cells())
-            }
-        }
+        let Ok(record_id) = self.function_records.try_insert(function) else {
+            panic!("function records exhausted");
+        };
+        let value = Value::direct_function(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Function, "function", bytes);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
     }
 
     /// `alloc(Cell::Promise(..))` without boxing the promise first: a promise record while
@@ -1720,11 +1765,34 @@ impl Heap {
         }
     }
 
-    /// `alloc(Cell::Iterator(..))` without boxing the iterator first: an iterator record
-    /// while one is free.
+    /// A new iterator record, admitted and charged as an object record is (`alloc_object_record`).
+    /// The iterator space holds as many records as `RECORD_SPACE_CAPACITY`, so a full space is a
+    /// panic, as for symbols.
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
-        self.alloc_object_record(iterator, |iterator| &iterator.object, |heap, iterator| heap.iterator_records.try_insert(iterator),
-            Value::direct_iterator, |iterator| Cell::Iterator(Box::new(iterator)))
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = iterator.object.allocated_extra_bytes();
+        self.admit_object_contents(&iterator.object);
+        self.mark_prototype(iterator.object.proto());
+        self.allocated += 1;
+        let Ok(record_id) = self.iterator_records.try_insert(iterator) else {
+            panic!("iterator records exhausted");
+        };
+        let value = Value::direct_iterator(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Iterator, "iterator", bytes);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
+        value
+    }
+
+    /// The aggregate profile's counts for a record allocated without a cell, as `alloc_cell`
+    /// counts a cell: its kind, its variant name, and the bytes it owns beyond its slot.
+    #[cfg(feature = "profile-aggregate")]
+    fn profile_record_allocation(&mut self, kind: CellKind, variant: &'static str, bytes: usize) {
+        self.gc_profile.allocated_kinds[kind as usize] += 1;
+        *self.allocated_variants.entry(variant).or_default() += 1;
+        self.gc_profile.allocated_payload_bytes[kind as usize] += bytes as u64;
+        self.gc_profile.allocated_size_buckets[kind as usize][crate::profile::size_bucket(bytes)] += 1;
     }
 
     /// Allocates `record`, an object kind with its own record space: admitted and charged as one
@@ -1999,6 +2067,10 @@ impl Heap {
             let old_shape = iterator.object.shape() as usize;
             iterator.object.renumber_shape(mapping[old_shape]);
         });
+        self.collection_records.for_each_live_mut(|_, collection| {
+            let old_shape = collection.object.shape() as usize;
+            collection.object.renumber_shape(mapping[old_shape]);
+        });
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
                 continue;
@@ -2107,6 +2179,7 @@ impl Heap {
             function_records,
             promise_records,
             iterator_records,
+            collection_records,
             slots,
             properties,
             narrow_runs,
@@ -2128,6 +2201,9 @@ impl Heap {
             } else if let Some(record_id) = owner.direct_iterator_index() {
                 // SAFETY: iterator owners were collected from live iterator records.
                 Some(&mut unsafe { iterator_records.get_live_mut_unbarriered(record_id) }.object)
+            } else if let Some(record_id) = owner.direct_collection_index() {
+                // SAFETY: collection owners were collected from live collection records.
+                Some(&mut unsafe { collection_records.get_live_mut_unbarriered(record_id) }.object)
             } else {
                 owner
                     .legacy_heap_index()
@@ -2152,21 +2228,14 @@ impl Heap {
             );
         }
     }
+    for_each_record_space!(reset_record_spaces,);
+
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
-        self.object_records = ObjectRecordSpace::default();
-        self.array_records = ArrayRecordSpace::default();
-        self.function_records = FunctionRecordSpace::default();
-        self.promise_records = PromiseRecordSpace::default();
-        self.await_records = AwaitRecordSpace::default();
-        self.environment_records = EnvironmentRecordSpace::default();
-        self.iterator_records = IteratorRecordSpace::default();
-        self.string_records = StringRecordSpace::default();
-        self.small_strings = small_strings::SmallStringSpace::default();
+        self.reset_record_spaces();
         self.small_views = small_strings::SmallViews::default();
         self.small_templates = small_strings::SmallTemplates::default();
         self.clear_string_atoms();
-        self.v128_records = V128RecordSpace::default();
         self.marks.clear();
         self.aged.clear();
         self.free_by_slab.clear();
@@ -2316,15 +2385,17 @@ impl Heap {
     /// settled_reclaimable_bytes`), a large program a process keeps raises its own threshold,
     /// while a stream of short-lived ones keeps the minimum.
     pub(crate) fn charge_reclaimable_program(&mut self, bytes: usize) {
-        /// The least program footprint since the last full collection that makes one due.
-        const MINIMUM_PROGRAM_GROWTH: usize = 256 << 10;
+        /// The least program footprint since the last full collection that makes one due on
+        /// charge. Distinct from `pacing::PACING_MINIMUM_PROGRAM_GROWTH`, the floor
+        /// `should_full_collect` checks through the pacing table on each query.
+        const CHARGE_MINIMUM_PROGRAM_GROWTH: usize = 256 << 10;
         self.reclaimable_program_bytes_since_full = self.reclaimable_program_bytes_since_full.saturating_add(bytes);
         // Programs die without allocating on the heap: once as much program as the last full
         // collection kept has come since, a full collection is due by itself, or a code-load
         // loop keeps every dead program until heap allocation happens to make one
         // (octane-code-load: no full collection in a run). Against what was kept, programs
         // that all stay (one live function per eval) make it due ever less often.
-        if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(MINIMUM_PROGRAM_GROWTH) {
+        if self.reclaimable_program_bytes_since_full >= self.reclaimable_program_bytes_after_full.max(CHARGE_MINIMUM_PROGRAM_GROWTH) {
             self.full_due = true;
             self.request_collection();
         }
@@ -2770,6 +2841,7 @@ impl Heap {
             let properties = &mut self.properties;
             let payload_bytes = &mut self.payload_bytes;
             let live_payload_bytes = &mut live_payload_bytes;
+            let mut collection_counts = (0, 0);
             let mut sweep_rest = || {
                 // Every young run's owner is a direct object or function (`YoungOwner`), so
                 // their sweep shows its survivors, minor or full, and lists those it keeps.
@@ -2861,6 +2933,27 @@ impl Heap {
                             memory_profile.freed_record_cell(Value::direct_iterator(_record_id), slots);
                         }
                     });
+                let collection_records = &mut self.collection_records;
+                collection_counts = collection_records.sweep(full, age, full, |record| match record {
+                    RecordSweep::Keep(record_id, collection) => {
+                        if full {
+                            *live_payload_bytes += collection.entries.payload_bytes();
+                        }
+                        if compacts && collection.object.properties().has_compact_range() {
+                            direct_property_owners.push((
+                                collection.object.properties().start_offset(),
+                                Value::direct_collection(record_id),
+                            ));
+                        }
+                    }
+                    RecordSweep::Dead(_record_id, collection) => {
+                        #[cfg(feature = "profile-memory")]
+                        let slots = properties.len(collection.object.properties());
+                        properties.release_ordinary(collection.object.properties());
+                        #[cfg(feature = "profile-memory")]
+                        memory_profile.freed_record_cell(Value::direct_collection(_record_id), slots);
+                    }
+                });
                 let mut dead_arrays = Vec::new();
                 // Every young run of elements is a young array's (`ArrayElements::young`), so
                 // their sweep, which shows its survivors minor or full, lists those it keeps.
@@ -2947,9 +3040,21 @@ impl Heap {
             self.payload_bytes = self.payload_bytes.saturating_sub(string_out.dead_bytes);
             *live_payload_bytes += string_out.live_bytes;
             let (string_live, string_freed) = (string_out.live, string_out.freed);
+            let (collection_live, collection_freed) = collection_counts;
             // An environment owns no arena storage; dropping a dead one frees its slots.
             let (environment_live, environment_freed) = self.environment_records.sweep(full, age, false, |_| {});
-            live += environment_live
+            // A symbol owns no arena storage; a dead one releases its description, which
+            // `alloc_symbol` charged as external bytes.
+            let mut dead_description_bytes = 0;
+            let (symbol_live, symbol_freed) = self.symbol_records.sweep(full, age, false, |record| {
+                if let RecordSweep::Dead(_record_id, symbol) = record {
+                    dead_description_bytes += symbol.description.as_ref().map_or(0, |description| description.len());
+                    #[cfg(feature = "profile-memory")]
+                    self.memory_profile.freed_symbol(Value::direct_symbol(_record_id));
+                }
+            });
+            self.external_bytes = self.external_bytes.saturating_sub(dead_description_bytes);
+            live += symbol_live + environment_live
                 + object_live
                 + array_live
                 + function_live
@@ -2957,10 +3062,11 @@ impl Heap {
                 + await_live
                 + v128_live
                 + iterator_live
+                + collection_live
                 + string_live;
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.freed += (environment_freed
+                self.gc_profile.freed += (symbol_freed + environment_freed
                     + object_freed
                     + array_freed
                     + function_freed
@@ -2968,10 +3074,12 @@ impl Heap {
                     + await_freed
                     + v128_freed
                     + iterator_freed
+                    + collection_freed
                     + string_freed) as u64;
             }
             #[cfg(not(feature = "profile-aggregate"))]
             let _ = (
+                symbol_freed,
                 environment_freed,
                 object_freed,
                 array_freed,
@@ -2980,6 +3088,7 @@ impl Heap {
                 await_freed,
                 v128_freed,
                 iterator_freed,
+                collection_freed,
                 string_freed,
             );
         }
@@ -3508,12 +3617,19 @@ impl Heap {
         trace_kind: GcTraceKind,
         environments: &mut EnvironmentTrace<'_>,
     ) {
+        let mut ctx = MarkCtx {
+            work,
+            object_roots,
+            ephemerons,
+            trace_kind,
+            environments,
+            last_proto: PushedProtos::default(),
+        };
         let Some(parallel) = parallel else {
-            let mut last_proto = PushedProtos::default();
-            self.drain_work::<false>(work, object_roots, ephemerons, trace_kind, environments, &mut last_proto, 0);
+            self.drain_work::<false, _>(&mut ctx, 0);
             return;
         };
-        self.mark_work_in_rounds(work, object_roots, parallel, ephemerons, trace_kind, environments);
+        self.mark_work_in_rounds(&mut ctx, parallel);
     }
 
     /// `mark_work` with a parallel mark: drains work until a round is due, runs the round,
@@ -3521,38 +3637,25 @@ impl Heap {
     // Kept out of line: `collect_with_object_roots` then inlines one serial visit
     // (`mark_value`), and with it the children walks, as before parallel rounds existed.
     #[inline(never)]
-    fn mark_work_in_rounds(
+    fn mark_work_in_rounds<R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>)>(
         &mut self,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+        ctx: &mut MarkCtx<'_, '_, R>,
         parallel: parallel_mark::ParallelMark<'_>,
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
     ) {
-        let mut last_proto = PushedProtos::default();
         let mut left_to_collector = Vec::new();
-        while self.drain_work::<true>(
-            work,
-            object_roots,
-            ephemerons,
-            trace_kind,
-            environments,
-            &mut last_proto,
-            parallel.round_minimum,
-        ) {
+        while self.drain_work::<true, _>(ctx, parallel.round_minimum) {
             self.mark_parallel_round(
                 parallel,
-                work,
+                ctx.work,
                 &mut left_to_collector,
-                object_roots,
-                ephemerons,
-                trace_kind,
-                environments,
+                ctx.object_roots,
+                ctx.ephemerons,
+                ctx.trace_kind,
+                ctx.environments,
             );
             // A worker counted the visit of an environment it left.
             while let Some(environment) = left_to_collector.pop() {
-                self.mark_value(environment, work, object_roots, ephemerons, trace_kind, environments, &mut last_proto);
+                self.mark_value(environment, ctx);
             }
         }
     }
@@ -3562,36 +3665,33 @@ impl Heap {
     /// round then takes them. Without `ROUNDS` the loop tests nothing per value but the
     /// stack, as the serial mark did before rounds existed.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn drain_work<const ROUNDS: bool>(
+    fn drain_work<const ROUNDS: bool, R>(
         &mut self,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
-        last_proto: &mut PushedProtos,
+        ctx: &mut MarkCtx<'_, '_, R>,
         round_minimum: usize,
-    ) -> bool {
+    ) -> bool
+    where
+        R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+    {
         loop {
-            if ROUNDS && work.len() > round_minimum {
+            if ROUNDS && ctx.work.len() > round_minimum {
                 return true;
             }
-            let Some(value) = work.pop() else {
-                if !environments.has_pending() {
+            let Some(value) = ctx.work.pop() else {
+                if !ctx.environments.has_pending() {
                     return false;
                 }
-                self.trace_environment_edges(environments, work);
+                self.trace_environment_edges(ctx.environments, ctx.work);
                 continue;
             };
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.work_items += 1;
             }
-            self.mark_value(value, work, object_roots, ephemerons, trace_kind, environments, last_proto);
+            self.mark_value(value, ctx);
             #[cfg(feature = "profile-aggregate")]
             {
-                self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
+                self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(ctx.work.len() as u64);
             }
         }
     }
@@ -3599,17 +3699,10 @@ impl Heap {
     /// Marks `value` when it is a heap value not marked yet, pushing the values it keeps
     /// alive onto `work`: the serial mark's visit of one value.
     #[inline(always)]
-    #[allow(clippy::too_many_arguments)]
-    fn mark_value(
-        &mut self,
-        value: Value,
-        work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
-        ephemerons: &mut weak::EphemeronWork,
-        trace_kind: GcTraceKind,
-        environments: &mut EnvironmentTrace<'_>,
-        last_proto: &mut PushedProtos,
-    ) {
+    fn mark_value<R>(&mut self, value: Value, ctx: &mut MarkCtx<'_, '_, R>)
+    where
+        R: FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
+    {
         if let Some(record_id) = value.direct_object_index() {
             if !self.object_records.mark(record_id) {
                 return;
@@ -3625,9 +3718,9 @@ impl Heap {
                 // A survivor (or a re-marked candidate) counts what its snapshot names
                 // (`SatbSnapshot`), pushed here. Its shape's edges are pinned or this
                 // collection's roots, and its owned roots are roots (`Vm::collect_inner`).
-                let first = work.len();
-                Self::object_children(value, object, &self.properties, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
-                for &child in &work[first..] {
+                let first = ctx.work.len();
+                Self::object_children(value, object, &self.properties, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
+                for &child in &ctx.work[first..] {
                     self.rc_increment(child);
                 }
                 self.rc_counted += 1;
@@ -3636,19 +3729,13 @@ impl Heap {
                     value,
                     object,
                     &self.properties,
-                    work,
-                    object_roots,
-                    trace_kind,
-                    last_proto,
+                    ctx.work,
+                    ctx.object_roots,
+                    ctx.trace_kind,
+                    &mut ctx.last_proto,
                 );
             }
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(
-                value,
-                None,
-                |target| mark_bits.is_marked(target),
-                work,
-            );
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_array_index() {
             if !self.array_records.mark(record_id) {
                 return;
@@ -3662,9 +3749,9 @@ impl Heap {
             let array = unsafe { self.array_records.get_live(record_id) };
             if self.rc_marking && self.array_records.is_aged(record_id) {
                 // As for an object: the snapshot's values are counted as they are pushed.
-                let first = work.len();
-                Self::array_children(value, array, &self.properties, |_| false, work, &mut |_, _, _, _, _| {}, trace_kind, &mut PushedProtos::default());
-                for &child in &work[first..] {
+                let first = ctx.work.len();
+                Self::array_children(value, array, &self.properties, |_| false, ctx.work, &mut |_, _, _, _, _| {}, ctx.trace_kind, &mut PushedProtos::default());
+                for &child in &ctx.work[first..] {
                     self.rc_increment(child);
                 }
                 self.rc_counted += 1;
@@ -3675,24 +3762,18 @@ impl Heap {
                     array,
                     &self.properties,
                     |string| string_parts::mark_flat(string_records, string),
-                    work,
-                    object_roots,
-                    trace_kind,
-                    last_proto,
+                    ctx.work,
+                    ctx.object_roots,
+                    ctx.trace_kind,
+                    &mut ctx.last_proto,
                 );
             }
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && let Some(elements) = arrays.get(&value)
             {
-                work.extend(elements.values.values().copied());
+                ctx.work.extend(elements.values.values().copied());
             }
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(
-                value,
-                None,
-                |target| mark_bits.is_marked(target),
-                work,
-            );
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_function_index() {
             if !self.function_records.mark(record_id) {
                 return;
@@ -3708,14 +3789,13 @@ impl Heap {
                 value,
                 function,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            environments.closure(function.env, &function.kind, work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            ctx.environments.closure(function.env, &function.kind, ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_iterator_index() {
             if !self.iterator_records.mark(record_id) {
                 return;
@@ -3731,18 +3811,43 @@ impl Heap {
                 value,
                 &iterator.object,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            Self::iterator_edges(iterator, work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            Self::iterator_edges(iterator, ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
+        } else if let Some(record_id) = value.direct_collection_index() {
+            if !self.collection_records.mark(record_id) {
+                return;
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                self.gc_profile.marked += 1;
+                let kind = match unsafe { self.collection_records.get_live(record_id) }.entries {
+                    CollectionStorage::Map(_) => CellKind::Map,
+                    CollectionStorage::Set(_) => CellKind::Set,
+                };
+                self.gc_profile.marked_kinds[kind as usize] += 1;
+            }
+            // SAFETY: a direct collection Value names an initialized record.
+            let collection = unsafe { self.collection_records.get_live(record_id) };
+            Self::object_children(
+                value,
+                &collection.object,
+                &self.properties,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
+            );
+            Self::collection_edges(&collection.entries, ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else if let Some(record_id) = value.direct_string_index() {
             if let Some(local) = small_strings::small_string_local(record_id) {
                 if self.small_strings.mark(local) {
-                    small_strings::trace_small(&self.small_strings, &mut self.string_records, local, work);
+                    small_strings::trace_small(&self.small_strings, &mut self.string_records, local, ctx.work);
                     if self.rc_marking && self.small_strings.is_aged(local) {
                         // A survivor counts its parts as it marks them (`Heap::rc_epoch`).
                         // SAFETY: just marked, so occupied.
@@ -3760,7 +3865,7 @@ impl Heap {
             }
             // A string holds no edges but its parts': marking it and tracing them is the visit.
             if self.string_records.mark(record_id) {
-                string_parts::trace_parts(&mut self.string_records, record_id, work);
+                string_parts::trace_parts(&mut self.string_records, record_id, ctx.work);
                 if self.rc_marking && self.string_records.is_aged(record_id) {
                     // As for a small string; a flat one, marked in place wherever its holder
                     // is traced, has no parts to count.
@@ -3789,7 +3894,7 @@ impl Heap {
             // A full collection traces environments by what their readers read.
             // SAFETY: a direct environment Value names an initialized record while it is live.
             let function = unsafe { self.environment_records.get_live(record_id) }.function;
-            if environments.whole(value, record_id, function) {
+            if ctx.environments.whole(value, record_id, function) {
                 return;
             }
             if !self.environment_records.mark(record_id) {
@@ -3801,7 +3906,18 @@ impl Heap {
                 self.gc_profile.marked_kinds[CellKind::Environment as usize] += 1;
             }
             // SAFETY: as above.
-            Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, work, last_proto);
+            Self::environment_children(unsafe { self.environment_records.get_live(record_id) }, ctx.work, &mut ctx.last_proto);
+        } else if let Some(record_id) = value.direct_symbol_index() {
+            // A symbol holds no edges: marking it is the whole visit, and a weak key's ephemeron
+            // is told that it is marked.
+            if self.symbol_records.mark(record_id) {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::Symbol as usize] += 1;
+                }
+                ephemeron_tail!(self, ctx, value, None);
+            }
         } else if let Some(record_id) = value.direct_await_index() {
             if !self.await_records.mark(record_id) {
                 return;
@@ -3812,7 +3928,7 @@ impl Heap {
                 self.gc_profile.marked_kinds[CellKind::AwaitState as usize] += 1;
             }
             // SAFETY: a direct await Value names an initialized record.
-            unsafe { self.await_records.get_live(record_id) }.extend_roots(work);
+            unsafe { self.await_records.get_live(record_id) }.extend_roots(ctx.work);
         } else if let Some(record_id) = value.direct_promise_index() {
             if !self.promise_records.mark(record_id) {
                 return;
@@ -3828,14 +3944,13 @@ impl Heap {
                 value,
                 &promise.object,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            promise.record.append_roots(work);
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(value, None, |target| mark_bits.is_marked(target), work);
+            promise.record.append_roots(ctx.work);
+            ephemeron_tail!(self, ctx, value, None);
         } else {
             let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                 return;
@@ -3859,23 +3974,17 @@ impl Heap {
                 value,
                 cell,
                 &self.properties,
-                work,
-                object_roots,
-                trace_kind,
-                last_proto,
+                ctx.work,
+                ctx.object_roots,
+                ctx.trace_kind,
+                &mut ctx.last_proto,
             );
-            let mark_bits = mark_bits!(self);
-            ephemerons.newly_marked(
-                value,
-                Some(cell),
-                |target| mark_bits.is_marked(target),
-                work,
-            );
+            ephemeron_tail!(self, ctx, value, Some(cell));
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && matches!(cell, Cell::Array { .. })
                 && let Some(elements) = arrays.get(&Value::heap(index as u32))
             {
-                work.extend(elements.values.values().copied());
+                ctx.work.extend(elements.values.values().copied());
             }
         }
     }
@@ -3954,10 +4063,13 @@ impl Heap {
             Some(HeapReference::IteratorRecord(record_id)) => {
                 self.iterator_records.barrier(record_id, &self.properties)
             }
+            Some(HeapReference::CollectionRecord(record_id)) => {
+                self.collection_records.barrier(record_id, &self.properties)
+            }
             Some(HeapReference::LegacySlot(index)) => self.remember(index as usize),
             // Strings and vectors are immutable and hold no edges, so nothing is ever stored
             // into them.
-            Some(HeapReference::StringRecord(_) | HeapReference::V128Record(_)) | None => {}
+            Some(HeapReference::StringRecord(_) | HeapReference::V128Record(_) | HeapReference::SymbolRecord(_)) | None => {}
         }
     }
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
@@ -4151,6 +4263,7 @@ impl Heap {
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let data = self.object_store_mut(object, stored).expect("property owner is an object");
+        data.note_constant_write();
         if data.store_packed_inline_values(values) {
             return;
         }
@@ -4359,7 +4472,12 @@ impl Heap {
             return false;
         };
         // SAFETY: as above; the barrier admitted the write.
-        let start = unsafe { (*self.unlogged_object_record(record_id)).proved_arena_start() };
+        let record = unsafe { &*self.unlogged_object_record(record_id) };
+        // A marked object's store retires its readers first (`store_exact_slot`).
+        if record.holds_constant_mark() {
+            return false;
+        }
+        let start = record.proved_arena_start();
         // SAFETY: the run holds the shape's slots.
         unsafe { self.properties.set_flat_at(start, usize::from(slot), value, ty) };
         true
@@ -4492,6 +4610,8 @@ impl Heap {
             function_records,
             promise_records,
             iterator_records,
+            symbol_records,
+            collection_records,
             slots,
             properties,
             memory_profile,
@@ -4528,6 +4648,19 @@ impl Heap {
             let iterator = unsafe { iterator_records.get_live(record_id) };
             let slots = properties.len(iterator.object.properties());
             memory_profile.allocated_iterator(identity, iterator, slots);
+            return;
+        }
+        if let Some(record_id) = identity.direct_symbol_index() {
+            // SAFETY: profile runs immediately after inserting this symbol.
+            let symbol = unsafe { symbol_records.get_live(record_id) };
+            memory_profile.allocated_symbol(identity, symbol);
+            return;
+        }
+        if let Some(record_id) = identity.direct_collection_index() {
+            // SAFETY: profile runs immediately after inserting this collection.
+            let collection = unsafe { collection_records.get_live(record_id) };
+            let slots = properties.len(collection.object.properties());
+            memory_profile.allocated_collection(identity, collection, slots);
             return;
         }
         let index = identity
@@ -4685,20 +4818,6 @@ impl Heap {
                 object(value);
                 work.push(*buffer);
             }
-            Cell::Map {
-                object: value,
-                entries,
-            } => {
-                object(value);
-                work.extend(entries.iter().flat_map(|(key, value)| [key, value]));
-            }
-            Cell::Set {
-                object: value,
-                entries,
-            } => {
-                object(value);
-                work.extend(entries.iter());
-            }
             Cell::ShadowRealm {
                 object: value,
                 caller_global,
@@ -4720,10 +4839,6 @@ impl Heap {
                 work.push(*callback);
                 work.extend(entries.iter().map(|entry| entry.held));
             }
-            Cell::Iterator(iterator) => {
-                object(&iterator.object);
-                Self::iterator_edges(iterator, work);
-            }
             Cell::AwaitState(state) => state.extend_roots(work),
             Cell::ArrayFromAsyncState(state) => {
                 work.extend([state.output, state.result, state.this_arg]);
@@ -4739,13 +4854,6 @@ impl Heap {
             } => {
                 object(value);
                 work.extend([*target, *handler]);
-            }
-            Cell::Function(function) => {
-                object(&function.object);
-                work.push(function.env);
-                if last_proto.first_shared(function.realm) {
-                    work.push(function.realm);
-                }
             }
             Cell::WasmGlobal { header, bits, ty, .. } => {
                 object(&header.object);
@@ -4782,7 +4890,6 @@ impl Heap {
             | Cell::TemporalInstant { object: value, .. }
             | Cell::WasmTag { object: value, .. } => object(value),
             Cell::BigInt(_)
-            | Cell::Symbol(_)
             | Cell::Error(_)
             | Cell::WasmHostFunction {
                 target: crate::heap::WasmHostTarget::Host(_),
@@ -4885,6 +4992,13 @@ impl Heap {
         };
         mark_string(record_id)
     }
+    /// A Map's or Set's edges besides its object: its keys and values, or its values.
+    fn collection_edges(entries: &CollectionStorage, work: &mut Vec<Value>) {
+        match entries {
+            CollectionStorage::Map(entries) => work.extend(entries.iter().flat_map(|(key, value)| [key, value])),
+            CollectionStorage::Set(entries) => work.extend(entries.iter()),
+        }
+    }
     /// An iterator's edges besides its object: its source, cached next method, helper
     /// state and suspended generator.
     fn iterator_edges(iterator: &IteratorRecord, work: &mut Vec<Value>) {
@@ -4982,13 +5096,9 @@ impl Heap {
             | Cell::PromiseResolvingState { .. }
             | Cell::Promise(_) => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
-            Cell::Map { .. } => CellKind::Map,
-            Cell::Set { .. } => CellKind::Set,
-            Cell::Iterator { .. } => CellKind::Iterator,
             Cell::WeakMap { .. } => CellKind::WeakMap,
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
-            Cell::Function(_) => CellKind::Function,
             Cell::BindingReference { .. } => CellKind::Environment,
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmElements(_) | Cell::WasmInstance(_) => CellKind::WasmElements,
@@ -5003,7 +5113,6 @@ impl Heap {
             Cell::WasmException { .. } => CellKind::WasmException,
             Cell::WasmGc { .. } => CellKind::WasmGc,
             Cell::WasmHostFunction { .. } => CellKind::WasmHostFunction,
-            Cell::Symbol(_) => CellKind::Symbol,
             Cell::Date { .. } => CellKind::Date,
             Cell::Error(_) => CellKind::Error,
             Cell::RegExp { .. } => CellKind::RegExp,
@@ -5027,7 +5136,6 @@ impl Heap {
                 Cell::Object(_)
                 | Cell::WasmObject { .. }
                 | Cell::ShadowRealm { .. }
-                | Cell::Iterator { .. }
                 | Cell::ArrayFromAsyncState(_)
                 | Cell::AwaitState(_)
                 | Cell::Proxy { .. }
@@ -5073,14 +5181,10 @@ impl Heap {
                 Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
-                Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
-                Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.allocated_bytes(),
-                Cell::Function(_) => size_of::<FunctionRecord>(),
                 Cell::BigInt(value) => value.spilled_bytes(),
                 Cell::Error(value) => value.capacity(),
-                Cell::Symbol(value) => value.as_ref().map_or(0, |description| description.len()),
             }
     }
 }
@@ -5226,6 +5330,9 @@ fn store_exact_slot(data: &mut Object, properties: &mut ValueArena, slot: usize,
     // SAFETY: the caller matched the exact shape, which holds the slot.
     let (widened, ty) = unsafe { properties.note_exact_slot_word(data.shape(), slot, value) };
     if declines_widening(widened, layout, properties) { return false; }
+    // Code that held the object's values as constants retires before the write
+    // (`Object::note_constant_write`); the exact shape a cache records leaves the mark out.
+    data.note_constant_write();
     // A plain arena run first, by one payload compare (`Object::plain_arena_start`): the
     // extras-tag and flag tests of `exact_storage` were six instructions per store.
     if let Some(start) = data.plain_arena_start() {
@@ -5406,23 +5513,20 @@ impl Heap {
             environments.words += environment.slots.len();
         });
         let mut map_bytes = 0usize;
-        for slot in self.slots.iter() {
-            let Some(cell) = slot.cell.as_ref() else { continue };
-            cells += 1;
-            match cell {
-                Cell::Map { entries, .. } => {
-                    map_bytes += entries.payload_bytes();
+        cells += self.slots.iter().filter(|slot| slot.cell.is_some()).count();
+        self.collection_records.for_each_live(|_, collection| {
+            map_bytes += collection.entries.payload_bytes();
+            match &collection.entries {
+                CollectionStorage::Map(entries) => {
                     maps.words += 2 * entries.capacity();
                     maps.take(entries.iter().flat_map(|(key, value)| [key, value]));
                 }
-                Cell::Set { entries, .. } => {
-                    map_bytes += entries.payload_bytes();
+                CollectionStorage::Set(entries) => {
                     sets.words += entries.capacity();
                     sets.take(entries.iter());
                 }
-                _ => {}
             }
-        }
+        });
         let _ = element_capacity;
         // Strings: records and their unit storage (shared storage counted once).
         let (mut strings, mut string_bytes) = (0usize, 0usize);
@@ -5438,9 +5542,8 @@ impl Heap {
         for slot in self.slots.iter() {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
-                Cell::Object(_) => "object", Cell::Array { .. } => "array", Cell::Function(_) => "function",
-                Cell::Map { .. } => "map", Cell::Set { .. } => "set",
-                Cell::Iterator(_) => "iter", Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
+                Cell::Object(_) => "object", Cell::Array { .. } => "array",
+                Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",
             };
@@ -5448,6 +5551,15 @@ impl Heap {
             entry.0 += 1;
             entry.1 += cell.payload_bytes();
         }
+        self.collection_records.for_each_live(|_, collection| {
+            let kind = match collection.entries {
+                CollectionStorage::Map(_) => "map",
+                CollectionStorage::Set(_) => "set",
+            };
+            let entry = kinds.entry(kind).or_default();
+            entry.0 += 1;
+            entry.1 += collection.entries.payload_bytes();
+        });
         let kinds = kinds.iter().map(|(kind, (count, bytes))| format!("{kind}:{count}/{}KB", bytes / 1024)).collect::<Vec<_>>().join(",");
         eprintln!("storage census strings={strings} string_bytes={}KB slot_bytes={} cells[{kinds}]", string_bytes / 1024, std::mem::size_of::<Slot>());
         eprintln!("storage census reasons: wide={:?} eligible={:?} same_class={:?}", reasons[0], reasons[1], reasons[2]);

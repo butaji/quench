@@ -14,7 +14,7 @@ fn unavailable_fault_page_declines_before_changing_canonical_registers() {
     assert!(region.fault_poll);
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);

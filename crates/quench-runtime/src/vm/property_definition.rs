@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let property = match self.string_key_atom(key) {
             Some(atom) => PropertyKey::string(atom),
-            None if matches!(self.heap.get(key), Some(Cell::Symbol(_))) => PropertyKey::symbol(key),
+            None if self.heap.is_symbol(key) => PropertyKey::symbol(key),
             _ => unreachable!("DefineOwnProperty receives a property key"),
         };
         if let PropertyKey::String(atom) = property {

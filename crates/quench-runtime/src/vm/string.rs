@@ -7,43 +7,9 @@ enum StringReplacement {
 
 const MATCH_ALL_FLAGS: &str = "g";
 
-const STRING_METHODS: &[(&str, Native, f64)] = &[
-    ("at", Native::StringAt, 1.0),
-    ("charAt", Native::StringCharAt, 1.0),
-    ("charCodeAt", Native::StringCharCodeAt, 1.0),
-    ("codePointAt", Native::StringCodePointAt, 1.0),
-    ("concat", Native::StringConcat, 1.0),
-    ("endsWith", Native::StringEndsWith, 1.0),
-    ("includes", Native::StringIncludes, 1.0),
-    ("isWellFormed", Native::StringIsWellFormed, 0.0),
-    ("indexOf", Native::StringIndexOf, 1.0),
-    ("lastIndexOf", Native::StringLastIndexOf, 1.0),
-    ("localeCompare", Native::StringLocaleCompare, 1.0),
-    ("match", Native::StringMatch, 1.0),
-    ("matchAll", Native::StringMatchAll, 1.0),
-    ("normalize", Native::StringNormalize, 0.0),
-    ("padEnd", Native::StringPadEnd, 1.0),
-    ("padStart", Native::StringPadStart, 1.0),
-    ("repeat", Native::StringRepeat, 1.0),
-    ("replace", Native::StringReplace, 2.0),
-    ("replaceAll", Native::StringReplaceAll, 2.0),
-    ("search", Native::StringSearch, 1.0),
-    ("slice", Native::StringSlice, 2.0),
-    ("split", Native::StringSplit, 2.0),
-    ("startsWith", Native::StringStartsWith, 1.0),
-    ("substr", Native::StringSubstr, 2.0),
-    ("substring", Native::StringSubstring, 2.0),
-    ("toLocaleLowerCase", Native::StringToLocaleLowerCase, 0.0),
-    ("toLocaleUpperCase", Native::StringToLocaleUpperCase, 0.0),
-    ("toLowerCase", Native::StringToLowerCase, 0.0),
-    ("toString", Native::StringToString, 0.0),
-    ("toWellFormed", Native::StringToWellFormed, 0.0),
-    ("toUpperCase", Native::StringToUpperCase, 0.0),
-    ("trim", Native::StringTrim, 0.0),
-    ("trimEnd", Native::StringTrimEnd, 0.0),
-    ("trimStart", Native::StringTrimStart, 0.0),
-    ("valueOf", Native::StringValueOf, 0.0),
-];
+/// `String.prototype`'s methods with their lengths, in installation order: derived from the
+/// rows of `native_rows`.
+const STRING_METHODS: &[(&str, Native, f64)] = super::native_rows::STRING_METHODS;
 
 struct StringHtmlMethod {
     name: &'static str,
@@ -811,13 +777,14 @@ impl<H: Host> Vm<H> {
             let Some(first) = input.find_units(search.units(), 0) else {
                 return Ok(vm.heap.alloc_string(input));
             };
-            let callback_inputs = match replacement {
-                StringReplacement::Callable(_) => Some([
-                    vm.heap.alloc_string(search.clone()),
-                    vm.heap.alloc_string(input.clone()),
-                ]),
-                StringReplacement::Template(_) => None,
+            // A template replacement is the string-pattern core's (`Vm::replace_units`), the one
+            // body every caller shares; it reads the receiver only when nothing matches.
+            let method = match replacement {
+                StringReplacement::Template(template) =>
+                    return vm.replace_units(p, Value::UNDEFINED, &input, &search, &template, replace_all),
+                StringReplacement::Callable(method) => method,
             };
+            let callback_inputs = Some([vm.heap.alloc_string(search.clone()), vm.heap.alloc_string(input.clone())]);
             vm.with_call_roots(callback_inputs.into_iter().flatten(), |vm| {
                 let search_length = search.units().len();
                 // Empty matches occur at each code-unit boundary. The immutable
@@ -828,28 +795,9 @@ impl<H: Host> Vm<H> {
                 let mut output = super::wtf16::JsStringBuilder::default();
                 while let Some(index) = position {
                     output.append_slice(&input, cursor..index);
-                    let text = match &replacement {
-                        StringReplacement::Callable(method) => {
-                            let [matched, input] =
-                                callback_inputs.expect("callable replacement owns guest strings");
-                            let value = vm.call_value(
-                                p,
-                                *method,
-                                Value::UNDEFINED,
-                                &[matched, Value::number(index as f64), input],
-                            )?;
-                            vm.coerce_js_string(p, value)?
-                        }
-                        StringReplacement::Template(template) => vm.replacement_substitution(
-                            p,
-                            template,
-                            &input,
-                            index,
-                            &search,
-                            &[],
-                            Value::UNDEFINED,
-                        )?,
-                    };
+                    let [matched, whole] = callback_inputs.expect("callable replacement owns guest strings");
+                    let value = vm.call_value(p, method, Value::UNDEFINED, &[matched, Value::number(index as f64), whole])?;
+                    let text = vm.coerce_js_string(p, value)?;
                     output.append(&text);
                     cursor = index + search_length;
                     let next = index + advance;
@@ -904,4 +852,65 @@ fn map_case(units: super::wtf16::Units<'_>, map: impl Fn(&str) -> String) -> JsS
     }
     flush(&units[start..], &mut output);
     JsString::from_units(&output)
+}
+
+/// The integral position of `charCodeAt` and `charAt` for a Number index: ToIntegerOrInfinity
+/// of it (NaN is zero, the rest truncated). `None` for any other value, which the native
+/// coerces, since ToNumber may run guest code.
+#[inline(always)]
+fn string_unit_index(index: Value) -> Option<i64> {
+    if let Some(index) = index.as_int() {
+        return Some(i64::from(index));
+    }
+    let number = index.as_number()?;
+    Some(if number.is_nan() { 0 } else { number.trunc() as i64 })
+}
+
+impl<H: Host> Vm<H> {
+    /// The one body of `String.prototype.charCodeAt`: the unit of the string `receiver` at
+    /// `index`, NaN outside the string, surrogates raw. `None` where the receiver is no string
+    /// or the index is no Number. Interpreter fast paths and the native both call this.
+    #[inline(always)]
+    pub(in crate::vm) fn string_char_code_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
+        let records = self.heap.string_record_base().unwrap_or(std::ptr::null());
+        if let Some(code) = crate::staged::strings::concrete_string_char_code_at(records, receiver, index) {
+            return Some(code);
+        }
+        // Any other flat text: the staged row over its units, the semantics the tiers share.
+        if let Some(code) = self.heap.flat_text(receiver).and_then(|text| crate::staged::builtins::concrete_char_code_at(text.units(), index)) {
+            return Some(code);
+        }
+        let position = string_unit_index(index)?;
+        let text = self.heap.string(receiver)?;
+        let unit = usize::try_from(position).ok().and_then(|position| text.units().get(position));
+        Some(unit.map_or_else(|| Value::number(f64::NAN), |unit| Value::number(unit.into())))
+    }
+
+    /// The one body of `String.prototype.charAt`: the one-unit string of `receiver` at `index`,
+    /// `""` outside the string, shared strings for ASCII units. `None` where the receiver is no
+    /// string or the index is no Number. Interpreter fast paths and the native both call this.
+    #[inline(always)]
+    pub(in crate::vm) fn string_char_at_core(&mut self, receiver: Value, index: Value) -> Option<Value> {
+        let records = self.heap.string_record_base().unwrap_or(std::ptr::null());
+        let table = self.heap.ascii_unit_strings_base().unwrap_or(std::ptr::null());
+        if let Some(character) = crate::staged::strings::concrete_string_char_at(records, table, receiver, index) {
+            return Some(character);
+        }
+        // Any other flat text at an ASCII unit: the staged row, then the unit's shared string.
+        if let Some(byte) = self.heap.flat_text(receiver).and_then(|text| crate::staged::builtins::concrete_char_at_ascii(text.units(), index)) {
+            return Some(self.ascii_byte_string(byte));
+        }
+        let position = string_unit_index(index)?;
+        let unit = {
+            let text = self.heap.string(receiver)?;
+            usize::try_from(position).ok().and_then(|position| text.units().get(position))
+        };
+        Some(match unit {
+            None => self.heap.alloc_string(JsString::from_units(&[])),
+            Some(unit) => match self.ascii_unit_string(unit) {
+                Some(value) => value,
+                None => self.heap.alloc_string(JsString::from_units(&[unit])),
+            },
+        })
+    }
 }

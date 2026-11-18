@@ -11,6 +11,7 @@
 
 use super::*;
 use crate::compile::liveness::transfer;
+use crate::dataflow::{solve, Dataflow};
 use std::num::NonZeroUsize;
 
 /// The views the next uses of a register read; empty when none does before a redefinition.
@@ -49,11 +50,13 @@ fn read_demand(instruction: WideInstruction, register: usize, after: &dyn Fn() -
     use super::super::operations::{equality_operator, NumberRelation};
     let op = instruction.op();
     match op.class() {
-        Class::JumpBinaryFalse if NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
+            && NumberRelation::from_operator(instruction.binary_operator_field()).is_some()
             && equality_operator(instruction.binary_operator_field()).is_none() => Demand::NUMBER,
         // A strict (in)equality reads a Number operand's double (`Lowering::number_strict_equality`).
-        Class::JumpBinaryFalse if equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
-        _ if op.is_get_index() => element_read_demand(instruction, register),
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
+            && equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict) => Demand::NUMBER,
+        _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => element_read_demand(instruction, register),
         _ if op.js_denotation() == JsDenotation::NumericBinary && !instruction.returns_from_frame() => binary_read_demand(instruction, after),
         _ => Demand::TAGGED,
     }
@@ -82,7 +85,7 @@ fn element_read_demand(instruction: WideInstruction, register: usize) -> Demand 
 /// the helper of a call, a construction or a value step to read.
 fn homes_registers(instruction: WideInstruction) -> bool {
     instruction.op().steps_with_result()
-        || matches!(instruction.op().class(), Class::Call | Class::Construct)
+        || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Call) || crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct)
 }
 
 /// The one table of reads: the views the instruction at `pc` reads of `register`.
@@ -126,19 +129,19 @@ impl Demands {
         changed
     }
 
-    /// The row on entry to the block `start..end`: its successors' rows, past each instruction
-    /// from the last, a definition retiring the register's demand and a use adding its own.
+    /// The row on entry to the block `start..end`, from `row`, the join of its successors' rows:
+    /// past each instruction from the last, a definition retiring the register's demand and a use
+    /// adding its own.
     /// The live registers a leave recovers add tagged demand a mask word at a time: an
     /// instruction touches its operands and the registers its live set newly tags, not every
     /// register of the unit (`block_entry_dense` for a unit past one set's width).
     fn block_entry(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-        start: usize, end: usize, masks: Option<&crate::compile::liveness::RegisterMasks>) -> Vec<Demand> {
+        start: usize, end: usize, masks: Option<&crate::compile::liveness::RegisterMasks>, mut row: Vec<Demand>) -> Vec<Demand> {
         use crate::compile::liveness::RegisterSet;
         if self.registers > RegisterSet::BITS as usize {
             let live = |pc: usize, register: Register| masks.is_none_or(|masks| masks.is_live(pc, register));
-            return self.block_entry_dense(program, unit, start, end, &live);
+            return self.block_entry_dense(program, unit, start, end, &live, row);
         }
-        let mut row = self.successor_row(unit, end);
         let all = below(self.registers);
         let recovered = all & !below(usize::from(unit.caller_registers).min(self.registers));
         let mut tagged = RegisterSet::default();
@@ -163,20 +166,9 @@ impl Demands {
         row
     }
 
-    /// The join of the rows of the successors of the block ending before `end`.
-    fn successor_row(&self, unit: &super::super::lane_unit::Unit, end: usize) -> Vec<Demand> {
-        let mut row = vec![Demand::default(); self.registers];
-        let last = unit.instructions[end - 1];
-        for successor in successors(end - 1, last).into_iter().flatten().filter_map(|pc| self.row(pc)) {
-            for (demand, successor) in row.iter_mut().zip(successor) { *demand = demand.union(*successor); }
-        }
-        row
-    }
-
     /// `block_entry` one register at a time, for a unit wider than a register set.
     fn block_entry_dense(&self, program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
-        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool) -> Vec<Demand> {
-        let mut row = self.successor_row(unit, end);
+        start: usize, end: usize, live: &impl Fn(usize, Register) -> bool, mut row: Vec<Demand>) -> Vec<Demand> {
         for pc in (start..end).rev() {
             let instruction = unit.instructions[pc];
             let (uses, defs) = transfer(instruction, program, &program.field_sites, &program.superinstructions);
@@ -213,10 +205,45 @@ fn each(set: crate::compile::liveness::RegisterSet, mut visit: impl FnMut(usize)
     }
 }
 
+/// The backward solve of the demands over the unit's blocks, as a `Dataflow`: a block's output is
+/// its row, and its input is the join of the rows of the blocks it falls or jumps to, so the
+/// join flows from a block to its predecessors. Every row is recorded as it is computed.
+struct DemandSolve<'a> {
+    program: &'a ResidualProgram,
+    unit: &'a super::super::lane_unit::Unit,
+    masks: Option<&'a crate::compile::liveness::RegisterMasks>,
+    /// Each block's `(start, end)`.
+    blocks: Vec<(usize, usize)>,
+    /// The blocks whose rows flow into each block: its predecessors.
+    predecessors: Vec<Vec<usize>>,
+    demands: Demands,
+}
+
+impl Dataflow for DemandSolve<'_> {
+    type State = Vec<Demand>;
+    fn blocks(&self) -> usize { self.blocks.len() }
+    fn edges(&self, block: usize) -> &[usize] { &self.predecessors[block] }
+    fn entry_state(&self, _: usize) -> Option<Vec<Demand>> { Some(vec![Demand::default(); self.demands.registers]) }
+    fn join(&self, into: &mut Vec<Demand>, incoming: &Vec<Demand>) -> bool {
+        let mut changed = false;
+        for (demand, successor) in into.iter_mut().zip(incoming) {
+            let joined = demand.union(*successor);
+            changed |= joined != *demand;
+            *demand = joined;
+        }
+        changed
+    }
+    fn transfer(&mut self, block: usize, state: &Vec<Demand>) -> Vec<Demand> {
+        let (start, end) = self.blocks[block];
+        let row = self.demands.block_entry(self.program, self.unit, start, end, self.masks, state.clone());
+        self.demands.set(start, &row);
+        row
+    }
+}
+
 /// Each block leader's use demand, solved backward to a fixed point over the unit's CFG. A
-/// worklist reaches the round-robin solution: the demand only grows as rows join, so a block
-/// needs solving again only when a successor's row changed, and each change queues its
-/// predecessors alone instead of sweeping every block once more.
+/// block runs again only when a successor's row grew, so each change queues its predecessors
+/// alone instead of sweeping every block once more.
 pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit::Unit,
     leaders: &CompoundBitSet, liveness: &Liveness) -> Demands {
     let Liveness::Unit(masks) = liveness else { return Demands::default() };
@@ -240,19 +267,9 @@ pub(super) fn analyze(program: &ResidualProgram, unit: &super::super::lane_unit:
             if let Some(&target) = block_of.get(successor) && target != usize::MAX { predecessors[target].push(index); }
         }
     }
-    // The lowest queued index is the latest block: a backward analysis solves a block after
-    // the blocks it falls or jumps to (but for backedges), so each runs once per change.
-    let mut work: CompoundBitSet = CompoundBitSet::with_capacity(blocks.len());
-    for index in 0..blocks.len() { work.insert(index); }
-    while let Some(index) = work.iter().next() {
-        work.remove(index);
-        let (start, end) = blocks[index];
-        let entry = demands.block_entry(program, unit, start, end, masks);
-        if demands.set(start, &entry) {
-            for &predecessor in &predecessors[index] { work.insert(predecessor); }
-        }
-    }
-    demands
+    let mut solver = DemandSolve { program, unit, masks, blocks, predecessors, demands };
+    solve(&mut solver);
+    solver.demands
 }
 
 impl Lowering<'_, '_> {

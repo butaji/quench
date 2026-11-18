@@ -86,8 +86,18 @@ pub enum Kind {
     Neg,
     /// `%`, the staged Number remainder.
     Rem,
-    /// `Math.sqrt` of a Number (`codes::SQRT`).
+    /// `Math.sqrt`, `Math.floor`, `Math.ceil`, `Math.trunc`, `Math.abs` and `Math.round` of a Number
+    /// (`codes::SQRT..=codes::ROUND`).
     Sqrt,
+    Floor,
+    Ceil,
+    Trunc,
+    Abs,
+    Round,
+    /// `Math.min`, `Math.max` of two Numbers and `Math.imul` of two int32s (`codes::MIN..=codes::IMUL`).
+    Min,
+    Max,
+    Imul,
 }
 
 impl Kind {

@@ -55,7 +55,7 @@ impl crate::compile::AtomPrefix for SpecializedAtoms {
 fn eval_program(source: &str) -> crate::bytecode::ResidualProgram {
     // A caller's context makes the eval's functions keep their records.
     let context = crate::compile::EvalContext { in_function: true, ..Default::default() };
-    Engine::specialize_eval_with_context(source, "eval-rewrites.js", &SpecializedAtoms, false, context, &[], &[]).unwrap()
+    Engine::specialize_eval_with_context(source, "eval-rewrites.js", &SpecializedAtoms, false, context, &[], &[], None).unwrap()
 }
 
 #[test]

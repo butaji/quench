@@ -33,6 +33,8 @@ pub(crate) enum Class {
     WasmI64BinaryRaw,
     WasmI64BinaryImmediateRaw,
     WasmI64UnaryRaw,
+    WasmFloatBinary64Raw,
+    WasmFloatUnary64Raw,
     /// A Wasm return of a raw i64 register, which boxes the word where a `Value` cannot hold it.
     WasmReturn64,
     WasmScalarConvert,
@@ -149,6 +151,15 @@ pub(crate) enum Class {
     WasmJumpI32Zero,
     WasmSimd,
     WasmSimdShuffle,
+    WasmTableSize,
+    WasmTableGet,
+    WasmTableSet,
+    WasmTableGrow,
+    WasmTableFill,
+    WasmTableCopy,
+    WasmTableInit,
+    WasmMemoryInit,
+    WasmSegmentDrop,
 }
 
 impl Class {
@@ -161,7 +172,7 @@ impl Class {
 /// decoder is the interpreter's hand path alone (a tier leaves at its exact PC).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Decoder {
-    /// A register move, a constant, a jump or a return.
+    /// A register move, a constant, a jump, a return or a suspension (`await`, `yield`, `yield*`).
     Flow,
     /// A frame local's load or store.
     Local,

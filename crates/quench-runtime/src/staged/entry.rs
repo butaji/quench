@@ -4,9 +4,10 @@
 //! the entry's address, so the code never changes when the site's feedback does (the entry
 //! record is the one feedback authority).
 
-use super::object::{Form, Rep, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
+use super::object::{Form, arena_run, decode_narrow, extras_pointer, has_extras, inline_storage, plain_payload};
+use crate::typed_ir::Representation;
 use super::slot_store::store_slot;
-use super::{RecordSpace, Stage};
+use super::{StagedRecordSpace, Stage};
 use super::region::Region;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 use crate::vm::NATIVE_FIELD_CACHE_LAYOUT as ENTRY;
@@ -91,7 +92,7 @@ fn plain_store<S: Stage>(stage: &mut S, record: S::Word, slot: S::Word, value: S
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let plain = plain_payload(stage, payload);
     stage.guard(plain, miss)?;
-    store_slot(stage, record, payload, slot, Form::Either, (value, Rep::Tagged), miss)
+    store_slot(stage, record, payload, slot, Form::Either, (value, Representation::Tagged), miss)
 }
 
 /// A store of `value` through the own cache entry `offset` bytes into the table of `tables`: the
@@ -106,7 +107,7 @@ pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), ob
     stage.guard(own, miss)?;
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     if gated {
-        let open = stage.store_gate(RecordSpace::Object, id, value);
+        let open = stage.store_gate(StagedRecordSpace::Object, id, value);
         stage.guard(open, miss)?;
     }
     let slot = entry_slot(stage, entry);

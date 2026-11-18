@@ -29,6 +29,7 @@ impl Heap {
         self.function_records.for_each_live(|_, function| visit(&function.object, properties));
         self.promise_records.for_each_live(|_, promise| visit(&promise.object, properties));
         self.iterator_records.for_each_live(|_, iterator| visit(&iterator.object, properties));
+        self.collection_records.for_each_live(|_, collection| visit(&collection.object, properties));
         for slot in self.slots.iter() {
             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
                 visit(object, properties);

@@ -10,10 +10,12 @@ use crate::vm::in_presence::InPresence;
 /// The operator of a comparison that is a `Binary`, which writes a boolean to a register, or a `JumpBinaryFalse`, which branches
 /// where the comparison fails.
 fn comparison_operator(instruction: WideInstruction) -> Option<u32> {
-    match instruction.op().class() {
-        Class::Binary => Some(instruction.binary_operator()),
-        Class::JumpBinaryFalse => Some(instruction.binary_operator_field()),
-        _ => None,
+    if super::super::meaning_compiled::is_binary(instruction) {
+        Some(instruction.binary_operator())
+    } else if super::super::meaning_compiled::is_jump_binary_false(instruction) {
+        Some(instruction.binary_operator_field())
+    } else {
+        None
     }
 }
 
@@ -159,7 +161,7 @@ fn instanceof_jump(known: Known, pc: u32, instruction: WideInstruction, dst: Reg
 /// The rows of a `JumpBinaryFalse` of `instanceof` or `in` the VM remembers an answer for: the comparison's row, writing its boolean to
 /// the register `scratch`, then the jump to the instruction's target where that boolean is false.
 pub(super) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
-    (instruction.op().class() == Class::JumpBinaryFalse).then_some(())?;
+    matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })).then_some(())?;
     let compared = instanceof_jump(known, pc, instruction, scratch).or_else(|| membership_row(known, pc, instruction, scratch))?;
     let jump = Decoded::number(Kind::JumpFalse, None, Some(Source::Register(scratch)), None, Some(instruction.jump_target()));
     Some(vec![compared, jump])
@@ -173,7 +175,8 @@ impl<H: crate::Host> crate::vm::Vm<H> {
         (0..code.len()).map(|pc| {
             let register = Some(code[pc]).filter(|instruction| is_instanceof(*instruction))?.operand_c().register_index()?;
             let named = match origin(code, &joins, pc, register) {
-                Origin::Written(load) if load.op().class() == Class::LoadName => self.global_value(program, load),
+                Origin::Written(load) if matches!(crate::staged::Operation::<(), ()>::decode_load_name(load, ()),
+                    Some(crate::staged::Operation::LoadName { receiver: None, .. })) => self.global_value(program, load),
                 Origin::Entry => parameters.get(usize::from(register)).copied(),
                 Origin::Written(_) | Origin::Merged => None,
             };

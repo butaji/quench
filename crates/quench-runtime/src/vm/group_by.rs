@@ -36,9 +36,9 @@ impl<H: Host> Vm<H> {
             let next = self.heap.root(next);
             next_root = Some(next);
             let result = match kind {
-                GroupByKind::Object => Cell::Object(Self::empty_object(Value::NULL)),
-                GroupByKind::Map => Cell::Map {
-                    object: Self::empty_object(
+                GroupByKind::Object => self.heap.alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                GroupByKind::Map => self.heap.alloc_map(
+                    Self::empty_object(
                         self.realm
                             .intrinsics
                             .builtin_prototypes
@@ -46,10 +46,9 @@ impl<H: Host> Vm<H> {
                             .copied()
                             .unwrap_or(self.map_proto),
                     ),
-                    entries: Default::default(),
-                },
+                    Default::default(),
+                ),
             };
-            let result = self.heap.alloc(result);
             let result = self.heap.root(result);
             result_root = Some(result);
             let mut index = 0u64;
@@ -121,16 +120,18 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let group = match kind {
-            GroupByKind::Object => match self.heap.get(key).cloned() {
-                Some(Cell::Symbol(_)) => self.symbol_property(result, key),
-                _ if let Some(name) = self.heap.string(key).cloned()  => {
+            GroupByKind::Object => {
+                if self.heap.is_symbol(key) {
+                    self.symbol_property(result, key)
+                } else if let Some(name) = self.heap.string(key).cloned() {
                     let atom = self.intern_js_atom(&name);
                     self.own_property(result, atom)
+                } else {
+                    unreachable!("ToPropertyKey returns a string or symbol")
                 }
-                _ => unreachable!("ToPropertyKey returns a string or symbol"),
-            },
+            }
             GroupByKind::Map => self.map_entry_index(result, key).map(|index| {
-                let Some(Cell::Map { entries, .. }) = self.heap.get(result) else {
+                let Some(entries) = self.heap.map_entries(result) else {
                     unreachable!("groupBy owns a Map result")
                 };
                 entries.value_at(index)
@@ -148,19 +149,19 @@ impl<H: Host> Vm<H> {
                 ),
             });
             match kind {
-                GroupByKind::Object => match self.heap.get(key).cloned() {
-                    Some(Cell::Symbol(_)) => {
+                GroupByKind::Object => {
+                    if self.heap.is_symbol(key) {
                         self.set_index(p, result, key, group)?;
-                    }
-                    _ if let Some(name) = self.heap.string(key).cloned()  => {
+                    } else if let Some(name) = self.heap.string(key).cloned() {
                         let atom = self.intern_js_atom(&name);
                         self.set_property(result, atom, group)?;
+                    } else {
+                        unreachable!("ToPropertyKey returns a string or symbol");
                     }
-                    _ => unreachable!("ToPropertyKey returns a string or symbol"),
-                },
+                }
                 GroupByKind::Map => {
                     let key_hash = self.same_value_zero_hash(key);
-                    let Some(Cell::Map { entries, .. }) = self.heap.get_mut(result) else {
+                    let Some(entries) = self.heap.map_entries_mut(result) else {
                         unreachable!("groupBy owns a Map result")
                     };
                     entries.push((key, group), key_hash);

@@ -33,11 +33,7 @@ struct WriteRequest {
     root: RootId,
     lease: super::stream_binding::RequestLease,
 }
-fn put(c: &mut Context<'_>, o: RootId, n: &str, v: RootId) -> Result<(), RootedError> {
-    let k = c.string_rooted(n);
-    c.define_data_property_rooted(o, k, v, true, true, true)?;
-    Ok(())
-}
+use crate::modules::util_shared_vm::named_put as put;
 fn err(c: &mut Context<'_>, message: &str) -> Result<RootedError, RootedError> {
     let e = c.type_error_rooted(message)?;
     Ok(c.throw(e))

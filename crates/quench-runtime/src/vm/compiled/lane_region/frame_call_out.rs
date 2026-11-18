@@ -177,7 +177,7 @@ pub(super) fn global_write(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, 
     let general = super::cold_block(stage.builder);
     let done = stage.builder.create_block();
     let record = stage.and_imm(bits, u64::from(u32::MAX));
-    emit_unlogged_property_store_guard(stage.builder, crate::staged::RecordSpace::Object, frame.payload, record, value, general);
+    emit_unlogged_property_store_guard(stage.builder, crate::staged::StagedRecordSpace::Object, frame.payload, record, value, general);
     stage.store_u64(OBJECT_SLOTS, address, 0, value);
     stage.jump(done, &[]);
     stage.builder.switch_to_block(general);

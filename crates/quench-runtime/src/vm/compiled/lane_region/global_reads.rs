@@ -69,7 +69,7 @@ impl Lowering<'_, '_> {
         if !self.division().folds(BindingTime::Stable) { return; }
         let Some(end) = self.loop_end(header) else { return };
         let global = self.loop_realm(header, end);
-        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| instruction.op().is_get_field());
+        let folds = global.is_some() || self.unit.instructions[header..=end].iter().any(|instruction| matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })));
         let stable = folds && (header..=end).all(|pc| self.keeps_stable_facts(pc, self.unit.instructions[pc]));
         if !(stable || global.is_some()) || !self.enters_only_at_header(header, end) { return; }
         let exit = self.guard_exit(state, header as u32);

@@ -5,7 +5,6 @@
 //! against, and what each memory policy lets compile. A tuning experiment changes a row here,
 //! never a controller.
 
-use crate::bytecode::Class;
 use crate::jit_mode::Tier;
 
 /// The thresholds every tier controller reads.
@@ -68,9 +67,6 @@ pub(in crate::vm) struct Stitch {
     /// The inline depth: activations a leave inside inlined code materializes, the caller's
     /// included.
     pub(in crate::vm) max_depth: usize,
-    /// The opcode classes a callee body may hold: the numeric rows of the stencil library, its jumps
-    /// (the site's own rows), and the `Return` that becomes a move and a jump to the continuation.
-    pub(in crate::vm) classes: &'static [Class],
 }
 
 /// Parts per thousand, the unit of a prior's share.
@@ -391,11 +387,6 @@ const MEASURED: Tiers = Tiers {
         max_total_instructions: 96,
         window_registers: 32,
         max_depth: 3,
-        classes: &[
-            Class::Move, Class::ToNumeric, Class::LoadConst, Class::Binary, Class::NumericAdd, Class::NumericMultiply,
-            Class::IncDec, Class::Unary, Class::JumpBinaryFalse, Class::JumpTrue, Class::JumpFalse, Class::Jump, Class::Return,
-            Class::LoadCapture,
-        ],
     },
     priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, base_entry_ns: 30, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
@@ -452,6 +443,7 @@ const BY_POLICY: [PolicyTiers; crate::MemoryPolicy::ALL.len()] = [
 
 /// The one tier predicate: whether any of `tiers` may run for a function under `policy` and the
 /// process's JIT mode (`jit_mode::tiers_allowed`).
+#[inline]
 pub(in crate::vm) fn tier_may_run(policy: crate::MemoryPolicy, tiers: &[crate::jit_mode::Tier]) -> bool {
     by_policy(policy).js_function_tiers && crate::jit_mode::tiers_allowed(tiers)
 }

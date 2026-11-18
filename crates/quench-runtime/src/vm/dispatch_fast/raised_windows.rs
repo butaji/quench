@@ -16,16 +16,17 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;
     }
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    let activation = *vm.lane_stack.activations.last()?;
-    let script = *activation.script().filter(|script| script.completion.is_windowed())?;
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
+    let activation = *vm.lane_stack.activations().last()?;
+    // An in-place request's throw fails it where its frame unwinds (`fail_materialized_request`).
+    let script = *activation.script().filter(|script| script.completion.is_windowed() && script.completion != Completion::AsyncRequest)?;
     if vm.lane_stack.iterators.last().is_some_and(|(owner, _)| *owner == depth) {
         return None;
     }
     // SAFETY: the context's program outlives the lane run, and `record` is one of the running
     // function's records.
     let (code, call_pc) = unsafe { (&*(*cx).code, record.offset_from((*cx).base) as u32) };
-    if code.function(activation.function as usize).handler_at(call_pc).is_some() {
+    if code.function(activation.function() as usize).handler_at(call_pc).is_some() {
         return None;
     }
     let owner = unsafe { (*cx).root };
@@ -38,7 +39,7 @@ pub(super) fn settle_raised_window<H: Host>(cx: *mut LaneContext<H>, record: Ip)
         }
         _ => {
             vm.finish_generator_window(script.callee);
-            lane_raised_exit(cx, activation.call)
+            lane_raised_exit(cx, activation.call())
         }
     })
 }

@@ -17,7 +17,7 @@ fn setter_site_bit(site: usize) -> (usize, u64) {
 }
 
 /// Whether a general store called a setter at the site at cache index `site`.
-fn met_setter(site: usize) -> bool {
+pub(super) fn met_setter(site: usize) -> bool {
     let (word, bit) = setter_site_bit(site);
     SETTER_SITES.with_borrow(|sites| sites.get(word).is_some_and(|bits| bits & bit != 0))
 }
@@ -27,7 +27,7 @@ fn met_setter(site: usize) -> bool {
 /// (`Vm::set_field_uncached`): an ordinary object's own or inherited accessor, with no proxy
 /// up its chain to mediate an inherited one, which the site then caches. `None` for any other
 /// store, a private name's among them.
-fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
+pub(super) fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::Atom, site: usize) -> Option<Value> {
     if let Some((_, setter)) = vm.cached_field_accessor(object, atom, site) {
         return setter;
     }
@@ -42,34 +42,6 @@ fn stored_setter<H: Host>(vm: &mut Vm<H>, object: Value, atom: crate::bytecode::
     setter
 }
 
-/// A store of the record `i` (at `ip`) to `object` that meets a setter of the running
-/// program the lane activates: its activation with the stored value as its one argument and
-/// `object` as its receiver, whose completion leaves the record's registers as they are
-/// (`Completion::Assigns`). `None`, before any effect, leaves any other store to its path;
-/// an activation the lane has no room for exits at the record, where the general path makes
-/// the call.
-pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction, object: Value) -> Option<Resumed> {
-    let vm = unsafe { vm(cx) };
-    let site = vm.field_cache_index(i.c);
-    if !met_setter(site) {
-        return None;
-    }
-    let setter = stored_setter(vm, object, i.imm(), site)?;
-    let target = lane_script_target(cx, setter).filter(|target| !target.forwards())?;
-    let this = lane_call_this(vm, &target, object)?;
-    // SAFETY: the record's value register is one of the running function's.
-    let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };
-    Some(match lane_activate_kept::<H, false>(cx, r, ip, &target, stored, this) {
-        Ok((registers, next)) => {
-            if let Some(Activation { kind: ActivationKind::Script(script), .. }) = vm.lane_stack.activations.last_mut() {
-                script.completion = Completion::Assigns;
-            }
-            Resumed::At(registers, next, Carried::script(cx))
-        }
-        Err(next) => Resumed::Exit(next),
-    })
-}
-
 /// What the call of `activation`, which completed with `value` and receiver `this`, yields
 /// before a forwarder's or a promise's substitution: [[Construct]] of an ordinary constructor
 /// its returned object, otherwise the receiver it allocated; a setter's store
@@ -79,7 +51,7 @@ pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, comp
     match completion {
         completion if completion.constructs() && !vm.is_object_like(value) => this,
         // SAFETY: the call record belongs to the caller's live view.
-        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers.get(unsafe { (*activation.call).a }),
+        Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers().get(unsafe { (*activation.call()).a }),
         _ => value,
     }
 }

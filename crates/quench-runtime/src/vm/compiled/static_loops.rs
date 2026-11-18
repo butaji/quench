@@ -3,7 +3,7 @@
 //! Instructions keep their original unit PCs, origins and recovery homes.
 
 use super::{facts, lane_unit::Unit};
-use crate::{Value, bytecode::{Class, ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
+use crate::{Value, bytecode::{ControlFlowLayout, Op, Operand, OperandKind, ResidualProgram, WideInstruction}};
 use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberRelation, PartialOrderStage};
 use cranelift_codegen::bitset::CompoundBitSet;
 
@@ -52,20 +52,23 @@ fn operand(program: &ResidualProgram, values: &[Option<Value>], operand: Operand
 /// Static evaluation uses the interpreter's Number denotations. Unknown operands
 /// remain dynamic; no guest conversion or effect is executed by the compiler.
 fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: WideInstruction) {
+    let decoded = crate::vm::compiled::decoded(instruction);
     if !scalar_body(instruction) {
-        if instruction.op().loads_frame_local() && instruction.numeric_local_target().is_none() {
+        // A plain local load decodes; `LoadLocal` and a plain slot past u16 do not.
+        if super::meaning_compiled::loads_frame_local(instruction) && instruction.numeric_local_target().is_none() {
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
-        } else if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Nop)) && !instruction.op().control_flow_layout().jumps() {
+        } else if !matches!(decoded, Some(crate::staged::Operation::Nop)) && !instruction.op().control_flow_layout().jumps() {
             values.fill(None);
         }
         return;
     }
-    let value = match instruction.op().class() {
-        Class::LoadConst => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
-        Class::Move => values.get(usize::from(instruction.register_b())).copied().flatten(),
-        Class::IncDec if instruction.numeric_local_target().is_none() => {
+    let value = match () {
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() =
+            program.constants.get(instruction.constant_index()).and_then(facts::immediate),
+        _ if matches!(decoded, Some(crate::staged::Operation::Move { .. })) => values.get(usize::from(instruction.register_b())).copied().flatten(),
+        _ if matches!(decoded, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. }))) => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
                 .zip(instruction.boolean_flag()).map(|(value, decrement)| Value::number(if decrement { value - 1.0 } else { value + 1.0 }))
         }
@@ -94,7 +97,9 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
 
 fn scalar_body(instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
-        && (matches!(instruction.op().class(), Class::LoadConst | Class::Move | Class::IncDec)
+        && (crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some()
+            || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. }))
+            || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::IncDec { .. })))
             || (instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary
                 && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
                     || NumberBitwise::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()
@@ -178,7 +183,8 @@ pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -
         if header >= latch { continue; }
         let instructions = residual.as_deref().unwrap_or(&unit.instructions);
         let condition = instructions[header];
-        if !condition.op().is_jump_binary_false() || condition.result_flags() != 0 { continue; }
+        if !matches!(crate::vm::compiled::decoded(condition), Some(crate::staged::Operation::CompareJump { .. }))
+            || condition.result_flags() != 0 { continue; }
         let exit = condition.jump_target() as usize;
         if exit <= latch || !instructions[header + 1..latch].iter().copied().all(scalar_body)
             || unit.markers.iter().any(|pc| *pc > header && *pc < latch) { continue; }
@@ -209,7 +215,7 @@ mod tests {
             .is_some_and(|atom| &program.atoms[atom as usize] == "step")).unwrap();
         let body = program.function(caller);
         let unit = lane_unit::unit(&program, caller as u32, body, &|owner, pc|
-            (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| op.op().is_call()))
+            (owner == caller as u32 && body.instructions().nth(pc as usize).is_some_and(|op| super::meaning_compiled::is_call(op)))
                 .then_some(CallTarget { function: callee as u32, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
         assert_eq!(unit.frames.len(), 1);
@@ -224,9 +230,9 @@ mod tests {
         let changed: Vec<_> = residual.iter().zip(&unit.instructions).enumerate()
             .filter(|(_, (after, before))| after.imm() != before.imm()).collect();
         assert_eq!(changed.len(), 2);
-        assert_eq!(changed[0].1.0.op(), Op::Nop);
+        assert!(matches!(crate::vm::compiled::decoded(changed[0].1.0), Some(crate::staged::Operation::Nop)));
         let (pc, (after, before)) = changed[1];
-        assert_eq!(after.op(), Op::Jump);
+        assert!(matches!(crate::vm::compiled::decoded(after), Some(crate::staged::Operation::Jump)));
         assert!((before.jump_target() as usize) < pc && after.jump_target() as usize > pc);
         assert!(matches!(unit.origins[pc], lane_unit::Origin::Inlined { .. }));
     }
@@ -257,7 +263,7 @@ mod tests {
         let program = crate::Engine::specialize("function one(){return 1;}function two(){return 2;}function pipe(fn){let count=fn();let value=0;for(let i=0;i<count;i=(i+1)|0)value=(value+1)|0;return value;}", "static-alternatives.js").unwrap();
         let body = program.function(3);
         let unit = lane_unit::unit(&program, 3, body, &|owner, pc| {
-            if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| op.op().is_call()) {
+            if owner == 3 && body.instructions().nth(pc as usize).is_some_and(|op| super::meaning_compiled::is_call(op)) {
                 [1, 2].map(|function| CallTarget { function, callee: CalleeBinding::Function }).to_vec()
             } else { Vec::new() }
         }, &|id| program.function_get(id as usize)).unwrap();

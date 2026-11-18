@@ -61,7 +61,26 @@ fn stitched(vm: &Vm<crate::SystemHost>, module: &crate::WasmModule, index: usize
     let function = code.function(index);
     let params = function.params as usize;
     let no_callee = |_: usize| None;
-    let world = World { constant: &constant, memory_slot, callee: &no_callee };
+    let no_global = |_: usize| None;
+    let no_indirect = |_: usize| None;
+    let no_table = |_: usize| None;
+    let no_vector = |_: usize| None;
+    let no_move = |_: usize| false;
+    let world = World {
+        constant: &constant,
+        memory_slot,
+        memory_stable: false,
+        callee: &no_callee,
+        vm_call: 0,
+        global: &no_global,
+        globals_offset: 0,
+        indirect: &no_indirect,
+        table_callout: 0,
+        table_bindings: &no_table,
+        registers: function.registers,
+        vector_constant: &no_vector,
+        vector_move: &no_move,
+    };
     let bytes = stitch(function, params, true, &world).expect("rows for every instruction");
     let memory = CodeMemory::new(&bytes).expect("code memory");
     // SAFETY: the code begins with the entry routine, which takes the `WasmEntry` ABI.
@@ -209,5 +228,63 @@ fn stitched_float_select_and_unreachable_rows_agree_with_the_interpreter() {
     let (_code, trap) = stitched(&vm, &module, 2);
     for a in [0_i32, 5] {
         assert_eq!(run(trap, &[u64::from(a as u32)]), interpreted(&mut vm, &instance, 2, &[WasmValue::I32(a)]), "trap {a}");
+    }
+}
+
+/// Function 0 fills `c` bytes at `a` with `b` and returns the memory's size in pages plus the
+/// byte at `a`; function 1 copies `c` bytes from `b` to `a` (overlap allowed) and returns the
+/// byte at `a + c - 1`; one page of memory.
+fn bulk_module() -> crate::WasmModule {
+    use Operator::*;
+    let get = |local_index| LocalGet { local_index };
+    let at = |offset| wasmparser::MemArg { align: 0, max_align: 0, offset, memory: 0 };
+    Engine::lower_wasm_module_with_tables(
+        "stitched-bulk",
+        [
+            body(0, vec![], vec![
+                get(0), get(1), get(2), MemoryFill { mem: 0 },
+                MemorySize { mem: 0 }, get(0), I32Load8U { memarg: at(0) }, I32Add, End,
+            ]),
+            body(0, vec![], vec![
+                get(0), get(1), get(2), MemoryCopy { dst_mem: 0, src_mem: 0 },
+                get(0), get(2), I32Add, I32Load8U { memarg: at(0) }, End,
+            ]),
+        ],
+        &WasmTypes::from_functions([FuncType::new([ValType::I32, ValType::I32, ValType::I32], [ValType::I32])]),
+        &[],
+        &[crate::WasmMemory { ty: wasmparser::MemoryType { memory64: false, shared: false, initial: 1, maximum: None, page_size_log2: None }, import: None }],
+        &[],
+        &[],
+    )
+    .unwrap()
+}
+
+#[test]
+fn stitched_bulk_memory_rows_fill_copy_and_trap_as_the_interpreter() {
+    let module = bulk_module();
+    let mut vm = Vm::new(crate::SystemHost);
+    let instance = vm.instantiate_wasm_module(&module).unwrap();
+    // The interpreter runs over the instance's memory; the rows over this mirror, kept equal by
+    // running the same calls in the same order.
+    let mut memory = vec![0u8; 1 << 16];
+    let (_fill_code, fill) = stitched(&vm, &module, 0);
+    let (_copy_code, copy) = stitched(&vm, &module, 1);
+    let calls: [(usize, [i32; 3]); 9] = [
+        (0, [10, 0xab, 20]),
+        (0, [65530, 7, 6]),
+        (0, [65530, 7, 7]),
+        (0, [0, 1, 0]),
+        (1, [100, 10, 20]),
+        (1, [15, 10, 20]),
+        (1, [5, 10, 20]),
+        (1, [65535, 0, 2]),
+        (1, [0, 65535, 2]),
+    ];
+    for (function, [a, b, c]) in calls {
+        let entry = if function == 0 { fill } else { copy };
+        let words = [u64::from(a as u32), u64::from(b as u32), u64::from(c as u32)];
+        let arguments = [WasmValue::I32(a), WasmValue::I32(b), WasmValue::I32(c)];
+        let expected = interpreted(&mut vm, &instance, function as u32, &arguments);
+        assert_eq!(run_over(entry, &mut memory, &words), expected, "function {function} ({a}, {b}, {c})");
     }
 }

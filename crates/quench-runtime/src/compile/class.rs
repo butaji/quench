@@ -3,6 +3,9 @@ pub(super) use method_name::class_method_function_name;
 
 use super::*;
 
+/// The rejection for a class field key the compiler does not lower.
+const CLASS_FIELD_KEY_UNSUPPORTED: &str = "class field key is unsupported";
+
 impl FunctionCompiler<'_, '_> {
     pub(super) fn class_expression(&mut self, class: &Class<'_>) -> Register {
         self.lower_class(class, false, None)
@@ -575,7 +578,7 @@ impl FunctionCompiler<'_, '_> {
                         Some(backing)
                     } else if computed_key.is_none() {
                         let Some(name) = class_field_storage_name(self.owner, key) else {
-                            self.owner.reject(span, "class field key is unsupported");
+                            self.owner.reject(span, CLASS_FIELD_KEY_UNSUPPORTED);
                             continue;
                         };
                         Some(self.owner.atom(&name))
@@ -766,7 +769,7 @@ impl FunctionCompiler<'_, '_> {
                     match class_field_storage_name(self.owner, &field.key) {
                         Some(name) => Some(self.owner.atom(&name)),
                         None => {
-                            self.owner.reject(span, "class field key is unsupported");
+                            self.owner.reject(span, CLASS_FIELD_KEY_UNSUPPORTED);
                             continue;
                         }
                     }

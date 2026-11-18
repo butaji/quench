@@ -22,6 +22,31 @@ use crate::words::{HOLE_A, HOLE_B, HOLE_FOURTH, Out, S, hole, hole64, slot};
 
 pub(crate) use crate::wasm_codes::*;
 
+#[path = "wasm_rows_memory.rs"]
+mod wasm_rows_memory;
+use wasm_rows_memory::{memory_copy, memory_fill, memory_size};
+#[path = "wasm_rows_global.rs"]
+mod wasm_rows_global;
+use wasm_rows_global::{global_get, global_set};
+#[path = "wasm_rows_indirect.rs"]
+mod indirect;
+#[path = "wasm_rows_simd.rs"]
+mod simd;
+#[path = "wasm_rows_simd_more.rs"]
+mod simd_more;
+#[path = "wasm_rows_convert.rs"]
+mod wasm_rows_convert;
+use wasm_rows_convert::{COPYSIGN_TAG, convert_row, copysign_row};
+#[path = "wasm_rows_instance.rs"]
+mod wasm_rows_instance;
+use wasm_rows_instance::memory_grow;
+#[path = "wasm_rows_call_vm.rs"]
+mod wasm_rows_call_vm;
+use wasm_rows_call_vm::call_vm;
+#[path = "wasm_rows_callout.rs"]
+mod wasm_rows_callout;
+use wasm_rows_callout::callout;
+
 /// The row of codes `K`, `OP`, `W`, `SHAPE` (`wasm_library.rs`).
 #[inline(always)]
 pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u8>(s: S) -> Out {
@@ -36,6 +61,11 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
             }
             LOAD => memory_load::<OP>(s),
             CALL => call(s),
+            CALL_VM => call_vm(s),
+            CALL_INDIRECT => indirect::call_indirect(s),
+            GLOBAL_GET => global_get::<OP>(s),
+            GLOBAL_SET => global_set::<OP>(s),
+            FLOAT_BINARY if OP == COPYSIGN_TAG => copysign_row::<W>(s),
             FLOAT_BINARY => {
                 let operator = const { float_binary_operator(OP) };
                 let word = float_binary(&mut ConcreteWasm, operator, const { float_of(W) }, read::<HOLE_A>(&s), read::<HOLE_B>(&s));
@@ -48,13 +78,7 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 write::<0>(&s, word);
                 Out::Next(s)
             }
-            CONVERT => match convert(&mut ConcreteWasm, const { conversion(OP) }, read::<HOLE_A>(&s)) {
-                Ok(word) => {
-                    write::<0>(&s, word);
-                    Out::Next(s)
-                }
-                Err(error) => trap(s, error),
-            },
+            CONVERT => convert_row::<OP>(s),
             SELECT => {
                 let taken = read::<HOLE_FOURTH>(&s) as u32 != 0;
                 write::<0>(&s, if taken { read::<HOLE_A>(&s) } else { read::<HOLE_B>(&s) });
@@ -66,6 +90,31 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 write::<0>(&s, hole64::<HOLE_B>());
                 Out::Next(s)
             }
+            MEMORY_SIZE => memory_size(s),
+            MEMORY_FILL => memory_fill(s),
+            MEMORY_COPY => memory_copy(s),
+            MEMORY_GROW => memory_grow(s),
+            CALLOUT => callout::<OP>(s),
+            SIMD_BINARY => simd::binary::<OP>(s),
+            SIMD_UNARY => simd::unary::<OP>(s),
+            SIMD_SHUFFLE => simd::shuffle(s),
+            SIMD_CONST => simd::constant(s),
+            SIMD_LOAD => simd::load(s),
+            SIMD_STORE => simd::store(s),
+            SIMD_SPLAT => simd::splat::<OP>(s),
+            SIMD_EXTRACT => simd::extract::<OP>(s),
+            SIMD_REPLACE => simd::replace::<OP>(s),
+            SIMD_MOVE => simd::moves(s),
+            SIMD_MORE_BINARY => simd_more::binary::<OP>(s),
+            SIMD_MORE_COMPARE => simd_more::compare::<OP>(s),
+            SIMD_MORE_FLOAT => simd_more::float::<OP>(s),
+            SIMD_MORE_SHIFT => simd_more::shift::<OP>(s),
+            SIMD_MORE_TEST => simd_more::test::<OP>(s),
+            SIMD_MORE_UNARY => simd_more::unary::<OP>(s),
+            SIMD_MORE_WIDEN => simd_more::widen::<OP>(s),
+            SIMD_MORE_WIDE => simd_more::wide::<OP>(s),
+            SIMD_MORE_CONVERT => simd_more::convert::<OP>(s),
+            SIMD_MORE_LOAD => simd_more::load::<OP>(s),
             _ => Out::Taken(s),
         }
     }
@@ -301,17 +350,41 @@ unsafe fn memory_store<const OP: u32>(s: S) -> Out {
 /// The u-jit's compiled-function ABI, which every Wasm function's entry takes, stitched or not.
 type WasmEntry = unsafe extern "C" fn(usize, u64, u64, *const u64, *mut u64) -> u32;
 
+/// The frame header's words (`FRAME_HEADER_WORDS`): the memory base, then the memory length.
+const BASE_WORD: usize = 1;
+const LENGTH_WORD: usize = 2;
+const _: () = assert!(crate::wasm_codes::FRAME_HEADER_WORDS as usize > LENGTH_WORD);
+
+/// After a call (or a VM callout) that may have grown the memory: the frame's length word takes
+/// the context's current length, read at `length_at` (`CONTEXT_MEMORY_LENGTH`, a hole), since a
+/// callee's growth refreshes the context and not this frame's header. The base is reloaded from
+/// the header; it never moves under a call (`World::memory_stable` admits calls only where it
+/// cannot), and the pins are reloaded from the header afterwards.
+#[inline(always)]
+pub(crate) unsafe fn reload_memory(s: &mut S, length_at: usize) {
+    unsafe {
+        let header = s.frame as *mut usize;
+        let length = *((s.ctx + length_at) as *const u64) as usize;
+        *header.add(LENGTH_WORD) = length;
+        s.p[1] = *header.add(BASE_WORD);
+        s.p[2] = length;
+    }
+    // Wasm rows keep nothing in the other pins (the status pin is written only on a leave), so
+    // a call row hands them on as constants: the call need not save them around itself.
+    s.p[0] = 0;
+    s.p[3] = 0;
+    s.f = [0.0; 8];
+}
+
 /// Calls the entry in the cell at hole B's address: the arguments are the registers from hole A
 /// on, the result goes to hole 0's register, and a trap's status leaves. The call clobbers the
-/// pins; the memory's base and length come back from the frame header (`FRAME_HEADER_WORDS`).
+/// pins; afterwards the memory's length is the context's (`reload_memory`, hole `HOLE_FOURTH`).
 #[inline(always)]
 unsafe fn call(mut s: S) -> Out {
     unsafe {
         let entry: WasmEntry = core::mem::transmute(*(hole64::<HOLE_B>() as *const usize));
         let status = entry(s.ctx, s.p[1] as u64, s.p[2] as u64, slot::<HOLE_A>(&s) as *const u64, slot::<0>(&s) as *mut u64);
-        let header = s.frame as *const usize;
-        s.p[1] = *header.add(1);
-        s.p[2] = *header.add(2);
+        reload_memory(&mut s, hole64::<HOLE_FOURTH>() as usize);
         if status != 0 {
             s.p[0] = status as usize;
             return Out::Exit(s);

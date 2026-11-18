@@ -53,9 +53,7 @@ struct Comparison {
     in_progress: Vec<RootId>,
 }
 
-fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
-    c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
-}
+use crate::modules::util_shared_vm::type_of_value as type_of;
 
 /// `typeof value === 'object' && value !== null`.
 fn is_object(c: &Context<'_>, value: RootId) -> bool {
@@ -70,9 +68,7 @@ fn is_undefined(c: &Context<'_>, value: RootId) -> bool {
     type_of(c, value) == ValueType::Undefined
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn brand(c: &mut Context<'_>, value: RootId, brand: BuiltinBrand) -> Result<bool, RootedError> {
     c.has_builtin_brand_rooted(value, brand)

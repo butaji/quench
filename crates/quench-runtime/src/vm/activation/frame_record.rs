@@ -49,6 +49,8 @@ pub(crate) struct FrameRecord {
     pub(in crate::vm) live_registers: Option<RegisterSet>,
     /// The heap's collection epoch when the frame suspended (`Heap::collection_epoch`).
     suspended_epoch: u64,
+    /// The last suspension's pc and the registers live there (`Vm::park_frame`).
+    pub(in crate::vm) suspension_live: Option<(usize, Option<RegisterSet>)>,
     /// What its windowed resumes derive once (`generator_windows::window_plan`).
     pub(in crate::vm) window_plan: Option<crate::vm::dispatch_fast::WindowPlan>,
     /// Skip one function-entry tier attempt when the frame runs again (`Frame::js_jit_skip_entry_once`).
@@ -60,6 +62,10 @@ pub(crate) struct FrameRecord {
     /// The resume pc of the binding site the direct eval the activation is running was called
     /// at (`CallerView::binding_site`).
     pub(in crate::vm) binding_site_pc: Option<u32>,
+    /// The frame's own `this` is authoritative (`Frame::fixed_this`), as its call decided
+    /// (`Vm::initialize_activation_bindings`): an activation that pushed no lexical `this`
+    /// binding has no other place to read it from when it runs again.
+    fixed_this: bool,
 }
 
 #[cfg(test)]
@@ -196,11 +202,13 @@ impl FrameRecord {
             active_iterators: Vec::new(),
             with_objects: Vec::new(),
             live_registers: None,
+            suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
+            fixed_this: false,
         };
         record.bind_window();
         Box::new(record)
@@ -239,21 +247,21 @@ impl FrameRecord {
 
     /// `frame`'s suspended state, moved: its register file and buffers keep their storage. What
     /// a run derives for itself (the operation's field and binding site, the capture cache,
-    /// a fixed `this`, the `with` base) is not kept.
+    /// the `with` base) is not kept.
     pub(in crate::vm) fn capture(frame: Box<Frame>) -> Box<Self> {
         let Frame {
             context, reflected_parameters, original_arguments, program, function, pc, env, this,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
             pc_is_resume: _, source_field: _, binding_site_pc: _,
             initialized_registers: _, capture_cache: _, with_base: _, js_jit_interpreter_started: _,
-            fixed_this: _, js_jit_skip_entry_once,
+            fixed_this, js_jit_skip_entry_once,
         } = *frame;
         let prefix = ShadowFrame { this: this.to_bits(), ..ShadowFrame::EMPTY };
         let mut record = Self {
             prefix, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: None, suspended_epoch: 0, window_plan: None, js_jit_skip_entry_once, environment_window: false,
-            binding_site_pc: None,
+            live_registers: None, suspended_epoch: 0, suspension_live: None, window_plan: None, js_jit_skip_entry_once, environment_window: false,
+            binding_site_pc: None, fixed_this,
         };
         record.bind_window();
         Box::new(record)
@@ -275,7 +283,8 @@ impl FrameRecord {
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,
             locals, dynamic_bindings, captured, registers, active_iterators, with_objects,
-            live_registers: _, suspended_epoch: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            live_registers: _, suspended_epoch: _, suspension_live: _, window_plan: _, js_jit_skip_entry_once, environment_window: _, binding_site_pc: _,
+            fixed_this,
         } = *self;
         Box::new(Frame {
             context, reflected_parameters, original_arguments, program, function, pc,
@@ -289,7 +298,7 @@ impl FrameRecord {
             capture_cache: CaptureCache::default(),
             active_iterators, with_objects, with_base,
             js_jit_interpreter_started: None,
-            fixed_this: false,
+            fixed_this,
         })
     }
 
@@ -300,7 +309,7 @@ impl FrameRecord {
         out.extend(self.context.callee());
         out.extend_from_slice(&self.original_arguments);
         out.extend_from_slice(&self.with_objects);
-        out.extend([self.env, self.this()]);
+        extend_this_env_roots(out, self.this(), self.env);
         Value::extend_heap_values(out, &self.locals);
         out.extend(self.dynamic_bindings.iter().map(|(_, value)| *value));
         match self.live_registers {
@@ -340,11 +349,13 @@ impl Clone for FrameRecord {
             active_iterators: self.active_iterators.clone(),
             with_objects: self.with_objects.clone(),
             live_registers: self.live_registers,
+            suspension_live: self.suspension_live,
             suspended_epoch: self.suspended_epoch,
             window_plan: None,
             js_jit_skip_entry_once: self.js_jit_skip_entry_once,
             environment_window: false,
             binding_site_pc: None,
+            fixed_this: self.fixed_this,
         };
         copy.bind_window();
         copy
@@ -395,15 +406,24 @@ impl Snap for FrameRecord {
             with_objects: Snap::unsnap(reader)?,
             captured: Snap::unsnap(reader)?,
             live_registers: None,
+            suspension_live: None,
             suspended_epoch: 0,
             window_plan: None,
             js_jit_skip_entry_once: false,
             environment_window: false,
             binding_site_pc: None,
+            fixed_this: false,
         };
         record.bind_window();
         Ok(record)
     }
+}
+
+/// Appends the receiver and environment of an activation to `out`, the two context words every
+/// activation holds beside its registers, which a collection traces as roots.
+#[inline]
+pub(in crate::vm) fn extend_this_env_roots(out: &mut Vec<Value>, this: Value, env: Value) {
+    out.extend([this, env]);
 }
 
 /// Clears the `registers` outside `live`: each past the set's width, and the runs of dead ones

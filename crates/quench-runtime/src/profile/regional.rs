@@ -1,5 +1,5 @@
 use super::Profile;
-use crate::bytecode::{DispatchClass, Instr, ResidualProgram};
+use crate::bytecode::{DispatchClass, ResidualProgram};
 
 impl Profile {
     #[inline(always)]
@@ -58,10 +58,13 @@ pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgr
                 general[1] += counts[1];
             }
         }
-        for (pc, instruction) in function.code.iter().enumerate() {
-            if let Some(start) = backward_edge_target(*instruction, pc) {
-                regions.push(region(profile, program_id, id, start, pc, counts));
+        for (source, target) in function.back_edges() {
+            // A wide record's packed word holds its index, not a jump, so the packed scan this
+            // replaces never saw a wide back edge: keep it out.
+            if function.code[source].is_wide() {
+                continue;
             }
+            regions.push(region(profile, program_id, id, target, source, counts));
         }
     }
     regions.sort_unstable_by_key(|region| std::cmp::Reverse(region.binaries.iter().sum::<u64>()));
@@ -163,14 +166,6 @@ fn binary_count(function: &crate::bytecode::Function, counts: &[u64]) -> u64 {
         })
         .map(|(pc, _)| counts.get(pc).copied().unwrap_or(0))
         .sum()
-}
-
-fn backward_edge_target(instruction: Instr, pc: usize) -> Option<usize> {
-    if !instruction.op().control_flow_layout().jumps() {
-        return None;
-    }
-    let target = instruction.jump_target() as usize;
-    (target <= pc).then_some(target)
 }
 
 impl Profile {

@@ -656,6 +656,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: LaneViews,
+    /// Per Wasm function a collection found on the stack: the live registers holding raw
+    /// words at each pc (`raw_webs::raw_live`), `None` for a function with no raw op.
+    raw_masks: std::cell::RefCell<FxHashMap<u32, Option<Rc<crate::compile::liveness::RegisterMasks>>>>,
     /// Per function: what the JavaScript tier found at its entries (`js_entry_facts`).
     js_entry_facts: JsEntryFactsTable,
     /// Per function: the runs it has made without its lane view (`entry_lane_view`,
@@ -1265,7 +1268,7 @@ impl ProgramStore {
         // A function compiles again on its first call; until then it keeps only its header.
         // A program other owners share keeps its records.
         #[cfg(feature = "profile-aggregate")]
-        let retain_profile_records = std::env::var_os("QUENCH_PROFILE_RETAIN_BYTECODE").is_some();
+        let retain_profile_records = crate::vm::switches::profile_retain_bytecode();
         #[cfg(not(feature = "profile-aggregate"))]
         let retain_profile_records = false;
         if !retain_profile_records && let Some(program) = Rc::get_mut(&mut program) {
@@ -1294,6 +1297,7 @@ impl ProgramStore {
             root_slots: std::cell::OnceCell::new(),
             module: false,
             lane_views,
+            raw_masks: Default::default(),
             js_entry_facts: JsEntryFactsTable::default(),
             lane_deferred,
             compiled: None,
@@ -1492,6 +1496,18 @@ impl ProgramStore {
         }
     }
 
+    /// Whether every slot of `id`'s root environment is the binding itself
+    /// (`RootSlotRule::Binding`), as a strict eval's or a function-wrapped script's is: its
+    /// dense slots then serve a closure's captures as any function environment's do
+    /// (`Vm::target_capture`). A module's imports read through their records, so none is.
+    pub(crate) fn root_slots_are_bindings(&self, id: ProgramId) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.module || !entry.module_imports.is_empty() { return false; }
+        let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+        // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
+        (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
+    }
+
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
     /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
     /// through it.
@@ -1576,6 +1592,26 @@ impl ProgramStore {
     /// The decoded residuals of the stored programs, a shared one once per program sharing it.
     pub(crate) fn decoded_residuals(&self) -> impl Iterator<Item = &ResidualProgram> {
         self.programs.iter().flatten().filter_map(|entry| entry.residual.if_decoded().map(|program| &**program))
+    }
+
+    /// The registers of `function` of program `id` live before each pc that hold raw words,
+    /// which a collection reads past (`RegisterMasks::extend_live_except`); `None` for a
+    /// function with no raw op. Derived once per function, when a collection first asks.
+    pub(crate) fn raw_register_masks(&self, id: ProgramId, function: u32) -> Option<Rc<crate::compile::liveness::RegisterMasks>> {
+        let entry = self.entry(id)?;
+        if entry.residual.kind != crate::bytecode::ProgramKind::Wasm {
+            return None;
+        }
+        if let Some(masks) = entry.raw_masks.borrow().get(&function) {
+            return masks.clone();
+        }
+        let masks = entry
+            .residual
+            .function_get(function as usize)
+            .and_then(|record| crate::compile::liveness::raw_webs::raw_live(record))
+            .map(|live| Rc::new(crate::compile::liveness::RegisterMasks::new(live)));
+        entry.raw_masks.borrow_mut().insert(function, masks.clone());
+        masks
     }
 
     #[inline] pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
@@ -2162,13 +2198,18 @@ impl ProgramStore {
                     for instruction in &function.code {
                         let instruction = instruction.as_wide();
                         match instruction.op().class() {
-                            crate::bytecode::Class::JumpFalse
-                            | crate::bytecode::Class::JumpTrue
-                            | crate::bytecode::Class::JumpBinaryFalse => {
+                            _ if matches!(
+                                crate::vm::compiled::decoded(instruction),
+                                Some(crate::staged::Operation::JumpIf { .. })
+                            ) => {
                                 guard_census.0 = guard_census.0.saturating_add(1);
-                                if instruction.op().is_jump_binary_false() {
-                                    count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
-                                }
+                            }
+                            _ if matches!(
+                                crate::vm::compiled::decoded(instruction),
+                                Some(crate::staged::Operation::CompareJump { .. })
+                            ) => {
+                                guard_census.0 = guard_census.0.saturating_add(1);
+                                count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
                             }
                             crate::bytecode::Class::Unary
                                 if instruction.unary_operator()
@@ -2606,8 +2647,9 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`).
-    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool) -> bool {
+    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`); where
+    /// `now`, its deferred runs are skipped, uncounted.
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
         };
@@ -2616,7 +2658,7 @@ impl ProgramStore {
             || entry
                 .lane_deferred
                 .get(function as usize)
-                .is_some_and(deferred_run_completes)
+                .is_some_and(|runs| now || deferred_run_completes(runs))
                 && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 

@@ -2001,15 +2001,18 @@ impl<H: Host> Vm<H> {
             )?;
             return Ok(namespace);
         }
-        if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
-            let exports = exports
-                .into_iter()
-                .map(|(name, value)| (name, self.module_static_value(value)))
-                .collect();
-            return self.module_namespace(exports);
-        }
-        if let Some(reason) = crate::Engine::static_module_throw(&module.source) {
-            return self.evaluate_static_module_throw(p, reason);
+        match crate::Engine::static_module_outcome(&module.source, &module.name) {
+            Some(crate::compile::StaticModuleOutcome::Exports(exports)) => {
+                let exports = exports
+                    .into_iter()
+                    .map(|(name, value)| (name, self.module_static_value(value)))
+                    .collect();
+                return self.module_namespace(exports);
+            }
+            Some(crate::compile::StaticModuleOutcome::Throw(reason)) => {
+                return self.evaluate_static_module_throw(p, reason);
+            }
+            None => {}
         }
         if self.static_module_plan(module).is_some_and(|plan| {
             plan.link_plan
@@ -4679,7 +4682,7 @@ impl<H: Host> Vm<H> {
         for key in keys {
             let key_name = match self.heap.get(key) {
                 _ if let Some(value) = self.heap.string(key)  => Some(value.host_string().to_owned()),
-                Some(Cell::Symbol(_)) => continue,
+                _ if self.heap.is_symbol(key) => continue,
                 _ => return Err(JsError("invalid import attribute key".into())),
             };
             let descriptor = self.object_get_own_property_descriptor(p, &[attributes, key])?;

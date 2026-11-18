@@ -203,10 +203,10 @@ impl Offsets {
 
 /// Compile `source` in `global`'s realm as a Script placed at `offsets`. Compile errors
 /// carry no source position to decorate their stacks with.
-fn compile(c: &mut Context<'_>, global: RootId, source: &str, filename: &str, offsets: Offsets) -> Result<CompiledScript, RootedError> {
-    let text = match offsets.padding() { padding if padding.is_empty() => std::borrow::Cow::Borrowed(source), padding => (padding + source).into() };
+fn compile(c: &mut Context<'_>, global: RootId, source: &std::rc::Rc<String>, filename: &str, offsets: Offsets) -> Result<CompiledScript, RootedError> {
+    let text = match offsets.padding() { padding if padding.is_empty() => std::rc::Rc::clone(source), padding => std::rc::Rc::new(padding + source.as_str()) };
     let (line, column) = offsets.origin();
-    c.compile_script_in_realm_with_origin(global, &text, filename, line, column)
+    c.compile_script_in_realm_with_origin_owned(global, text, filename, line, column)
 }
 
 /// `new ContextifyScript(code, filename, lineOffset, columnOffset, cachedData,
@@ -216,7 +216,7 @@ pub(crate) fn script(c: &mut Context<'_>, receiver: RootId, args: &[RootId]) -> 
         return Err(type_error(c, "Class constructor ContextifyScript cannot be invoked without 'new'"));
     }
     let source = argument(c, args, 0);
-    let source = c.to_string(source)?;
+    let source = std::rc::Rc::new(c.to_string(source)?);
     let filename = argument(c, args, 1);
     let filename = c.to_string(filename)?;
     let offsets = Offsets::read(c, args, 2, 3)?;

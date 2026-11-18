@@ -7,6 +7,7 @@
 use super::{emit_js_payload_word, Host, JsStepDispatch, Vm};
 use super::super::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 use crate::bytecode::Atom;
+use crate::typed_ir::SlotType;
 use crate::vm::compiled::regions;
 use crate::Value;
 use cranelift_codegen::ir::{self, types};
@@ -14,33 +15,28 @@ use super::object_slots::emit;
 use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
 use cranelift_frontend::FunctionBuilder;
 
-/// The value classes a store proof names: each one `ValueArena::note_slot_value` joins alike
-/// for every value of it, so one store that widened nothing proves every later one. Objects
-/// join their own shape as the slot's target, so theirs needs a settled target too.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-enum StoreClass { Int32 = 1, DirectObject, Null, Undefined }
+/// The proof's place above the slot in its entry's slot word, whose low half the slot fills.
+const STORE_CLASS_SHIFT: u32 = u16::BITS;
+/// The entry's slot word among its stored words.
+const STORE_CLASS_WORD: usize = CACHE.slot_offset / size_of::<u32>();
 
-impl StoreClass {
-    /// The proof's place above the slot in its entry's slot word, whose low half the slot fills.
-    const SHIFT: u32 = u16::BITS;
-    /// The entry's slot word among its stored words.
-    const WORD: usize = CACHE.slot_offset / size_of::<u32>();
-
-    fn of(value: Value) -> Option<Self> {
-        if value.as_int().is_some() { Some(Self::Int32) }
-        else if value.direct_object_index().is_some() { Some(Self::DirectObject) }
-        else if value.is_null() { Some(Self::Null) }
-        else if value.is_undefined() { Some(Self::Undefined) }
-        else { None }
+/// The store class of `value` that a proof names, or `None`: `SlotType::of(value)` filtered to
+/// the four classes a proof records (an int32, a direct object, null, undefined). Those are the
+/// value classes `ValueArena::note_slot_value` joins alike for every value of it, so one store
+/// that widened nothing proves every later one. Objects join their own shape as the slot's
+/// target, so theirs needs a settled target too.
+fn store_class(value: Value) -> Option<SlotType> {
+    match SlotType::of(value) {
+        class @ (SlotType::Int32 | SlotType::DirectObject | SlotType::Null | SlotType::Undefined) => Some(class),
+        _ => None,
     }
 }
 
 /// Records on `site`'s entry the class of `value`, which a native-preserving helper store just
 /// wrote through it without widening its slot's representation, where the class proves
-/// every later store of it (`StoreClass`).
+/// every later store of it (`store_class`).
 pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Value) {
-    let Some(class) = StoreClass::of(value) else { return };
+    let Some(class) = store_class(value) else { return };
     // A native store writes the value's tagged word, which a slot of raw doubles does not hold.
     let entry = vm.field_cache_entry(site);
     if vm.heap.slot_holds_raw_doubles(entry.receiver, usize::from(entry.slot)) { return; }
@@ -48,8 +44,8 @@ pub(super) fn record_store_class<H: Host>(vm: &mut Vm<H>, site: u16, value: Valu
     if !vm.field_cache_records(index) {
         return;
     }
-    let word = &mut vm.field_caches.stored_mut(index)[StoreClass::WORD];
-    let recorded = (*word & !(super::super::object::FIELD_BYTE << StoreClass::SHIFT)) | ((class as u32) << StoreClass::SHIFT);
+    let word = &mut vm.field_caches.stored_mut(index)[STORE_CLASS_WORD];
+    let recorded = (*word & !(super::super::object::FIELD_BYTE << STORE_CLASS_SHIFT)) | ((class as u32) << STORE_CLASS_SHIFT);
     if *word != recorded {
         *word = recorded;
         vm.note_field_cache_write(index);

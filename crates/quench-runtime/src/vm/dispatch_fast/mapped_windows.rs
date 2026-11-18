@@ -9,21 +9,19 @@
 //! `arguments` object does.
 use super::*;
 
-/// The handler of `class`'s record of parameter `slot` when the parameter is one a mapped
+/// The handler of `instruction`'s record of parameter `slot` when the parameter is one a mapped
 /// `arguments` object aliases in a suspended function's window; `None` for any other record.
 pub(super) fn mapped_parameter_handler<H: Host>(
     function: &Function,
-    class: Class,
+    instruction: WideInstruction,
     slot: usize,
 ) -> Option<Handler> {
-    let handler: Handler = match class {
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal => {
-            lane_load_mapped_parameter::<H>
-        }
-        Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal => {
-            lane_store_mapped_parameter::<H>
-        }
-        _ => return None,
+    let handler: Handler = if super::window_records::is_local_load(instruction) {
+        lane_load_mapped_parameter::<H>
+    } else if super::window_records::is_local_store(instruction) {
+        lane_store_mapped_parameter::<H>
+    } else {
+        return None;
     };
     (crate::vm::arguments::mapped_arguments_slot(function, slot).is_some()
         && function.arguments_ride_window())
@@ -102,9 +100,9 @@ impl LaneStack {
 
     /// The function of the environment window activation at `depth` and where its entries start.
     fn window_at<'a>(&self, code: &'a ResidualProgram, depth: usize) -> Option<(&'a Function, *mut Value)> {
-        let activation = self.activations.get(depth)?;
+        let activation = self.activations().get(depth)?;
         activation.script().filter(|script| script.environment)?;
-        let body = code.function_get(activation.function as usize)?;
+        let body = code.function_get(activation.function() as usize)?;
         // SAFETY: an environment activation's window holds its entries after its registers.
         Some((body, unsafe { activation.window_ptr().add(usize::from(body.registers)) }))
     }
@@ -149,7 +147,7 @@ fn mapped_window<H: Host>(
         return None;
     }
     let vm = unsafe { vm(cx) };
-    let function = vm.lane_stack.activations.last()?.function;
+    let function = vm.lane_stack.activations().last()?.function();
     // SAFETY: the context's program outlives the lane run.
     let body = unsafe { &*(*cx).code }.function(function as usize);
     Some((

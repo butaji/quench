@@ -115,7 +115,7 @@ fn ops(list: Vec<IcOp<'static>>) -> &'static [IcOp<'static>] { Box::leak(list.in
 /// An own read of `slot` of an object of `shape` that keeps `len` values.
 fn own(shape: u32, slot: u16, len: usize) -> FieldPlan<'static> {
     FieldPlan::Ops(ops(vec![IcOp::GuardShape(shape),
-        IcOp::LoadSlot { slot, form: Form::Either, storage_len: len, rep: super::object::Rep::Tagged }]))
+        IcOp::LoadSlot { slot, form: Form::Either, storage_len: len, rep: crate::typed_ir::Representation::Tagged }]))
 }
 
 const NO_STORE: StorePlan<'static> = StorePlan::Host;
@@ -165,8 +165,8 @@ fn a_polymorphic_plan_reads_through_the_arm_that_holds_the_shape() {
     let (second, second_shape) = object_of(&mut heap, &[Value::integer(20), Value::integer(31)]);
     let (third, _) = object_of(&mut heap, &[]);
     let arms: &'static [Arm<'static>] = Box::leak(Box::new([
-        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: super::object::Rep::Tagged }]), holds: None },
-        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: super::object::Rep::Tagged }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([first_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: crate::typed_ir::Representation::Tagged }]), holds: None },
+        Arm { shapes: Box::leak(Box::new([second_shape])), ops: ops(vec![IcOp::LoadSlot { slot: 1, form: Form::Either, storage_len: 2, rep: crate::typed_ir::Representation::Tagged }]), holds: None },
     ]));
     let plan = FieldPlan::Arms(arms);
     assert_eq!(read(&heap, plan, first), Some(Value::integer(10)));
@@ -228,7 +228,7 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
         let value = Value::integer(4).to_bits();
         let mut frame = Host::new(0, &plans, vec![0, Value::integer(1).to_bits(), value]);
         let mut stage = Concrete::new(std::ptr::null());
-        let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 });
+        let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false });
         assert!(matches!(stored, Step::Value(word) if word == value));
         assert_eq!(frame.log, [name]);
     }
@@ -241,7 +241,7 @@ fn the_property_instructions_decode_to_their_operations() {
     let get = decode(WideInstruction::new(Op::GetField, 1, 2, 3, 4)).expect("a register-based read decodes");
     assert!(matches!(get, Operation::GetField { base, lookup: FieldLookup::Atom { atom: 4, cache_site: 3, .. } } if base == FieldBase::register(2)));
     let set = decode(WideInstruction::new(Op::SetField, 1, 2, 3, 9)).expect("a store decodes");
-    assert!(matches!(set, Operation::SetField { value: 1, base: Some(2), atom: 9, site: 3 }));
+    assert!(matches!(set, Operation::SetField { value: 1, base: Some(2), atom: 9, site: 3, .. }));
     let this = decode(WideInstruction::new(Op::SetThisField, 1, 0, 3, 9)).expect("a store to this decodes");
     assert!(matches!(this, Operation::SetField { base: None, .. }));
     let delete = decode(WideInstruction::new(Op::Delete, 1, 2, 3, 1)).expect("delete decodes");
@@ -297,7 +297,7 @@ fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, op
 
 /// `plan` run as the store of `value` to `object`'s field.
 fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value) -> (Option<Value>, Vec<&'static str>) {
-    let operation = Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3 };
+    let operation = Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false };
     store_step(heap, plan, vec![0, object.to_bits(), value.to_bits()], operation)
 }
 

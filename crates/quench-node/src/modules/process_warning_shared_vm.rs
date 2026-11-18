@@ -42,9 +42,7 @@ pub(crate) fn emit_experimental(c: &mut Context<'_>, feature: &'static str) -> R
     Ok(())
 }
 
-fn get(c: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
-    c.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 
 fn process(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     c.host_mut().shared_state().borrow().process_module.ok_or_else(|| RootedError::host("process is not initialized"))

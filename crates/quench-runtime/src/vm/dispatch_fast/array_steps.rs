@@ -63,7 +63,7 @@ fn lane_array_callback_activation<H: Host>(
     let this = lane_call_this(unsafe { vm(cx) }, target, this_arg)?;
     // SAFETY: the running lane's context, which nothing else accesses.
     let mut shape = PreparedShape::of(unsafe { &*cx }, ip, target, array_callback_argument_count(native))?;
-    if let ActivationKind::Script(script) = &mut shape.activation.kind {
+    if let ActivationKind::Script(script) = shape.activation.kind_mut() {
         script.completion = completion;
     }
     let entry = shape.entry(target, this);
@@ -340,7 +340,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
     } else {
         lane_apply_array_step(cx, mapped)
     };
-    let depth = vm.lane_stack.activations.len() - 1;
+    let depth = vm.lane_stack.activation_count() - 1;
     if applied.is_none()
         && depth < vm.lane_stack.activation_limit.get()
         && let Some(index) = step.iteration.advance()
@@ -352,7 +352,7 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
             // The callback's completed loops close nothing more.
             vm.lane_stack.drop_owned_from(depth);
             // SAFETY: an activation runs, the innermost, at `depth`.
-            let window = unsafe { vm.lane_stack.activations.get_unchecked(depth) }.window_ptr();
+            let window = unsafe { vm.lane_stack.activations().get_unchecked(depth) }.window_ptr();
             // SAFETY: the window the activation held, which its return left in place.
             let start = unsafe { lane_enter_array_step::<H, true>(cx, &step.entry, &step.iteration, element, index, window) };
             return Some(Resumed::At(unsafe { (*cx).registers }, start, Carried::script(cx)));
@@ -382,8 +382,8 @@ fn lane_finish_array_step<H: Host>(cx: *mut LaneContext<H>, activation: &Activat
     let LaneArrayStep { iteration, to_body, .. } = vm.lane_stack.steps[depth];
     vm.lane_stack.steps.truncate(depth);
     match applied {
-        None => lane_resume_array_iteration(cx, activation.call, iteration, to_body),
-        value => lane_array_complete(cx, activation.call, to_body, value),
+        None => lane_resume_array_iteration(cx, activation.call(), iteration, to_body),
+        value => lane_array_complete(cx, activation.call(), to_body, value),
     }
 }
 

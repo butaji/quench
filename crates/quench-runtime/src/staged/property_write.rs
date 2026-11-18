@@ -95,6 +95,22 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
                 })?;
             return Some(source.answer());
         }
+        StorePlan::Hinted { id, slot, narrow, join } => {
+            let base = base.map_or(FieldBase::THIS, FieldBase::register);
+            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
+            let tagged = source.tagged(stage, frame);
+            if frame.field_store_hinted(stage, at.1, atom, site, tagged, (id, slot), narrow).is_none() {
+                vm_store(stage, frame, join, at, (atom, site), (tagged, fact), miss)?;
+            }
+            return Some(source.answer());
+        }
+        StorePlan::Polymorphic { id, slot } => {
+            let base = base.map_or(FieldBase::THIS, FieldBase::register);
+            let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
+            let tagged = source.tagged(stage, frame);
+            frame.field_store_polymorphic(stage, at.1, atom, site, tagged, (id, slot))?;
+            return Some(source.answer());
+        }
         StorePlan::Add => (&[][..], StoreJoin::Add),
         StorePlan::Host => (&[][..], StoreJoin::Host),
         StorePlan::Bound => (&[][..], StoreJoin::Bound),
@@ -189,7 +205,7 @@ fn tagged_through_layout<S: Stage>(stage: &mut S, (base, object): (S::Word, S::W
     super::slot_store::gate_open(stage, id, (value, fact), miss)?;
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
-    super::slot_store::store_word(stage, address, value, super::object::Rep::Tagged);
+    super::slot_store::store_word(stage, address, value, crate::typed_ir::Representation::Tagged);
     Some(())
 }
 
@@ -211,7 +227,7 @@ fn raw_through_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
     let super::object::Slots::Flat(base) = layout.slots else { return own_store_raw(stage, at.record, arm.slot, number, miss) };
     let offset = stage.site(u64::from(arm.slot) * crate::heap::NATIVE_OBJECT_LAYOUT.property_value_size as u64);
     let address = stage.add_imm(base, offset);
-    super::slot_store::store_word(stage, address, number, super::object::Rep::Float64);
+    super::slot_store::store_word(stage, address, number, crate::typed_ir::Representation::Float64);
     Some(())
 }
 

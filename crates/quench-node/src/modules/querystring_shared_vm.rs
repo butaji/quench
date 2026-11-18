@@ -84,9 +84,7 @@ fn argument(c: &mut Context<'_>, args: &[RootId], index: usize) -> RootId {
     }
 }
 
-fn type_of(c: &Context<'_>, value: RootId) -> ValueType {
-    c.value_type_rooted(value).unwrap_or(ValueType::Undefined)
-}
+use crate::modules::util_shared_vm::type_of_value as type_of;
 
 /// `encodeStr(str, noEscape, hexTable)`: percent-encodes UTF-8, failing on a lone
 /// surrogate at the end of the string.

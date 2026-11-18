@@ -224,7 +224,7 @@ unsafe fn lane_body_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u
     use super::super::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_MISSED};
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run, and `call_pc` is a record of the running frame's function.
-    if !vm.lane_stack.activations.is_empty() {
+    if !vm.lane_stack.activations().is_empty() {
         return unsafe { lane_activation_step_in(cx, call_pc) };
     }
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame(), (*cx).base.add(call_pc as usize)) };

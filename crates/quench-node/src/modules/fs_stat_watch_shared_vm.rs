@@ -35,13 +35,7 @@ pub(crate) struct State {
     watchers: Vec<Watcher>,
 }
 
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    context.get_named_property_rooted(object, name)
-}
+use crate::modules::util_shared_vm::named_get as get;
 fn set(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,

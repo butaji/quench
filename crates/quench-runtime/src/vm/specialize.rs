@@ -78,7 +78,8 @@ fn static_successor(
     pc: usize,
 ) -> Option<usize> {
     let op = instruction.op();
-    if !op.is_jump() || !division.folds_instruction(op) {
+    let jump = matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump));
+    if !jump || !division.folds_instruction(op) {
         return None;
     }
     let stops_here = function.parameter_end_pc != 0 && function.parameter_end_pc as usize == pc;

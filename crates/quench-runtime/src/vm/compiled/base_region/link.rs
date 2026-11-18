@@ -4,8 +4,46 @@ use super::super::LaneHelper;
 use quench_bjit::{call, exit_stub, padded_holes, patch_successor, EXIT_STUB_LEN, HOLES};
 
 /// `jmp rel32`: a resume stub's last row, which jumps to its PC's first row.
+#[cfg(target_arch = "x86_64")]
 pub(super) use quench_bjit::stub::JMP_REL32;
+#[cfg(target_arch = "x86_64")]
 pub(super) const JUMP_LEN: usize = 1 + std::mem::size_of::<u32>();
+/// `b`: a resume stub's last row, which branches to its PC's first row.
+#[cfg(target_arch = "aarch64")]
+pub(super) const JUMP_LEN: usize = quench_bjit::patch::INSN_BYTES;
+
+/// The bytes of a resume stub's jump before `patch_jump` sets its target: `jmp rel32` with a zero
+/// displacement (x86-64).
+#[cfg(target_arch = "x86_64")]
+fn jump_row() -> Vec<u8> {
+    [&[JMP_REL32][..], &[0; JUMP_LEN - 1]].concat()
+}
+
+/// The bytes of a resume stub's jump before `patch_jump` sets its target: `b` with a zero
+/// displacement (AArch64).
+#[cfg(target_arch = "aarch64")]
+fn jump_row() -> Vec<u8> {
+    quench_bjit::stub::A64_B.to_le_bytes().to_vec()
+}
+
+/// Patches the jump at `at` of `code` to a row `delta` bytes from the jump's start. An x86-64
+/// `jmp rel32` displacement counts from the end of its five bytes; an AArch64 `b` displacement
+/// counts from its own start.
+#[cfg(target_arch = "x86_64")]
+fn patch_jump(code: &mut [u8], at: usize, delta: i64) -> Result<(), String> {
+    let displacement = (delta - JUMP_LEN as i64) as i32;
+    code[at + 1..at + JUMP_LEN].copy_from_slice(&displacement.to_le_bytes());
+    Ok(())
+}
+
+/// Patches the jump at `at` of `code` to a row `delta` bytes from the jump's start (AArch64: the
+/// `b`'s displacement counts from its own start).
+#[cfg(target_arch = "aarch64")]
+fn patch_jump(code: &mut [u8], at: usize, delta: i64) -> Result<(), String> {
+    let insn = quench_bjit::patch::patch_branch(quench_bjit::stub::A64_B, quench_bjit::class::BRANCH26, delta).map_err(|error| format!("resume jump: {error:?}"))?;
+    code[at..at + JUMP_LEN].copy_from_slice(&insn.to_le_bytes());
+    Ok(())
+}
 
 /// How a region hands back its result: a loop region stores its word through the entry's result
 /// pointer and returns status 0, or, where a call it made ended the run (`Leave::Status`), that call's
@@ -31,10 +69,6 @@ impl Ending {
         match self { Self::Region => LaneHelper::RegionCall, Self::Body => LaneHelper::Call }
     }
 
-    fn thunk(self) -> &'static str {
-        match self { Self::Region => "entry_thunk", Self::Body => "entry_body" }
-    }
-
     /// The routine that leaves with a word its holes give, and the one that leaves with the
     /// word an exit stub pushed.
     fn tails(self) -> (&'static str, &'static str) {
@@ -52,15 +86,26 @@ pub(super) fn routine(name: &str) -> Result<Stencil, String> {
     quench_bjit::rustc::stencil(name).ok_or_else(|| format!("no stencil routine {name}"))
 }
 
-/// The entry thunk, its call to the first row (at `rows_at`) patched.
+/// The entry thunk, its call to the first row (at `rows_at`) patched; a body's is followed by its
+/// row entry (`entry_rows`, at `rows_entry_offset`), which calls the same first row.
 pub(super) fn thunk(ending: Ending, rows_at: usize) -> Result<Vec<u8>, String> {
-    let stencil = routine(ending.thunk())?;
-    let mut code = stencil.code.clone();
-    for reloc in &stencil.relocs {
-        let at = reloc.offset as usize;
-        patch_successor(&mut code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
+    let mut code = Vec::new();
+    let names: &[&str] = match ending { Ending::Region => &["entry_thunk"], Ending::Body => &["entry_body", "entry_rows"] };
+    for name in names {
+        let stencil = routine(name)?;
+        let start = code.len();
+        code.extend_from_slice(&stencil.code);
+        for reloc in &stencil.relocs {
+            let at = start + reloc.offset as usize;
+            patch_successor(&mut code, at, reloc.class, rows_at as i64 + reloc.addend - at as i64).map_err(|error| format!("entry thunk: {error:?}"))?;
+        }
     }
     Ok(code)
+}
+
+/// Where a body's row entry (`entry_rows`) lies in its code: past `entry_body`, which starts it.
+pub(in crate::vm::compiled) fn rows_entry_offset() -> Option<usize> {
+    routine("entry_body").ok().map(|stencil| stencil.code.len())
 }
 
 /// The code that writes `spills` back to the register file (a pinned double as a canonical
@@ -94,8 +139,9 @@ pub(super) struct Layout<'a> {
     pub(super) homes: Homes,
     pub(super) webs: Webs,
     pub(super) ending: Ending,
-    /// Per caller PC, what the call there recorded of its callee, where the code calls it by its entry.
-    pub(super) callees: &'a [Option<DirectFacts>],
+    /// Per caller PC, what the call there recorded of each callee it reached, latest first: the code
+    /// calls each by its entry.
+    pub(super) callees: &'a [Vec<DirectFacts>],
     /// Per row of a stitched program, where the interpreter resumes if the row leaves.
     pub(super) origins: &'a [Origin],
     /// Per inlined frame, the (parameter register, argument register) copies a leave inside it runs
@@ -113,9 +159,9 @@ pub(super) struct Layout<'a> {
 }
 
 impl Layout<'_> {
-    /// What the call at caller PC `pc` recorded of its callee.
-    pub(super) fn callee(&self, pc: u32) -> Option<&DirectFacts> {
-        self.callees.get(pc as usize)?.as_ref()
+    /// What the call at caller PC `pc` recorded of each callee it reached, latest first.
+    pub(super) fn callees(&self, pc: u32) -> &[DirectFacts] {
+        self.callees.get(pc as usize).map_or(&[], Vec::as_slice)
     }
 
     fn origin(&self, row: u32) -> Option<Origin> {
@@ -357,7 +403,7 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     let targets = parts.iter().map(|part| branch_target(layout, &mut leaves, &starts, *part, n, g)).collect::<Result<Vec<_>, _>>()?;
     let (body_exits, routines) = exit_targets(layout, &body, (g, g + n), &mut leaves)?;
     let stubs = if layout.ending == Ending::Region { resume_stubs(layout, planned, (g, &starts))? } else { Vec::new() };
-    let jump = leave_row([&[JMP_REL32][..], &[0; JUMP_LEN - 1]].concat());
+    let jump = leave_row(jump_row());
     let mut holes: Vec<[u64; HOLES]> = entry.iter().map(|(_, holes)| *holes).collect();
     holes.extend(body.iter().map(|row| row.holes));
     holes.extend(std::iter::repeat_n([0; HOLES], leaves.0.len()));
@@ -436,9 +482,7 @@ pub(super) fn place_rows(ending: Ending, rows: &[Placed], (exits, routines): (&[
     // SAFETY: as above; the stubs lie after the copied code inside `code`.
     let (_, starts) = unsafe { quench_bjit::copy_patch(rows, base.add(head), |row, kind| addresses[row].get(kind as usize).copied().unwrap_or(base as usize)) };
     for jump in jumps {
-        let displacement = starts[jump.target] as i64 - (starts[jump.row] + JUMP_LEN) as i64;
-        let operand = head + starts[jump.row] + 1;
-        code[operand..operand + JUMP_LEN - 1].copy_from_slice(&(displacement as i32).to_le_bytes());
+        patch_jump(&mut code, head + starts[jump.row], starts[jump.target] as i64 - starts[jump.row] as i64)?;
     }
     let thunk_bytes = thunk(ending, head)?;
     code[..head].copy_from_slice(&thunk_bytes);
@@ -454,28 +498,57 @@ mod tests {
     use super::*;
     use quench_bjit::Reloc;
 
+    /// The machine code of a bare return on the host architecture.
+    #[cfg(target_arch = "x86_64")]
+    fn ret() -> Vec<u8> {
+        vec![quench_bjit::RET]
+    }
+
+    /// The machine code of a bare return on the host architecture.
+    #[cfg(target_arch = "aarch64")]
+    fn ret() -> Vec<u8> {
+        quench_bjit::RET.to_vec()
+    }
+
     /// A row that is one `jmp rel32` through its first exit hole.
+    #[cfg(target_arch = "x86_64")]
     fn exiting() -> Stencil {
         let exit = Reloc { offset: 1, class: quench_bjit::REL32, index: quench_bjit::EXIT, addend: -(std::mem::size_of::<i32>() as i64) };
         Stencil { code: vec![quench_bjit::stub::JMP_REL32, 0, 0, 0, 0], relocs: vec![exit], imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 5, hot_len: 5 }
     }
 
+    /// A row that is one `b` through its first exit hole (its displacement counts from its start).
+    #[cfg(target_arch = "aarch64")]
+    fn exiting() -> Stencil {
+        let exit = Reloc { offset: 0, class: quench_bjit::BRANCH26, index: quench_bjit::EXIT, addend: 0 };
+        let code = quench_bjit::stub::A64_B.to_le_bytes().to_vec();
+        Stencil { code, relocs: vec![exit], imm32: Vec::new(), next_jump: None, tail_len: 0, raw_len: 4, hot_len: 4 }
+    }
+
     /// Where the row at `at` of `code` jumps to.
+    #[cfg(target_arch = "x86_64")]
     fn jump_target(code: &[u8], at: usize) -> usize {
         let field = at + 1;
         let displacement = i32::from_le_bytes(code[field..field + std::mem::size_of::<i32>()].try_into().expect("a displacement"));
         (field as i64 + std::mem::size_of::<i32>() as i64 + i64::from(displacement)) as usize
     }
 
+    /// Where the row at `at` of `code` branches to (its `b` displacement counts from `at`).
+    #[cfg(target_arch = "aarch64")]
+    fn jump_target(code: &[u8], at: usize) -> usize {
+        let insn = u32::from_le_bytes(code[at..at + JUMP_LEN].try_into().expect("an instruction"));
+        (at as i64 + quench_bjit::patch::branch_delta(insn, quench_bjit::class::BRANCH26)) as usize
+    }
+
     /// A row's stub and a leave row lie after every hot row, the stub after the routines, and each
     /// exit reaches its own target.
     #[test]
     fn exits_land_in_the_cold_area_behind_the_hot_rows() {
-        let (hot, leave) = (exiting(), leave_row(vec![quench_bjit::RET]));
+        let (hot, leave) = (exiting(), leave_row(ret()));
         let hole = |_: u32| 0u64;
         let rows = [Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &leave, hole: &hole, taken: None, cold: false }];
         let exits = [vec![Target::Stub { pc: 7, routine: 0 }], vec![Target::Row(2)], Vec::new()];
-        let routines = [vec![quench_bjit::RET]];
+        let routines = [ret()];
         let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[]).expect("a layout");
         let head = thunk(Ending::Body, 0).expect("a thunk").len();
         let (second, leave_at) = (head + hot.code.len(), head + 2 * hot.code.len());

@@ -113,7 +113,7 @@ impl<H: Host> Vm<H> {
         let deferred = self
             .programs
             .get(program)
-            .is_some_and(|code| code.functions.get(id as usize).is_some_and(|slot| slot.header().prototype_unobservable));
+            .is_some_and(|code| code.functions.get(id as usize).is_some_and(|slot| slot.header().prototype_unobservable && !slot.header().is_arrow));
         let atom = self.intern_atom("prototype");
         if deferred && self.own_property(caller, atom).is_none() {
             let parent = self.realm_object_prototype(realm);

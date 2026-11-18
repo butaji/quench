@@ -3,6 +3,7 @@
 //! `net` objects and native stream handles that own them.
 
 use crate::host::{NodeHost, SharedNodeState};
+use crate::modules::buffer_codec::latin1_text;
 use crate::modules::net_shared_vm;
 use quench_runtime::{RootId, Runtime, Value};
 use std::cell::RefCell;
@@ -843,10 +844,6 @@ fn buffer_from_bytes(runtime: &mut Runtime<NodeHost>, bytes: &[u8]) -> Result<Ro
     runtime.release_root(store);
     chunk.map_err(|error| error.to_string())
 }
-fn latin1_text(bytes: &[u8]) -> String {
-    bytes.iter().copied().map(char::from).collect()
-}
-
 fn set_text(
     runtime: &mut Runtime<NodeHost>,
     object: RootId,

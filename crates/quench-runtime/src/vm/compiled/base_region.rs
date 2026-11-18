@@ -17,10 +17,11 @@ use super::lane_unit::{Frame as InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use crate::bytecode::{Atom, Class, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
 use crate::code_dependencies::InstanceofFact;
+use crate::typed_ir::Representation;
 use crate::value::Value;
 use crate::vm::dispatch_fast::operand_feedback::OperandKinds;
 use crate::vm::in_presence::InPresence;
-use oxc_ast::ast::{BinaryOperator, UnaryOperator};
+use oxc_ast::ast::BinaryOperator;
 use super::base_rows::{self, Heap, HeapRow};
 use super::{ElementViews, NativeFieldLoad};
 use quench_bjit::numeric::{self, Kind, Place};
@@ -61,6 +62,7 @@ use decode::*;
 use entry_facts::*;
 use globals::*;
 use link::*;
+pub(in crate::vm::compiled) use link::rows_entry_offset;
 use plan::*;
 use repr::*;
 pub(in crate::vm) use resume::ResumeTable;
@@ -332,7 +334,7 @@ fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<Operan
     loop {
         let (webs, renamed) = Webs::split(span, decoded, &merged);
         let reprs = representations(span, &renamed, widened, seen, &webs);
-        let homes = Homes::of(&ranked(&renamed, &reprs, Repr::Int), &ranked(&renamed, &reprs, Repr::Double), webs.orig.clone(), &webs.clashes(span, &renamed));
+        let homes = Homes::of(&ranked(&renamed, &reprs, Some(Representation::Int32)), &ranked(&renamed, &reprs, Some(Representation::Float64)), webs.orig.clone(), &webs.clashes(span, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {
             return (reprs, homes, webs, renamed);

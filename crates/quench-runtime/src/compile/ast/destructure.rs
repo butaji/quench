@@ -48,6 +48,11 @@ pub(super) enum AssignmentReference {
     },
 }
 
+/// The rejection for a destructuring key the compiler does not lower.
+const DESTRUCTURING_KEY_UNSUPPORTED: &str = "destructuring key is unsupported";
+/// The rejection for an assignment target the compiler does not lower.
+const ASSIGNMENT_TARGET_UNSUPPORTED: &str = "assignment target unsupported";
+
 impl FunctionCompiler<'_, '_> {
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
         if let Some(target) = value.left.as_simple_assignment_target() {
@@ -352,7 +357,7 @@ impl FunctionCompiler<'_, '_> {
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(property) => {
                             let Some((key, excluded_key)) = self.pattern_key(&property.name) else {
-                                self.owner.reject(property.span(), "destructuring key is unsupported");
+                                self.owner.reject(property.span(), DESTRUCTURING_KEY_UNSUPPORTED);
                                 continue;
                             };
                             let reference = self.prepare_maybe_default_reference(&property.binding);
@@ -459,7 +464,7 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => {
                 self.owner
-                    .reject(target.span(), "assignment target unsupported");
+                    .reject(target.span(), ASSIGNMENT_TARGET_UNSUPPORTED);
                 AssignmentReference::Name {
                     atom: self.owner.atom("undefined"),
                     environment: None,
@@ -537,7 +542,7 @@ impl FunctionCompiler<'_, '_> {
             _ => {
                 let Some(target) = target.as_assignment_target() else {
                     self.owner
-                        .reject(target.span(), "assignment target unsupported");
+                        .reject(target.span(), ASSIGNMENT_TARGET_UNSUPPORTED);
                     return;
                 };
                 self.assign_pattern(target, value);
@@ -636,7 +641,7 @@ impl FunctionCompiler<'_, '_> {
                 for property in &object.properties {
                     let dst = self.reg();
                     let Some((key, excluded_key)) = self.pattern_key(&property.key) else {
-                        self.owner.reject(property.span, "destructuring key is unsupported");
+                        self.owner.reject(property.span, DESTRUCTURING_KEY_UNSUPPORTED);
                         continue;
                     };
                     excluded.push(excluded_key);

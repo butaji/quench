@@ -69,6 +69,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The value of the active realm's global lexical binding at `index`, where a hint names it
+    /// (`dispatch_fast::lane_load_root_lexical`, `lane_load_name_lexical`): the binding there while
+    /// it is `atom`'s and initialized. The index is only a locator, so a stale one, or a binding
+    /// in its temporal dead zone, gives `None` and the caller takes its walk or refresh.
+    #[inline(always)]
+    pub(super) fn global_lexical_at(&self, atom: Atom, index: u16) -> Option<Value> {
+        self.realm
+            .global_lexical_bindings
+            .get_index(usize::from(index))
+            .filter(|(bound, value)| **bound == atom && !value.is_deleted())
+            .map(|(_, value)| *value)
+    }
+
     #[inline(always)]
     pub(super) fn field_cache_atom_eligible(&self, atom: Atom) -> bool {
         !self
@@ -144,7 +157,6 @@ impl<H: Host> Vm<H> {
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
-            Cell::Function(function) => return self.shape_property_lookup_function(function, atom),
             _ => ReceiverKind::Exotic,
         };
         self.shape_answers(cell.object()?, atom, kind)

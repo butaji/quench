@@ -1,15 +1,26 @@
 //! How a value is held in machine form.
 #![allow(dead_code)]
 
-use super::{IntRange, Type};
+use crate::typed_ir::{IntRange, Type};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// How a value is held in machine form. It is also how the word of an arena slot encodes its
+/// value: a static projection of the slot owner's type (`SlotType::rep`), not a fact stored apart
+/// from it. A specializer that proved the owner's type under a dependency reads and writes the
+/// word in this representation with no tag test.
+///
+/// The variants are ordered narrowest to widest (`Int32`, `Int64`, `Float64`, `Tagged`), so the
+/// greatest of several representations is the widest one that holds all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum Representation {
+    /// A `Value` whose tag the owner proved int32; the bits are the tagged word's.
     Int32,
     /// An integer Number of `IntRange::EXACT` in a signed 64-bit word: the Number's own value,
     /// which an index word and a sum of index words need no binary64 round trip to share.
     Int64,
+    /// The Number as its IEEE double, which every Number is stored as (NaN canonical): a raw
+    /// double is already a valid `Value` word, so the collector reads it as a non-reference.
     Float64,
+    /// Any `Value`, as the interpreter holds it.
     Tagged,
 }
 
@@ -38,6 +49,11 @@ impl Representation {
     /// The register view that holds a value in this representation.
     pub(crate) const fn view(self) -> crate::WasmType {
         REPRESENTATIONS[self as usize].view
+    }
+
+    /// The widest of two representations: the one that holds both values.
+    pub(crate) const fn join(self, other: Self) -> Self {
+        if self as usize >= other as usize { self } else { other }
     }
 
     /// Implicit views supported by the shared emitter. Narrowing and unboxing

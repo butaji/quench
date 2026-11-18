@@ -683,7 +683,7 @@ print(out.join("|"));
 #[test]
 fn typed_array_length_sites_read_the_intrinsic_getter() {
     // A `length` site that read a typed array's reads the intrinsic getter's geometry first
-    // (`lane_get_length_typed`): an own `length`, a subclass getter, arrays and strings at the
+    // (`TYPED_LENGTH_SITE`): an own `length`, a subclass getter, arrays and strings at the
     // same site, a length-tracking view across a resize and a detached buffer read as before.
     let source = r#"
 const out = [];

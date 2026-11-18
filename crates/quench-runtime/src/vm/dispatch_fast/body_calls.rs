@@ -21,13 +21,13 @@ pub(super) fn ends_run<H: Host>(cx: *mut LaneContext<H>, activation: &Activation
         Completion::ReturnsToBody | Completion::ConstructsToBody => {
             let value = setters::completed_value(vm, activation, completion, this, value);
             // SAFETY: the call record belongs to the caller's live view, whose registers the context names.
-            let destination = unsafe { (*activation.call).a } & crate::bytecode::REGISTER_MASK;
+            let destination = unsafe { (*activation.call()).a } & crate::bytecode::REGISTER_MASK;
             unsafe { (*cx).registers }.set(destination, value);
         }
         _ => return None,
     }
     vm.lane_completion.set(LaneCompletion::NativeReturned(value));
-    Some(Resumed::Exit(exit(activation.call)))
+    Some(Resumed::Exit(exit(activation.call())))
 }
 
 /// Whether `activation`, which becomes the frame at index `frame`, is the entry frame of
@@ -55,7 +55,7 @@ pub(super) fn left_lane(resume: Ip) -> bool {
 /// Changes the completion of the lane's `depth`th activation `from` one `to` another;
 /// false, changing nothing, where it holds another or is no script activation.
 fn recomplete<H: Host>(cx: *mut LaneContext<H>, depth: usize, from: Completion, to: Completion) -> bool {
-    match unsafe { vm(cx) }.lane_stack.activations.get_mut(depth).map(|activation| &mut activation.kind) {
+    match unsafe { vm(cx) }.lane_stack.activations_mut().get_mut(depth).map(|activation| activation.kind_mut()) {
         Some(ActivationKind::Script(script)) if script.completion == from => {
             script.completion = to;
             true
@@ -427,7 +427,9 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     // lies outside its records: a loop region's `Callee` exit (`lane_loop_native`) leaves the
     // lane there and needs its PC. `lane_specialize` below takes the prologue's warming step.
     let start = unsafe { (*cx).base };
-    let depth = vm.lane_stack.activations.len() - 1;
+    // Counted without making a plain activation a record: `finish` reads the records, which
+    // spills them, so the index then names this activation.
+    let depth = vm.lane_stack.activation_count() - 1;
     let leave = move |resume: Ip, acc: Value| finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(super::super::program_store::derived_lane_view);

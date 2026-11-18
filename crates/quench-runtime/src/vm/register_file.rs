@@ -1,5 +1,5 @@
 //! A VM frame's register file with the frame context in front of register 0 (M2): the words
-//! `FRAME_CONTEXT` names sit at `registers[-3..0]`, as below every lane activation's window,
+//! `FRAME_CONTEXT` names sit at `registers[-FRAME_CONTEXT..0]` (receiver, environment, captures, then a plain activation's header), as below every lane activation's window,
 //! so a handler reads `this`, the environment and the captures at fixed negative registers
 //! whichever kind of frame it runs on. Everything else sees the registers alone: it derefs to
 //! the slice past the context, and its length, capacity and pointers are the registers'.
@@ -8,7 +8,7 @@ use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::value::Value;
 
 /// The words in front of register 0: captures, environment, receiver (`r[-3]`, `r[-2]`, `r[-1]`).
-pub(in crate::vm) const FRAME_CONTEXT: usize = 3;
+pub(in crate::vm) const FRAME_CONTEXT: usize = crate::staged::frame::CONTEXT_WORDS;
 /// The words a new file holds room for past its context: a typical frame's registers and window plus
 /// `dispatch_fast::INLINED_WINDOW_ROOM`.
 const SPARE_WORDS: usize = 32 + crate::vm::dispatch_fast::INLINED_WINDOW_ROOM;

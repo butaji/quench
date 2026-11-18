@@ -18,14 +18,11 @@ impl<H: Host> Vm<H> {
         }
         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let to_map = native == Native::ArrayGroupToMap;
-        let grouped = self.heap.alloc(if to_map {
-            Cell::Map {
-                object: Self::empty_object(self.map_proto),
-                entries: Default::default(),
-            }
+        let grouped = if to_map {
+            self.heap.alloc_map(Self::empty_object(self.map_proto), Default::default())
         } else {
-            Cell::Object(Self::empty_object(self.object_proto))
-        });
+            self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)))
+        };
         for index in 0..length {
             let value = self.array_value_at(this, index);
             let key = self.call_value(
@@ -44,10 +41,7 @@ impl<H: Host> Vm<H> {
                 .and_then(|atom| self.own_property(grouped, atom))
                 .or_else(|| {
                     self.map_entry_index(grouped, key).and_then(|index| {
-                        match self.heap.get(grouped) {
-                            Some(Cell::Map { entries, .. }) => Some(entries.value_at(index)),
-                            _ => None,
-                        }
+                        self.heap.map_entries(grouped).map(|entries| entries.value_at(index))
                     })
                 });
             if let Some(existing) = existing {
@@ -66,7 +60,7 @@ impl<H: Host> Vm<H> {
                 self.set_property(grouped, atom, bucket)?;
             } else {
                 let key_hash = self.same_value_zero_hash(key);
-                if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(grouped) {
+                if let Some(entries) = self.heap.map_entries_mut(grouped) {
                     entries.push((key, bucket), key_hash);
                 }
             }
