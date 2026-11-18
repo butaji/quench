@@ -89,7 +89,7 @@ const NARROW_WORD: usize = size_of::<u32>();
 const SHORT_RUN: usize = 2 * WIDE_WORD;
 
 #[inline(always)]
-unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
+pub(crate) unsafe fn copy_short(bytes: &[u8], to: *mut u8) {
     let (from, len) = (bytes.as_ptr(), bytes.len());
     // SAFETY: every read is within `bytes` and every write within `to`'s `len` bytes; the
     // overlapping moves write the same bytes twice.
