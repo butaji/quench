@@ -235,9 +235,12 @@ impl<H: Host> Vm<H> {
         let active = self.active_program;
         let constants = self.programs.residual(active).filter(|running| std::ptr::eq(*running, program))
             .map_or(&[][..], |_| self.programs.constants(active));
-        let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
-        let names = |site: u16, atom| self.native_function_name(site, atom);
-        let shape_stable = |shape: u32| self.shape_is_stable(shape);
+        // The VM's facts the lowering may ask, answered from tables taken now: a lowering that
+        // reads no VM state may run off the program's thread (`FactTables`).
+        let tables = FactTables::of(self, &unit, &fields, &global_reads);
+        let instanceofs = |constructor: Value| tables.instanceof(constructor);
+        let names = |site: u16, atom| tables.name(site, atom);
+        let shape_stable = |shape: u32| tables.shape_stable(shape);
         let own_constant = |atom: Atom| self.own_constant_of(atom);
         let construct_plans = |function: u32, pc: u32| targets(function, pc).first().and_then(|target| target.identity())
             .and_then(|callee| super::dispatch_fast::scalar_construct_plan(self, callee));
