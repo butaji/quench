@@ -19,9 +19,16 @@ usage:
   ir_predict.py ops BINARY PLAN [SETTLED]          ops.js loops: predicted vs ir_budget.txt
   ir_predict.py offfloor BINARY                    handlers measured above their floor, ranked
                                                    (ir_budget_handlers.txt), the excess per op
+  ir_predict.py tiers BINARY PLAN BLOG BDIR ULOG UDIR [TIERS_REPORT]
+                                                   no-jit, b-jit and u-jit per op, flagged where
+                                                   no-jit > b-jit > u-jit <= 3C+6 breaks
 
 PLAN: QUENCH_TRACE=bytecode=lanes quench-node --no-jit load_only.cjs ops.js 2> PLAN
-SETTLED: the same trace of a run (settle.cjs). Handler costs are cached beside the binary
+SETTLED: the same trace of a run (settle.cjs).
+BLOG/BDIR (ULOG/UDIR): QUENCH_DEV=sync-compile QUENCH_TRACE=jit-dump=BDIR quench-node --b-jit (--u-jit)
+  jit_dump.cjs ops.js 2> BLOG. The JIT tiers generate code at run time, so their prediction reads the
+  code they compiled (one warm-up per op, no valgrind): each loop's shortest path from its head to its
+  back edge, the cheapest loop of the code compiled for the op's measured loop. Handler costs are cached beside the binary
 (<binary>.handler-costs.tsv) until the binary changes.
 """
 import bisect, collections, heapq, os, re, subprocess, sys
@@ -316,8 +323,141 @@ def command_offfloor(binary):
         print(f"{excess:7.0f} {floor:5}  {handler}  [{','.join(map(str, menu[:10]))}]  {' '.join(ops[:8])}")
 
 
+MIN_JS_LOOP = 4
+
+
+def compiled_loops(path):
+    """Each loop of a dumped piece of JIT code (`code-<n>.bin`): (instructions on the shortest
+    path from its head back to its back edge, calls on that path)."""
+    out = subprocess.run(['objdump', '-D', '-b', 'binary', '-mi386:x86-64', '--no-show-raw-insn', '-w', path],
+                         capture_output=True, text=True).stdout
+    code = []
+    for line in out.splitlines():
+        match = re.match(r'^\s*([0-9a-f]+):\s+(\S+)\s*(.*)$', line)
+        if match:
+            code.append((int(match.group(1), 16), match.group(2), match.group(3)))
+    at = {address: index for index, (address, _, _) in enumerate(code)}
+    loops = []
+    for back, (_, mnemonic, operands) in enumerate(code):
+        target = re.match(r'^0x([0-9a-f]+)', operands)
+        if not mnemonic.startswith('j') or not target or int(target.group(1), 16) not in at:
+            continue
+        head = at[int(target.group(1), 16)]
+        if head > back:
+            continue
+        distance, queue = {head: (1, 0)}, [(1, 0, head)]
+        while queue:
+            length, calls, index = heapq.heappop(queue)
+            if index == back:
+                loops.append((length, calls))
+                break
+            _, m, o = code[index]
+            if m.startswith('ret') or m in ('ud2', '(bad)'):
+                continue
+            jump = re.match(r'^0x([0-9a-f]+)', o)
+            following = [] if m.startswith('jmp') else [index + 1]
+            if m.startswith('j') and jump and int(jump.group(1), 16) in at:
+                following.append(at[int(jump.group(1), 16)])
+            for successor in following:
+                if head <= successor <= back and (successor not in distance or length + 1 < distance[successor][0]):
+                    distance[successor] = (length + 1, calls + m.startswith('call'))
+                    heapq.heappush(queue, (length + 1, calls + m.startswith('call'), successor))
+    return loops
+
+
+def jit_dumps(log):
+    """{op: [(code file stem, site)]} from a jit-dump run of jit_dump.cjs (its stderr)."""
+    dumps, op = collections.defaultdict(list), None
+    for line in open(log):
+        if line.startswith('IRPREDICT-OP '):
+            op = line.split()[1]
+        elif line.startswith('QUENCH_JS_JIT_DUMP ') and op:
+            parts = line.split()
+            dumps[op].append((parts[1], ' '.join(parts[2:4])))
+    return dumps
+
+
+def loop_head(body):
+    backs = [pc for pc, r in body.items() if r['text'].startswith('Jump ') and (jump_target(r['text']) or 1 << 30) <= pc]
+    return jump_target(body[max(backs)]['text']) if backs else None
+
+
+def jit_cost(op, head, dumps, directory):
+    """A JIT tier's predicted Ir/iter of an op's measured loop: the cheapest loop of the last code
+    compiled for that loop's header (a loop region) or for the op's function (a body)."""
+    entries = dumps.get(op, [])
+    region = [stem for stem, site in entries if site == f'loop header={head}']
+    bodies = [stem for stem, site in entries if site.startswith('body')]
+    stem = (region or bodies or [None])[-1]
+    if stem is None:
+        return None, 0
+    # A loop of under four instructions is a spin or copy loop of the prologue, not a JS loop.
+    loops = [loop for loop in compiled_loops(os.path.join(directory, stem + '.bin')) if loop[0] >= MIN_JS_LOOP]
+    return (min(loops) if loops else (None, 0))
+
+
+def measured_tiers(path):
+    """{op: (no-jit, b-jit, u-jit)} from a `QUENCH_IR_BUDGET_MODE=tiers` gate report."""
+    rows = {}
+    if path and os.path.exists(path):
+        for line in open(path):
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    rows[parts[0]] = tuple(float(x) for x in parts[1:4])
+                except ValueError:
+                    pass
+    return rows
+
+
+def command_tiers(binary, plan_path, bjit_log, bjit_dir, ujit_log, ujit_dir, measured_path=None):
+    """Per op: predicted no-jit, b-jit and u-jit Ir/iter and the design's order,
+    no-jit > b-jit > u-jit <= 3 x C + 6, flagged where the prediction breaks it."""
+    costs = handler_costs(binary)
+
+    def static_cost(handler):
+        menu, through = costs.get(handler, ([], None))
+        return (menu[0], False) if menu else (through or 0, True)
+
+    records, chunks = plan(plan_path, binary)
+    bdumps, udumps = jit_dumps(bjit_log), jit_dumps(ujit_log)
+    table, measured = budgets(), measured_tiers(measured_path)
+    print(f"{'op':16}{'no-jit':>8}{'b-jit':>8}{'u-jit':>8}{'C':>7}{'3C+6':>7}  {'measured n/b/u':>22}  predicted breaks")
+    flagged, predicted = collections.Counter(), []
+    for op, stub in op_functions(chunks):
+        body = records.get(chunks[stub])
+        interp = loop_cost(body, lambda r: r['handler'], static_cost) if body else None
+        head = loop_head(body) if body else None
+        if not interp or head is None:
+            continue
+        (b, bcalls), (u, ucalls) = jit_cost(op, head, bdumps, bjit_dir), jit_cost(op, head, udumps, ujit_dir)
+        c, _ = table.get(op, (0.0, 0.0))
+        budget = 3 * c + 6
+        breaks = []
+        if b is None: breaks.append('no b-jit code')
+        elif b >= interp[0]: breaks.append('b-jit>=no-jit')
+        if u is None: breaks.append('no u-jit code')
+        elif b is not None and u >= b: breaks.append('u-jit>=b-jit')
+        if u is not None and c and u > budget: breaks.append('u-jit>3C+6')
+        if bcalls or ucalls: breaks.append(f'calls in loop b={bcalls} u={ucalls}')
+        for brk in breaks: flagged[brk.split(' b=')[0]] += 1
+        predicted.append((op, (interp[0], b, u), (False, bool(bcalls), bool(ucalls))))
+        m = measured.get(op)
+        shown = '/'.join(f'{x:.0f}' for x in m) if m else '-'
+        show = lambda v: f'{v:8}' if v is not None else '       -'
+        print(f"{op:16}{interp[0]:8.0f}{show(b)}{show(u)}{c:7.1f}{budget:7.1f}  {shown:>22}  {', '.join(breaks)}")
+    print('# predicted breaks: ' + ', '.join(f'{k} {v}' for k, v in flagged.most_common()))
+    for index, tier in ((1, 'b-jit'), (2, 'u-jit')):
+        pairs = [(p[index], measured[op][index]) for op, p, calls in predicted if op in measured and p[index] and not calls[index]]
+        if pairs:
+            errors = sorted(abs(a - b) / b for a, b in pairs)
+            share = lambda x: 100 * sum(e <= x for e in errors) / len(errors)
+            print(f"# {tier} vs measured, loops without calls: {len(errors)} ops, median error {100 * errors[len(errors) // 2]:.0f}%, "
+                  f"within 10% {share(0.1):.0f}%, within 25% {share(0.25):.0f}%")
+
+
 if __name__ == '__main__':
-    commands = {'handlers': command_handlers, 'ops': command_ops, 'offfloor': command_offfloor}
+    commands = {'handlers': command_handlers, 'ops': command_ops, 'offfloor': command_offfloor, 'tiers': command_tiers}
     if len(sys.argv) < 3 or sys.argv[1] not in commands:
         sys.exit(__doc__)
     commands[sys.argv[1]](*sys.argv[2:])
