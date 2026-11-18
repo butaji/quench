@@ -23,6 +23,7 @@ pub(super) fn declared_return(program: &ResidualProgram, function: u32) -> Optio
 /// `DeclaredTypes::declared_local` types checkably, as the register each lives in and its type.
 /// Parameters are checked at entry instead (`scalar::declared_entry_types`). The top level keys
 /// as `u32::MAX`, a nested function by its source span start (`compile::typescript::signatures`).
+/// A captured local (`Function::local_slot_captured`) is left out.
 pub(super) fn declared_local_types(program: &ResidualProgram, function: &crate::bytecode::Function) -> Vec<(Register, Type)> {
     let Some(declared) = program.declared_types.as_deref() else { return Vec::new() };
     let key = match function.source_span {
@@ -30,7 +31,10 @@ pub(super) fn declared_local_types(program: &ResidualProgram, function: &crate::
         Some(span) => span.start,
         None => return Vec::new(),
     };
-    function.local_registers.iter().filter(|entry| entry.local >= function.params)
+    // A captured local may be written by a closure through its environment, never through this
+    // register, so a fact on the register would go stale: only a local this frame alone writes is seeded.
+    function.local_registers.iter()
+        .filter(|entry| entry.local >= function.params && !function.local_slot_captured(usize::from(entry.local)))
         .filter_map(|entry| {
             let atom = *function.local_atoms.get(usize::from(entry.local))?;
             let ty = checkable_declared(declared.declared_local(key, &program.atoms[atom as usize])?)?;
