@@ -35,7 +35,7 @@
 
 use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, SITE_OBJECT_AT};
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_METHOD_CACHE_ATOMS, JS_STEP_METHOD_CACHE_ATOM_WORDS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
+use crate::layout::{JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
 use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp, Reached};
@@ -54,9 +54,6 @@ const GET_RECEIVER: u8 = HOLE_A;
 const SET_RECEIVER: u8 = 0;
 /// The first hole of an entry's own operands: the two before it are the row's frame operands.
 const ENTRY_HOLES: u8 = 2;
-/// Bits in a method-cache bitset word, as a shift.
-const WORD_SHIFT: u32 = u64::BITS.trailing_zeros();
-const WORD_BITS: u64 = u64::BITS as u64;
 
 /// The receiver's record id, address and the record table, proved: the frame word at hole `H`
 /// (for a get, above the destination's offset in hole 0, as a site row's) is a direct object and
@@ -110,29 +107,17 @@ fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: 
     }
 }
 
-/// Whether a store of the atom at the next hole is admitted: the program runs specialized and no
-/// method cache names the atom, an atom past the bitset being unnamed (`emit_atom_unnamed`, the
-/// Cranelift reading of the same two payload words).
+/// Whether a store of the atom at the next hole is admitted: the program runs specialized. That no
+/// method cache names the atom is a Stable fact the code holds (`Decoded::atom`, `held_atoms`): naming it
+/// retires the code, and a run already inside learns that from the invalidation word its rows test after
+/// a call (`Heap::Live`), so the row reads no bitset. The atom's hole stays numbered.
 #[inline(always)]
 fn store_admitted(stage: &mut StencilStage, payload: u64) -> Option<()> {
     let specialized = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_STORES_SPECIALIZED as i32);
     let on = stage.ne_imm(specialized, 0u32);
     stage.guard(on, ())?;
-    let atom = stage.site(0);
-    let index = stage.shr_imm(atom, WORD_SHIFT);
-    let length = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_METHOD_CACHE_ATOM_WORDS as i32);
-    let covered = stage.ult(index, length);
-    let named = stage.choose(covered, |stage| {
-        let words = stage.load_u64(Region::Dispatch.mutable(), payload, JS_STEP_METHOD_CACHE_ATOMS as i32);
-        let offset = stage.mul_imm(index, size_of::<u64>() as u64);
-        let address = stage.add(words, offset);
-        let word = stage.load_u64(Region::HeapMeta.mutable(), address, 0);
-        let position = stage.and_imm(atom, WORD_BITS - 1);
-        let shifted = stage.shr_imm(word, position);
-        stage.and_imm(shifted, 1u64)
-    }, |stage| stage.constant(0));
-    let unnamed = stage.eq_imm(named, 0u32);
-    stage.guard(unnamed, ())
+    let _atom = stage.site(0);
+    Some(())
 }
 
 /// The store of the Number in the value place into the receiver's flat slot (a packed receiver
