@@ -133,23 +133,17 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
         index
     }
 
-    /// An equal id accepts; any other is the VM's to relate. The relating path traps on a
-    /// mismatch itself, so both paths join accepted: the rule's mismatch test is a constant,
-    /// and the equal path is one compare and branch, with no flag joined and tested again.
+    /// Reached only where the ids differ (`unless_equal`): the VM relates the element's type to
+    /// the expected one and traps on a mismatch itself, so the flag is a constant and the rule's
+    /// mismatch test folds away.
     fn signature_accepts(
         &mut self,
         reference: ir::Value,
-        signature: ir::Value,
-        expected: ir::Value,
+        _signature: ir::Value,
+        _expected: ir::Value,
     ) -> ir::Value {
-        let equal = self.operate(Binary::Equal, Width::I64, signature, expected);
         let site = self.site();
         let context = self.body.core.context;
-        let builder = &mut self.body.core.builder;
-        let (relate, join) = (builder.create_block(), builder.create_block());
-        self.branch_if(equal, (join, &[]), (relate, &[]));
-        self.body.core.builder.set_cold_block(relate);
-        self.enter(relate);
         let table = self.constant(Width::I64, i64::from(site.table));
         let expected_type = self.constant(Width::I64, i64::from(site.signature_index));
         let target = compiled_table_accepts::<H> as *const () as usize;
@@ -157,9 +151,28 @@ impl<H: Host> WasmTable for Emitter<'_, '_, H> {
         let related = self.convert(Conversion::WrapI64, related);
         let mismatch = self.operate_unary(crate::wasm::integer::I64UnaryOperator::EqualZero, Width::I32, related);
         infallible(self.trap_when(mismatch, crate::WasmTrap::IndirectCallTypeMismatch));
+        self.constant(Width::I32, 1)
+    }
+
+    /// Equal ids continue at once: one compare and branch. The other path, cold, runs the rule's
+    /// null check and the VM's relating (`signature_accepts`), which trap themselves, so both
+    /// paths join accepted with no flag joined and tested again.
+    fn unless_equal(
+        &mut self,
+        signature: ir::Value,
+        expected: ir::Value,
+        otherwise: impl FnOnce(&mut Self) -> Result<ir::Value, Self::Exit>,
+    ) -> Result<ir::Value, Self::Exit> {
+        let equal = self.operate(Binary::Equal, Width::I64, signature, expected);
+        let builder = &mut self.body.core.builder;
+        let (relate, join) = (builder.create_block(), builder.create_block());
+        self.branch_if(equal, (join, &[]), (relate, &[]));
+        self.body.core.builder.set_cold_block(relate);
+        self.enter(relate);
+        otherwise(self)?;
         self.goto(join, &[]);
         self.enter(join);
-        self.constant(Width::I32, 1)
+        Ok(self.constant(Width::I32, 1))
     }
 }
 
@@ -183,24 +196,28 @@ impl<H: Host> Emitter<'_, '_, H> {
         };
         let signature = self.analysis.type_signature(signature_index).expect("planned").clone();
         let expected = self.analysis.type_canonical(signature_index).expect("planned");
-        let (args, out) = self.spill_arguments(instruction, &signature);
         let row = self.read(instruction.b(), Kind::I64);
         let words = self.table_words(table);
         // The target checked in this block: its row and id, not loaded again.
         let block = self.body.core.builder.current_block();
         let checked = self.checked_row.take().filter(|checked| checked.block.is_some() && checked.block == block && checked.index == row);
         let builder = &mut self.body.core.builder;
+        // `done` takes the status and the result's bits: the native call hands both on in
+        // registers; only the cold paths spill the arguments and read the result from memory.
         let (slow, done) = (builder.create_block(), builder.create_block());
         builder.append_block_param(done, types::I64);
-        self.native_calls(words, row, checked, expected, &signature, (args, out), (slow, done));
+        builder.append_block_param(done, types::I64);
+        self.native_calls(words, row, checked, expected, (instruction, &signature), (slow, done));
         self.body.core.builder.set_cold_block(slow);
         self.enter(slow);
+        let (args, out) = self.spill_arguments(instruction, &signature);
         let status = self.call_through_vm(pc, table, signature_index, row, (args, out));
-        self.goto(done, &[status]);
+        let bits = self.result_bits(&signature, out);
+        self.goto(done, &[status, bits]);
         self.enter(done);
-        let status = self.body.core.builder.block_params(done)[0];
+        let (status, bits) = (self.body.core.builder.block_params(done)[0], self.body.core.builder.block_params(done)[1]);
         self.propagate(status);
-        self.take_result(instruction, &signature, out);
+        self.take_result(instruction, &signature, bits);
     }
 
     /// The native calls of the row: when it holds the `expected` id, a call of its function in
@@ -212,8 +229,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         row: ir::Value,
         checked: Option<CheckedRow>,
         expected: CanonicalSignature,
-        signature: &crate::WasmSignature,
-        buffers: (ir::Value, ir::Value),
+        (instruction, signature): (WideInstruction, &crate::WasmSignature),
         (slow, done): (ir::Block, ir::Block),
     ) {
         let context = self.body.core.context;
@@ -239,16 +255,32 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.branch_if(compiled, (present, &[]), (slow, &[]));
         self.enter(present);
         let instance = self.load_word(Width::I64, flags, address, TableTarget::INSTANCE);
-        let entry = self.load_word(Width::I32, flags, address, TableTarget::ENTRY);
-        let entry = self.convert(Conversion::ExtendI32Unsigned, entry);
         let running = self.load_word(Width::I64, invariant(), context, CONTEXT_INSTANCE);
         let mine = self.operate(Binary::Equal, Width::I64, instance, running);
         self.branch_if(mine, (local, &[]), (foreign, &[]));
         self.enter(local);
-        let status = self.call_body(body, signature, buffers, (self.base, self.length));
-        self.goto(done, &[status]);
+        let window = instruction.call_window();
+        let arguments: Vec<ir::Value> = signature
+            .params
+            .iter()
+            .enumerate()
+            .map(|(offset, ty)| self.read(window.base + offset as u16, Kind::of(*ty).expect("planned")))
+            .collect();
+        let (status, bits) = self.call_body_values(body, signature, &arguments, (self.base, self.length));
+        self.goto(done, &[status, bits]);
+        self.body.core.builder.set_cold_block(foreign);
         self.enter(foreign);
-        self.foreign_call(instance, entry, signature, buffers, (slow, done));
+        let entry = self.load_word(Width::I32, flags, address, TableTarget::ENTRY);
+        let entry = self.convert(Conversion::ExtendI32Unsigned, entry);
+        let buffers = self.spill_arguments(instruction, signature);
+        let switched = self.body.core.builder.create_block();
+        self.body.core.builder.append_block_param(switched, types::I64);
+        self.foreign_call(instance, entry, signature, buffers, (slow, switched));
+        self.body.core.builder.set_cold_block(switched);
+        self.enter(switched);
+        let status = self.body.core.builder.block_params(switched)[0];
+        let bits = self.result_bits(signature, buffers.1);
+        self.goto(done, &[status, bits]);
     }
 
     /// The body at index `entry` of the code table at `table`; a function without one leaves
@@ -275,29 +307,51 @@ impl<H: Host> Emitter<'_, '_, H> {
         (args, out): (ir::Value, ir::Value),
         (base, length): (ir::Value, Option<ir::Value>),
     ) -> ir::Value {
+        let values: Vec<ir::Value> = signature
+            .params
+            .iter()
+            .enumerate()
+            .map(|(offset, ty)| {
+                let raw = self.load_word_at(args, offset);
+                match Kind::of(*ty).expect("planned") {
+                    Kind::I32 => self.convert(Conversion::WrapI64, raw),
+                    Kind::I64 => raw,
+                }
+            })
+            .collect();
+        let (status, bits) = self.call_body_values(body, signature, &values, (base, length));
+        if !signature.results.is_empty() {
+            self.store_word(MemFlagsData::trusted(), bits, out, 0);
+        }
+        status
+    }
+
+    /// The call of `body` with `arguments`, each of its parameter's kind, and the memory
+    /// arguments the callee takes: its status and its result as a word of bits (0 for none).
+    fn call_body_values(
+        &mut self,
+        body: ir::Value,
+        signature: &crate::WasmSignature,
+        values: &[ir::Value],
+        (base, length): (ir::Value, Option<ir::Value>),
+    ) -> (ir::Value, ir::Value) {
         let mut arguments = vec![self.body.core.context];
         if self.memory.base {
             arguments.push(base);
         }
         arguments.extend(length);
-        for (offset, ty) in signature.params.iter().enumerate() {
-            let raw = self.load_word_at(args, offset);
-            arguments.push(match Kind::of(*ty).expect("planned") {
-                Kind::I32 => self.convert(Conversion::WrapI64, raw),
-                Kind::I64 => raw,
-            });
-        }
+        arguments.extend_from_slice(values);
         let callee = internal_signature(self.memory, &signature.params, signature.results.first().copied(), self.call_conv);
         let callee = self.body.core.builder.import_signature(callee);
         let results = self.call_signature(callee, body, &arguments);
-        if let Some(result) = signature.results.first() {
-            let value = match Kind::of(*result).expect("planned") {
+        let bits = match signature.results.first() {
+            Some(result) => match Kind::of(*result).expect("planned") {
                 Kind::I32 => self.convert(Conversion::ExtendI32Unsigned, results[1]),
                 Kind::I64 => results[1],
-            };
-            self.store_word(MemFlagsData::trusted(), value, out, 0);
-        }
-        results[0]
+            },
+            None => self.constant(Width::I64, 0),
+        };
+        (results[0], bits)
     }
 }
 
@@ -373,12 +427,20 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.call_words(target, &[context, table, row, signature_index, site, args, out])
     }
 
-    /// Writes the call's result, the word `out` holds, to the call's register.
+    /// The bits of the call's result that `out` holds: 0 where the signature has none.
+    fn result_bits(&mut self, signature: &crate::WasmSignature, out: ir::Value) -> ir::Value {
+        if signature.results.is_empty() {
+            return self.constant(Width::I64, 0);
+        }
+        self.load_word_at(out, 0)
+    }
+
+    /// Writes the call's result, whose word of bits is `bits`, to the call's register.
     fn take_result(
         &mut self,
         instruction: WideInstruction,
         signature: &crate::WasmSignature,
-        out: ir::Value,
+        bits: ir::Value,
     ) {
         let destination = instruction.result_register();
         let Some(ty) = signature.results.first() else {
@@ -386,7 +448,6 @@ impl<H: Host> Emitter<'_, '_, H> {
             return;
         };
         let kind = Kind::of(*ty).expect("planned");
-        let bits = self.load_word_at(out, 0);
         let value = match kind {
             Kind::I32 => self.convert(Conversion::WrapI64, bits),
             Kind::I64 => bits,

@@ -6014,6 +6014,29 @@ fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) ->
     }
 }
 
+/// Whether a Wasm function is a leaf: every reachable step is arithmetic, control flow, a
+/// register, constant or global, or a plain memory access, so it calls no function and re-enters
+/// no VM, and its frame is small (`LEAF_REGISTERS`). Its stack use is bounded by that frame and
+/// its running time by its loops' back edges, which poll themselves.
+fn is_leaf(instructions: &[WideInstruction], plan: &Plan, registers: u16) -> bool {
+    use crate::staged::wasm_memory::Memory;
+    /// The most registers a leaf's frame holds: a few KiB, well inside the stack budget's margin.
+    const LEAF_REGISTERS: u16 = 256;
+    registers <= LEAF_REGISTERS
+        && instructions.iter().enumerate().all(|(pc, instruction)| {
+            !plan.reachable(pc)
+                || matches!(
+                    Step::of(instruction.op(), instruction.imm()),
+                    Some(
+                        Step::Numeric(_)
+                            | Step::Flow(_)
+                            | Step::Instance(_)
+                            | Step::Memory(Memory::Load(_) | Memory::Store(_) | Memory::Size)
+                    )
+                )
+        })
+}
+
 /// Bind the activation's stable interrupt capability. The pointer is invariant;
 /// the byte it addresses remains atomic and must be read at every safepoint.
 fn native_interrupt_pointer(builder: &mut FunctionBuilder<'_>, context: ir::Value, fault_poll: bool) -> ir::Value {
@@ -7006,13 +7029,19 @@ impl<'a, H: Host> Analysis<'a, H> {
                 wasm_parameters[offset],
             );
         }
-        // Each activation checks the stack it may still use.
-        let stack_pointer = emitter.stack_pointer();
-        let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
-        let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
-        emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
+        // Each activation that calls checks the stack it may still use and polls for an
+        // interrupt: unbounded depth and unbounded time both need a call (or a back edge, which
+        // polls itself). A leaf (`is_leaf`) runs bounded on one small frame, under the margin its
+        // caller's check left, so it enters with neither.
+        let leaf = is_leaf(&instructions, plan, function.registers);
+        if !leaf {
+            let stack_pointer = emitter.stack_pointer();
+            let limit = emitter.raw_load(Lane::I64, invariant(), context, CONTEXT_STACK_LIMIT);
+            let exhausted = emitter.raw_compare(Relation::UnsignedLess, stack_pointer, limit);
+            emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
+        }
         emitter.known.clear();
-        emitter.jump(0, true);
+        emitter.jump(0, !leaf);
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
         for (pc, instruction) in instructions.iter().copied().enumerate() {
