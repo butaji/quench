@@ -445,10 +445,27 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
 }
 
 /// Whether `register` has definitions in `instructions` and every one is a `load`, which may
-/// give an object.
+/// give an object, or a move of a register only such loads define (`const p = a[i]; p.x`: the
+/// element read's register reaches the receiver through a `Move`) or of an entry value.
 fn loads_alone_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool) -> bool {
+    loads_define(instructions, register, load, &mut Vec::new())
+}
+
+/// `loads_alone_define`, through the moves not yet `followed`.
+fn loads_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool, followed: &mut Vec<Register>) -> bool {
+    if followed.contains(&register) {
+        return false;
+    }
+    followed.push(register);
     let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| load(definition.op()))
+    definitions.peek().is_some() && definitions.all(|definition| load(definition.op())
+        || (definition.op().is_move() && moved_from_load(instructions, definition.register_b(), load, followed)))
+}
+
+/// Whether a move's `source` may hold what a load gives: loads alone define it, or the loop
+/// defines it not at all, so it holds its entry value (`let p = head; while (p) p = p.next`).
+fn moved_from_load(instructions: &[WideInstruction], source: Register, load: fn(Op) -> bool, followed: &mut Vec<Register>) -> bool {
+    !instructions.iter().any(|candidate| candidate.defined_register() == Some(source)) || loads_define(instructions, source, load, followed)
 }
 
 fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
