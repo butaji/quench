@@ -16,6 +16,9 @@ pub mod call;
 pub mod call_record;
 pub mod shared_words;
 pub mod stub;
+/// The Wasm rows: their codes and names (`stencils/wasm_library.rs`).
+#[path = "../stencils/wasm_library.rs"]
+pub mod wasm;
 pub use class::{EXIT, LOCAL, NEXT, TAKEN, ABS64, BRANCH14, BRANCH19, BRANCH26, MOVW, REL32};
 pub use patch::{HOLES, Imm32, padded_holes, PatchError, patch_successor, patch_value};
 pub use stub::{EXIT_STUB_LEN, exit_stub};
@@ -303,6 +306,9 @@ mod rustc_tests {
         for code in library::heap_library() {
             assert_eq!(library::heap_canonical(code), code);
             assert!(rustc::stencil(&library::heap_name(code)).is_some(), "{code:?}");
+        }
+        for code in crate::wasm::wasm_library() {
+            assert!(rustc::stencil(&crate::wasm::wasm_name(code)).is_some(), "{code:?}");
         }
     }
 

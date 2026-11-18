@@ -47,7 +47,7 @@ pub(crate) mod i31;
 pub(crate) mod integer;
 pub(crate) mod numeric;
 pub(crate) mod reference;
-mod trap;
+pub(crate) mod trap;
 pub use trap::WasmTrap;
 use control::{Control, Reachability};
 use conversion::ScalarConversionOperator;

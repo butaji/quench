@@ -1574,17 +1574,7 @@ impl AnalysisState {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 9] = [
-    crate::WasmTrap::Unreachable,
-    crate::WasmTrap::OutOfBoundsMemory,
-    crate::WasmTrap::IntegerDivideByZero,
-    crate::WasmTrap::IntegerOverflow,
-    crate::WasmTrap::CallStackExhausted,
-    crate::WasmTrap::InvalidConversionToInteger,
-    crate::WasmTrap::UndefinedElement,
-    crate::WasmTrap::UninitializedElement,
-    crate::WasmTrap::IndirectCallTypeMismatch,
-];
+use crate::wasm::trap::COMPILED_TRAPS as TRAPS;
 
 const JIT_NATIVE_ENTRY_SAMPLE_INTERVAL: u64 = 256;
 const MAX_JIT_ROOT_FUNCTIONS: usize = 128;
@@ -1744,11 +1734,7 @@ const TERMINATED_STATUS: i64 = quench_bjit::call_record::TERMINATED_STATUS as i6
 const _: () = assert!(TERMINATED_STATUS == RAISED_STATUS + 1, "the stencils' terminated status follows the raised one");
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
-    TRAPS
-        .iter()
-        .position(|candidate| *candidate == trap)
-        .map(|index| index as i64 + 1)
-        .expect("compiled code raises only listed traps")
+    i64::from(trap.compiled_status().expect("compiled code raises only listed traps"))
 }
 
 /// Stack compiled code may use below its entry before a call traps as
