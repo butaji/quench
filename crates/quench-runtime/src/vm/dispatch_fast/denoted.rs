@@ -63,17 +63,13 @@ script_handler! {
     }
 }
 
-/// The lane handler `op`'s denotation selects, if it selects one.
+/// The lane handler `op`'s denotation selects, if it selects one. A `Unary` is no denotation's
+/// case: its plain record runs its generated row (`ROW_HANDLER`), and `lane_unary` remains the
+/// general arm the views' specialized unary handlers fall back to.
 pub(super) const fn denoted_handler<H: Host>(op: Op) -> Option<Handler> {
     match op.js_denotation() {
         crate::bytecode::JsDenotation::NumericBinary => Some(lane_binary::<H>),
-        crate::bytecode::JsDenotation::NumericUnary => Some(lane_unary::<H>),
         crate::bytecode::JsDenotation::StringConcatenation => Some(lane_string_concat::<H>),
         _ => None,
     }
-}
-
-/// The lane handler of a `Unary` record, which a view specializes further.
-pub(super) const fn unary_handler<H: Host>() -> Handler {
-    lane_unary::<H>
 }

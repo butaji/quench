@@ -6591,6 +6591,8 @@ fn unary_operator_handler<H: Host>(operator: u32) -> Option<Handler> {
         NEGATION => Some(lane_unary_number::<H, NEGATION> as Handler),
         PLUS => Some(lane_unary_number::<H, PLUS> as Handler),
         super::coercion::LOGICAL_NOT => Some(lane_logical_not::<H> as Handler),
+        // The row decodes only the index form of `typeof`; a value's `typeof` stays in the lane.
+        super::coercion::TYPEOF => Some(lane_unary::<H> as Handler),
         _ => None,
     }
 }
@@ -15790,7 +15792,7 @@ use i64_operators::i64_operator_handler;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
-use denoted::{denoted_handler, lane_unary, unary_handler};
+use denoted::{denoted_handler, lane_unary};
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
@@ -23097,7 +23099,6 @@ fn specialize_register_operands<H: Host>(
     };
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
     let backward_test = lane_jump_binary_false::<H, true> as Handler as *const ();
-    let unary = unary_handler::<H>() as *const ();
     let returning_binary = lane_returning::<H, RETURNING_BINARY, NOT_LEAF> as Handler as *const ();
     let forward_false_jump = jump_row::<H, JUMP_IF_FALSE>(false) as *const ();
     for (pc, &instruction) in decoded.iter().enumerate() {
@@ -23108,7 +23109,7 @@ fn specialize_register_operands<H: Host>(
             specialize_returning_operator::<H>(instruction, constants, record);
             continue;
         }
-        if record.handler == unary {
+        if is_row::<H, { crate::staged::UNARY_ROW }>(record.handler) {
             if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
                 record.handler = lane_typeof_index::<H> as Handler as *const ();
             } else if tested_next && let Some(handler) = typeof_test_jump_handler::<H>(instruction.imm()) {

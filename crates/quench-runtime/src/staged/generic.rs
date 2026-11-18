@@ -13,7 +13,7 @@ use crate::Value;
 impl<W, P> Operation<W, P> {
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
     /// an operand is no register or the instruction returns from the frame.
-    pub(super) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
+    pub(crate) fn decode_generic(instruction: WideInstruction) -> Option<Self> {
         Some(match instruction.op() {
             Op::ToPropertyKey => Self::PropertyKey {
                 destination: instruction.result_register(), source: instruction.register_b() },

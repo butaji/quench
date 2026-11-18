@@ -712,6 +712,7 @@ lane_handler! {
             Some(crate::bytecode::Decoder::Flow) => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
             Some(crate::bytecode::Decoder::Local) => Operation::decode_local(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),
+            Some(crate::bytecode::Decoder::Generic) => Operation::decode_generic(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
             _ => None,
         };

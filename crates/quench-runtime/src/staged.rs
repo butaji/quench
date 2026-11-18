@@ -165,6 +165,10 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// tier names to give the row a fact it proved at view time.
 pub(crate) const ARGUMENTS_COUNT_ROW: u16 = Op::ArgumentsLength as u16;
 
+/// The opcode whose row answers a `Unary` record (`specialize_register_operands` recognizes the
+/// plain row by it).
+pub(crate) const UNARY_ROW: u16 = Op::Unary as u16;
+
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier.
 pub(crate) const fn row_writes_result(op: Op) -> bool {
