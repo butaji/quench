@@ -171,6 +171,10 @@ pub(crate) enum Miss {
     /// A by-name load the frame does not answer: its first run resolves the name, and a later
     /// run whose binding misses takes that binding's residual (`NameLoad`).
     NameLoad(NameLoad),
+    /// A generic Wasm memory load the row leaves (a vector load, a memory the frame does not
+    /// address directly, an out-of-bounds access): the lane's hand handler of the load, which
+    /// completes it or raises its trap.
+    WasmMemoryLoad,
     /// A generic Wasm effective address the row leaves: the lane's hand handler of the address.
     WasmMemoryAddress,
 }
@@ -209,6 +213,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::LoadLocal => Miss::LocalLoad,
         Op::StoreLocal => Miss::LocalStore,
         Op::InitializeTdz => Miss::LocalInitialize,
+        Op::WasmMemoryLoad => Miss::WasmMemoryLoad,
         Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
