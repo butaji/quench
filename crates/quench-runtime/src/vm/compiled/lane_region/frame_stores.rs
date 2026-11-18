@@ -54,7 +54,7 @@ impl EmitFrame<'_> {
         let slot = self.fields.as_ref()?.held.slot?;
         #[cfg(test)] LOOP_SLOT_STORES.with(|count| count.set(count.get() + 1));
         let builder = &mut *stage.builder;
-        if slot.raw {
+        if slot.domain == Type::NUMBER {
             // The entry admitted the slot's raw doubles and left a packed record: the word goes in as it is.
             emit(builder).store_f64(Region::ObjectSlots.mutable(), slot.address, 0, value);
             return Some(());

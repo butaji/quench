@@ -3,7 +3,10 @@ use smallvec::SmallVec;
 mod internal_bindings;
 mod module_records;
 mod declared_types;
-pub(crate) use declared_types::{Declared, DeclaredKind, DeclaredLocal, DeclaredSignature, DeclaredTypes, EnumConstant};
+pub(crate) use declared_types::{
+    Declared, DeclaredKind, DeclaredLocal, DeclaredMember, DeclaredParameterClass, DeclaredSignature, DeclaredTypes,
+    EnumConstant,
+};
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
 pub(crate) use internal_bindings::*;

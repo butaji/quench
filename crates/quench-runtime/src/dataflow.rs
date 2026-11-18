@@ -12,6 +12,8 @@ pub(crate) trait Dataflow {
     /// The number of blocks.
     fn blocks(&self) -> usize;
     /// The blocks a block's output flows into: its successors (forward) or predecessors (backward).
+    /// `solve` reads a block's edges right after its `transfer`, so an analysis whose control
+    /// depends on the state may name the edges its last `transfer` of the block took.
     fn edges(&self, block: usize) -> &[usize];
     /// The input a block starts with before any output reaches it, or `None` where nothing
     /// seeds it (it runs only once an output reaches it).
@@ -24,6 +26,19 @@ pub(crate) trait Dataflow {
     /// a state per edge (a branch's taken side) override this; the default passes `out` as is.
     fn transfer_edge(&self, _block: usize, _target: usize, out: &Self::State) -> Self::State {
         out.clone()
+    }
+    /// The state `block` sends along its `index`th edge, read right after its `transfer`. An
+    /// analysis whose block reaches one target by several edges in different states (exception
+    /// edges out of the middle of a block, recorded by `transfer`) overrides this; the default is
+    /// `transfer_edge` to the edge's target.
+    fn transfer_edge_at(&self, block: usize, index: usize, out: &Self::State) -> Self::State {
+        self.transfer_edge(block, self.edges(block)[index], out)
+    }
+    /// The input of `block` when the first output reaches it, from that output `incoming`. An
+    /// analysis that adjusts a block's input whenever it joins (a contract it keeps, a widening it
+    /// counts) adjusts the first one here; the default takes `incoming` as is.
+    fn admit(&self, _block: usize, incoming: Self::State) -> Self::State {
+        incoming
     }
 }
 
@@ -43,11 +58,11 @@ pub(crate) fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
         let out = analysis.transfer(block, state);
         for index in 0..analysis.edges(block).len() {
             let target = analysis.edges(block)[index];
-            let edge = analysis.transfer_edge(block, target, &out);
+            let edge = analysis.transfer_edge_at(block, index, &out);
             let changed = match &mut states[target] {
                 Some(known) => analysis.join(known, &edge),
                 slot => {
-                    *slot = Some(edge);
+                    *slot = Some(analysis.admit(target, edge));
                     true
                 }
             };

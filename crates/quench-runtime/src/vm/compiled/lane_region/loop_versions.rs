@@ -108,6 +108,7 @@ impl Lowering<'_, '_> {
         self.hoist_arrays(state, header, true);
         self.version_loops(state, header);
         self.start_inductions(state, header);
+        self.hoist_constructions(header);
     }
 
     /// The comparison of each reach of the versioned accesses of the loop at `header` with the length

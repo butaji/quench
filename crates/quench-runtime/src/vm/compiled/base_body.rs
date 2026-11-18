@@ -15,12 +15,12 @@ use crate::vm::global_facts::GlobalTable;
 use crate::bytecode::{Register, WideInstruction};
 use super::lane_region::StableFacts;
 use crate::compile::liveness::RegisterMasks;
+use crate::typed_ir::Type;
 
-/// The registers an entry's parameters hold as int32s, and as other Numbers: the types the body's
-/// entry rows assume (a parameter that is neither is a tagged word the rows test where they read it).
-fn observed(parameters: &[Value]) -> (Vec<Register>, Vec<Register>) {
-    let registers = |wanted: fn(Value) -> bool| (0..parameters.len()).filter(|k| wanted(parameters[*k])).map(|k| k as Register).collect();
-    (registers(|value| value.as_int().is_some()), registers(|value| value.as_int().is_none() && value.as_number().is_some()))
+/// The types an entry's parameters hold, by register: the types the body's entry rows assume (a parameter
+/// that is neither an int32 nor a Number is `Type::immediate`'s own type, which no unboxed row accepts).
+fn observed(parameters: &[Value]) -> Vec<Type> {
+    parameters.iter().map(|value| Type::immediate(*value)).collect()
 }
 
 /// Whether `code` indexes a register an entry's parameter holds a typed array in: a body has no row of a typed
@@ -139,7 +139,7 @@ impl<H: Host> Vm<H> {
         if !super::base_region::covers(&code) { return LaneBodyOutcome::Declined }
         if indexes_typed_parameter(&code, |register| parameters.get(usize::from(register)).is_some_and(|value| self.is_typed_array(*value))) { return LaneBodyOutcome::Declined }
         let Some(region) = LoopRegion::of_function(code.clone(), self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
-        let (ints, doubles) = observed(parameters);
+        let seen = observed(parameters);
         let callees = self.stitch_callees(program, function, &code, &direct(self));
         let invalidation = Invalidation::default();
         // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
@@ -162,7 +162,7 @@ impl<H: Host> Vm<H> {
             globals: globals.as_ref(),
         };
         let speculated = widened(generic);
-        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: [&ints, &doubles], kinds: &[] };
+        let spec = BodySpec { function, registers: body.registers, known, realm: self.realm_proof(), widened: &speculated, seen: &seen, kinds: &[] };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers::<H>()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (&code, invalidation), caller)
