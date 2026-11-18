@@ -4111,11 +4111,11 @@ fn lane_in_place<H: Host, T>(
         vm.frames[frame].pc = pc;
         vm.frames[frame].pc_is_resume = false;
     }
-    let generation_key = (vm.heap.collection_epoch(), vm.realm.globals);
+    let generation_key = (vm.cache_epochs.gc, vm.realm.globals);
     let result = operation(vm, code);
     // The operation may allocate, which can make a collection due.
     note_allocation(vm);
-    if (vm.heap.collection_epoch(), vm.realm.globals) != generation_key {
+    if (vm.cache_epochs.gc, vm.realm.globals) != generation_key {
         lane_after_nested_collection(cx);
     }
     let unobserved = beside && vm.lane_deferred.take().is_some();
@@ -4141,7 +4141,7 @@ fn lane_in_place<H: Host, T>(
 #[inline(never)]
 fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
-    vm.lane_stack.enter_generation((vm.heap.collection_epoch(), vm.realm.globals));
+    vm.lane_stack.enter_generation((vm.cache_epochs.gc, vm.realm.globals));
     // SAFETY: `cx` is the running context, of this Host.
     unsafe { retire_lane_binding::<H>(cx.cast()) };
 }
@@ -25475,7 +25475,7 @@ impl<H: Host> Vm<H> {
         // whose exhaustion the general path raises.
         let _stack = crate::stack::StackGuard::enter().ok()?;
         // A collection since the lane entered retires the targets it resolved.
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         // Another program's callee (a library's function a benchmark's native call reaches)
         // runs as that program's activation, whose completion leaves the program to re-enter.
         let (target, crosses) = match lane_script_target(cx, callee) {
@@ -25581,7 +25581,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let _stack = crate::stack::StackGuard::enter().ok()?;
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         let target = lane_script_target(cx, callee)?;
         // A callback of another program would enter it from the native's caller's view.
         if target.program() != unsafe { (*cx).program } {
@@ -26035,7 +26035,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let stack = crate::stack::StackGuard::enter().ok()?;
-        let epoch = self.heap.collection_epoch();
+        let epoch = self.cache_epochs.gc;
         self.lane_stack.enter_generation((epoch, self.realm.globals));
         let target = lane_script_target(cx, callee)?;
         let this = lane_call_this(self, &target, receiver)?;
@@ -26083,8 +26083,8 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        if self.heap.collection_epoch() != prepared.epoch {
-            prepared.epoch = self.heap.collection_epoch();
+        if self.cache_epochs.gc != prepared.epoch {
+            prepared.epoch = self.cache_epochs.gc;
             self.lane_stack.enter_generation((prepared.epoch, self.realm.globals));
             let callee = prepared.target.callee;
             prepared.target = lane_script_target(cx, callee)?;

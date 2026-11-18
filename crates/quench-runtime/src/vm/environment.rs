@@ -1604,7 +1604,7 @@ impl<H: Host> Vm<H> {
         if walk.depth != depth
             || walk.cache.env != env
             || walk.cache.captured != captured
-            || walk.cache.epoch != self.heap.collection_epoch()
+            || walk.cache.epoch != self.cache_epochs.gc
             || walk.cache.slots.is_null()
             || walk.cache.root.is_some()
         {
@@ -1624,7 +1624,7 @@ impl<H: Host> Vm<H> {
         captured: bool,
         depth: u16,
     ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
-        let epoch = self.heap.collection_epoch();
+        let epoch = self.cache_epochs.gc;
         let index = capture_walk_index(env, depth)?;
         let walk = &self.capture_walks[index];
         if walk.depth == depth
@@ -1668,7 +1668,7 @@ impl<H: Host> Vm<H> {
         let cache = &frame.capture_cache;
         (cache.env == frame.env
             && cache.captured == frame.captured
-            && cache.epoch == self.heap.collection_epoch()
+            && cache.epoch == self.cache_epochs.gc
             && !cache.slots.is_null())
         .then_some((cache.slots, cache.root))
     }
@@ -1711,7 +1711,7 @@ impl<H: Host> Vm<H> {
         let (slots, root) = if let Some(current) = self.current_capture_slots(frame) {
             current
         } else {
-            let epoch = self.heap.collection_epoch();
+            let epoch = self.cache_epochs.gc;
             let (env, captured) = (self.frames[frame].env, self.frames[frame].captured);
             let (slots, root) = self.environment_capture_slots(env, captured, 0)?;
             let slots: *const crate::heap::EnvironmentSlots = slots;

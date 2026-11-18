@@ -106,7 +106,7 @@ impl<H: Host> Vm<H> {
             program_contexts: Vec::new(),
             idle_context: Box::new(ProgramContext::idle()),
             active_field_entries: std::ptr::null(),
-            field_entries_epoch: 0,
+            cache_epochs: Default::default(),
             active_program: ProgramId::MAIN,
             profile: Default::default(),
             shape_slot_memo: Default::default(),

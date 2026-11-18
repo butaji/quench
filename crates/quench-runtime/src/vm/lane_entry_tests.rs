@@ -31,9 +31,9 @@ fn a_program_install_that_moves_the_field_cache_table_leaves_lane_entries_readin
     vm.programs.enable_js_lane_methods();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
     let before = answer(&mut vm, drive, "drive.js");
-    let epoch = vm.field_entries_epoch;
+    let epoch = vm.cache_epochs.field_entries;
     answer(&mut vm, &format!("var w = {{}}; {wide}"), "wide.js");
-    assert!(vm.field_entries_epoch > epoch, "installing the wide program grew the table");
+    assert!(vm.cache_epochs.field_entries > epoch, "installing the wide program grew the table");
     assert!(before.is_some(), "the drive leaves its answer");
     assert_eq!(answer(&mut vm, drive, "drive-again.js"), before);
 }

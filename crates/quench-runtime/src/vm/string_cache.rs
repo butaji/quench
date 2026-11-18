@@ -58,7 +58,7 @@ impl<H: Host> Vm<H> {
         }
         let (left, right) = (self.concat_key(left)?, self.concat_key(right)?);
         let (l, r, atom) = self.concat_memo.0[ConcatMemo::index(left, right)];
-        if l != left || r != right || self.concat_memo.1 != self.heap.collection_epoch() {
+        if l != left || r != right || self.concat_memo.1 != self.cache_epochs.gc {
             return None;
         }
         self.heap.atom_string(atom, false)
@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if let (Some(l), Some(r)) = (self.concat_key(left), self.concat_key(right)) {
-            let epoch = self.heap.collection_epoch();
+            let epoch = self.cache_epochs.gc;
             if self.concat_memo.1 != epoch {
                 self.concat_memo.0.fill((u64::MAX, u64::MAX, 0));
                 self.concat_memo.1 = epoch;
