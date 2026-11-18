@@ -141,6 +141,16 @@ fn noted_slot(address: usize, function: u32) -> usize {
 
 /// A `LaneInstruction::call_link` that names no entry: no cache holds this many.
 const NO_CALL_LINK: u16 = u16::MAX;
+/// The bit of a call link the plain call proved (`lane_script_call_prove`): its target activates
+/// plainly and takes the site's argument count, so `lane_script_call` tests only the callee's
+/// identity. The index is the link without it (`link_index`); a link without the bit is out of
+/// range for `lane_script_call`, which proves it first.
+const PLAIN_LINK: u16 = 1 << 15;
+const _: () = assert!(SCRIPT_CALL_TARGETS[0] < PLAIN_LINK as usize && SCRIPT_CALL_TARGETS[1] < PLAIN_LINK as usize);
+
+/// The script target index a call link names, with or without `PLAIN_LINK`.
+#[inline(always)]
+fn link_index(link: u16) -> usize { usize::from(link & !PLAIN_LINK) }
 const _: () = assert!(std::mem::size_of::<LaneInstruction>() == 3 * std::mem::size_of::<u64>());
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -1269,8 +1279,6 @@ fn handler_is<H: Host>(ip: Ip, handler: Handler) -> bool {
 /// The context words below register 0 (`staged::frame`, the one source of the frame layout).
 use crate::staged::frame::{CONTEXT_CALL, CONTEXT_CALLEE, CONTEXT_CALLER_BASE, CONTEXT_CALLER_REGISTERS, CONTEXT_CAPTURE, CONTEXT_ENV, CONTEXT_PACKED, CONTEXT_THIS};
 const _: () = assert!(CONTEXT_CALLEE == super::register_file::FRAME_CONTEXT);
-/// `CONTEXT_PACKED`'s flag of a plain frame.
-pub(in crate::vm) const PLAIN_FRAME_FLAG: u64 = crate::staged::frame::PLAIN_FLAG;
 
 /// The active frame's registers. Lane instructions never resize registers or
 /// change the frame stack, so the base stays valid for the whole lane run.
@@ -1319,19 +1327,6 @@ impl Registers {
     fn set_capture(self, capture: *const usize) {
         // SAFETY: as for `capture`.
         unsafe { *self.0.sub(CONTEXT_CAPTURE).cast::<*const usize>() = capture }
-    }
-
-    /// Write a plain activation's frame header below the window (`CONTEXT_CALL`..`CONTEXT_CALLEE`).
-    #[inline(always)]
-    fn write_plain_header(self, call: Ip, caller_registers: Registers, caller_base: Ip, function: u32, argc: u16, callee: Value) {
-        // SAFETY: every lane window has `FRAME_CONTEXT` words free below register 0.
-        unsafe {
-            *self.0.sub(CONTEXT_CALL).cast::<Ip>() = call;
-            *self.0.sub(CONTEXT_CALLER_REGISTERS).cast::<Registers>() = caller_registers;
-            *self.0.sub(CONTEXT_CALLER_BASE).cast::<Ip>() = caller_base;
-            *self.0.sub(CONTEXT_PACKED).cast::<u64>() = u64::from(function) | PLAIN_FRAME_FLAG | (u64::from(argc) << crate::staged::frame::ARGC_SHIFT);
-            *self.0.sub(CONTEXT_CALLEE) = callee;
-        }
     }
 
     /// The plain header's call record, caller registers and caller records.
@@ -2099,6 +2094,12 @@ impl Admission {
     /// no cached call may run under holds (`LaneStack::refuse_cached_calls`), so every
     /// admission fails, and the paths that resolve again decide.
     const REFUSED: u64 = 1 << 63;
+    /// A bit the lane's admission carries while its run calls no script functions
+    /// (`LaneContext::script_calls`, `LaneStack::set_script_calls`): every cached call misses, so
+    /// the plain call's handler need not test the flag.
+    const NO_SCRIPT_CALLS: u64 = 1 << 62;
+    /// Every bit only the lane's admission carries.
+    const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
 
     #[inline(always)]
     const fn generation(self) -> ScriptGeneration {
@@ -2506,7 +2507,7 @@ impl LaneStack {
 
     /// The address of the plain activations' words (`PlainFrames`).
     #[inline(always)]
-    pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).addr() }
+    pub(in crate::vm) fn plain_frames_word(&self) -> usize { (&raw const self.plain).expose_provenance() }
 
     /// Make the plain activations records, outermost first, as their pushes would have.
     #[cold]
@@ -2682,13 +2683,18 @@ impl LaneStack {
         if Self::is_plain(&activation, window) {
             debug_assert!(self.plain.depth.get() == 0 || self.plain.program.get() == activation.caller_program());
             let ActivationKind::Script(script) = activation.kind() else { unreachable!() };
-            Registers(window).write_plain_header(
-                activation.call(), activation.caller_registers(), activation.caller_base(),
-                activation.function(), script.argc, script.callee,
+            use crate::staged::protocol::{plain_packed, push_plain, PlainHeader};
+            let header = PlainHeader {
+                call: activation.call().expose_provenance() as u64,
+                caller_registers: activation.caller_registers().0.expose_provenance() as u64,
+                caller_base: activation.caller_base().expose_provenance() as u64,
+                packed: plain_packed(activation.function(), script.argc, 0),
+                callee: script.callee.to_bits(),
+            };
+            push_plain(
+                &mut crate::staged::Concrete::new(std::ptr::null()),
+                self.plain_frames_word() as u64, window.expose_provenance() as u64, header, u64::from(activation.caller_program().raw()),
             );
-            self.plain.program.set(activation.caller_program());
-            self.plain.registers.set(window);
-            self.plain.depth.set(self.plain.depth.get() + 1);
             return;
         }
         activation.native.window = window.addr();
@@ -2715,13 +2721,17 @@ impl LaneStack {
     fn pop_plain(&mut self) -> Option<(Ip, Registers, Ip)> {
         let depth = self.plain.depth.get();
         if depth == 0 { return None; }
-        let window = Registers(self.plain.registers.get());
-        let caller = window.plain_caller();
-        self.plain.depth.set(depth - 1);
-        self.plain.registers.set(caller.1.0);
+        let window = self.plain.registers.get();
+        let caller = crate::staged::protocol::pop_plain(
+            &mut crate::staged::Concrete::new(std::ptr::null()), self.plain_frames_word() as u64, window.addr() as u64,
+        );
         // SAFETY: the window is the innermost, the lane stack's own.
-        unsafe { self.values.release_window(window.0.addr()) };
-        Some(caller)
+        unsafe { self.values.release_window(window.addr()) };
+        Some((
+            std::ptr::with_exposed_provenance(caller.call as usize),
+            Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize)),
+            std::ptr::with_exposed_provenance(caller.base as usize),
+        ))
     }
 
     /// Drops what the activations from index `depth` on owned, which completed: their loops'
@@ -2829,20 +2839,38 @@ impl LaneStack {
     /// (`Vm::construct_target`), under which a lane call leaves the lane, so the cached paths
     /// need not test either (`Vm::refresh_call_refusal`).
     pub(super) fn set_refused(&mut self, refused: bool) {
-        self.refused = if refused { Admission::REFUSED } else { 0 };
-        self.admission = Admission(self.admission.0 & !Admission::REFUSED | self.refused);
+        self.set_condition(Admission::REFUSED, refused);
+    }
+
+    /// Notes whether the running lane run calls script functions (`LaneContext::script_calls`):
+    /// while it does not, every cached call misses (`Admission::NO_SCRIPT_CALLS`).
+    #[inline(always)]
+    pub(super) fn set_script_calls(&mut self, allowed: bool) {
+        self.set_condition(Admission::NO_SCRIPT_CALLS, !allowed);
+    }
+
+    /// Whether the lane's admission admits script calls (`set_script_calls`).
+    #[inline(always)]
+    pub(super) fn script_calls_allowed(&self) -> bool {
+        self.refused & Admission::NO_SCRIPT_CALLS == 0
+    }
+
+    #[inline(always)]
+    fn set_condition(&mut self, bit: u64, holds: bool) {
+        self.refused = self.refused & !bit | if holds { bit } else { 0 };
+        self.admission = Admission(self.admission.0 & !Admission::CONDITIONS | self.refused);
     }
 
     /// Whether cached calls are refused (`set_refused`).
     #[inline(always)]
     fn refuses(&self) -> bool {
-        self.refused != 0
+        self.refused & Admission::REFUSED != 0
     }
 
-    /// The admission a target or memo made now holds: the lane's, without `Admission::REFUSED`.
+    /// The admission a target or memo made now holds: the lane's, without its conditions.
     #[inline(always)]
     fn current_admission(&self) -> Admission {
-        Admission(self.admission.0 & !Admission::REFUSED)
+        Admission(self.admission.0 & !Admission::CONDITIONS)
     }
 }
 
@@ -14354,7 +14382,7 @@ impl<H: Host> Vm<H> {
     /// costs the hash again.
     #[inline(always)]
     fn linked_script_call_entry(&mut self, callee: Value, link: &std::cell::Cell<u16>) -> Option<*const ScriptCallTarget> {
-        let linked = usize::from(link.get());
+        let linked = link_index(link.get());
         let index = if self.script_call_holds(linked, callee) {
             linked
         } else {
@@ -14890,6 +14918,19 @@ script_handler! {
     }
 }
 
+/// Sets whether the lane run calls script functions (`LaneContext::script_calls`), which the
+/// lane's admission mirrors (`LaneStack::set_script_calls`).
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_set_script_calls<H: Host>(cx: *mut LaneContext<H>, allowed: bool) {
+    unsafe {
+        (*cx).script_calls = allowed;
+        vm(cx).lane_stack.set_script_calls(allowed);
+    }
+}
+
 script_handler! {
     /// A JavaScript `Call` of a frameless target (`Vm::resolve_script_call_target`): the
     /// callee runs in the lane on a window of the lane stack, with the frame facts its
@@ -14900,26 +14941,60 @@ script_handler! {
     /// register (`Function::undefined_register`, `specialize_script_calls`), whose value the
     /// handler then knows without reading it.
     fn lane_script_call<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
+        // A run that calls no script functions refuses every cached call
+        // (`Admission::NO_SCRIPT_CALLS`), which the link's test below makes.
+        debug_assert!(unsafe { (*cx).script_calls || !vm(cx).lane_stack.script_calls_allowed() });
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        // The link proves the call (`PLAIN_LINK`): the target activates plainly and takes the
+        // site's arguments, so only the callee's identity and the run's admission are tested.
+        // A pending construction refuses every cached target (`LaneStack::set_refused`).
+        let index = usize::from(i.call_link.get() ^ PLAIN_LINK);
+        if !vm.script_call_holds(index, callee) {
+            sibling!(lane_script_call_prove::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
+        }
+        debug_assert!(!lane_constructing(vm, callee));
+        // SAFETY: `script_call_holds` found the entry within the cache; nothing below resolves
+        // a target or collects.
+        let target = unsafe { &*std::ptr::from_ref(vm.lane_stack.script_targets.entries.get_unchecked(index)) };
+        debug_assert!(target.entry == CallEntry::Activates);
+        #[cfg(feature = "profile-lane-exits")]
+        profile_script_call_target(cx, ip, callee, target);
+        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN, proven)
+    }
+}
+
+script_handler! {
+    /// `lane_script_call` of a site whose link is not proved: the target it links, which
+    /// takes its entry's form where that is not a plain activation
+    /// (`lane_script_call_requicken`) and the out-of-line form where the site's arguments are
+    /// more than it takes, else the link is proved (`PLAIN_LINK`) and the call runs plainly.
+    #[cold]
+    #[inline(never)]
+    fn lane_script_call_prove<ARGC: u16, PLAIN: bool>(cx, r, ip, i, view) {
         if !unsafe { (*cx).script_calls } {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
-        let callee = r.get(i.b);
-        // A pending construction refuses every cached target (`LaneStack::set_refused`).
-        let Some(target) = vm.linked_script_call_entry(callee, &i.call_link) else {
+        let Some(target) = vm.linked_script_call_entry(r.get(i.b), &i.call_link) else {
             sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view))
         };
-        debug_assert!(!lane_constructing(vm, callee));
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        // One test: the site calls the form for its target's entry directly from now on
-        // (`lane_script_call_requicken`), out of line so this handler makes no call.
         if target.entry != CallEntry::Activates {
             sibling!(lane_script_call_requicken::<H>, r, ip, Carried::script_in(cx, view))
         }
-        #[cfg(feature = "profile-lane-exits")]
-        profile_script_call_target(cx, ip, callee, target);
-        lane_plain_activation!(cx, vm, r, ip, i, target, ARGC, PLAIN)
+        let argc = call_argument_count::<ARGC>(i);
+        if argc > FIXED_ARGUMENT_COPIES || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        // The tier's diagnostics count every entry (`record_js_jit_lane_entry`), which a
+        // proved call skips: under them no link is proved.
+        if vm.programs.js_jit_diagnostics_enabled() {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        i.call_link.set(i.call_link.get() | PLAIN_LINK);
+        sibling!(lane_script_call::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -14927,7 +15002,13 @@ script_handler! {
 /// whose argument count is `ARGC` (`call_argument_count`), past its target's proof
 /// (`lane_script_call`, `lane_script_call_leaf`).
 macro_rules! lane_plain_activation {
-    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {{
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr) => {
+        lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, false)
+    };
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, proven) => {
+        lane_plain_activation!($cx, $vm, $r, $ip, $i, $target, $argc, $plain, true)
+    };
+    ($cx:expr, $vm:expr, $r:expr, $ip:expr, $i:expr, $target:expr, $argc:ident, $plain:expr, $proven:literal) => {{
         let (cx, vm, r, ip, i, target) = ($cx, $vm, $r, $ip, $i, $target);
         // A plain call's receiver is `undefined` by its record (`lane_script_call`'s `PLAIN`).
         // Its `this` is then its target's (`ScriptCallTarget::lexical_this`), one load.
@@ -14946,8 +15027,14 @@ macro_rules! lane_plain_activation {
         // whose activation keeps them or grows the stack (`lane_activate`), and so does another
         // program's target (`lane_push_activation`).
         // So does a window past `FIXED_ARGUMENT_COPIES`, whose copy is a call.
+        // A proved link (`PLAIN_LINK`) proved the argument count; the room stays per call.
         let argc = call_argument_count::<$argc>(i);
-        if argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc) {
+        if if $proven {
+            debug_assert!(argc <= FIXED_ARGUMENT_COPIES && crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)));
+            !lane_activation_room(vm, target)
+        } else {
+            argc > FIXED_ARGUMENT_COPIES || !lane_admits_window(vm, target, argc)
+        } {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script(cx))
         }
         let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
@@ -14968,7 +15055,7 @@ macro_rules! lane_plain_activation {
         }
         debug_assert!(!target.settles(), "a settling target activates through its own call form");
         let callee_registers = lane_fill_window(vm, target, passed, argc);
-        let (registers, base) = lane_enter_window_of::<H, false, false>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
+        let (registers, base) = lane_enter_window_of::<H, false, false, { !$proven }>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
         next!(cx, registers, base, Carried::script(cx))
     }};
 }
@@ -18608,7 +18695,7 @@ fn lane_site_targets<H: Host>(vm: &Vm<H>, view: &LaneView, pc: u32) -> Vec<super
     // A collection since the site linked retires its entry; the callee's own entry of this
     // generation, where a call resolved it again, is the same target. A linked entry another
     // site's callee took since names no callee of this site.
-    let latest = vm.lane_stack.script_targets.entries.get(usize::from(record.call_link.get())).and_then(|linked| {
+    let latest = vm.lane_stack.script_targets.entries.get(link_index(record.call_link.get())).and_then(|linked| {
         if linked.generation() == vm.lane_stack.generation {
             Some(linked)
         } else {
@@ -19286,7 +19373,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let callee_registers = lane_fill_window(vm, target, passed, argc);
-    lane_enter_window_of::<H, GENERAL, SETTLES>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None, None)
+    lane_enter_window_of::<H, GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -19418,14 +19505,14 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
     kept: Option<u16>,
 ) -> (Registers, Ip) {
-    lane_enter_window_of::<H, GENERAL, SETTLES>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, skipped, kept)
+    lane_enter_window_of::<H, GENERAL, SETTLES, true>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, skipped, kept)
 }
 
 /// `lane_enter_window` with the VM its caller already holds, so the push reads the lane
 /// stack through it rather than through the context again after the window's writes.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool>(
+fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const COUNTED: bool>(
     cx: *mut LaneContext<H>,
     vm: &mut Vm<H>,
     r: Registers,
@@ -19469,7 +19556,9 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool>(
     if cross {
         lane_enter_program(cx, target.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    // A proved plain call (`PLAIN_LINK`) never runs under the tier's diagnostics
+    // (`lane_script_call_prove`), so it skips their per-call test (`COUNTED`).
+    if COUNTED { vm.programs.record_js_jit_lane_entry(target.program(), target.function); }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
@@ -20320,7 +20409,7 @@ fn lane_complete_activation<H: Host>(cx: *mut LaneContext<H>, ip: Ip, mut value:
             lane_enter_program(cx, activation.caller_program());
             unsafe {
                 (*cx).inline_calls = false;
-                (*cx).script_calls = true;
+                lane_set_script_calls(cx, true);
                 (*cx).instance = Value::DELETED;
             }
             value = vm.wasm_export_result(value, result);
@@ -20371,7 +20460,7 @@ fn lane_complete_to_wasm<H: Host>(cx: *mut LaneContext<H>, ip: Ip, value: Value)
     };
     unsafe {
         (*cx).inline_calls = true;
-        (*cx).script_calls = false;
+        lane_set_script_calls(cx, false);
         (*cx).instance = call.instance;
         (*cx).memory = memory;
     }
@@ -20399,7 +20488,7 @@ fn lane_complete_wasm_activation<H: Host>(cx: *mut LaneContext<H>, mut value: Va
         lane_enter_program(cx, activation.caller_program());
         unsafe {
             (*cx).inline_calls = false;
-            (*cx).script_calls = true;
+            lane_set_script_calls(cx, true);
             (*cx).instance = Value::DELETED;
         }
         value = vm.wasm_export_result(value, result);
@@ -21729,7 +21818,7 @@ fn lane_wasm_export_frame<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip
     // (`lane_return_frame`); the caller's lane run starts afresh there.
     unsafe {
         (*cx).inline_calls = true;
-        (*cx).script_calls = false;
+        lane_set_script_calls(cx, false);
     }
     // SAFETY: the general loop's pending calls outlive the lane run.
     unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
@@ -21819,7 +21908,7 @@ fn lane_activate_wasm_export<H: Host>(
         (*cx).memory = MemoryView::NONE;
         (*cx).instance = instance;
         (*cx).inline_calls = true;
-        (*cx).script_calls = false;
+        lane_set_script_calls(cx, false);
     }
     let view = Carried { memory: MemoryView::NONE, integers: crate::value::IntegerEncoding::TAG, acc: Slot::of(Value::UNDEFINED) };
     Some(Resumed::At(callee_registers, base, view))
@@ -22088,7 +22177,7 @@ fn lane_return_wasm_export<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Re
     lane_enter_program(cx, saved.id);
     unsafe {
         (*cx).inline_calls = false;
-        (*cx).script_calls = true;
+        lane_set_script_calls(cx, true);
     }
     drop(call.call_guard);
     let frame = call.caller;

@@ -374,7 +374,7 @@ fn lane_activate_js_import<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: I
     vm.lane_stack.to_wasm.push(ToWasmCall { instance, memory: memory_binding, result });
     unsafe {
         (*cx).inline_calls = false;
-        (*cx).script_calls = true;
+        lane_set_script_calls(cx, true);
         (*cx).instance = Value::DELETED;
     }
     let view = Carried::script(cx);
