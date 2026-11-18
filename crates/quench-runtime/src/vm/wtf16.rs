@@ -771,6 +771,41 @@ impl JsStringInner {
         }
     }
 
+    /// A rope's host text joined from its parts' own host texts, without making its units:
+    /// ASCII runs, decoded UTF-8 text and wide runs whose host text is already made. `None`
+    /// when a part has no host text yet, or a wide part's ends could pair with a neighbour's
+    /// surrogate (joining lossy texts would then differ from transcoding the joined units).
+    fn joined_host(self: &Rc<Self>) -> Option<String> {
+        let mut text = String::with_capacity(self.length as usize);
+        let mut pending = vec![self.clone()];
+        while let Some(part) = pending.pop() {
+            if let Some(units) = part.flat.get() {
+                match units.view() {
+                    // SAFETY: ASCII units are UTF-8.
+                    Units::Ascii(bytes) => text.push_str(unsafe { std::str::from_utf8_unchecked(bytes) }),
+                    Units::Wide(units) => {
+                        let host = part.cached_host()?;
+                        let pairs_at_ends = units.first().is_some_and(|&u| (0xDC00..=0xDFFF).contains(&u))
+                            || units.last().is_some_and(|&u| (0xD800..=0xDBFF).contains(&u));
+                        if pairs_at_ends {
+                            return None;
+                        }
+                        text.push_str(host);
+                    }
+                }
+                continue;
+            }
+            if let Some(host) = part.unflattened_host() {
+                text.push_str(host);
+                continue;
+            }
+            let (left, right) = part.halves()?;
+            pending.push(right);
+            pending.push(left);
+        }
+        Some(text)
+    }
+
     /// Calls `visit` with each flat run of this string, in order.
     fn for_each_run(self: &Rc<Self>, mut visit: impl FnMut(Units<'_>)) {
         let mut pending = vec![self.clone()];
@@ -1224,6 +1259,14 @@ impl JsString {
     pub(crate) fn to_host_owned(&self) -> String {
         if let Some(host) = self.unflattened_host() {
             return host.to_owned();
+        }
+        // A rope of host texts (a decoded source with text appended) is joined as host text,
+        // so its units are never made only to be transcoded back.
+        if let Repr::Shared(inner) = &self.repr
+            && inner.flat.get().is_none()
+            && let Some(text) = inner.joined_host()
+        {
+            return text;
         }
         match (self.flat(), &self.repr) {
             (wide @ (FlatUnits::Wide(_) | FlatUnits::WideSlice(_) | FlatUnits::WidePrefix(..)), Repr::Shared(inner)) => {
