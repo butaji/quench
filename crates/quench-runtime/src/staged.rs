@@ -103,6 +103,7 @@ pub(crate) mod wasm_flow;
 pub(crate) mod wasm_instance;
 pub(crate) mod wasm_machine;
 pub(crate) mod wasm_memory;
+pub(crate) mod wasm_table_ops;
 pub(crate) mod wasm_operation;
 pub(crate) mod wasm_simd;
 pub(crate) mod wasm_simd_concrete;

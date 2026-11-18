@@ -11,7 +11,7 @@
 use super::wasm_stage::infallible;
 use super::{
     Analysis, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC, CONTEXT_INSTANCE,
-    CONTEXT_TABLE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
+    CONTEXT_TABLE_WORDS, CallContext, Emitter, Host, Kind,
     Slot, Vm, internal_signature, invariant,
 };
 use crate::bytecode::WideInstruction;
@@ -231,6 +231,13 @@ impl<H: Host> Emitter<'_, '_, H> {
         let (resolve, local, foreign) = (builder.create_block(), builder.create_block(), builder.create_block());
         self.branch_if(same_signature, (resolve, &[]), (slow, &[]));
         self.enter(resolve);
+        // The row's body (one load): 0 is no compiled body, which takes the slow path.
+        let body = self.load_word(Width::I64, flags, address, TableTarget::BODY);
+        let none = self.constant(Width::I64, 0);
+        let compiled = self.operate(Binary::NotEqual, Width::I64, body, none);
+        let present = self.body.core.builder.create_block();
+        self.branch_if(compiled, (present, &[]), (slow, &[]));
+        self.enter(present);
         let instance = self.load_word(Width::I64, flags, address, TableTarget::INSTANCE);
         let entry = self.load_word(Width::I32, flags, address, TableTarget::ENTRY);
         let entry = self.convert(Conversion::ExtendI32Unsigned, entry);
@@ -238,25 +245,10 @@ impl<H: Host> Emitter<'_, '_, H> {
         let mine = self.operate(Binary::Equal, Width::I64, instance, running);
         self.branch_if(mine, (local, &[]), (foreign, &[]));
         self.enter(local);
-        self.local_call(entry, signature, buffers, (slow, done));
-        self.enter(foreign);
-        self.foreign_call(instance, entry, signature, buffers, (slow, done));
-    }
-
-    /// The call of the function at index `entry` of the running artifact's code table, in the
-    /// running context: its status jumps to `done`.
-    fn local_call(
-        &mut self,
-        entry: ir::Value,
-        signature: &crate::WasmSignature,
-        buffers: (ir::Value, ir::Value),
-        (slow, done): (ir::Block, ir::Block),
-    ) {
-        let context = self.body.core.context;
-        let table = self.load_word(Width::I64, invariant(), context, CONTEXT_TABLE);
-        let body = self.entry_body(table, entry, slow);
         let status = self.call_body(body, signature, buffers, (self.base, self.length));
         self.goto(done, &[status]);
+        self.enter(foreign);
+        self.foreign_call(instance, entry, signature, buffers, (slow, done));
     }
 
     /// The body at index `entry` of the code table at `table`; a function without one leaves

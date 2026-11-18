@@ -12032,8 +12032,9 @@ const FUSED_LEFT: bool = true;
 lane_handler! {
     /// An f64 arithmetic `FIRST` whose result the next record, f64 operator
     /// `SECOND`, takes as its left (`LEFT`) or right operand: both records
-    /// run here, each result written as its own record writes it.
-    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool, ACC: u8>(cx, r, ip, i, view) {
+    /// run here, each result written as its own record writes it (plainly
+    /// when `RAW`, canonicalized otherwise).
+    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool, RAW: bool, ACC: u8>(cx, r, ip, i, view) {
         let first = match f64_operation(
             FIRST,
             f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
@@ -12042,7 +12043,10 @@ lane_handler! {
             Ok(result) => result,
             Err(_) => unreachable!("a fused first operator is arithmetic"),
         };
-        r.set(i.a, Value::from_float_bits64(first.to_bits()));
+        r.set(
+            i.a,
+            if RAW { Value::from_bits(first.to_bits()) } else { Value::from_float_bits64(first.to_bits()) },
+        );
         let next = following(ip);
         // SAFETY: the view fuses a float record only with a following one.
         let second = unsafe { &*next };
@@ -12052,7 +12056,9 @@ lane_handler! {
             (f64::from_bits(r.get(second.b).float_bits64()), first)
         };
         let value = match f64_operation(SECOND, left, right) {
-            Ok(result) => Value::from_float_bits64(result.to_bits()),
+            Ok(result) => {
+                if RAW { Value::from_bits(result.to_bits()) } else { Value::from_float_bits64(result.to_bits()) }
+            }
             Err(truth) => view.integers.encode(i32::from(truth)),
         };
         produce!(cx, r, next, second.a, value, view)
@@ -12202,39 +12208,39 @@ macro_rules! float_load_pair_handlers {
 struct FloatPairs<H>(std::marker::PhantomData<H>);
 
 macro_rules! float_pair_handlers {
-    ($host:ty) => {
+    ($host:ty, $raw:expr) => {
         [
-            float_pair_handlers!($host, FLOAT_ADD),
-            float_pair_handlers!($host, FLOAT_SUBTRACT),
-            float_pair_handlers!($host, FLOAT_MULTIPLY),
-            float_pair_handlers!($host, FLOAT_DIVIDE),
+            float_pair_handlers!($host, FLOAT_ADD, $raw),
+            float_pair_handlers!($host, FLOAT_SUBTRACT, $raw),
+            float_pair_handlers!($host, FLOAT_MULTIPLY, $raw),
+            float_pair_handlers!($host, FLOAT_DIVIDE, $raw),
         ]
     };
-    ($host:ty, $first:expr) => {
+    ($host:ty, $first:expr, $raw:expr) => {
         [
-            float_pair_handlers!($host, $first, FLOAT_ADD),
-            float_pair_handlers!($host, $first, FLOAT_SUBTRACT),
-            float_pair_handlers!($host, $first, FLOAT_MULTIPLY),
-            float_pair_handlers!($host, $first, FLOAT_DIVIDE),
-            float_pair_handlers!($host, $first, FLOAT_EQUAL),
-            float_pair_handlers!($host, $first, FLOAT_NOT_EQUAL),
-            float_pair_handlers!($host, $first, FLOAT_LESS),
-            float_pair_handlers!($host, $first, FLOAT_GREATER),
-            float_pair_handlers!($host, $first, FLOAT_LESS_EQUAL),
-            float_pair_handlers!($host, $first, FLOAT_GREATER_EQUAL),
+            float_pair_handlers!($host, $first, FLOAT_ADD, $raw),
+            float_pair_handlers!($host, $first, FLOAT_SUBTRACT, $raw),
+            float_pair_handlers!($host, $first, FLOAT_MULTIPLY, $raw),
+            float_pair_handlers!($host, $first, FLOAT_DIVIDE, $raw),
+            float_pair_handlers!($host, $first, FLOAT_EQUAL, $raw),
+            float_pair_handlers!($host, $first, FLOAT_NOT_EQUAL, $raw),
+            float_pair_handlers!($host, $first, FLOAT_LESS, $raw),
+            float_pair_handlers!($host, $first, FLOAT_GREATER, $raw),
+            float_pair_handlers!($host, $first, FLOAT_LESS_EQUAL, $raw),
+            float_pair_handlers!($host, $first, FLOAT_GREATER_EQUAL, $raw),
         ]
     };
-    ($host:ty, $first:expr, $second:expr) => {
+    ($host:ty, $first:expr, $second:expr, $raw:expr) => {
         [
-            float_pair_handlers!($host, $first, $second, false),
-            float_pair_handlers!($host, $first, $second, FUSED_LEFT),
+            float_pair_handlers!($host, $first, $second, false, $raw),
+            float_pair_handlers!($host, $first, $second, FUSED_LEFT, $raw),
         ]
     };
-    ($host:ty, $first:expr, $second:expr, $left:expr) => {
+    ($host:ty, $first:expr, $second:expr, $left:expr, $raw:expr) => {
         [
-            lane_f64_pair::<$host, $first, $second, $left, ACC_NONE> as Handler,
-            lane_f64_pair::<$host, $first, $second, $left, ACC_B> as Handler,
-            lane_f64_pair::<$host, $first, $second, $left, ACC_C> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_NONE> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_B> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, $raw, ACC_C> as Handler,
         ]
     };
 }
@@ -12247,7 +12253,10 @@ impl<H: Host> FloatPairs<H> {
     /// By first operator, second operator, whether the first result is the
     /// second's left operand, and the first's accumulator field.
     const HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
-        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H);
+        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, false);
+    /// The same over raw registers (`Class::WasmFloatBinary64Raw`).
+    const RAW_HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
+        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H, true);
     /// An f64 load fused with the operator taking its value, by second
     /// operator and whether the value is its left operand.
     /// An f64 arithmetic fused with the store of its result, by operator.
@@ -23509,12 +23518,13 @@ fn derive_lane_view<'live, H: Host>(
                     return None;
                 }
                 let second = float_arithmetic(next.op(), next.imm())?;
-                let left_of = |records: &[LaneInstruction]| {
+                // The width row (boxed `1`, raw `2`) the second record was built from.
+                let left_of = |records: &[LaneInstruction], row: usize| {
                     [ACC_B, ACC_C]
                         .into_iter()
                         .find(|acc| {
                             records[pc + 1].handler
-                                == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
+                                == FloatArithmetic::<H>::HANDLERS[row][usize::from(second)]
                                     [usize::from(*acc)] as *const ()
                         })
                         .map(|acc| acc == ACC_B)
@@ -23524,7 +23534,7 @@ fn derive_lane_view<'live, H: Host>(
                     if records[pc].handler != plain.handler as *const () {
                         return None;
                     }
-                    let left = left_of(&records)?;
+                    let left = left_of(&records, 1)?;
                     // An arithmetic whose result the record after it stores
                     // (`mem[x] += v`) joins as well.
                     let updates =
@@ -23554,17 +23564,18 @@ fn derive_lane_view<'live, H: Host>(
                 if usize::from(first) >= FLOAT_PAIR_FIRSTS {
                     return None;
                 }
-                let field = FUSED_ACC_FIELDS.iter().position(|acc| {
-                    records[pc].handler
-                        == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
-                            as *const ()
-                })?;
-                let left = left_of(&records)?;
-                Some((
-                    FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
-                        [usize::from(left)][field],
-                    2,
-                ))
+                // Two boxed records fuse as boxed, two raw records as raw; mixed widths do not fuse.
+                [(1usize, &FloatPairs::<H>::HANDLERS), (2, &FloatPairs::<H>::RAW_HANDLERS)]
+                    .into_iter()
+                    .find_map(|(row, pairs)| {
+                        let field = FUSED_ACC_FIELDS.iter().position(|acc| {
+                            records[pc].handler
+                                == FloatArithmetic::<H>::HANDLERS[row][usize::from(first)]
+                                    [usize::from(*acc)] as *const ()
+                        })?;
+                        let left = left_of(&records, row)?;
+                        Some((pairs[usize::from(first)][usize::from(second)][usize::from(left)][field], 2))
+                    })
             })();
             // An f64 arithmetic whose result the next record stores, when only
             // the arithmetic reaches that store.

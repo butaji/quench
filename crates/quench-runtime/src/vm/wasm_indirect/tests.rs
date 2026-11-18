@@ -165,6 +165,7 @@ fn a_row_names_the_function_and_the_instance_of_its_element_through_every_write(
         signature: if entry == 0 { first.signature } else { second_row.signature },
         entry,
         instance: record,
+        body: InstanceContext::published_body(record as usize, entry),
     };
     assert_eq!(rows(&vm, table), [function(0); 3]);
 

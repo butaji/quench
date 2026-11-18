@@ -132,11 +132,14 @@ mod wasm_memory_stage;
 mod wasm_flow_stage;
 mod wasm_call_stage;
 mod wasm_table_stage;
+mod wasm_table_ops_stage;
 mod wasm_instance_switch;
 mod wasm_simd_stage;
 // `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod wasm_stitch;
+#[cfg(target_arch = "x86_64")]
+mod wasm_call_vm;
 pub(super) use lane_unit::{CalleeBinding, CallTarget, Frame as InlinedCall};
 #[cfg(all(test, feature = "aot"))]
 pub(super) use lane_unit::static_call_targets;
@@ -1919,6 +1922,9 @@ pub(super) struct CallContext {
     instance: *const InstanceContext,
     /// The VM's roots for the instances native code enters beyond this one.
     native_roots: *mut NativeRoots,
+    /// The VM's `memory_grow_callout::<H>`: (context, pages) -> the size before in pages, or -1.
+    /// A stitched `memory.grow` row calls it (`CONTEXT_MEMORY_GROW`).
+    memory_grow: usize,
 }
 
 impl CallContext {
@@ -1960,6 +1966,7 @@ impl CallContext {
             interrupt_owner: std::ptr::null(),
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
+            memory_grow: 0,
         };
         context.bind_native_adapter(adapter_payload, interrupt, poll_page);
         context
@@ -2019,6 +2026,7 @@ impl CallContext {
             interrupt_owner: interrupt,
             instance: std::ptr::null(),
             native_roots: std::ptr::null_mut(),
+            memory_grow: 0,
         }
     }
 
@@ -2066,6 +2074,7 @@ impl CallContext {
             interrupt_owner: self.interrupt_owner,
             instance: self.instance,
             native_roots: self.native_roots,
+            memory_grow: self.memory_grow,
         }
     }
 }
@@ -2086,6 +2095,7 @@ const CONTEXT_TABLE_WORDS: i32 = std::mem::offset_of!(CallContext, table_words) 
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, memory_length) as i32;
+const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
 const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
     std::mem::offset_of!(CallContext, call_reference_diagnostic) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
@@ -2698,31 +2708,86 @@ enum CompiledArgs<'a> {
 
 /// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
 /// for every instruction: the `WasmEntry` ABI the compiled entry has.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn stitched_entry<H: Host>(
     vm: &Vm<H>,
     program: ProgramId,
     code: &crate::bytecode::ResidualProgram,
     index: usize,
-    (plans, cells): (&[Option<Plan>], &[std::cell::Cell<usize>]),
+    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
     memory_slot: Option<u32>,
+    (full_plan, sites, env): (&Plan, &[(usize, usize)], Value),
 ) -> Option<Vec<u8>> {
-    if !crate::jit_mode::base_only() {
+    // The indirect call row calls the non-diagnostic reference callout.
+    if !crate::jit_mode::base_only() || vm.programs.js_jit_diagnostics_enabled() {
         return None;
     }
     let function = code.function_get(index)?;
     let constant = |at: usize| {
         let value = vm.programs.constant(program, at)?;
+        if vm.heap.v128(value).is_some() {
+            return None;
+        }
         Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
     };
-    // A callee has an entry where it has a plan; its cell holds the entry once placed.
-    let callee = |callee: usize| plans.get(callee)?.as_ref().map(|_| cells[callee].as_ptr() as u64);
-    let world = wasm_stitch::World { constant: &constant, memory_slot, callee: &callee };
+    // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
+    // the cell holds the entry once placed. A callee that is not callable is called through the
+    // VM (`CALL_VM`), so its callers stitch all the same.
+    let callee = |callee: usize| callable.get(callee).copied()?.then(|| cells[callee].as_ptr() as u64);
+    // A global access names its environment slot in the full plan; the row reads the cell from
+    // the context, since a program's code serves every instance.
+    let global = |pc: usize| -> Option<(u32, crate::staged::wasm_instance::Storage)> {
+        if !full_plan.reachable(pc) {
+            return None;
+        }
+        let Slot::Binding(slot) = full_plan.operand(pc) else { return None };
+        let binding = vm.heap.environment_slot(env, slot as usize)?;
+        let Some(Cell::WasmGlobal { ty, .. }) = vm.heap.get(binding) else { return None };
+        Some((slot, crate::staged::wasm_instance::Storage::of(*ty)))
+    };
+    let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
+    let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
+    let vector_constant = |at: usize| vm.heap.v128(vm.programs.constant(program, at)?);
+    let vector_move = |pc: usize| full_plan.reachable(pc) && full_plan.operand(pc) == Slot::Vector;
+    // A growth leaves the base in place only for a reserved (guarded) memory.
+    let memory_stable = memory_slot.is_none_or(|slot| {
+        vm.heap.environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
+    });
+    // A table or segment operation names its bindings in the full plan, as the u-jit reads them.
+    let table_bindings = |pc: usize| -> Option<(Option<u32>, Option<u32>)> {
+        if !full_plan.reachable(pc) {
+            return None;
+        }
+        let first = match full_plan.operand(pc) {
+            Slot::Binding(slot) => Some(slot),
+            _ => None,
+        };
+        let second = match full_plan.seconds[pc] {
+            Some(Slot::Binding(slot)) => Some(slot),
+            _ => None,
+        };
+        Some((first, second))
+    };
+    let world = wasm_stitch::World {
+        constant: &constant,
+        memory_slot,
+        memory_stable,
+        callee: &callee,
+        vm_call: wasm_call_vm::vm_call_callout::<H> as *const () as u64,
+        global: &global,
+        globals_offset: CONTEXT_GLOBALS as u64,
+        indirect: &indirect,
+        table_callout: wasm_table_ops_stage::table_op_callout::<H> as *const () as u64,
+        table_bindings: &table_bindings,
+        registers: function.registers,
+        vector_constant: &vector_constant,
+        vector_move: &vector_move,
+    };
     wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>]), _: Option<u32>) -> Option<Vec<u8>> {
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)], Value)) -> Option<Vec<u8>> {
     None
 }
 
@@ -5360,6 +5425,9 @@ struct Plan {
     /// (a moved value's kind, a global's binding, an import reference). The
     /// full register states exist only while planning.
     operands: Vec<Option<Slot>>,
+    /// Per instruction, the second binding slot of a table copy or segment init
+    /// (`TableOp::bindings`), `None` where the step names none.
+    seconds: Vec<Option<Slot>>,
 }
 
 impl Plan {
@@ -5370,6 +5438,7 @@ impl Plan {
             params: self.params.clone(),
             result: self.result,
             operands: Vec::new(),
+            seconds: Vec::new(),
         }
     }
 
@@ -5680,6 +5749,15 @@ impl<H: Host> Analysis<'_, H> {
                 Some(state.get(operand, function.registers).unwrap_or(Slot::Conflict))
             })
             .collect();
+        let seconds: Vec<Option<Slot>> = states
+            .iter()
+            .zip(&instructions)
+            .map(|(state, instruction)| {
+                let state = state.as_ref()?;
+                let register = Step::of(instruction.op(), instruction.imm())?.second_binding(*instruction)?;
+                state.get(register, function.registers)
+            })
+            .collect();
         if let Some(started) = plan_started {
             let reachable = states.iter().flatten().count();
             let stored_slots: usize = states.iter().flatten().map(|state| state.slots.len()).sum();
@@ -5710,6 +5788,7 @@ impl<H: Host> Analysis<'_, H> {
             params,
             result,
             operands,
+            seconds,
         })
     }
 
@@ -5739,6 +5818,9 @@ impl<H: Host> Analysis<'_, H> {
             }
             Step::Memory(step) => {
                 self.transfer_memory(function, instruction, state, step, (memory_register, *memory_slot))
+            }
+            Step::Table(op) => {
+                self.transfer_table(function, instruction, state, op, (memory_register, *memory_slot))
             }
             Step::Flow(flow) => self.transfer_flow(function, instruction, state, flow, result),
             Step::Call(call) => self.transfer_call(function, instruction, state, call, callable),
@@ -6836,6 +6918,10 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Step::Memory(step) => {
                 self.memory(instruction, step);
+                true
+            }
+            Step::Table(op) => {
+                self.table_op(pc, instruction, op);
                 true
             }
             Step::Flow(flow) => self.flow(function, pc, instruction, flow),
@@ -8362,11 +8448,17 @@ impl<H: Host> Vm<H> {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        let opt_level = jit_root_opt_level(root, root_only).ok()?;
-        if diagnostics_enabled {
-            eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
-        }
-        let isa = super::jit_backend::target_isa_at(opt_level)?;
+        // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
+        let base_only = crate::jit_mode::base_only();
+        let isa = if base_only {
+            None
+        } else {
+            let opt_level = jit_root_opt_level(root, root_only).ok()?;
+            if diagnostics_enabled {
+                eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
+            }
+            Some(super::jit_backend::target_isa_at(opt_level)?)
+        };
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
         let mut reference_cache_sites = Vec::new();
@@ -8422,40 +8514,93 @@ impl<H: Host> Vm<H> {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
-        analysis.unrolls = program_unrolls(&code);
-        let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
-        build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
-        let build = build_order.into_iter().map(|index| {
-            let full_plan = full_plans[index].as_ref()?;
-            let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
-            let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
-            let built = analysis.build_function(
-                &*isa,
-                index,
-                full_plan,
-                &plans,
-                guarded,
-                fixed_base,
-                &reference_site_ids[index],
-                diagnostics_enabled,
-            );
-            if let Some(started) = body_build_started {
-                let memory_after = jit_memory_snapshot();
-                eprintln!(
-                    "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                    started.elapsed().as_micros(),
-                    body_memory_before.map(|memory| memory.0),
-                    memory_after.map(|memory| memory.0),
-                    body_memory_before.map(|memory| memory.1),
-                    memory_after.map(|memory| memory.1),
+        // Without an ISA (`--b-jit`) no body or Cranelift entry exists: `bodies` stays empty.
+        let mut bodies = Vec::new();
+        if let Some(isa) = isa.as_deref() {
+            analysis.unrolls = program_unrolls(&code);
+            let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
+            build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
+            let build = build_order.into_iter().map(|index| {
+                let full_plan = full_plans[index].as_ref()?;
+                let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
+                let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
+                let built = analysis.build_function(
+                    isa,
+                    index,
+                    full_plan,
+                    &plans,
+                    guarded,
+                    fixed_base,
+                    &reference_site_ids[index],
+                    diagnostics_enabled,
                 );
+                if let Some(started) = body_build_started {
+                    let memory_after = jit_memory_snapshot();
+                    eprintln!(
+                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
+                        started.elapsed().as_micros(),
+                        body_memory_before.map(|memory| memory.0),
+                        memory_after.map(|memory| memory.0),
+                        body_memory_before.map(|memory| memory.1),
+                        memory_after.map(|memory| memory.1),
+                    );
+                }
+                let entry = analysis.build_entry(isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
+                Some((index, built?, entry))
+            });
+            bodies = compile_built_functions(isa, count, self.memory_policy(), build)?;
+        }
+        // Under `--b-jit` each function's entry is its stitched rows. A callee whose stitch fails
+        // has no entry cell, so it leaves `callable` and its callers call it through the VM
+        // (`CALL_VM`) instead of failing. Only a movable memory (`memory_stable` false) refuses
+        // that call, so there a caller still fails with its callee; the set only shrinks.
+        let mut stitched: Vec<Option<Vec<u8>>> = if base_only {
+            let mut callable: Vec<bool> = plans.iter().map(Option::is_some).collect();
+            loop {
+                let codes: Vec<Option<Vec<u8>>> = (0..count)
+                    .map(|index| {
+                        if !callable[index] {
+                            return None;
+                        }
+                        stitched_entry(self, program, &code, index, (&plans, &entry_cells, &callable), memory_slot, (full_plans[index].as_ref()?, &reference_site_ids[index], env))
+                    })
+                    .collect();
+                let kept: Vec<bool> = codes.iter().map(Option::is_some).collect();
+                if kept == callable {
+                    break codes;
+                }
+                callable = kept;
             }
-            let entry = analysis.build_entry(&*isa, index, plans[index].as_ref()?, MemoryArguments::of(fixed_base, guarded));
-            Some((index, built?, entry))
-        });
-        let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
+        } else {
+            Vec::new()
+        };
         for index in 0..count {
             if plans[index].is_none() {
+                continue;
+            }
+            if base_only {
+                // `--b-jit`: the stitched rows are the entry, and the table names them as the
+                // body too (the same `WasmEntry` ABI, so indirect calls enter them directly).
+                // A function whose stitch failed has no native entry: it runs in the interpreter.
+                let Some(stitched) = stitched[index].take() else {
+                    continue;
+                };
+                let stitched_projected_len = projected_code_len(bytes.len(), stitched.len())?;
+                if let Some(root) = root
+                    && stitched_projected_len > MAX_JIT_ROOT_CODE_BYTES
+                {
+                    if diagnostics_enabled {
+                        eprintln!(
+                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={stitched_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
+                        );
+                    }
+                    return None;
+                }
+                let stitched_len = stitched.len();
+                let offset = place(&mut bytes, stitched);
+                offsets[index] = Some(offset);
+                spans.push((offset, stitched_len, index));
+                entries[index] = Some(offset);
                 continue;
             }
             let (body, function_calls, entry) = bodies[index].take()?;
@@ -8486,13 +8631,6 @@ impl<H: Host> Vm<H> {
                 }
                 return None;
             }
-            // `--b-jit` enters a function through its stitched rows where every instruction has
-            // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
-            // compiled body stays for the calls of the other functions until the rows take calls.
-            let entry = match stitched_entry(self, program, &code, index, (&plans, &entry_cells), memory_slot) {
-                Some(stitched) => stitched,
-                None => entry,
-            };
             entries[index] = Some(place(&mut bytes, entry));
         }
         for (offset, call) in calls {
@@ -8964,6 +9102,7 @@ impl<H: Host> Vm<H> {
                 interrupt_owner: std::ptr::null(),
                 instance: std::ptr::null(),
                 native_roots: &mut *self.native_roots,
+                memory_grow: wasm_memory_stage::memory_grow_callout::<H> as *const () as usize,
             };
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });

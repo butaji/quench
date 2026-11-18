@@ -151,6 +151,15 @@ pub(crate) enum Class {
     WasmJumpI32Zero,
     WasmSimd,
     WasmSimdShuffle,
+    WasmTableSize,
+    WasmTableGet,
+    WasmTableSet,
+    WasmTableGrow,
+    WasmTableFill,
+    WasmTableCopy,
+    WasmTableInit,
+    WasmMemoryInit,
+    WasmSegmentDrop,
 }
 
 impl Class {

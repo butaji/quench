@@ -1064,6 +1064,18 @@ impl Heap {
         }
     }
 
+    /// Visits the elements of every Wasm table in the slot heap, mutably: the same walk as
+    /// `for_each_cell`, for the writers that rewrite rows (`WasmTableElements::refresh_bodies`).
+    pub(crate) fn for_each_wasm_table_mut(&mut self, mut visit: impl FnMut(&mut WasmTableElements)) {
+        for (_, slab) in self.slots.slabs_mut() {
+            for slot in slab.iter_mut() {
+                if let Some(Cell::WasmTable { elements, .. }) = &mut slot.cell {
+                    visit(&mut **elements);
+                }
+            }
+        }
+    }
+
     /// Every live legacy cell, without needing `&mut` (census and diagnostics).
     #[cfg(feature = "profile-gc-time")]
     pub(crate) fn for_each_live_cell(&self, mut visit: impl FnMut(&Cell)) {

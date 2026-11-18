@@ -6,6 +6,7 @@ use super::*;
 use crate::staged::wasm_call::indirect_target;
 use crate::staged::wasm_machine::ConcreteTable;
 use crate::heap::{TableTarget, WasmTableElements};
+use super::compiled::InstanceContext;
 
 impl<H: Host> Vm<H> {
     /// What a table element holding `value` presents to an indirect call (`TableTarget`): the
@@ -38,6 +39,7 @@ impl<H: Host> Vm<H> {
             signature,
             entry: *function,
             instance: instance as u64,
+            body: InstanceContext::published_body(instance, *function),
         }
     }
 
