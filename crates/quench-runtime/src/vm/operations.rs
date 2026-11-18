@@ -61,7 +61,7 @@ macro_rules! number_arithmetic_operators {
             /// specialized bytecodes are accepted only for their corresponding
             /// operator, as recorded in this table.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                if instruction.is_binary() {
+                if instruction as u16 == crate::staged::BINARY_ROW {
                     return Self::from_operator(operator);
                 }
                 $(number_arithmetic_operators!(
@@ -141,7 +141,7 @@ macro_rules! number_unary_operators {
             /// The side-effect-free Number unary operation denoted by JavaScript bytecode.
             /// Other unary operators still require their normal coercion and effect paths.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction.is_unary())
+                (instruction as u16 == crate::staged::UNARY_ROW)
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
@@ -178,7 +178,7 @@ macro_rules! number_bitwise_operators {
             /// for the general `Binary` instruction; entry guards are checked
             /// separately by the caller.
             pub(super) fn from_js_instruction(instruction: Op, operator: u32) -> Option<Self> {
-                (instruction.is_binary())
+                (instruction as u16 == crate::staged::BINARY_ROW)
                     .then(|| Self::from_operator(operator))
                     .flatten()
             }
