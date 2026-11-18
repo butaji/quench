@@ -73,16 +73,18 @@ pub(super) unsafe fn bind_frame<H: Host>(
     native: &mut JsNativeActivation, vm: &mut Vm<H>, (program, function, lane_context): (ProgramId, u32, usize),
     registers: *mut crate::value::Value,
 ) {
-    if let Some(program) = vm.programs.get(program)
-        && let Some(body) = program.function_get(function as usize) {
+    // The activation holds the program and the function's body it was made for (`with_function`).
+    if native.dispatch.program_id == program
+        && let Some(body) = native._program.function_get(function as usize) {
         native.dispatch.native_registers = registers;
         native.dispatch.register_count = usize::from(body.registers);
         native.dispatch.native_locals = super::dispatch_fast::lane_body_locals::<H>(lane_context as *mut (), registers, false);
         native.dispatch.local_count = usize::from(body.locals);
         native.dispatch.body = body as *const _;
-        native.dispatch.residual = Rc::as_ptr(&program) as usize;
+        native.dispatch.residual = Rc::as_ptr(&native._program) as usize;
     }
-    native.dispatch.refresh_object_bases(vm);
+    // A dispatch with views read its bases as the activation was made, and nothing since moved them.
+    if native.dispatch.layout_seen == u64::MAX { native.dispatch.refresh_object_bases(vm); }
     // The program's field cache entries, which its site rows read and a body it calls by its entry
     // finds bound where the region lends it the lane frame's place (`region_lend`).
     native.dispatch.field_entries = vm.program_field_entries(program).unwrap_or(0);
