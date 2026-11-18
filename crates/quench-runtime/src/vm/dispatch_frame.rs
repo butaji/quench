@@ -1887,6 +1887,21 @@ impl<H: Host> Vm<H> {
                 pc = step.next_pc;
                 native_step = Some(step);
             }
+            // A hand-back (a continue at the same pc) retires the program's ahead code
+            // (`Vm::js_linked_frame_entry`): the cursor this frame entered with names no lane
+            // and no decoded records, so derive them again for the records the shared bodies
+            // now run.
+            if native_step.as_ref().is_some_and(|step| step.instruction_pc == step.next_pc
+                && matches!(step.result, Ok(super::StepResult::Continue)))
+            {
+                // The frame may be another program's, whose records this cursor does not name.
+                let (program, function) = (self.frames[frame].program, self.frames[frame].function);
+                // SAFETY: as for `p` at the top of the loop.
+                let residual = unsafe { &*executing_residual };
+                if program == executing_program && (function as usize) < residual.function_count() {
+                    cursor = self.general_cursor(executing_program, residual, function, fast_lane);
+                }
+            }
             if native_step.is_none() && !self.execution_mode.allows_dynamic_execution()
                 && !(STOPS && stop_pc == Some(pc))
             {
