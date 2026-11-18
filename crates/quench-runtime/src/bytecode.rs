@@ -4210,7 +4210,11 @@ impl ResidualProgram {
     /// source text, and every function's registers and operation sequence.
     #[cfg(feature = "native-execution")]
     pub(crate) fn shares_records_with(&self, other: &Self) -> bool {
-        self.kind == other.kind
+        // A program whose records were released decodes them on access; one that yields no
+        // instruction at all cannot prove identity and is not the program the code names.
+        self.instruction_count() > 0
+            && other.instruction_count() > 0
+            && self.kind == other.kind
             && self.source_text() == other.source_text()
             && self.function_count() == other.function_count()
             && (0..self.function_count()).all(|index| {
