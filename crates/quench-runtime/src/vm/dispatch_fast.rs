@@ -3315,7 +3315,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, staged_typeof_index, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, staged_typeof_index, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
 
 
 lane_handler! {
@@ -13766,26 +13766,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `LoadName` the general path's probe found landing on the global object
-    /// (`settle_name_record`): the global object's own data field its record's hint names
-    /// (`LaneInstruction::field_hint`), one shape test and one load, as `name_row`
-    /// reads a global. Any other read takes `lane_load_global_name_refresh`. A `LoadNameCall`
-    /// (`LOAD_NAME_CALL`) also writes the call's receiver, `undefined` for a global binding.
-    fn lane_load_global_name<KIND: u8, SCOPED: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let Some(value) = vm.record_field_entry_hit(i.field_hint(), vm.realm.globals) else {
-            sibling!(lane_load_global_name_refresh::<H, KIND, SCOPED>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `name_row` of a global, or `lane_load_global_name`, past its record's hint: an
+    /// `name_row` of a global, past its record's hint: an
     /// initialized global lexical binding of
     /// the name, which the general path's search finds first there; else the global object's
     /// own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field

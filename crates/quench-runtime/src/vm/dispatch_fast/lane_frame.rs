@@ -805,6 +805,10 @@ pub(in crate::vm::dispatch_fast) const FLAG_NAME_UNDEFINED: u8 = 4;
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL: u8 = 5;
 /// `FLAG` of a by-name load resolved to an intrinsic name (`NameRead::Intrinsic`).
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_INTRINSIC: u8 = 6;
+/// `FLAG` of a by-name load a probe settled onto the global object's own data field its record's
+/// hint names, in a scope that may declare the name (`settle_name_record`): as `FLAG_NAME_GLOBAL`,
+/// but a refresh checks the scopes' declarations first (`lane_load_global_name_refresh`, `SCOPED`).
+pub(in crate::vm::dispatch_fast) const FLAG_NAME_GLOBAL_SCOPED: u8 = 7;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -836,7 +840,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         let binding = match FLAG {
             FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
-            FLAG_NAME_GLOBAL => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
+            FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
             FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
             _ => None,
         };
@@ -1000,6 +1004,7 @@ const fn name_load_miss<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) 
 const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
     match FLAG {
         FLAG_NAME_GLOBAL => super::lane_load_global_name_refresh::<H, KIND, false> as Handler,
+        FLAG_NAME_GLOBAL_SCOPED => super::lane_load_global_name_refresh::<H, KIND, true> as Handler,
         FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC => super::lane_exit::<H> as Handler,
         _ => super::lane_load_name_resolve::<H, KIND> as Handler,
     }
