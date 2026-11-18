@@ -439,6 +439,8 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 40] = [
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
 pub(crate) const NO_LINK: u16 = u16::MAX;
+/// The opcode an absent chain link stands for, where its untaken branch still names `NO_LINK`.
+pub(crate) const NO_LINK_OP: Op = Op::Nop;
 
 /// `FUSED_ROWS` mode: both rows run in full, `A`'s result is written to its register.
 pub(crate) const FUSED_PLAIN: u8 = 0;
@@ -630,6 +632,7 @@ pub(crate) const LOAD_NAME_TYPEOF_ROW: u16 = Op::LoadNameTypeof as u16;
 pub(crate) const LOCAL_LOAD_ROW: u16 = Op::LoadLocal as u16;
 pub(crate) const LOCAL_STORE_ROW: u16 = Op::StoreLocal as u16;
 pub(crate) const LOCAL_INITIALIZE_ROW: u16 = Op::InitializeTdz as u16;
+pub(crate) const LOAD_LOCAL_PLAIN_ROW: u16 = Op::LoadLocalPlain as u16;
 /// The opcodes whose rows read and write the running captured environment's slots (`LoadEnvLocal`,
 /// `StoreEnvLocal`), which a frame's specialization rewrites where the slot is not captured.
 pub(crate) const LOAD_ENV_LOCAL_ROW: u16 = Op::LoadEnvLocal as u16;
@@ -642,6 +645,19 @@ pub(crate) const fn window_slot(imm: u32) -> u16 { (imm & u16::MAX as u32) as u1
 /// The register base of the environment window a local-access record names, where its immediate
 /// carries one (`window_slot` names the slot above it); `0` where none is named.
 pub(crate) const fn window_base(imm: u32) -> u16 { (imm >> u16::BITS) as u16 }
+
+/// The row that runs a window's local access `op` (a load, store or initialization of a frame local
+/// or an environment slot), or `None` where `op` is no local access.
+pub(crate) const fn local_access_row(op: Op) -> Option<u16> {
+    match op {
+        Op::LoadLocal | Op::LoadEnvLocal => Some(LOCAL_LOAD_ROW),
+        Op::LoadLocalPlain => Some(LOAD_LOCAL_PLAIN_ROW),
+        Op::StoreLocal | Op::StoreEnvLocal => Some(LOCAL_STORE_ROW),
+        Op::StoreLocalPlain => Some(STORE_LOCAL_PLAIN_ROW),
+        Op::InitializeTdz => Some(LOCAL_INITIALIZE_ROW),
+        _ => None,
+    }
+}
 
 /// Whether `op` is a checked local access: its row reads and writes the frame's own locals in
 /// place, and leaves to its hand handler (`Miss`) for any slot those locals do not hold.
@@ -739,6 +755,31 @@ pub(crate) const fn defines_array_element(op: Op) -> bool { matches!(op, Op::Def
 pub(crate) const fn requires_object_coercible(op: Op) -> bool { matches!(op, Op::RequireObjectCoercible) }
 /// Writes `this` as a field (`SetThisField`).
 pub(crate) const fn writes_this_field(op: Op) -> bool { matches!(op, Op::SetThisField) }
+/// Makes a closure (`MakeClosure`).
+pub(crate) const fn makes_closure(op: Op) -> bool { matches!(op, Op::MakeClosure) }
+/// Clones the environment of an iteration (`CloneEnv`).
+pub(crate) const fn clones_environment(op: Op) -> bool { matches!(op, Op::CloneEnv) }
+/// Accesses a local slot of its frame or its environment: a load, a store or an initialization
+/// (`LoadLocal`, `LoadLocalPlain`, `LoadEnvLocal`, `StoreLocal`, `StoreLocalPlain`, `StoreEnvLocal`,
+/// `InitializeTdz`).
+pub(crate) const fn accesses_local_slot(op: Op) -> bool {
+    matches!(op, Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreLocal | Op::StoreLocalPlain
+        | Op::StoreEnvLocal | Op::InitializeTdz)
+}
+/// Stores a local slot of its frame or its environment (`StoreLocal`, `StoreLocalPlain`, `StoreEnvLocal`).
+pub(crate) const fn stores_local_slot(op: Op) -> bool { matches!(op, Op::StoreLocal | Op::StoreLocalPlain | Op::StoreEnvLocal) }
+/// Stores an environment slot (`StoreEnvLocal`).
+pub(crate) const fn stores_environment_slot(op: Op) -> bool { matches!(op, Op::StoreEnvLocal) }
+/// Loads or stores an environment slot (`LoadEnvLocal`, `StoreEnvLocal`).
+pub(crate) const fn addresses_environment_slot(op: Op) -> bool { matches!(op, Op::LoadEnvLocal | Op::StoreEnvLocal) }
+/// Stores a captured slot (`StoreCapture`).
+pub(crate) const fn writes_capture(op: Op) -> bool { matches!(op, Op::StoreCapture) }
+/// Jumps on a falsy register (`JumpFalse`).
+pub(crate) const fn jumps_when_false(op: Op) -> bool { matches!(op, Op::JumpFalse) }
+/// Does nothing (`Nop`): a marker that a lane skips.
+pub(crate) const fn does_nothing(op: Op) -> bool { matches!(op, Op::Nop) }
+/// Stores a function's `var` binding (`StoreVarBinding`), a store to its slot where the function is nested.
+pub(crate) const fn stores_var_binding(op: Op) -> bool { matches!(op, Op::StoreVarBinding) }
 
 
 /// The instructions a tier emits when it lowers a unit. Staged names their opcodes, so a lowering

@@ -16,20 +16,21 @@ pub(super) enum WindowRecord {
 
 pub(super) fn window_record(function: &Function, instruction: WideInstruction) -> WindowRecord {
     let op = instruction.op();
-    if op.class().eq(Class::Call) && instruction.direct_eval() {
+    if crate::staged::calls(op) && instruction.direct_eval() {
         return WindowRecord::Eval;
     }
-    WindowRecord::Local(match op.class() {
-        Class::MakeClosure => instruction.imm(),
-        // A clone's own immediate is its plan, which the row reads (`staged::Operation::CloneEnv`).
-        Class::CloneEnv => instruction.imm(),
-        Class::LoadLocal | Class::LoadLocalPlain | Class::LoadEnvLocal | Class::StoreLocal | Class::StoreLocalPlain
-        | Class::StoreEnvLocal | Class::InitializeTdz => crate::staged::window_slot(instruction.imm()) as u32,
-        // A function's Annex B store to its `var` binding is a store to the slot
-        // (`Function::window_reads_locals`).
-        Class::StoreVarBinding if function.parent.is_some() => crate::staged::window_slot(instruction.imm()) as u32,
-        _ => return WindowRecord::Keeps,
-    })
+    // A closure's immediate names its function; a clone's is its plan, which the row reads
+    // (`staged::Operation::CloneEnv`).
+    if crate::staged::makes_closure(op) || crate::staged::clones_environment(op) {
+        return WindowRecord::Local(instruction.imm());
+    }
+    // A function's Annex B store to its `var` binding is a store to the slot
+    // (`Function::window_reads_locals`).
+    let slot_access = crate::staged::accesses_local_slot(op) || (crate::staged::stores_var_binding(op) && function.parent.is_some());
+    if slot_access {
+        return WindowRecord::Local(crate::staged::window_slot(instruction.imm()) as u32);
+    }
+    WindowRecord::Keeps
 }
 
 /// The handler of the window record of `op` on local slot `own`, or `None` where the record keeps its
@@ -41,22 +42,21 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
     if op as u16 == crate::staged::CLONE_ENV_ROW {
         return Some(lane_row::<H, { crate::staged::CLONE_ENV_ROW }, ACC_NONE, FLAG_UNREAD> as Handler);
     }
-    let class = op.class();
-    if class == Class::MakeClosure {
+    if crate::staged::makes_closure(op) {
         return Some(if scoped { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_SCOPE }>() } else { super::lane_frame::closure_row::<H, { super::lane_frame::FLAG_WINDOW_CLOSURE }>() });
     }
     // A store to the function's own name is ignored or throws (`Function::strict`), which
     // the general step decides.
-    if function.is_self_binding_slot(own) && matches!(class, Class::StoreLocal | Class::StoreLocalPlain | Class::StoreEnvLocal) {
+    if function.is_self_binding_slot(own) && crate::staged::stores_local_slot(op) {
         return Some(lane_exit::<H>);
     }
     // A function that resolves names at run time may store to a `with` object's binding instead of the
     // local: its environment store takes the scope first (`scoped_names::lane_store_scoped_local_miss`).
     let environment = !op.captures_environment() && function.local_slot_uses_environment(own);
-    if scoped && class == Class::StoreEnvLocal {
+    if scoped && crate::staged::stores_environment_slot(op) {
         return Some(if environment { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE_ENVIRONMENT }>() } else { super::lane_frame::scoped_local_row::<H, { super::lane_frame::FLAG_SCOPE }>() });
     }
-    let environment_slot = class == Class::LoadEnvLocal || class == Class::StoreEnvLocal;
+    let environment_slot = crate::staged::addresses_environment_slot(op);
     // A plain slot of a non-root function: the frame's own local, which the window holds too
     // (`plain_frame_local`). A program's root is not one: its slots may stand for bindings outside
     // its window (`Vm::root_binding`).
@@ -66,12 +66,13 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, op: Op, own: us
         // binding rules of the activation it runs in. An environment slot keeps its own row.
         return if environment_slot { None } else { Some(row_miss::<H, FLAG_UNREAD>(op)) };
     }
-    Some(match class {
-        Class::LoadLocal | Class::LoadEnvLocal => lane_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
-        Class::LoadLocalPlain => lane_row::<H, { opc::LoadLocalPlain }, ACC_NONE, FLAG_WINDOW> as Handler,
-        Class::StoreLocal | Class::StoreEnvLocal => lane_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
-        Class::StoreLocalPlain => lane_row::<H, { opc::StoreLocalPlain }, ACC_NONE, FLAG_WINDOW> as Handler,
-        Class::InitializeTdz => lane_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+    let row = crate::staged::local_access_row(op)?;
+    Some(match row {
+        crate::staged::LOCAL_LOAD_ROW => lane_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOAD_LOCAL_PLAIN_ROW => lane_row::<H, { crate::staged::LOAD_LOCAL_PLAIN_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOCAL_STORE_ROW => lane_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::STORE_LOCAL_PLAIN_ROW => lane_row::<H, { crate::staged::STORE_LOCAL_PLAIN_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
+        crate::staged::LOCAL_INITIALIZE_ROW => lane_row::<H, { crate::staged::LOCAL_INITIALIZE_ROW }, ACC_NONE, FLAG_WINDOW> as Handler,
         _ => return None,
     })
 }
