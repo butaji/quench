@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
         (frame.pc, frame.pc_is_resume) = (pc, true);
         let (context, this, stub) = (frame.context, frame.this, (frame.program, frame.function));
         let callee = context.callable().ok_or_else(|| JsError::validation("a first-call stub runs without a callee".into()))?;
-        let args = self.array_values(self.read(f, i.register_b()))?;
+        let args = self.array_values(self.stub_arguments(f, i))?;
         if self.heap.function(callee).is_some_and(|record| matches!(record.kind, FunctionKind::User(program, function) if (program, function) == stub)) {
             if !context.is_constructor()
                 && let Some(value) = self.call_streamed_runs(p, stub, callee, this, &args)?
@@ -47,6 +47,19 @@ impl<H: Host> Vm<H> {
         };
         self.write(f, i.result_register(), value);
         Ok(())
+    }
+
+    /// The arguments array of frame `f`'s stub body, whose `CallFirstChunk` is `i`: its rest
+    /// parameter's local, slot 0 as the stub's only parameter, which binding made from the values
+    /// passed. Register B, which the body loaded from it, is read only where the slot does not
+    /// hold the array (a parameter promoted to a register clears its slot): a lane that ran the
+    /// load in a frameless activation and left at this instruction, which no row stages, hands
+    /// the general loop the frame's own register file without the load's write (babel-wtb with
+    /// stubbed arrows read a stale value there).
+    fn stub_arguments(&self, f: usize, i: WideInstruction) -> Value {
+        self.frames[f].locals.first().copied()
+            .filter(|value| self.heap.array_elements(*value).is_some())
+            .unwrap_or_else(|| self.read(f, i.register_b()))
     }
 
     /// The chunk of stub `function` of program `p` (`stub.0`): the function's source alone,
