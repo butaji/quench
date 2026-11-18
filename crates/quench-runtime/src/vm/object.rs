@@ -2411,6 +2411,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
+    /// Whether the site cached no entry yet: its first read has not recorded one.
+    pub(super) fn field_site_empty(&self, site: u16) -> bool {
+        let entry = self.field_caches.get(self.field_cache_index(site));
+        entry.receiver == EMPTY_CACHE.receiver && entry.holder == EMPTY_CACHE.holder
+    }
+
+    /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
     }

@@ -8148,6 +8148,10 @@ script_handler! {
                                 lane_row::<H, FIELD_LEAF_READ, ACC_NONE, CELL_OWN_REGISTER>, lane_get_field::<H>)
                         })
                     }
+                    // A site that cached nothing yet (its first read, before the general read
+                    // below records an entry) keeps its record: the next miss decides by the entry,
+                    // a prototype's method (`a.includes`) the held row.
+                    _ if (unsafe { vm(cx) }).field_site_empty(i.c) => None,
                     _ => Some(lane_get_field::<H>),
                 }
             }
