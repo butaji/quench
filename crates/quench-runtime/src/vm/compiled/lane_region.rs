@@ -3189,7 +3189,7 @@ impl Lowering<'_, '_> {
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
             CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } if state.values[callee_index].value.ty.function_identity() == Some(identity)
-                || self.entry.as_ref().expect("entry facts").calls.contains(frame) =>
+                || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame)) =>
                     (None, Some(Type::function(identity).expect("admitted callee locator"))),
             CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
                 Some(self.is_identity(callee, identity)),
@@ -3197,7 +3197,7 @@ impl Lowering<'_, '_> {
             ),
             CalleeBinding::Function => (
                 if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
-                    || self.entry.as_ref().expect("entry facts").calls.contains(frame) { None }
+                    || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame)) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
                 Some(Type::function_body(inlined.target.function)),
             ),
