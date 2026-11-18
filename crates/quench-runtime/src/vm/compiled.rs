@@ -3991,6 +3991,10 @@ impl<H: Host> Vm<H> {
         let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
         // SAFETY: as above.
         unsafe {
+            // An entry from outside any body (the interpreter's call) found the run's words
+            // unbound: they stay bound to the run it made, so the next such entry of the same run
+            // binds none of them again (`LaneFrame::bind_run`); the per-entry words go back.
+            let saved = if saved.residual == 0 && saved.field_entries == 0 { saved.keeping_run_of(&(*frame).dispatch) } else { saved };
             saved.install(&mut (*frame).dispatch);
             if self.field_entries_epoch != moved_from { self.rebind_lane_field_entries(); }
             let context = &mut (*frame).context;
@@ -4095,6 +4099,12 @@ impl LaneEntry {
         }
     }
 
+    /// This entry's per-entry words with the run words `dispatch` holds now: its program, field
+    /// cache entries and residual.
+    fn keeping_run_of(self, dispatch: &JsStepDispatch) -> Self {
+        Self { program_id: dispatch.program_id, field_entries: dispatch.field_entries, residual: dispatch.residual, ..self }
+    }
+
     fn install(self, dispatch: &mut JsStepDispatch) {
         dispatch.program_id = self.program_id;
         dispatch.field_entries = self.field_entries;
@@ -4108,10 +4118,10 @@ impl LaneEntry {
 }
 
 /// The words of the dispatch payload and context that stay as they are for every entry of one
-/// lane run: its VM, program, residual, lane context and store specialization, and what follows
+/// lane run: its VM, program, residual and store specialization, and what follows
 /// from them, the program's field cache entries (`LaneFrame::bind_run`). An entry writes them
-/// only where its run is not the one that bound them; the words it writes per entry are its
-/// registers and the stack's room.
+/// only where its run is not the one that bound them; the words it writes per entry are its lane
+/// context (compared here only after it is written), its registers and the stack's room.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LaneRun {
     vm: usize,
@@ -4151,12 +4161,14 @@ impl LaneFrame {
     #[inline(always)]
     fn bind_run(&mut self, run: LaneRun, interrupt: &crate::ExecutionInterrupt, field_entries: impl FnOnce() -> usize) -> bool {
         let owner = std::ptr::from_ref(interrupt);
+        // The lane context is the entry's own activation, written by every entry; the other
+        // words stand for the whole run.
+        self.dispatch.lane_context = run.lane_context;
         let rebound = LaneRun::of(&self.dispatch) != run;
         if rebound {
             self.dispatch.field_entries = field_entries();
             self.context.stack_limit = native_stack_limit();
             self.dispatch.program_id = run.program_id;
-            self.dispatch.lane_context = run.lane_context;
             self.dispatch.residual = run.residual;
             self.dispatch.stores_specialized = run.stores_specialized;
         }
