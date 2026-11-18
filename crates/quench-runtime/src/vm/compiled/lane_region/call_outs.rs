@@ -45,7 +45,7 @@ impl Lowering<'_, '_> {
         self.canonicalize(state, pc);
         let cell = self.global_cell(state, pc, &row, miss);
         let site = self.call_out_site(pc, record, cell);
-        if instruction.op().class() != Class::ForInNext {
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::ForInNext { .. })) {
             self.step_with(state, frame::Edges::ValueGuarded { miss }, row, StepWith { sites: sites(&site), ..StepWith::default() });
             state.call_effect();
             return true;

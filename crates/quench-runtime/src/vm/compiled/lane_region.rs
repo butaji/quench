@@ -1747,7 +1747,7 @@ pub(super) fn lower(
         // input directly. This selects a checked entry contract; a fractional
         // or wider bound resumes the original header with its value unchanged.
         let instruction = instructions[entry_pc];
-        if !lowering.facts.backedge().is_empty() && instruction.op().is_jump_binary_false()
+        if !lowering.facts.backedge().is_empty() && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
             && matches!(super::operations::NumberRelation::from_operator(instruction.binary_operator_field()),
                     Some(super::operations::NumberRelation::LessThan | super::operations::NumberRelation::LessEqual
                         | super::operations::NumberRelation::GreaterThan | super::operations::NumberRelation::GreaterEqual)) {
@@ -2566,7 +2566,8 @@ impl Lowering<'_, '_> {
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
             _ if self.is_window_row(pc, instruction) => Some(self.window_step(state, pc, instruction)),
-            opcode if (opcode.is_load_name() || opcode.is_load_name_call()) && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
+            _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. }))
+                && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Nop)) && plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
@@ -2599,7 +2600,7 @@ impl Lowering<'_, '_> {
             // The entry function's own `arguments` binding, whose values the activation kept
             // or an unmaterialized binding holds; an inlined callee's reads its own, which no
             // window of this activation holds.
-            _ if plain && instruction.op().class().eq(Class::ArgumentsLength) && self.own_arguments_read(pc, instruction) =>
+            _ if plain && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::ArgumentsLength { .. })) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_length(state, pc32, instruction),
             _ if plain && instruction.op().class().eq(Class::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_get(state, pc32, instruction),
@@ -3478,7 +3479,7 @@ impl Lowering<'_, '_> {
             if boundaries.contains(at) || self.unit.markers.contains(&at) { break; }
             let instruction = self.unit.instructions[at];
             let operator = match instruction.op() {
-                opcode if opcode.is_jump_binary_false() => Some(instruction.binary_operator_field()),
+                _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => Some(instruction.binary_operator_field()),
                 _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => Some(instruction.binary_operator()),
                 _ => None,
             };

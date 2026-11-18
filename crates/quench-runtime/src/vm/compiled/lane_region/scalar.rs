@@ -162,7 +162,7 @@ fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSi
 /// a parameter: an int32 for a bitwise operator or a comparison with an integer, a Number for arithmetic.
 fn requirement(program: &ResidualProgram, instruction: WideInstruction) -> Option<([Operand; 2], Type)> {
     let (operands, required) = match instruction.op() {
-        opcode if opcode.is_jump_binary_false() => relation_requirement(program, instruction)?,
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => relation_requirement(program, instruction)?,
         _ if instruction.op().js_denotation() == JsDenotation::NumericBinary =>
             ([instruction.operand_b(), instruction.operand_c()], operator_requirement(instruction)?),
         _ => return None,
