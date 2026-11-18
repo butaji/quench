@@ -6615,7 +6615,7 @@ script_handler! {
         let imm = i.imm();
         let slot = usize::from(ImmediateLayout::capture_slot(imm));
         let vm = unsafe { vm(cx) };
-        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.environment(env) {
+        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.reachable_environment(env) {
             Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
                 slots.owned(slot).filter(|value| !value.is_internal_marker())
             }
@@ -6640,7 +6640,7 @@ script_handler! {
         let value = r.get(i.a);
         let stored = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).is_some_and(|env| {
             let vm = unsafe { vm(cx) };
-            match vm.heap.environment_mut(env) {
+            match vm.heap.reachable_environment_mut(env) {
                 Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
                     match slots.owned_mut(slot) {
                         Some(binding) if !binding.is_internal_marker() => {

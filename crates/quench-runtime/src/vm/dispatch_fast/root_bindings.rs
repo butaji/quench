@@ -31,7 +31,7 @@ pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16
         return vm.owner_capture_env(VarOwner::Frame(unsafe { (*cx).frame() }), depth);
     }
     for _ in 0..depth {
-        let Some(crate::heap::EnvironmentRecord { parent, .. }) = vm.heap.environment(env) else { return None };
+        let Some(crate::heap::EnvironmentRecord { parent, .. }) = vm.heap.reachable_environment(env) else { return None };
         env = *parent;
     }
     Some(env)

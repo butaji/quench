@@ -316,6 +316,24 @@ impl Heap {
         self.environment_records.is_live(record_id).then(|| unsafe { self.environment_records.get_live(record_id) })
     }
 
+    /// `environment` of a value reached from a live root, a register or another live record's
+    /// link, which the collector keeps live: no occupancy test (checked in debug builds). The
+    /// lane's hot capture reads take this; a value of unknown provenance takes `environment`.
+    #[inline(always)] pub(crate) fn reachable_environment(&self, value: Value) -> Option<&EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
+        // SAFETY: a reachable record is live, so occupied and initialized.
+        Some(unsafe { self.environment_records.get_live(record_id) })
+    }
+
+    /// `reachable_environment`, mutably, past the write barrier.
+    #[inline(always)] pub(crate) fn reachable_environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
+        let record_id = value.direct_environment_index()?;
+        debug_assert!(self.environment_records.is_live(record_id), "a reachable environment is live");
+        // SAFETY: as `reachable_environment`; `&mut self` is exclusive.
+        Some(unsafe { self.environment_records.get_live_mut(record_id, &self.properties) })
+    }
+
     /// `environment`, mutably, past the write barrier.
     #[inline(always)] pub(crate) fn environment_mut(&mut self, value: Value) -> Option<&mut EnvironmentRecord> {
         let record_id = value.direct_environment_index()?;
