@@ -302,6 +302,8 @@ pub(super) struct LoopSite {
     /// body is planned again (`loop_model::body_taken`, at the size its last plan had).
     body_seen: std::cell::Cell<u64>,
     body_due: std::cell::Cell<u64>,
+    /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
+    body_offered: std::cell::Cell<bool>,
 }
 
 impl LoopSite {
@@ -9921,6 +9923,10 @@ script_handler! {
                 loop_tier::lane_method_call_region(cx, site)
             }) {
                 Some(region) => site.region.get_or_init(|| region),
+                // A call no region runs (a native's, a callee the inliner cannot take) is a
+                // loop body's: the body planner inlines what it knows (`native_calls`) and
+                // starts at the header, so the loop runs natively without a function entry.
+                None if loop_body::offer_body(cx, r, site) => next!(cx, r, header, Carried::script_in(cx, view)),
                 None => {
                     site.entering.set(false);
                     lane_loop_retire::<H>(cx, ip, site);
@@ -22774,7 +22780,7 @@ fn install_loop_sites<'live, H: Host>(
                     widenings: std::cell::Cell::new(0),
                     compile_attempts: std::cell::Cell::new(0),
                     compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_due: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
                 },
             )
         })

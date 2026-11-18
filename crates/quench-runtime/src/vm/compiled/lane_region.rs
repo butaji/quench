@@ -41,6 +41,7 @@ mod int_ranges_tests;
 mod global_reads;
 #[path = "lane_region/native_calls.rs"] mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] mod builtin_calls;
+pub(in crate::vm) use native_calls::inlines_keeping_arrays;
 #[path = "lane_region/stable.rs"]
 mod stable;
 #[path = "lane_region/polls.rs"]
