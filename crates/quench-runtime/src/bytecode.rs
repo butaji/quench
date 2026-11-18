@@ -1432,6 +1432,8 @@ pub struct Function {
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `maker_bindings_read`; never serialized.
     pub(crate) maker_bindings: std::cell::OnceCell<bool>,
+    /// Lazily derived `arrow_chain_reads_implicit_bindings` of this function; never serialized.
+    pub(crate) arrow_reads: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
@@ -1993,6 +1995,34 @@ impl Function {
             .filter_map(|(slot, _)| u16::try_from(slot).ok())
     }
 
+    /// The local slots of a Script's or eval's root that the realm and later code address by
+    /// slot: a Script's every global declaration (`GlobalDeclarations`); a sloppy eval's var
+    /// and function names, which are the global object's; none of a strict eval's, whose
+    /// declarations are all its own (`ResidualProgram::root_variables_are_local`).
+    pub(crate) fn global_declaration_slots(&self, eval: bool) -> impl Iterator<Item = u16> + '_ {
+        // A set, once: a bundle's thousands of locals against its declarations was quadratic.
+        let declared: rustc_hash::FxHashSet<Atom> = self
+            .global_declarations_or_none()
+            .filter(|_| !(eval && self.strict))
+            .into_iter()
+            .flat_map(|declarations| {
+                let lexical: &[Atom] = if eval { &[] } else { &declarations.lexical };
+                let immutable: &[Atom] = if eval { &[] } else { &declarations.immutable };
+                lexical.iter()
+                    .chain(&declarations.var)
+                    .chain(&declarations.function)
+                    .chain(&declarations.annex_b_var)
+                    .chain(immutable)
+                    .copied()
+            })
+            .collect();
+        self.local_atoms
+            .iter()
+            .enumerate()
+            .filter(move |(_, atom)| declared.contains(*atom))
+            .filter_map(|(slot, _)| u16::try_from(slot).ok())
+    }
+
     pub fn global_immutable_atoms(&self) -> &[Atom] {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
@@ -2224,6 +2254,11 @@ impl Function {
     /// (`activation_bindings_observable` counts every arrow it makes): an arrow chain that reads
     /// none (`arrow_chain_reads_implicit_bindings`), as `xs.map(x => x * 2)` does, needs no
     /// `this` kept for it.
+    /// `arrow_chain_reads_implicit_bindings` of this function, `id` of `code`, cached.
+    pub(crate) fn arrow_reads_implicit_bindings(&self, code: &ResidualProgram, id: u32) -> bool {
+        *self.arrow_reads.get_or_init(|| arrow_chain_reads_implicit_bindings(code, id))
+    }
+
     pub(crate) fn maker_bindings_read(&self, code: &ResidualProgram) -> bool {
         *self.maker_bindings.get_or_init(|| {
             self.activation_binding_reads(code)

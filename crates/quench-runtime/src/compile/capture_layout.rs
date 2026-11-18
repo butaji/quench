@@ -9,10 +9,12 @@ use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 pub(crate) struct LayoutInputs {
     pub(crate) captured: Vec<u16>,
     pub(crate) dynamic_descendant: bool,
-    /// Whether the function is a module's body. Its module-scope bindings live in the module
-    /// environment, which importers and the linker address by slot, and are in `captured`;
-    /// its block bindings are as private to its activation as a function's.
-    pub(crate) module_root: bool,
+    /// Whether the function is a program root that splits like a function: a module's body,
+    /// whose module-scope bindings importers and the linker address by slot, or a Script's or
+    /// eval's root without dynamic name resolution, whose global declarations the realm and
+    /// later code find by slot. Those bindings are in `captured`; its block bindings, such as
+    /// a `for (let ...)` loop's, are as private to its activation as a function's.
+    pub(crate) split_root: bool,
 }
 
 /// What the program-wide layout analyses read of one function, fixed once it is compiled:
@@ -183,7 +185,7 @@ pub(super) fn inputs(
         .map(|((id, captured), dynamic_descendant)| LayoutInputs {
             captured: complete_captured(captured, arguments(id)),
             dynamic_descendant,
-            module_root: false,
+            split_root: false,
         })
         .collect()
 }
@@ -221,7 +223,7 @@ pub(super) fn apply_function(
     let mut captured = inputs.captured.clone();
     // A module body's `captured` includes the bindings its module environment holds
     // (`Function::module_environment_slots`), closures or not, so it always splits.
-    if !inputs.module_root && !has_closure(function) {
+    if !inputs.split_root && !has_closure(function) {
         // No closure of this activation can exist, and no nested function captures
         // its locals: a per-iteration or block copy of the environment is unobservable
         // under the same layout conditions that let a closure's activation split.
@@ -342,7 +344,7 @@ fn clones_are_unobservable(function: &Function, id: usize, inputs: &LayoutInputs
 /// names its slots.
 fn activation_is_private(function: &Function, id: usize, inputs: &LayoutInputs) -> bool {
     let nested = id != 0 && function.parent.is_some();
-    let module_body = inputs.module_root && function.parent.is_none();
+    let module_body = inputs.split_root && function.parent.is_none();
     (nested || module_body)
         && !inputs.dynamic_descendant
         && function.construction_is_private()

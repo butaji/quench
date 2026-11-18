@@ -100,7 +100,8 @@ impl<H: Host> Vm<H> {
         let mut target = self.sibling_capture_target(entry, callee, env)?;
         // An arrow's `this` is its own environment's: read for the new one, as
         // `closure_target` does, with every other fact kept.
-        if !entry.this_binding.binds_receiver() {
+        // An arrow that reads none of its maker's implicit bindings keeps the entry's.
+        if !entry.this_binding.binds_receiver() && self.arrow_reads_implicit_bindings(entry.program(), entry.function) {
             (target.this_binding, target.lexical_this) = match self.captured_lexical_this(env) {
                 Some(this) if this.is_deleted() => return None,
                 Some(this) => (ThisBinding::Lexical, this),
@@ -108,6 +109,14 @@ impl<H: Host> Vm<H> {
             };
         }
         Some(target)
+    }
+
+    /// Whether function `function` of `program`, an arrow, may read its maker's implicit
+    /// bindings (`arrow_chain_reads_implicit_bindings`); `true` when unknown.
+    fn arrow_reads_implicit_bindings(&self, program: ProgramId, function: u32) -> bool {
+        self.programs.residual(program).is_none_or(|code| {
+            code.function_get(function as usize).is_none_or(|body| body.arrow_reads_implicit_bindings(code, function))
+        })
     }
 
     /// `sibling_closure_target`'s entry for `callee` over `env`, its captures read.

@@ -2645,7 +2645,7 @@ impl<'a> Compiler<'a> {
                 capture_layout::mapped_arguments(&function),
             ),
             dynamic_descendant: false,
-            module_root: false,
+            split_root: false,
         };
         let arguments_slot = function.arguments_slot;
         capture_layout::apply_function(&mut function, id as usize, &layout, &self.atoms);
@@ -3293,7 +3293,8 @@ impl<'a> Compiler<'a> {
                 immutable: global_immutable_atoms,
             }
             .boxed();
-            if !self.module_goal {
+            // A strict eval's vars are its own bindings, not the global object's.
+            if !self.module_goal && !(self.eval_context.is_some() && strict_script) {
                 fn lower_global_var(
                     op: Op,
                     slot: impl FnOnce() -> usize,
@@ -3415,10 +3416,22 @@ impl<'a> Compiler<'a> {
             && let (Some(plan), Some(inputs), Some(Some(root))) =
                 (&module_link_plan, layout_inputs.first_mut(), functions.first())
         {
-            inputs.module_root = true;
+            inputs.split_root = true;
             inputs.captured.extend(
                 root.module_environment_slots(plan, &module_imports, |atom| self.atoms.get(atom as usize)),
             );
+            inputs.captured.sort_unstable();
+            inputs.captured.dedup();
+        } else if !self.module_goal
+            && let (Some(inputs), Some(Some(root))) = (layout_inputs.first_mut(), functions.first())
+            && !inputs.dynamic_descendant
+            && !root.has_dynamic_scope_access()
+            && root.binding_sites.is_empty()
+        {
+            // A Script's or eval's root splits around its global declarations; without
+            // dynamic name resolution nothing else names its block bindings.
+            inputs.split_root = true;
+            inputs.captured.extend(root.global_declaration_slots(self.eval_context.is_some()));
             inputs.captured.sort_unstable();
             inputs.captured.dedup();
         }
@@ -4325,7 +4338,7 @@ impl<'a> Compiler<'a> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(), maker_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
