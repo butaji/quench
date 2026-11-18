@@ -99,8 +99,8 @@ fn lowered(region: &LoopRegion, pc: u32, sites: &Sites, (instruction, returning)
         let shape = CallShape { returning, ..CallShape::of(pc, instruction, form) };
         return Decoded::step(Step::Call(shape), Some(shape.result));
     }
-    match instruction.op().class() {
-        Class::Return if plain && instruction.register_a() < sites.registers => returned(instruction.register_a()),
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::Return { source }) if plain && source < sites.registers => returned(source),
         _ => locals::fast_row(sites.function, sites.id, instruction, sites.ending)
             .unwrap_or_else(|| decode(region, (facts, sites.known), pc, instruction, helpers)),
     }

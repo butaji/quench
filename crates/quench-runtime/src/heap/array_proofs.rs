@@ -61,8 +61,9 @@ impl ArrayStorageProofs {
         Self {
             readable: [0; ARRAY_PROOF_SLOTS],
             writable: [0; ARRAY_PROOF_SLOTS],
-            bases: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
-            values: [MaybeUninit::uninit(); ARRAY_PROOF_SLOTS],
+            // Initialized, so `dense` reads a retired or never proved slot's words without a branch.
+            bases: [MaybeUninit::zeroed(); ARRAY_PROOF_SLOTS],
+            values: [MaybeUninit::new(NonNull::dangling()); ARRAY_PROOF_SLOTS],
         }
     }
 
@@ -98,6 +99,7 @@ impl ArrayStorageProofs {
     /// `register`'s slot, as `Vm::try_replace_record_element` would; `false` stores nothing:
     /// a slot that does not prove `base` writable, an index past the length, a hole, or a
     /// value the write barrier might log.
+    #[cfg_attr(not(test), allow(dead_code))]
     #[inline(always)]
     pub(crate) fn replace(&mut self, register: u16, base: Value, index: usize, value: Value) -> bool {
         let slot = Self::slot(register);
@@ -116,24 +118,18 @@ impl ArrayStorageProofs {
         true
     }
 
-    /// `replace` of a value whatever its kind, for a store the write barrier admitted unlogged
-    /// (`Heap::array_store_unlogged`): a heap value into a proved array (`arr[i] = o`).
+    /// The dense storage `register`'s slot proves of `base`: its first element and the elements an
+    /// access reaches there, the readable bound for a read and the writable one for a store that
+    /// replaces in place. `(null, 0)` where the slot does not prove `base` at that bound, so the
+    /// access reaches no element.
     #[inline(always)]
-    pub(crate) fn replace_admitted(&mut self, register: u16, base: Value, index: usize, value: Value) -> bool {
+    pub(crate) fn dense(&self, register: u16, base: Value, writable: bool) -> (*mut Value, usize) {
         let slot = Self::slot(register);
-        let bound = self.writable[slot];
-        if index >= bound || !self.proves(slot, bound, base) {
-            return false;
-        }
-        // SAFETY: as in `element`; a nonzero writable bound proves the backing this array's
-        // own and in-place replacement its whole store.
-        let values = unsafe { self.values[slot].assume_init() };
-        if unsafe { *values.as_ptr().add(index) }.is_deleted() {
-            return false;
-        }
-        // SAFETY: as above.
-        unsafe { ArrayElements::replace_through(values, index, value) };
-        true
+        let bound = if writable { self.writable[slot] } else { self.readable[slot] };
+        // SAFETY: every slot's base and values are initialized (`new`), and a nonzero bound was
+        // written by `prove` with them. A slot of another base selects no element, with no branch.
+        let proved = unsafe { self.bases[slot].assume_init() } == base;
+        (unsafe { self.values[slot].assume_init() }.as_ptr(), if proved { bound } else { 0 })
     }
 
     /// Whether `register`'s slot proves `base`, whether or not an access through it hit.
@@ -177,7 +173,7 @@ impl ArrayStorageProofs {
 impl Heap {
     /// Whether a store of `stored` into the record array `base` names logs nothing in the write
     /// barrier, as `record_array_store_mut_unlogged` admits it: the gate of a proved heap-value
-    /// replacement (`ArrayStorageProofs::replace_admitted`).
+    /// replacement (`element_proved_write_row`).
     #[inline(always)]
     pub(crate) fn array_store_unlogged(&self, base: Value, stored: Value) -> bool {
         base.direct_array_index().is_some_and(|record_id| !self.array_records.store_logs(record_id, stored))

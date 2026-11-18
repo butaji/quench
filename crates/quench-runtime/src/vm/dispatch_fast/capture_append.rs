@@ -49,14 +49,15 @@ fn tests_chunk_is_not_null(test: WideInstruction, constants: &[crate::bytecode::
 
 /// A false test jumps over the append to the result.
 fn skips_append_unless(branch: WideInstruction, test: WideInstruction) -> bool {
-    branch.op().is_jump_false()
+    matches!(crate::vm::compiled::decoded(branch), Some(crate::staged::Operation::JumpIf { taken: false, .. }))
         && branch.register_a() == test.result_register()
         && branch.jump_target() as usize == RESULT_PC
 }
 
 /// A capture of the body's own environment, into a register other than the chunk's.
 fn loads_own_capture(load: WideInstruction) -> bool {
-    load.op().is_load_capture() && spares_chunk(load) && load.capture_depth() == 0
+    // `spares_chunk` requires the flags the decode of a capture load requires.
+    matches!(crate::vm::compiled::decoded(load), Some(crate::staged::Operation::LoadCapture { .. })) && spares_chunk(load) && load.capture_depth() == 0
 }
 
 /// `binding + chunk`, in that order.
@@ -70,15 +71,15 @@ fn appends_chunk(add: WideInstruction, load: WideInstruction) -> bool {
 
 /// The sum, stored to the capture the load read.
 fn stores_back(store: WideInstruction, add: WideInstruction, load: WideInstruction) -> bool {
-    store.op().is_store_capture() && store.register_a() == add.result_register() && store.imm() == load.imm()
+    matches!(crate::vm::compiled::decoded(store), Some(crate::staged::Operation::StoreCapture { .. })) && store.register_a() == add.result_register() && store.imm() == load.imm()
 }
 
 /// `return true`, whether or not the append ran.
 fn returns_true(result: WideInstruction, done: WideInstruction, constants: &[crate::bytecode::Constant]) -> bool {
-    result.op().is_load_const()
+    crate::staged::Operation::<(), ()>::decode_constant_load(result).is_some()
         && result.result_flags() & !crate::bytecode::RETURN_REGISTER == 0
         && matches!(constants.get(result.constant_index()), Some(crate::bytecode::Constant::Boolean(true)))
-        && done.op().is_return()
+        && matches!(crate::vm::compiled::decoded(done), Some(crate::staged::Operation::Return { .. }))
         && done.register_a() == result.result_register()
 }
 

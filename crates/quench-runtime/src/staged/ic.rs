@@ -24,6 +24,16 @@ pub(crate) enum IcOp<'a> {
     /// `GuardLayout` of a layout whose storage form the site fixed (a generated row's site
     /// fact): the form is a constant of the row, so the load after it reads no table entry.
     GuardFormed { id: u32, form: u32 },
+    /// The read of the one object whose record is at `record` as `value`, while `watch` holds
+    /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
+    /// that starts from the receiver's word compares the word with the object's own instead.
+    OwnConstant { record: u64, watch: u64, value: u64 },
+    /// A direct array's `length` from the receiver's word, its record among the array records
+    /// at `records` (`elements::array_length`); any other receiver or form misses.
+    ArrayLength { records: u64 },
+    /// A flat string's `length` from the receiver's word, its record among the string records
+    /// at `records` (`string_length::string_length`); any other receiver or form misses.
+    StringLength { records: u64 },
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
@@ -45,6 +55,15 @@ pub(crate) enum IcOp<'a> {
     /// guards, and the watch at `watch` on the prototype's values still holds, else the read
     /// misses. The read starts from the receiver's word, not an object record. It ends the read.
     HeldString { watch: u64, value: u64 },
+    /// The value `Number.prototype` answered for a number primitive's read (`number_read`): the
+    /// reached word is a Number (an int32 or a double), whose one prototype stands for the shape
+    /// and link guards, and the watch at `watch` on the prototype's values still holds, else the
+    /// read misses. The read starts from the receiver's word, not an object record. It ends the read.
+    HeldNumber { watch: u64, value: u64 },
+    /// The own field at `slot` of the record, which a getter's hint returned for a receiver of
+    /// layout `guard` (`getter_own_read`): the record's layout is `guard` and the watch at `watch`
+    /// on its prototype's values still holds, else the read misses. It ends the read.
+    GetterOwn { guard: u64, watch: u64, slot: u16 },
 }
 
 /// The record a read starts from, with the facts its caller already holds for it: its
@@ -99,7 +118,18 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
             IcOp::LoadPrototypeSlot(slot) => return prototype_slot(stage, at.record, slot, miss),
             IcOp::PrototypeConstants(values) => return prototype_constants(stage, at.record, values, miss),
             IcOp::Held { guard, watch, value } => return holder_read(stage, at.record, guard, watch, value, miss),
+            IcOp::OwnConstant { record, watch, value } => return own_constant_read(stage, at.record, record, watch, value, miss),
+            IcOp::ArrayLength { records } => {
+                let records = site_word(stage, records);
+                return super::elements::array_length(stage, records, at.record, miss);
+            }
+            IcOp::StringLength { records } => {
+                let records = site_word(stage, records);
+                return super::string_length::string_length(stage, records, at.record, miss);
+            }
             IcOp::HeldString { watch, value } => return string_read(stage, at.record, watch, value, miss),
+            IcOp::HeldNumber { watch, value } => return number_read(stage, at.record, watch, value, miss),
+            IcOp::GetterOwn { guard, watch, slot } => return getter_own_read(stage, at.record, guard, watch, slot, miss),
         }
     }
     None
@@ -126,6 +156,25 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, 
     Some(stage.add_imm(zero, value))
 }
 
+/// The own field the getter hint `(guard, watch, slot)` records for the object part at `record`:
+/// `None` (leaving at `miss`) where the record's layout word differs from `guard` (`holder_read`'s
+/// compare), or the watch on its prototype's values no longer holds. The field is then the tagged
+/// slot `LoadSlot` reads, as a getter's own-field return is.
+#[inline(always)]
+pub(crate) fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
+    miss: S::Miss) -> Option<S::Word> {
+    let words = stage.load_u32(Region::ShapeWord.mutable(), record,
+        crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
+    let guard = stage.site(guard);
+    let same = stage.eq_imm(words, guard);
+    stage.guard(same, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let at = Reached::bare(record);
+    load_slot(stage, &at, (slot, Representation::Tagged), Form::Either, usize::from(slot) + 1, miss)
+}
+
 /// The value the own-constant hint `(record, watch, value)` records for the object part at
 /// `at`: `None` (leaving at `miss`) for any record but the hinted one, or once the watch on its
 /// values no longer holds. A receiver that is always one object, whose slot the code reads and
@@ -146,6 +195,14 @@ pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u6
     Some(stage.add_imm(zero, value))
 }
 
+/// The per-site operand `bits` as a word (a record table's base the row names).
+#[inline(always)]
+fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
+    let zero = stage.constant(0);
+    let bits = stage.site(bits);
+    stage.add_imm(zero, bits)
+}
+
 /// The value the string hint `(watch, value)` records for the receiver word `word`: `None`
 /// (leaving at `miss`) for any receiver but a direct string, or once the watch on
 /// `String.prototype`'s values no longer holds.
@@ -153,6 +210,23 @@ pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u6
 pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
     let string = super::value::is_direct_string(stage, word);
     stage.guard(string, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
+}
+
+/// The value the number hint `(watch, value)` records for the receiver word `word`: `None`
+/// (leaving at `miss`) for any receiver but a Number, an int32 or a binary64, or once the watch
+/// on `Number.prototype`'s values no longer holds.
+#[inline(always)]
+pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
+    let integer = super::value::is_int(stage, word);
+    let double = super::value::is_double(stage, word);
+    let number = stage.any(integer, double);
+    stage.guard(number, miss)?;
     let watch = stage.site(watch);
     let holds = stage.assumption(watch);
     stage.guard(holds, miss)?;

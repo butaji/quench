@@ -2,7 +2,6 @@
 //! region PCs every kept instruction takes, the instructions each takes there, and the
 //! guards the frames end with.
 
-use crate::bytecode::Class;
 use super::{
     admitted_store, CalleeSource, field_base, inlined_returning, inlined_set_this, inlinable, intern_field, object_reads, renamed,
     FieldBase, FieldLookup, FieldPath, FieldReceiver, FieldSite, FieldUse, ImmediateLayout, ImmediateRole, InlineCallee,
@@ -34,10 +33,10 @@ pub(super) fn stored_names(caller: &[WideInstruction], sites: &[FieldSite]) -> B
     let mut names = BitSet::new(0);
     caller
         .iter()
-        .filter_map(|instruction| match instruction.op().class() {
-            _ if admitted_store(instruction.op()) => Some(instruction.atom_index()),
+        .filter_map(|instruction| match crate::vm::compiled::decoded_completed(instruction) {
+            _ if admitted_store(*instruction) => Some(instruction.atom_index()),
             // A fused read the bytecode stores into a `this` field (`inlined_set_this`).
-            Class::GetField if instruction.writes_current_this() => match instruction.field_lookup()? {
+            Some(crate::staged::Operation::GetField { .. }) if instruction.writes_current_this() => match instruction.field_lookup()? {
                 FieldLookup::Site(index) => sites.get(index)?.sink.map(|(atom, _)| atom),
                 FieldLookup::Atom { .. } => None,
             },
@@ -80,7 +79,8 @@ pub(super) fn admitted_callee<'a>(
     // this slice receiver-independent; recovery still performs the ordinary binding below.
     if !matches!(source, CalleeSource::Path) {
         body(&callee, &reached)
-            .all(|instruction| !instruction.op().is_get_field() || field_base(instruction, sites) != Some(FieldBase::THIS))
+            .all(|instruction| !matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
+                || field_base(instruction, sites) != Some(FieldBase::THIS))
             .then_some(())?;
     }
     Some((callee, reached))
@@ -391,10 +391,17 @@ impl<'c, 'a> Emission<'c, 'a> {
     }
 
     fn callee_part(&mut self, view: &CallView<'_, 'a>, instruction: WideInstruction) -> Option<WideInstruction> {
-        let instruction = if instruction.op().is_load_capture() { self.callee_capture(view.index, instruction)? } else { instruction };
+        let instruction = if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) {
+            self.callee_capture(view.index, instruction)?
+        } else {
+            instruction
+        };
         // The callee's `this` is the call's receiver, a caller register: its store of a
         // `this` field is a store to that register's object.
-        if !instruction.op().is_set_this_field() {
+        // Only a non-strict store to `this` (`SetField` with no base register) is rebased; a
+        // strict one passes through as before.
+        if !matches!(crate::vm::compiled::decoded_completed(instruction),
+            Some(crate::staged::Operation::SetField { base: None, strict: false, .. })) {
             return view.rename(instruction);
         }
         let store = view.rename(WideInstruction::new(Op::SetField, instruction.a(), 0, instruction.c(), instruction.imm()))?;

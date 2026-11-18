@@ -2416,6 +2416,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
+    /// Whether the site cached no entry yet: its first read has not recorded one.
+    pub(super) fn field_site_empty(&self, site: u16) -> bool {
+        let entry = self.field_caches.get(self.field_cache_index(site));
+        entry.receiver == EMPTY_CACHE.receiver && entry.holder == EMPTY_CACHE.holder
+    }
+
+    /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
     }
@@ -2476,6 +2483,15 @@ impl<H: Host> Vm<H> {
             .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
     }
 
+    /// The operands of number hint `index` for a read of `atom` (`IcOp::HeldNumber`): its watch's
+    /// address and its value's bits; `None` where no `Number.prototype` hint of that atom is held.
+    #[inline(always)]
+    pub(super) fn number_hint_operands(&self, index: u16, atom: Atom) -> Option<(u64, u64)> {
+        let hint = self.holder_hints.holder.get(usize::from(index))?;
+        (hint.atom == atom && hint.holder == self.number_proto)
+            .then(|| (std::rc::Rc::as_ptr(&hint.watch) as u64, hint.value.to_bits()))
+    }
+
     /// The object part of a direct object, array, function or ordinary builtin, whose own
     /// shape and prototype link a prototype-held hint tests (`holder_hint_hit`).
     #[inline(always)]
@@ -2509,6 +2525,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn hold_string_hint(&mut self, owned: Option<u16>, atom: Atom, value: Value, limit: u16) -> Option<u16> {
         // No object's auxiliary word is `NO_FIELD_RECEIVER`, so no object matches the guard.
         self.hold_prototype_hint(owned, atom, u64::from(NO_FIELD_RECEIVER) << u32::BITS, self.string_proto, value, limit)
+    }
+
+    /// Makes `value`, which `Number.prototype` answered for a number primitive's read of `atom`, a
+    /// record's hint (`hold_prototype_hint`).
+    pub(super) fn hold_number_hint(&mut self, owned: Option<u16>, atom: Atom, value: Value, limit: u16) -> Option<u16> {
+        // As `hold_string_hint`: no object's auxiliary word is `NO_FIELD_RECEIVER`.
+        self.hold_prototype_hint(owned, atom, u64::from(NO_FIELD_RECEIVER) << u32::BITS, self.number_proto, value, limit)
     }
 
     /// Makes `value`, which `prototype` answered for a read of `atom` from a receiver of

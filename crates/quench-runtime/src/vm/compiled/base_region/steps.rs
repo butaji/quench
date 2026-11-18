@@ -171,11 +171,13 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
         Some(Operation::PropertyKey { .. }) => return Some(Heap::Key),
         Some(Operation::ForInNext { .. }) => return Some(Heap::ForIn),
         Some(Operation::Protocol { step: crate::staged::Protocol::AppendArray { .. }, .. }) => return appends_one(instruction).then_some(Heap::Append),
+        Some(Operation::Protocol { step: crate::staged::Protocol::Class(crate::staged::protocol_classes::ClassStep::SetFunctionName { .. }), .. }) =>
+            return names::of(known, instruction).map(names::Name::heap),
+        Some(Operation::Protocol { step: crate::staged::Protocol::Value(crate::staged::protocol_values::ValueStep::RequireIteratorResult), .. }) =>
+            return Some(Heap::Object),
         _ => {}
     }
     match instruction.op().class() {
-        Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
-        Class::RequireIteratorResult => Some(Heap::Object),
         Class::Unary => typeof_arm(instruction.unary_operator()),
         _ => None,
     }

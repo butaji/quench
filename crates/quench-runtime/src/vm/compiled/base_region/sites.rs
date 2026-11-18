@@ -173,7 +173,8 @@ impl<H: crate::Host> crate::vm::Vm<H> {
         (0..code.len()).map(|pc| {
             let register = Some(code[pc]).filter(|instruction| is_instanceof(*instruction))?.operand_c().register_index()?;
             let named = match origin(code, &joins, pc, register) {
-                Origin::Written(load) if load.op().class() == Class::LoadName => self.global_value(program, load),
+                Origin::Written(load) if matches!(crate::staged::Operation::<(), ()>::decode_load_name(load, ()),
+                    Some(crate::staged::Operation::LoadName { receiver: None, .. })) => self.global_value(program, load),
                 Origin::Entry => parameters.get(usize::from(register)).copied(),
                 Origin::Written(_) | Origin::Merged => None,
             };

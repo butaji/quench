@@ -41,7 +41,7 @@ impl<H: Host> Vm<H> {
     /// resolves in the global scope of the function that holds them.
     fn global_name_loads(&self, program: &ResidualProgram, function: u32, unit: &lane_unit::Unit) -> Vec<(usize, crate::bytecode::Atom, u16)> {
         unit.instructions.iter().enumerate()
-            .filter(|(_, instruction)| instruction.op().is_throwing_name_load())
+            .filter(|(_, instruction)| crate::staged::Operation::<(), ()>::decode_load_name(**instruction, ()).is_some())
             .filter(|(pc, instruction)| {
                 let function = match unit.origins[*pc] {
                     lane_unit::Origin::Caller(_) => function,
@@ -74,7 +74,8 @@ impl<H: Host> Vm<H> {
     /// binding's word read live (`Vm::global_lexical_slot`); `read` otherwise.
     fn slot_load(&mut self, unit: &lane_unit::Unit, pc: usize, read: GlobalRead) -> GlobalRead {
         let instruction = unit.instructions[pc];
-        let loads = matches!(read, GlobalRead::Stable { .. } | GlobalRead::Dynamic) && instruction.op().is_throwing_name_load();
+        let loads = matches!(read, GlobalRead::Stable { .. } | GlobalRead::Dynamic)
+            && crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some();
         if !loads {
             return read;
         }
@@ -116,7 +117,7 @@ impl<H: Host> Vm<H> {
         recorded.iter().enumerate().map(|(call, callee)| {
             let callee = (*callee)?;
             let load = code[straight_definition(code, &entered, call)?];
-            if !load.op().is_throwing_name_load() { return None; }
+            if crate::staged::Operation::<(), ()>::decode_load_name(load, ()).is_none() { return None; }
             let atom = load.atom_index();
             if !self.reads_global_scope(program, function, atom) {
                 return None;
@@ -135,7 +136,7 @@ impl<H: Host> Vm<H> {
         /// The methods a call runs inline, by name.
         const METHODS: [(&str, crate::vm::Native); 4] = [("charCodeAt", crate::vm::Native::StringCharCodeAt), ("charAt", crate::vm::Native::StringCharAt),
             ("push", crate::vm::Native::ArrayPush), ("pop", crate::vm::Native::ArrayPop)];
-        if !instruction.op().is_get_field() { return None; }
+        if !matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. })) { return None; }
         let Some(crate::bytecode::FieldLookup::Atom { atom, .. }) = instruction.field_lookup() else { return None };
         let name = self.atom_name(atom);
         let (_, native) = METHODS.iter().find(|(method, _)| *method == name)?;
@@ -179,7 +180,7 @@ impl<H: Host> Vm<H> {
     fn native_member(&mut self, unit: &lane_unit::Unit, pc: usize, read: &GlobalRead) -> Option<(usize, GlobalRead)> {
         let (GlobalRead::Constant(object) | GlobalRead::Stable { value: object, .. }) = *read else { return None };
         let (base, member) = (unit.instructions.get(pc)?.result_register(), unit.instructions.get(pc + 1)?);
-        if !member.op().is_get_field() { return None; }
+        if !matches!(crate::vm::compiled::decoded_completed(member), Some(crate::staged::Operation::GetField { .. })) { return None; }
         let Some(crate::bytecode::FieldLookup::Atom { base: read_base, atom, .. }) = member.field_lookup() else { return None };
         if read_base.register_index() != Some(base) { return None; }
         let value = self.own_plain_data(object, atom)??;

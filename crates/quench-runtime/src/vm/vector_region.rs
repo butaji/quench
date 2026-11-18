@@ -362,8 +362,10 @@ fn admit(
             .then_some(Admitted::Simd { kernel, lane })?
         }
         Class::WasmSimdShuffle => Admitted::Shuffle(ShuffleForm::of(heap.v128(constant()?)?)),
-        Class::Move => Admitted::Move,
-        Class::LoadConst => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) => {
+            Admitted::Move
+        }
+        _ if crate::staged::Operation::<(), ()>::decode_constant_load(instruction).is_some() => {
             let value = constant()?;
             match heap.v128(value) {
                 Some(bytes) => Admitted::VectorConstant(u128::from_le_bytes(bytes)),

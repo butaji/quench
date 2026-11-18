@@ -31,14 +31,21 @@ mod global;
 pub(crate) mod division;
 pub(crate) mod math;
 mod names;
+pub(crate) mod protocol_literals;
+pub(crate) mod protocol_classes;
+pub(crate) mod protocol_values;
+pub(crate) mod protocol_owned;
+pub(crate) mod protocol_wasm;
 mod callout;
 mod spread;
 mod admission;
 mod delete;
 mod decode;
+pub(crate) mod meaning_fast;
 pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
+pub(crate) mod meaning_dispatch;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
 pub(crate) use names::Protocol;
 pub(crate) use callout::{CallOut, OperandValues};
@@ -237,7 +244,7 @@ pub(crate) enum Operation<W, P> {
     GetField { base: FieldBase, lookup: FieldLookup },
     /// `base.atom = value` through cache `site`'s store plan (`property_write::set_field`);
     /// `base` is `this` for `None`.
-    SetField { value: Register, base: Option<Register>, atom: u32, site: u16 },
+    SetField { value: Register, base: Option<Register>, atom: u32, site: u16, strict: bool },
     /// `base.atom = value` of a word no register names, of type `fact`, through cache site
     /// `site`'s store plan (`property_write::store_word`); `base` is `this` for `None`.
     StoreField { base: Option<Register>, value: W, fact: Type, atom: u32, site: u16 },
@@ -269,6 +276,14 @@ pub(crate) enum Operation<W, P> {
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
+    /// An indexed read whose base is a frame local, not a register (`GetIndex` over a numeric
+    /// local operand): the tier's exact path makes it (`element_rows::step` leaves it unresolved).
+    #[allow(dead_code)]
+    ElementReadOperand { destination: Register, base: Operand, key: Operand },
+    /// A numeric increment or decrement whose result goes to the frame local `local` instead of a
+    /// register (`IncDec` with a numeric local target): the tier's exact path makes it.
+    #[allow(dead_code)]
+    IncDecLocal { local: Register, source: Register, decrement: bool },
     /// `base[key] = value`, replacing a present dense element in place where the array owns its
     /// backing alone and the value needs no barrier log, else the VM's store.
     ElementWrite { value: Register, base: Register, key: Register },
@@ -300,6 +315,23 @@ impl<W, P> Operation<W, P> {
             Decoder::Names => names::decode(instruction),
             Decoder::Proved => None,
         }
+    }
+
+    /// The staged operation `instruction` makes apart from how its result completes the frame
+    /// (its result flags: a return, a `this` write), and those flags. A tier that completes a
+    /// record's result itself asks this instead of naming the opcode; `decode` alone stays the
+    /// operation with no completion.
+    pub(crate) fn decode_completed(instruction: WideInstruction, context: DecodeContext<'_>) -> Option<(Self, crate::bytecode::Register)> {
+        use crate::bytecode::{RETURN_REGISTER, SET_THIS_REGISTER};
+        // A numeric local target is where the result goes, not how it completes: it stays.
+        // (It shares its bit with the `this` write: only `ReturnableAndThis` reads that bit as one.)
+        let layout = instruction.op().result_layout();
+        let completing = (layout.allowed_flags() & RETURN_REGISTER)
+            | if matches!(layout, crate::bytecode::ResultLayout::ReturnableAndThis) { SET_THIS_REGISTER } else { 0 };
+        let flags = instruction.result_flags() & completing;
+        if instruction.result_flags() & !layout.allowed_flags() != 0 { return None; }
+        let plain = if flags != 0 { instruction.without_result_flags() } else { instruction };
+        Some((Self::decode(plain, context)?, flags))
     }
 
     /// The environment, global and iteration operations of `decode` (`Decoder::Names`), from a
@@ -356,7 +388,7 @@ impl<W, P> Operation<W, P> {
                 key: instruction.register_c(), strict: instruction.boolean_flag()? }),
             op if op.is_field_store() => Some(Self::SetField { value: instruction.register_a(),
                 base: instruction.field_store_register(), atom: instruction.atom_index(),
-                site: instruction.cache_site_index() }),
+                site: instruction.cache_site_index(), strict: op.is_strict_field_store() }),
             _ => None,
         }
     }
@@ -384,9 +416,13 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_b() },
             Op::ToNumeric => Self::Number(NumberOperation::ToNumeric {
                 destination: instruction.result_register(), source: instruction.register_b() }),
-            Op::IncDec if instruction.numeric_local_target().is_none() => Self::Number(NumberOperation::IncDec {
-                destination: instruction.result_register(), source: instruction.register_b(),
-                decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+            Op::IncDec => match instruction.numeric_local_target() {
+                None => Self::Number(NumberOperation::IncDec {
+                    destination: instruction.result_register(), source: instruction.register_b(),
+                    decrement: instruction.boolean_flag()?, overflow: Overflow::Exit }),
+                Some(local) => Self::IncDecLocal { local, source: instruction.register_b(),
+                    decrement: instruction.boolean_flag()? },
+            },
             Op::LoadCapture if instruction.result_flags() == 0 => Self::LoadCapture {
                 destination: instruction.result_register(), depth: instruction.capture_depth(), slot: instruction.capture_slot(),
                 root: false },

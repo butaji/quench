@@ -1614,7 +1614,7 @@ impl<H: Host> Vm<H> {
     ) -> Option<FrameOutcome> {
         let returned = match self.lane_completion.take_returned() {
             Some(value) => Some(value),
-            None if instruction.op().is_return() => Some(self.read(frame, instruction.register_a())),
+            None if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) => Some(self.read(frame, instruction.register_a())),
             None => None,
         };
         if let Some(value) = returned {
@@ -1875,7 +1875,7 @@ impl<H: Host> Vm<H> {
                     .and_then(|function| function.instructions().nth(pc))
                 {
                     super::lane_exits::record(instruction.op());
-                    if matches!(instruction.op() as u16, index::Call | index::Construct) {
+                    if crate::staged::meaning_dispatch::plain_call(instruction) || crate::staged::meaning_dispatch::construction(instruction) {
                         let callee = self.frames[frame].registers.get(usize::from(instruction.register_b())).copied();
                         let detail = match callee.and_then(|callee| self.heap.function(callee)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native @ (crate::heap::Native::FunctionBoundCall | crate::heap::Native::FunctionCall)), .. }) => {
@@ -1907,13 +1907,16 @@ impl<H: Host> Vm<H> {
                         let caller = p.function_get(self.frames[frame].function as usize).map(|f| (f.is_async, Self::lane_runs(cursor.lane, pc), self.frames.len() - 1 - frame, pending_calls.len()));
                         super::lane_exits::record_detail(format!("{:?} {detail} caller(async,arrow,depth,pending)={caller:?}", instruction.op()));
                     }
-                    if matches!(instruction.op() as u16, index::CloneEnv | index::Return | index::GetField | index::GetIndex | index::SetIndex | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse) || instruction.op().is_field_store() {
+                    if matches!(instruction.op() as u16, index::CloneEnv | index::LoadName | index::LoadNameCall | index::PrivateIn | index::Binary | index::JumpBinaryFalse)
+                        || matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. } | crate::staged::Operation::ElementWrite { .. }))
+                        || is_element_read(instruction)
+                        || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. } | crate::staged::Operation::SetField { .. })) {
                         let function = p.function_get(self.frames[frame].function as usize);
                         let name = function.and_then(|f| f.name).map(|a| p.atoms[a as usize].to_string()).unwrap_or_default();
                         let span = function.map(|f| format!("{:?}", f.source_span)).unwrap_or_default();
                         // A store names its cache site and field, which tell a shared overflow site
                         // (`SHARED_UNCACHED_SITE`) from a polymorphic one.
-                        let store = instruction.op().is_field_store()
+                        let store = matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::SetField { .. }))
                             .then(|| format!(" site={} field={}", instruction.c(), &p.atoms[instruction.imm() as usize]))
                             .or_else(|| {
                                 instruction.op().is_throwing_name_load()
@@ -1924,7 +1927,7 @@ impl<H: Host> Vm<H> {
                     }
                     // A `Return` exit of the loop's own entry frame: which native's call into
                     // JavaScript started this nested run.
-                    if instruction.op().is_return() && pending_calls.is_empty() {
+                    if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) && pending_calls.is_empty() {
                         let starter = self.realm.promise.active_native.last().map(|activation| activation.callable);
                         let described = match starter.and_then(|callable| self.heap.function(callable)) {
                             Some(crate::heap::FunctionRecord { kind: FunctionKind::Native(native), .. }) => {
@@ -1939,7 +1942,7 @@ impl<H: Host> Vm<H> {
                         };
                         super::lane_exits::record_detail(format!("Return nested run started by {described}"));
                     }
-                    if instruction.op().is_get_field()
+                    if matches!(crate::vm::compiled::decoded_completed(instruction), Some(crate::staged::Operation::GetField { .. }))
                         && let Some(lookup) = instruction.field_lookup()
                     {
                         let (base, atoms) = match lookup {
@@ -1954,10 +1957,11 @@ impl<H: Host> Vm<H> {
                         let kind = base.and_then(|base| self.heap.get(base)).map_or("immediate", |cell| cell.profile_variant_name());
                         super::lane_exits::record_detail(format!("GetField {names} on {kind}"));
                     }
-                    if matches!(instruction.op() as u16, index::GetIndex | index::SetIndex | index::DefineArrayElement) {
-                        let (base, key) = match instruction.op() as u16 {
-                            index::GetIndex => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
-                            index::SetIndex => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
+                    let element = crate::vm::compiled::decoded_completed(instruction);
+                    if is_element_read(instruction) || matches!(element, Some(crate::staged::Operation::ElementWrite { .. })) || instruction.op() as u16 == index::DefineArrayElement {
+                        let (base, key) = match element {
+                            _ if is_element_read(instruction) => (self.inert_operand(frame, instruction.operand_b()), self.inert_operand(frame, instruction.operand_c())),
+                            Some(crate::staged::Operation::ElementWrite { .. }) => (Some(self.read(frame, instruction.register_b())), Some(self.read(frame, instruction.register_c()))),
                             _ => {
                                 let registers = &self.frames[frame].registers;
                                 (registers.get(usize::from(instruction.a())).copied(), registers.get(usize::from(instruction.register_b())).copied())
@@ -2128,6 +2132,7 @@ impl<H: Host> Vm<H> {
             self.profile.opcode(ins.op() as usize);
             // Register/local moves and field cache hits cannot allocate, collect or throw, so they
             // need neither the published root-map PC nor the general step result.
+            let decoded_op = crate::vm::compiled::decoded(ins);
             match ins.op()  as u16 {
                 index::LoadLocalPlain => {
                     // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -2144,7 +2149,7 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                index::Move => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Move { .. })) => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2152,7 +2157,7 @@ impl<H: Host> Vm<H> {
                     );
                     continue;
                 }
-                index::LoadConst => {
+                _ if crate::staged::Operation::<(), ()>::decode_constant_load(ins).is_some() => {
                     if let Some(value) = self.active_constant(ins.constant_index()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
@@ -2166,14 +2171,14 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                 }
-                index::JumpFalse | index::JumpTrue => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::JumpIf { .. })) => {
                     // ToBoolean runs no guest code.
                     let value = self.read(frame, ins.register_a());
                     let truthy = self.truthy(value);
                     #[cfg(feature = "profile-aggregate")]
                     self.profile
                         .branch_value(value.profile_kind() as usize, truthy);
-                    if truthy == (ins.op().is_jump_true()) {
+                    if truthy == matches!(crate::vm::compiled::decoded(ins), Some(crate::staged::Operation::JumpIf { taken: true, .. })) {
                         pc = ins.jump_target() as usize;
                         if pc <= instruction_pc {
                             self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2181,7 +2186,7 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                index::JumpBinaryFalse => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::CompareJump { .. })) => {
                     let operator = ins.binary_operator_field();
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
@@ -2207,8 +2212,8 @@ impl<H: Host> Vm<H> {
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
                 // `this.x = v` is the same cached write with an authoritative `this`.
-                crate::bytecode::field_store_op!()
-                    if let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
+                _ if matches!(decoded_op, Some(crate::staged::Operation::SetField { .. }))
+                    && let Some(receiver) = ins.field_store_register().map(|register| self.read(frame, register))
                         .or_else(|| self.frames[frame].fixed_this.then(|| self.frames[frame].this)) => {
                     if self.cached_field_write_hit(
                         p,
@@ -2336,7 +2341,8 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
-                index::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. })))
+                    && self.read(frame, ins.register_b()).as_number().is_some() => {
                     self.write(
                         frame,
                         ins.result_register(),
@@ -2345,7 +2351,7 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 // A back edge collects only once the allocation threshold is reached.
-                index::Jump if !self.heap.should_collect() => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Jump)) && !self.heap.should_collect() => {
                     pc = ins.jump_target() as usize;
                     if pc <= instruction_pc {
                         self.note_back_edge(&mut cursor, instruction_pc + 1 - pc);
@@ -2365,8 +2371,8 @@ impl<H: Host> Vm<H> {
             match ins.op()  as u16 {
                 // A call the lane made returned its callee's completion from this frame.
                 _ if let Some(value) = lane_returned.take() => Ok(StepResult::Return(value)),
-                index::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
-                index::Call if allow_inline_calls => {
+                _ if matches!(decoded_op, Some(crate::staged::Operation::Return { .. })) => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                _ if allow_inline_calls && crate::staged::meaning_dispatch::plain_call(ins) => {
                     match self.try_inline_reflect_apply(p, frame, ins, pc) {
                         Some(result) => result,
                         None => match self.try_inline_user_call(p, frame, ins, pc) {
@@ -2899,6 +2905,16 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(slot) = value;
         }
     }
+}
+
+/// Whether a lane-exit diagnostic reads an element of `instruction`: its decoded element read,
+/// of a register base or of a frame local.
+#[cfg(feature = "profile-lane-exits")]
+fn is_element_read(instruction: WideInstruction) -> bool {
+    matches!(
+        crate::vm::compiled::decoded_completed(instruction),
+        Some(crate::staged::Operation::ElementRead { .. } | crate::staged::Operation::ElementReadOperand { .. })
+    )
 }
 
 /// The slots of the environment a promotion makes of `locals`: those the `selective` capture list

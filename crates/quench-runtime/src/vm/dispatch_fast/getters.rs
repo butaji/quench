@@ -156,28 +156,11 @@ fn lane_native_getter<H: Host>(
 }
 
 script_handler! {
-    /// `lane_get_field_getter` at a site whose getter returns an own field of the receiver
-    /// (`lane_hold_getter_hint`): the record's hint (`Vm::holder_hint_hit`), whose shape, link and
-    /// watch tests stand for the getter's call and its read. Any other read takes
-    /// `lane_get_field_getter_refresh`.
-    pub(super) fn lane_get_field_getter_hinted<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let value = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) }
-            .and_then(|base| vm.getter_hint_hit(i.call_link.get(), i.imm(), base));
-        let Some(value) = value else {
-            sibling!(lane_get_field_getter_refresh::<H>, r, ip, Carried::script(cx))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_getter_hinted` past its hint: the read the getter's answer makes
-    /// (`lane_getter_answer`), whose getter's own field becomes the hint
+    /// The generated getter read (`GETTER_THIS`, `GETTER_REGISTER`) past its hint: the read the
+    /// getter's answer makes (`lane_getter_answer`), whose getter's own field becomes the hint
     /// (`lane_hold_getter_hint`). A getter the answer declines takes `lane_get_field_getter`.
     #[inline(never)]
-    fn lane_get_field_getter_refresh<>(cx, r, ip, i, view) {
+    pub(super) fn lane_get_field_getter_refresh<>(cx, r, ip, i, view) {
         let base = unsafe { lane_field_base(cx, r, crate::bytecode::FieldBase(i.b)) };
         let Some(value) = base.and_then(|base| unsafe { lane_hold_getter_hint(cx, ip, i, base) }) else {
             requicken::<H>(ip, lane_get_field_getter::<H>);
@@ -208,7 +191,7 @@ unsafe fn lane_hold_getter_hint<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &La
 }
 
 /// The `FieldOperand::shape` of a record whose hint is a getter's own-field return
-/// (`Vm::getter_hint_hit`), as `HOLDER_HINT` no object's exact shape.
+/// (`Vm::getter_hint_operands`), as `HOLDER_HINT` no object's exact shape.
 const GETTER_HINT: u32 = super::super::NO_FIELD_RECEIVER - 3;
 
 /// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the

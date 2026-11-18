@@ -22,7 +22,7 @@ fn named_key_read<H: Host>(vm: &mut Vm<H>, base: Value, key: Value) -> Option<Va
     vm.plain_string_keyed_get(base, key)
 }
 
-/// `named_key_read` in the generic order (`lane_index_slot_element`): the site then reads
+/// `named_key_read` in the generic order (`row_index_read`): the site then reads
 /// name keys first (`lane_get_index_named`).
 pub(super) fn lane_named_key_element<H: Host>(ip: Ip, vm: &mut Vm<H>, base: Value, key: Value) -> Option<Value> {
     let value = named_key_read(vm, base, key)?;
