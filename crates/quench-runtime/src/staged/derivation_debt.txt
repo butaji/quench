@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2000
+# total 1998
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -137,7 +137,6 @@ vm/compiled/base_region/callees.rs Class:NumericMultiply 1
 vm/compiled/base_region/callees.rs is:is_call 1
 vm/compiled/base_region/decode.rs Class:Binary 2
 vm/compiled/base_region/decode.rs Class:GetField 1
-vm/compiled/base_region/decode.rs Class:JumpBinaryFalse 1
 vm/compiled/base_region/decode.rs Class:NumericAdd 1
 vm/compiled/base_region/decode.rs Class:NumericMultiply 1
 vm/compiled/base_region/decode.rs Class:Unary 1
@@ -156,7 +155,7 @@ vm/compiled/base_region/locals.rs Class:StoreEnvLocal 1
 vm/compiled/base_region/locals.rs Class:StoreLocal 3
 vm/compiled/base_region/names.rs Class:SetFunctionName 1
 vm/compiled/base_region/sites.rs Class:Binary 1
-vm/compiled/base_region/sites.rs Class:JumpBinaryFalse 2
+vm/compiled/base_region/sites.rs Class:JumpBinaryFalse 1
 vm/compiled/base_region/sites.rs Class:LoadName 1
 vm/compiled/base_region/steps.rs Class:AppendArray 1
 vm/compiled/base_region/steps.rs Class:ForInNext 1

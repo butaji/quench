@@ -223,16 +223,26 @@ pub(super) fn binary(numbers: Numbers, instruction: WideInstruction) -> Result<D
     ))
 }
 
-pub(super) fn jump_binary(numbers: Numbers, instruction: WideInstruction) -> Result<Decoded, String> {
-    let operator = instruction.binary_operator_field();
-    let kind = kind_of(operator, true).ok_or_else(|| format!("{:?}:{operator}", instruction.op()))?;
-    Ok(Decoded::number(
-        kind,
-        None,
-        Some(source(numbers, instruction.operand_b())?),
-        Some(source(numbers, instruction.operand_c())?),
-        Some(instruction.jump_target()),
-    ))
+/// The row of a comparison jump that fails to its target (`Operation::CompareJump` with
+/// `negate`): its staged comparison as the row's relation; any other comparison is the step's.
+pub(super) fn relation_jump(numbers: Numbers, instruction: WideInstruction, comparison: crate::staged::compare::Comparison,
+    (left, right): (crate::bytecode::Operand, crate::bytecode::Operand)) -> Result<Decoded, String> {
+    use crate::staged::compare::Comparison;
+    use crate::vm::operations::NumberRelation;
+    let kind = match comparison {
+        Comparison::Relation { relation, .. } => match relation {
+            NumberRelation::LessThan => Kind::Lt,
+            NumberRelation::LessEqual => Kind::Le,
+            NumberRelation::GreaterThan => Kind::Gt,
+            NumberRelation::GreaterEqual => Kind::Ge,
+            NumberRelation::Equal => Kind::Eq,
+            NumberRelation::NotEqual => Kind::Ne,
+        },
+        Comparison::Equality { negated: false, .. } => Kind::Eq,
+        Comparison::Equality { negated: true, .. } => Kind::Ne,
+        _ => return Err("comparison: not a Number relation".to_string()),
+    };
+    Ok(Decoded::number(kind, None, Some(source(numbers, left)?), Some(source(numbers, right)?), Some(instruction.jump_target())))
 }
 
 pub(super) fn load_const(numbers: Numbers, destination: Register, index: usize) -> Result<Decoded, String> {
@@ -385,6 +395,9 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Some(Operation::Number(NumberOperation::ToNumeric { .. })) => return Some(plain.then(|| Decoded { checked: true, ..copy() })),
         Some(Operation::Jump) => return Some(Some(Decoded::number(Kind::Jump, None, None, None, Some(instruction.jump_target())))),
         Some(Operation::JumpIf { register, taken }) => return Some(Some(truthiness_jump(instruction, register, taken))),
+        // A comparison jump (`JumpBinaryFalse`): a Number relation, or `==`/`===` (`!=`/`!==`)
+        // of Numbers, which the loop's entry guards and its rows prove its operands are.
+        Some(Operation::CompareJump { comparison, left, right, negate: true }) => return Some(relation_jump(numbers, instruction, comparison, (left, right)).ok()),
         // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
         Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
             if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
@@ -396,7 +409,6 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
     }
     Some(match instruction.op().class() {
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
-        Class::JumpBinaryFalse => jump_binary(numbers, instruction).ok(),
         Class::Unary => unary_row(instruction).filter(|_| plain),
         _ => return None,
     })
