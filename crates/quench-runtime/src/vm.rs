@@ -1698,6 +1698,12 @@ pub(super) enum StepResult {
         completion: CallCompletion,
     },
     Return(Value),
+    /// A suspension point (`await`, `yield`) that leaves the general loop.
+    Suspend(Suspended),
+}
+/// The facts of one suspension point, shared by `StepResult::Suspend` and
+/// `FrameOutcome::Suspend`: the value handed out and the register that receives the resumption.
+pub(super) enum Suspended {
     Await {
         value: Value,
         destination: Register,
@@ -1715,19 +1721,10 @@ pub(super) enum FrameOutcome {
         this: Value,
     },
     ParameterInitializationComplete,
-    Await {
-        value: Value,
-        destination: Register,
-        /// Boxed so every `FrameOutcome` stays a few words: the common completions move it
-        /// through each call return.
-        frame: Option<Box<Frame>>,
-    },
-    Yield {
-        value: Value,
-        destination: Register,
-        delegated_result: Option<Value>,
-        frame: Option<Box<Frame>>,
-    },
+    /// A suspension, with the activation's frame when the caller retains it. The frame is boxed
+    /// so every `FrameOutcome` stays a few words: the common completions move it through each
+    /// call return.
+    Suspend(Suspended, Option<Box<Frame>>),
 }
 
 impl FrameOutcome {
@@ -1739,8 +1736,8 @@ impl FrameOutcome {
             Self::ParameterInitializationComplete => {
                 Err(JsError("parameter initialization escaped a generator activation".into()))
             }
-            Self::Await { .. } => Err(JsError("await requires async continuation".into())),
-            Self::Yield { .. } => Err(JsError("yield requires generator continuation".into())),
+            Self::Suspend(Suspended::Await { .. }, _) => Err(JsError("await requires async continuation".into())),
+            Self::Suspend(Suspended::Yield { .. }, _) => Err(JsError("yield requires generator continuation".into())),
         }
     }
 }

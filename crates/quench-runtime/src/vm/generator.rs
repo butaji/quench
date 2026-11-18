@@ -1403,7 +1403,7 @@ impl<H: Host> Vm<H> {
     /// The step of `generator` whose popped `frame` ended with `outcome`.
     fn generator_step_of(&mut self, generator: Value, frame: Box<Frame>, outcome: FrameOutcome) -> Result<GeneratorStep, JsError> {
         match outcome {
-            FrameOutcome::Yield { value, destination, delegated_result, frame: None } => {
+            FrameOutcome::Suspend(Suspended::Yield { value, destination, delegated_result }, None) => {
                 Ok(self.park_generator_frame(generator, frame, (value, destination), delegated_result))
             }
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
@@ -1411,7 +1411,7 @@ impl<H: Host> Vm<H> {
                 self.complete_generator(generator);
                 Ok(GeneratorStep::Done(value))
             }
-            FrameOutcome::Await { .. } => {
+            FrameOutcome::Suspend(Suspended::Await { .. }, _) => {
                 self.pool_frame(frame);
                 self.complete_generator(generator);
                 Err(JsError("await is not supported in a synchronous generator".into()))
@@ -1420,7 +1420,7 @@ impl<H: Host> Vm<H> {
                 self.pool_frame(frame);
                 Err(JsError("unexpected generator parameter initialization boundary".into()))
             }
-            FrameOutcome::Yield { frame: Some(frame), .. } => {
+            FrameOutcome::Suspend(Suspended::Yield { .. }, Some(frame)) => {
                 self.pool_frame(frame);
                 Err(JsError("generator frame retained unexpectedly".into()))
             }

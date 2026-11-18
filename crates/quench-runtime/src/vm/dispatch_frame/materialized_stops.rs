@@ -16,15 +16,19 @@ impl<H: Host> Vm<H> {
         pc: usize,
         step: Result<StepResult, JsError>,
     ) -> (Result<StepResult, JsError>, Option<MaterializedStop>) {
-        if !matches!(step, Ok(StepResult::Yield { .. } | StepResult::Await { .. })) {
+        if !matches!(step, Ok(StepResult::Suspend(_))) {
             return (step, None);
         }
         let Some(call) = pending.filter(|call| call.caller + 1 == frame) else { return (step, None) };
         let (value, stop) = match step {
-            Ok(StepResult::Yield { value, destination, delegated_result }) if call.completion.is_generator() || call.completion.is_async_request() => {
+            Ok(StepResult::Suspend(Suspended::Yield { value, destination, delegated_result }))
+                if call.completion.is_generator() || call.completion.is_async_request() =>
+            {
                 (value, MaterializedStop::Yielded { destination, delegated_result })
             }
-            Ok(StepResult::Await { value, destination }) if call.completion.is_async_request() => (value, MaterializedStop::Awaited { destination }),
+            Ok(StepResult::Suspend(Suspended::Await { value, destination })) if call.completion.is_async_request() => {
+                (value, MaterializedStop::Awaited { destination })
+            }
             step => return (step, None),
         };
         self.frames[frame].pc = pc;

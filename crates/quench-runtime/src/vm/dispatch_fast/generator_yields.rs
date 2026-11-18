@@ -147,7 +147,7 @@ pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
 /// its registers, and for an environment activation the environment and locals its window holds
 /// (`settling_frame`), become the frame of the continuation the awaited value's reaction resumes
 /// (a job, `Vm::run_lane_job`), the activation pops, and its caller goes on with the call's
-/// promise, as the general loop's in-place async call leaves it (`StepResult::Await`). A body
+/// promise, as the general loop's in-place async call leaves it (`StepResult::Suspend(Suspended::Await)`). A body
 /// that kept the values it was passed, or whose call returns its completion, takes the general
 /// path.
 #[inline(never)]

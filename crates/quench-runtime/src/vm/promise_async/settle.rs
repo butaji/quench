@@ -49,17 +49,17 @@ impl<H: Host> Vm<H> {
                 self.pool_frame(frame);
                 self.complete_resumed(p, resume, value)
             }
-            super::FrameOutcome::Await { value, destination, frame: None } => {
+            super::FrameOutcome::Suspend(super::Suspended::Await { value, destination }, None) => {
                 self.await_resumed_frame(p, resume, frame, value, destination)
             }
-            super::FrameOutcome::Yield { value, destination, delegated_result, frame: None } => {
+            super::FrameOutcome::Suspend(super::Suspended::Yield { value, destination, delegated_result }, None) => {
                 self.yield_resumed_frame(p, resume, frame, (value, destination), delegated_result.is_some())
             }
-            super::FrameOutcome::Await { frame: Some(retained), .. } => {
+            super::FrameOutcome::Suspend(super::Suspended::Await { .. }, Some(retained)) => {
                 self.pool_frame(retained);
                 self.retained_resumed(p, resume, "resumed async frame retained unexpectedly")
             }
-            super::FrameOutcome::Yield { frame: Some(retained), .. } => {
+            super::FrameOutcome::Suspend(super::Suspended::Yield { .. }, Some(retained)) => {
                 self.pool_frame(retained);
                 self.retained_resumed(p, resume, "yield is not valid in an async function")
             }

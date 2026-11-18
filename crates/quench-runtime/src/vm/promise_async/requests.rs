@@ -90,9 +90,11 @@ impl<H: Host> Vm<H> {
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: false };
         let outcome = match stop {
             None | Some(MaterializedStop::Returned) => super::FrameOutcome::Complete(value),
-            Some(MaterializedStop::Awaited { destination }) => super::FrameOutcome::Await { value, destination, frame: None },
+            Some(MaterializedStop::Awaited { destination }) => {
+                super::FrameOutcome::Suspend(super::Suspended::Await { value, destination }, None)
+            }
             Some(MaterializedStop::Yielded { destination, delegated_result }) => {
-                super::FrameOutcome::Yield { value, destination, delegated_result, frame: None }
+                super::FrameOutcome::Suspend(super::Suspended::Yield { value, destination, delegated_result }, None)
             }
         };
         let result = Ok(outcome);

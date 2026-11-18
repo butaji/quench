@@ -966,10 +966,10 @@ impl<H: Host> Vm<H> {
                 } else {
                     awaited
                 };
-                return Ok(StepResult::Await {
+                return Ok(StepResult::Suspend(Suspended::Await {
                     value,
                     destination: i.result_register(),
-                });
+                }));
             }
             Op::Yield => {
                 let value = self.read(f, i.register_b());
@@ -978,11 +978,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     value
                 };
-                return Ok(StepResult::Yield {
+                return Ok(StepResult::Suspend(Suspended::Yield {
                     value,
                     destination: i.result_register(),
                     delegated_result: None,
-                });
+                }));
             }
             Op::YieldStar => {
                 let iterator = self.read(f, i.register_c());
@@ -1036,10 +1036,10 @@ impl<H: Host> Vm<H> {
                     if asynchronous {
                         *pc -= 1;
                         let value = self.promise_for_value(p, result)?;
-                        return Ok(StepResult::Await {
+                        return Ok(StepResult::Suspend(Suspended::Await {
                             value,
                             destination: state_register,
-                        });
+                        }));
                     }
                     result
                 };
@@ -1060,11 +1060,11 @@ impl<H: Host> Vm<H> {
                     } else {
                         Value::UNDEFINED
                     };
-                    return Ok(StepResult::Yield {
+                    return Ok(StepResult::Suspend(Suspended::Yield {
                         value,
                         destination: i.result_register(),
                         delegated_result: Some(result),
-                    });
+                    }));
                 }
             }
             Op::SetField | Op::SetFieldStrict => {

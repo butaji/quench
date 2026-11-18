@@ -95,11 +95,7 @@ impl<H: Host> Vm<H> {
             | super::FrameOutcome::ConstructComplete { value, .. } => {
                 self.promise_resolve_value(p, promise, value)?
             }
-            super::FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(frame),
-            } => {
+            super::FrameOutcome::Suspend(super::Suspended::Await { value, destination }, Some(frame)) => {
                 let continuation = self.suspend_activation(
                     frame,
                     Completion::Await(value),
@@ -108,10 +104,10 @@ impl<H: Host> Vm<H> {
                 );
                 self.enqueue_async_resume(p, AwaitKind::function(continuation), promise, value)?;
             }
-            super::FrameOutcome::Await { frame: None, .. } => {
+            super::FrameOutcome::Suspend(super::Suspended::Await { .. }, None) => {
                 return Err(JsError("async frame lost at suspension".into()));
             }
-            super::FrameOutcome::Yield { .. } => {
+            super::FrameOutcome::Suspend(super::Suspended::Yield { .. }, _) => {
                 return Err(JsError("yield is not valid in an async function".into()));
             }
             super::FrameOutcome::ParameterInitializationComplete => {
