@@ -11,7 +11,6 @@
 //! end, increments the children of the records it logged and of the young survivors, and
 //! decrements the copied ones. A full collection recounts from scratch.
 use super::*;
-use records::RecordChildren;
 
 /// The record family of a counted value and its id there: the index into
 /// `Heap::record_families`, and the id.
@@ -148,24 +147,14 @@ impl Heap {
     /// snapshot copies (`SatbSnapshot`), or a string's parts. Values that are no records
     /// (legacy cells, numbers) are among them; `locate` skips them.
     fn rc_children(&self, value: Value, out: &mut Vec<Value>) {
-        let properties = &self.properties;
+        // The record families share one dispatch (`Heap::record_children`); a string's parts
+        // are the only other children counts name.
+        if self.record_children(value, out) {
+            return;
+        }
         // SAFETY: the caller names live records.
         unsafe {
-            if let Some(id) = value.direct_object_index() {
-                self.object_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_array_index() {
-                self.array_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_function_index() {
-                self.function_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_promise_index() {
-                self.promise_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_await_index() {
-                self.await_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_iterator_index() {
-                self.iterator_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_collection_index() {
-                self.collection_records.get_live(id).children(properties, out);
-            } else if let Some(id) = value.direct_string_index() {
+            if let Some(id) = value.direct_string_index() {
                 match small_strings::small_string_local(id) {
                     Some(local) => self.small_strings.get_live(local).for_each_text(|part| out.push(Value::direct_string(part))),
                     None => {

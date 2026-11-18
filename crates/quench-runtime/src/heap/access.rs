@@ -902,21 +902,11 @@ impl Heap {
     pub(crate) fn is_live(&self, value: Value) -> bool {
         match value.heap_reference() {
             Some(HeapReference::LegacySlot(_)) => self.get(value).is_some(),
-            Some(HeapReference::ObjectRecord(id)) => self.object_records.is_live(id),
-            Some(HeapReference::ArrayRecord(id)) => self.array_records.is_live(id),
-            Some(HeapReference::FunctionRecord(id)) => self.function_records.is_live(id),
-            Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_live(id),
-            Some(HeapReference::AwaitRecord(id)) => self.await_records.is_live(id),
-            Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_live(id),
-            Some(HeapReference::CollectionRecord(id)) => self.collection_records.is_live(id),
             Some(HeapReference::StringRecord(id)) => match super::small_strings::small_string_local(id) {
                 Some(local) => self.small_strings.is_live(local),
                 None => self.string_records.is_live(id),
             },
-            Some(HeapReference::V128Record(id)) => self.v128_records.is_live(id),
-            Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_live(id),
-            Some(HeapReference::SymbolRecord(id)) => self.symbol_records.is_live(id),
-            None => false,
+            reference => record_reference_test!(self, reference, is_live, false),
         }
     }
 

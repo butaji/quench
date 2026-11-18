@@ -34,6 +34,27 @@ macro_rules! for_each_record_space {
     };
 }
 
+/// The record arms of a per-family test (`MarkBits::is_marked`, `Heap::is_live`): `$method` asked
+/// of the space that holds each record reference. Strings (split between small and large) and
+/// legacy slots are the caller's, matched before this; `$otherwise` answers what is left.
+macro_rules! record_reference_test {
+    ($s:expr, $reference:expr, $method:ident, $otherwise:expr) => {
+        match $reference {
+            Some(HeapReference::ObjectRecord(id)) => $s.object_records.$method(id),
+            Some(HeapReference::ArrayRecord(id)) => $s.array_records.$method(id),
+            Some(HeapReference::FunctionRecord(id)) => $s.function_records.$method(id),
+            Some(HeapReference::PromiseRecord(id)) => $s.promise_records.$method(id),
+            Some(HeapReference::AwaitRecord(id)) => $s.await_records.$method(id),
+            Some(HeapReference::IteratorRecord(id)) => $s.iterator_records.$method(id),
+            Some(HeapReference::CollectionRecord(id)) => $s.collection_records.$method(id),
+            Some(HeapReference::V128Record(id)) => $s.v128_records.$method(id),
+            Some(HeapReference::EnvironmentRecord(id)) => $s.environment_records.$method(id),
+            Some(HeapReference::SymbolRecord(id)) => $s.symbol_records.$method(id),
+            _ => $otherwise,
+        }
+    };
+}
+
 /// `MarkBits`: every record family's mark bits, and the legacy slots' mark words.
 macro_rules! mark_bits_struct {
     (; $($field:ident : $space:ty => $handle:path,)*) => {
@@ -456,27 +477,17 @@ impl MarkBits<'_> {
     /// Whether `value` is a heap value marked so far.
     pub(super) fn is_marked(self, value: Value) -> bool {
         match value.heap_reference() {
-            Some(HeapReference::ObjectRecord(id)) => self.object_records.is_marked(id),
-            Some(HeapReference::ArrayRecord(id)) => self.array_records.is_marked(id),
-            Some(HeapReference::FunctionRecord(id)) => self.function_records.is_marked(id),
-            Some(HeapReference::PromiseRecord(id)) => self.promise_records.is_marked(id),
-            Some(HeapReference::AwaitRecord(id)) => self.await_records.is_marked(id),
-            Some(HeapReference::IteratorRecord(id)) => self.iterator_records.is_marked(id),
-            Some(HeapReference::CollectionRecord(id)) => self.collection_records.is_marked(id),
             Some(HeapReference::StringRecord(id)) => match small_strings::small_string_local(id) {
                 Some(local) => self.small_strings.is_marked(local),
                 None => self.string_records.is_marked(id),
             },
-            Some(HeapReference::V128Record(id)) => self.v128_records.is_marked(id),
-            Some(HeapReference::EnvironmentRecord(id)) => self.environment_records.is_marked(id),
-            Some(HeapReference::SymbolRecord(id)) => self.symbol_records.is_marked(id),
             Some(HeapReference::LegacySlot(index)) => {
                 let index = index as usize;
                 self.marks.get(index / u64::BITS as usize).is_some_and(|word| {
                     word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
                 })
             }
-            None => false,
+            reference => record_reference_test!(self, reference, is_marked, false),
         }
     }
 }

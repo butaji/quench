@@ -24,8 +24,8 @@ pub(super) type RecordId = u32;
 /// What a record keeps alive, copied out for the reference-count barrier
 /// (`RecordSpace::rc_note`): the values its trace would push, read before a write changes them.
 /// Shape roots are left out.
-pub(super) trait RecordChildren {
-    fn children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
+pub(super) trait TraceRecord {
+    fn extend_children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
 }
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
@@ -695,7 +695,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena) -> &mut T
     where
-        T: RecordChildren,
+        T: TraceRecord,
     {
         self.barrier(id, properties);
         // SAFETY: the caller's contract.
@@ -716,7 +716,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         properties: &crate::value_vec::ValueArena,
     ) -> &mut T
     where
-        T: RecordChildren,
+        T: TraceRecord,
     {
         if self.rc {
             self.rc_barrier(id, properties);
@@ -731,7 +731,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(always)]
     pub(super) fn barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
     where
-        T: RecordChildren,
+        T: TraceRecord,
     {
         if self.rc {
             self.rc_barrier(id, properties);
@@ -745,7 +745,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(always)]
     fn rc_barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
     where
-        T: RecordChildren,
+        T: TraceRecord,
     {
         let (block_index, record_index) = Self::split_id(id);
         // SAFETY: a live id belongs to an initialized block.
@@ -759,13 +759,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(never)]
     fn rc_note(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
     where
-        T: RecordChildren,
+        T: TraceRecord,
     {
         self.remember(id);
         self.rc_logged.push(id);
         // SAFETY: a barrier runs only for a live record of this family.
         let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
-        record.children(properties, &mut self.rc_decrements);
+        record.extend_children(properties, &mut self.rc_decrements);
     }
 
 
