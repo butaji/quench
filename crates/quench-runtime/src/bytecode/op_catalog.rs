@@ -92,6 +92,7 @@ pub(crate) enum Class {
     CallForwardingArguments,
     CallSpread,
     CallRest,
+    ArrayPatternFits,
     RestGet,
     RestLength,
     CheckPrivate,

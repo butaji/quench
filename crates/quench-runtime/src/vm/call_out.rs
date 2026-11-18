@@ -188,6 +188,7 @@ impl<H: Host> Vm<H> {
             Protocol::GetIterator => self.get_iterator(p, source).map(Some),
             Protocol::ForInStart => self.for_in_start(p, source).map(Some),
             Protocol::IteratorClose => self.iterator_close(p, source).map(Some),
+            Protocol::ArrayPatternFits { count } => Ok(Some(Value::boolean(self.array_pattern_fits(source, count)))),
             Protocol::AppendArray { length, spread } => {
                 let array = array.expect("AppendArray names its array");
                 self.append_array_literal_holes(array, length)?;

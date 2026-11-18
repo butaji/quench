@@ -3872,6 +3872,17 @@ script_handler! {
 }
 
 script_handler! {
+    /// `ArrayPatternFits`: whether an array pattern of `imm` elements reads register `b`'s
+    /// elements with no observable step (`Vm::array_pattern_fits`), which neither throws nor
+    /// runs guest code.
+    fn lane_array_pattern_fits<>(cx, r, ip, i, view) {
+        let fits = (unsafe { vm(cx) }).array_pattern_fits(r.get(i.b), i.imm() as usize);
+        r.set(i.a, Value::boolean(fits));
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// `IteratorClose` of a built-in iterator whose chain lacks `return`
     /// (`Vm::iterator_close_absent`), which ends with `undefined`; any other takes the general
     /// step in place.
@@ -22113,6 +22124,8 @@ fn derive_lane_view<'live, H: Host>(
                 })
             } else if op.class() == Class::CallRest {
                 Some(LaneHandler { handler: lane_call_rest::<H> as Handler, produces: false })
+            } else if op.class() == Class::ArrayPatternFits {
+                Some(LaneHandler { handler: lane_array_pattern_fits::<H> as Handler, produces: false })
             } else if matches!(op.class(), Class::RestGet | Class::RestLength) {
                 Some(LaneHandler {
                     handler: if op.class() == Class::RestGet { lane_rest_view::<H, true> as Handler } else { lane_rest_view::<H, false> as Handler },

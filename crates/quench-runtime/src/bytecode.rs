@@ -1123,6 +1123,10 @@ opcodes!($;
     // `CallSpread` of a rest parameter `compile::rest_reads` keeps as a view: its window holds
     // the rest register, `undefined` where the entry kept the values passed, which it spreads.
     CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK, @ Returnable, @ fields(ResultRegister, Register, Register),
+    // `a` = whether an array pattern of `imm` elements reads register `b`'s elements with no
+    // observable iteration step (`Vm::array_pattern_fits`); `false` leaves the pattern to the
+    // iterator protocol, which the compiler emits beside the direct element reads.
+    ArrayPatternFits => Effect::READS_HEAP; layout Scalar; meaning ArrayLength; class ArrayPatternFits; staged Names; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );

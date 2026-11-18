@@ -23,6 +23,9 @@ pub(crate) enum Protocol {
     /// Append `length` holes to the array operand, then the optional element operand, spread
     /// where `spread` (`AppendArray`).
     AppendArray { length: usize, spread: bool },
+    /// Whether an array pattern of `count` elements reads the operand's elements with no
+    /// observable step (`ArrayPatternFits`).
+    ArrayPatternFits { count: usize },
 }
 
 /// The staged operation `instruction` denotes among the name, environment and iteration
@@ -68,6 +71,8 @@ fn decode_protocol<W, P>(instruction: WideInstruction) -> Option<Operation<W, P>
         Op::GetIterator => (Protocol::GetIterator, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::ForInStart => (Protocol::ForInStart, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         Op::IteratorClose => (Protocol::IteratorClose, Some(instruction.result_register()), [None, Some(instruction.register_b())]),
+        Op::ArrayPatternFits => (Protocol::ArrayPatternFits { count: instruction.array_length() },
+            Some(instruction.result_register()), [None, Some(instruction.register_b())]),
         _ => return super::spread::decode(instruction),
     };
     Some(Operation::Protocol { step, destination, operands })
