@@ -5,6 +5,7 @@
 //! job (`JobEnd`) and one whose activations became frames (`FrameOutcome`) settle here alike, as
 //! does an async call's first run (`Vm::settle_async_call`).
 use super::*;
+use super::super::activation::{JobRoot, SuspendKind};
 use super::super::dispatch_fast::JobEnd;
 use super::super::generator::GeneratorStep;
 
@@ -15,6 +16,22 @@ use super::super::generator::GeneratorStep;
 pub(in crate::vm) enum StopOwner {
     Generator(Value),
     Async(AwaitResume),
+}
+
+impl StopOwner {
+    /// The root of the run that resumes the activation (`Vm::resume_suspended`): its generator's
+    /// record, or the await state whose reaction resumes an async function. A request's run, which
+    /// no await state names, resumes its async generator's record.
+    pub(in crate::vm) fn job(self) -> JobRoot {
+        match self {
+            Self::Generator(generator) => JobRoot { object: generator, kind: SuspendKind::Generator },
+            Self::Async(resume) => match (resume.state, resume.role.generator()) {
+                (Some(state), _) => resume.role.job(state),
+                (None, Some(generator)) => JobRoot { object: generator, kind: SuspendKind::AsyncGenerator },
+                (None, None) => unreachable!("an async function resumes from the reaction of its await"),
+            },
+        }
+    }
 }
 
 /// What a stop gives its caller: a sync generator's step, or `None` for an async activation,

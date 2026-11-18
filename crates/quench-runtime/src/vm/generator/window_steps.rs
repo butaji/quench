@@ -42,12 +42,7 @@ impl<H: Host> Vm<H> {
         depth: usize,
     ) -> Option<*mut FrameRecord> {
         // SAFETY: the caller's; nothing since its lookup freed the generator.
-        let (frame, resume_register) = unsafe { &mut *record }.resume_windowed()?;
-        // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
-        let epoch = self.heap.collection_epoch();
-        let record = unsafe { &mut *frame };
-        record.settle_registers(epoch);
-        record.receive(resume_register, sent);
+        let frame = self.enter_windowed(unsafe { &mut *record }.resume_windowed()?, sent);
         // The frames the lane's activations become sit below the generator's.
         self.realm.promise.active_native.push(super::super::activation::NativeActivation {
             callable: method,
@@ -56,6 +51,19 @@ impl<H: Host> Vm<H> {
             boundary: super::super::activation::NativeCallBoundary::Opaque,
         });
         Some(frame)
+    }
+
+    /// Enters the suspended frame a windowed run resumes, which its owner handed over running
+    /// (`resume_windowed`) with the register that takes `sent`: its dead registers settle and the
+    /// register receives the value. Every windowed resumption, a generator step's and a job's
+    /// (`resume_job_window`), enters its frame here. The frame's address.
+    pub(in crate::vm) fn enter_windowed(&mut self, (frame, resume_register): (*mut FrameRecord, Option<u16>), sent: Value) -> *mut FrameRecord {
+        let epoch = self.heap.collection_epoch();
+        // SAFETY: the owner keeps the box, which nothing moves or drops until the run ends.
+        let record = unsafe { &mut *frame };
+        record.settle_registers(epoch);
+        record.receive(resume_register, sent);
+        frame
     }
 
     /// Ends the windowed run of `generator` at a `yield` that resumes at `pc`, whose value goes to

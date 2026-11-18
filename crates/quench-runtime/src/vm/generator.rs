@@ -1,6 +1,5 @@
 use super::activation::{
-    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, JobResume, JobRoot,
-    SuspendKind,
+    AsyncGeneratorOperation, AsyncGeneratorRequest, Completion, Continuation, GeneratorRecord, JobResume,
 };
 use super::promise_async::StopOwner;
 use crate::heap::AwaitKind;
@@ -1291,11 +1290,11 @@ impl<H: Host> Vm<H> {
 
     /// Resumes `generator` as `next`, `return` or `throw` do, and says how it stopped, so a
     /// caller that only reads the result's `value` and `done` (`Vm::generator_iteration_step`)
-    /// need not allocate one. The step is a lane run rooted at the generator's record
-    /// (`LaneRoot::Job`, `Vm::run_job`), as an async generator's resumption is.
+    /// need not allocate one. The step is the resumption every suspended activation takes
+    /// (`Vm::resume_suspended`), a lane run rooted at the generator's record, in its realm.
     pub(super) fn resume_generator_step(
         &mut self,
-        _p: &ResidualProgram,
+        p: &ResidualProgram,
         generator: Value,
         args: &[Value],
         initial_error: Option<JsError>,
@@ -1304,27 +1303,21 @@ impl<H: Host> Vm<H> {
         if done {
             return initial_error.map_or(Ok(GeneratorStep::Done(Value::UNDEFINED)), Err);
         }
-        let job = JobRoot { object: generator, kind: SuspendKind::Generator };
-        let frame = self.job_frame(job).ok_or_else(|| JsError("generator is suspended".into()))?;
-        let (program, frame) = (frame.program, std::ptr::from_ref(frame));
+        let owner = StopOwner::Generator(generator);
+        if self.job_frame(owner.job()).is_none() {
+            return Err(JsError("generator is suspended".into()));
+        }
         if unstarted && let Some(error) = initial_error {
             return self.close_unstarted_generator(generator, error);
         }
-        let code = self
-            .programs
-            .get(program)
-            .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
         let how = match initial_error {
             None => JobResume::Sends(args.first().copied().unwrap_or(Value::UNDEFINED)),
             Some(error) => JobResume::Throws(error),
         };
-        let previous_program = self.replace_active_program(program);
         let previous_global = self.switch_realm_global(realm);
-        let end = self.run_job(&code, job, frame, how);
-        self.restore_active_program(previous_program);
+        let step = self.resume_suspended(p, owner, how);
         self.switch_realm_global(previous_global);
-        let step = self.settle_job_end(&code, StopOwner::Generator(generator), end)?;
-        Ok(step.expect("a sync generator's stop is its step"))
+        Ok(step?.expect("a sync generator's stop is its step"))
     }
 
     /// What a resumption of `generator` finds: its realm, whether it has completed and whether

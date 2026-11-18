@@ -66,16 +66,11 @@ impl<H: Host> Vm<H> {
     /// `sent` is the value the suspending `await` evaluates to. The frame's address, which its
     /// box keeps until the run ends.
     pub(in crate::vm) fn resume_job_window(&mut self, job: JobRoot, sent: Value) -> Option<*mut FrameRecord> {
-        let (frame, resume_register) = match job.kind {
+        let resumed = match job.kind {
             SuspendKind::AsyncFunction => self.heap.await_state_mut(job.object)?.resume_windowed()?,
             SuspendKind::AsyncGenerator | SuspendKind::Generator => self.generator_record_mut(job.object)?.resume_windowed()?,
         };
-        // SAFETY: the owner keeps the box, which nothing moves or drops until the run ends.
-        let epoch = self.heap.collection_epoch();
-        let record = unsafe { &mut *frame };
-        record.settle_registers(epoch);
-        record.receive(resume_register, sent);
-        Some(frame)
+        Some(self.enter_windowed(resumed, sent))
     }
 
     /// Ends the lane run of `job`'s activation at an `await` of `value` that resumes at `pc`,
