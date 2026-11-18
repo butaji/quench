@@ -40,7 +40,8 @@ fn chain(depth: usize, innermost: &str, wrap: impl Fn(usize) -> String) -> Strin
 #[test]
 fn native_frames_pushed_through_the_top_word_are_counted_until_linked() {
     let mut activations = LaneActivations::with_capacity(4);
-    let frame = ShadowFrame { callee: std::ptr::dangling::<DirectCallee>(), ..ShadowFrame::EMPTY };
+    // A frame that still runs its body: `top_native` names only those (`retire_bodies` clears it).
+    let frame = ShadowFrame { callee: std::ptr::dangling::<DirectCallee>(), body: 1, ..ShadowFrame::EMPTY };
     assert!(!activations.top_is_native());
     for pushed in 1..=2 {
         // SAFETY: the allocation holds four slots; emitted code writes the prefix, the tag and the top the same way.

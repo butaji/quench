@@ -21,6 +21,8 @@ pub(crate) enum Form {
     Register,
     /// `a = b op imm`.
     Immediate,
+    /// `a = b op c`, `c` being a 16-bit constant (the selector is in `imm`).
+    Short,
     /// Jumps to the target where `a op b` holds.
     Branch,
     /// Jumps to the target where `a op b` holds, `b` being a 16-bit constant.
@@ -37,7 +39,7 @@ pub(crate) enum Operand {
 impl Form {
     pub(crate) fn left(self, instruction: WideInstruction) -> u16 {
         match self {
-            Self::Register | Self::Immediate => instruction.b(),
+            Self::Register | Self::Immediate | Self::Short => instruction.b(),
             Self::Branch | Self::BranchImmediate => instruction.a(),
         }
     }
@@ -46,6 +48,7 @@ impl Form {
         match self {
             Self::Register => Operand::Register(instruction.c()),
             Self::Immediate => Operand::Constant(i64::from(instruction.imm() as i32)),
+            Self::Short => Operand::Constant(i64::from(instruction.c() as i16)),
             Self::Branch => Operand::Register(instruction.b()),
             Self::BranchImmediate => Operand::Constant(i64::from(instruction.b() as i16)),
         }
@@ -153,12 +156,17 @@ impl WasmOperation {
     /// The integer operations whose operator is a selector operand.
     fn selected(class: Class, tag: u32) -> Option<Self> {
         match class {
-            Class::WasmI64Binary => Binary::from_tag(tag).map(|operator| Self::Binary {
+            Class::WasmI64Binary | Class::WasmI64BinaryRaw => Binary::from_tag(tag).map(|operator| Self::Binary {
                 operator,
                 width: Width::I64,
                 form: Form::Register,
             }),
-            Class::WasmI64Unary => Unary::from_tag(tag).map(|operator| Self::Unary {
+            Class::WasmI64BinaryImmediate | Class::WasmI64BinaryImmediateRaw => Binary::from_tag(tag).map(|operator| Self::Binary {
+                operator,
+                width: Width::I64,
+                form: Form::Short,
+            }),
+            Class::WasmI64Unary | Class::WasmI64UnaryRaw => Unary::from_tag(tag).map(|operator| Self::Unary {
                 operator,
                 width: Width::I64,
             }),

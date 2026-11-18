@@ -997,37 +997,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// `RestLength` or `RestGet` (`Function::rest_view`) in frame `f`: the rest register holds
-    /// the array an entry made, read as `GetField` of `length` and `GetIndex` read it, or
-    /// `undefined`, and the values past the first `imm` parameters are those the frame kept;
-    /// a key other than an index they hold makes the rest array, which the register keeps.
-    pub(super) fn read_rest_view(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<Value, JsError> {
-        let get = i.op().class() == crate::bytecode::Class::RestGet;
-        let rest = if get { i.c() } else { i.b() };
-        let fixed = i.imm() as usize;
-        let mut held = self.read(f, rest);
-        if held == Value::UNDEFINED {
-            let kept = &self.frames[f].original_arguments;
-            let passed = kept.get(fixed..).unwrap_or_default();
-            if !get {
-                return Ok(Value::length(passed.len()));
-            }
-            let key = self.read(f, i.b());
-            if let Some(value) = key.as_int().and_then(|index| usize::try_from(index).ok()).and_then(|index| passed.get(index)) {
-                return Ok(*value);
-            }
-            let passed = passed.to_vec();
-            held = self.rest_parameter_array(&passed);
-            self.write(f, rest, held);
-        }
-        if get {
-            let key = self.read(f, i.b());
-            self.get_index(p, held, key)
-        } else {
-            self.get_property(p, held, self.length_atom)
-        }
-    }
-
     /// Copies a program root activation's module import bindings into its locals or, for a
     /// module environment, its environment slots.
     #[inline(never)]

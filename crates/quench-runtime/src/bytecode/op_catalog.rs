@@ -25,7 +25,16 @@ pub(crate) enum Class {
     WasmI32ShiftRightUnsignedAnd,
     WasmI32Unary,
     WasmI64Binary,
+    /// `a = b op c` on i64, `c` a signed 16-bit constant and the operator the selector.
+    WasmI64BinaryImmediate,
     WasmI64Unary,
+    /// The i64 operations over raw registers (`compile::liveness::raw_webs`): their i64
+    /// operands and results are machine words, not `Value`s.
+    WasmI64BinaryRaw,
+    WasmI64BinaryImmediateRaw,
+    WasmI64UnaryRaw,
+    /// A Wasm return of a raw i64 register, which boxes the word where a `Value` cannot hold it.
+    WasmReturn64,
     WasmScalarConvert,
     WasmSelect,
     WasmI32Load,

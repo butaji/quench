@@ -610,6 +610,29 @@ impl Heap {
         }
     }
 
+    /// The object part of an array, function or ordinary builtin, whose own layout a held
+    /// read guards (`IcOp::Held`): an array's inline, the rest out of line.
+    #[inline(always)]
+    pub(crate) fn held_other_receiver(&self, value: Value) -> Option<&Object> {
+        if let Some(array) = self.record_array(value) { return Some(array); }
+        self.held_cell_receiver(value)
+    }
+
+    /// The object part of a function, inline: the receiver an own read of a function's static
+    /// field guards (`CELL_OWN_SITE`); `None` for any other value.
+    #[inline(always)]
+    pub(crate) fn function_receiver(&self, value: Value) -> Option<&Object> {
+        value.direct_function_index().and_then(|_| self.function(value)).map(|function| &function.object)
+    }
+
+    /// `held_other_receiver` of a function or ordinary builtin.
+    #[cold]
+    #[inline(never)]
+    fn held_cell_receiver(&self, value: Value) -> Option<&Object> {
+        let function = value.direct_function_index().and_then(|_| self.function(value));
+        function.map(|function| &function.object).or_else(|| self.ordinary_builtin_object(value))
+    }
+
     /// The array a direct-array Value names; `None` for any other value, including an array
     /// in a slot.
     #[inline(always)]
@@ -628,6 +651,13 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn array_record_base(&self) -> Option<*const ArrayObject> {
         self.array_records.base_ptr()
+    }
+
+    /// `array_record_base` untested, for a read that proves its receiver a direct array before
+    /// it addresses the table.
+    #[inline(always)]
+    pub(crate) fn live_array_records(&self) -> *const ArrayObject {
+        self.array_records.live_base()
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.
@@ -746,6 +776,13 @@ impl Heap {
     #[inline]
     pub(crate) fn object_record_base(&self) -> Option<*const Object> {
         self.object_records.base_ptr()
+    }
+
+    /// `object_record_base` untested, for a read that proves its receiver a direct object before
+    /// it addresses the table (`object_record_by_id`'s contract).
+    #[inline(always)]
+    pub(crate) fn live_object_records(&self) -> *const Object {
+        self.object_records.live_base()
     }
 
     /// The base of the function record reservation (`NATIVE_FUNCTION_LAYOUT`).

@@ -96,6 +96,12 @@ fn runs_unlowered(program: &ResidualProgram, index: usize, function: &Function) 
         && !crate::trace::Dev::Tier0Off.on()
         && !function.loops()
         && !function.suspends()
+        // A program running from its kept form lowers every record on first read, as its
+        // decoded ones are: a first-call chunk appended to it adds records that would otherwise
+        // run unlowered, and a recursive one (a parser's descent, a tree walk's visitor) keeps
+        // a frame of itself live through its runs until its unlowered record is pinned for good
+        // (`ResidualProgram::tier0_blocked`): acorn-wtb +8% per steady iteration.
+        && program.encoded_records.is_none()
 }
 
 impl ResidualProgram {

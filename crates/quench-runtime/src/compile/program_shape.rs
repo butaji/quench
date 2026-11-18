@@ -15,6 +15,10 @@ pub(crate) struct EvalContext {
 #[derive(Clone, Copy)]
 pub(super) enum ParsedProgramShape<'a> {
     Any,
+    /// A classic host script run from its kept form, which records the room its first-call
+    /// chunks append in (`ResidualProgram::kept_chunk_room`): as `Any`, and a large one's
+    /// functions compile on first call (`stubbing`).
+    FirstCallScript,
     /// A script whose functions keep their records: a host script whose program keeps only
     /// part of its compiled text (a static body), from which they cannot compile again, or an
     /// application's entry, whose own functions mostly run.
@@ -30,7 +34,7 @@ impl ParsedProgramShape<'_> {
     /// Whether each function compiles again from its own text alone: a script's or module's,
     /// or an eval's that its caller gives no context (indirect or global: unwrapped, a script).
     pub(super) fn replayable(self, private_names: &[(String, String)], annex_b_forbidden: &[String]) -> bool {
-        matches!(self, Self::Any) || matches!(self, Self::Eval(context, None) if context == EvalContext::default()
+        matches!(self, Self::Any | Self::FirstCallScript) || matches!(self, Self::Eval(context, None) if context == EvalContext::default()
             && private_names.is_empty() && annex_b_forbidden.is_empty())
     }
 
@@ -45,13 +49,19 @@ impl ParsedProgramShape<'_> {
     /// the chunk's scopes: a chunk that compiled them eagerly compiled a stubbed root's whole
     /// subtree at its first call, so a bundle's module wrapper, which runs once, compiled every
     /// function of its module (babylonjs-startup: about 9,000 that never run).
-    pub(super) fn stubbing(self, replayable: bool, source_bytes: usize) -> Stubbing {
+    ///
+    /// A host script (`FirstCallScript`) of `FIRST_CALL_SCRIPT_BYTES` or more stubs its
+    /// functions as an eval's do: its chunks append to the program it runs
+    /// (`ResidualProgram::restore_chunk_room`), so calls into them stay within one program. A
+    /// module's never stub.
+    pub(super) fn stubbing(self, replayable: bool, source_bytes: usize, module: bool) -> Stubbing {
         if matches!(self, Self::FirstCallChunk(_)) {
             return Stubbing { functions: true, arrows: true };
         }
         let eval = matches!(self, Self::Eval(..));
         let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
-        Stubbing { functions: eval && replayable || direct, arrows: direct }
+        let script = matches!(self, Self::FirstCallScript) && !module && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
+        Stubbing { functions: (eval || script) && replayable || direct, arrows: direct }
     }
 
     /// Where in the source lazily parsed bodies begin (`lazy_bodies::parse`): past a chunk's
@@ -68,13 +78,21 @@ impl ParsedProgramShape<'_> {
     /// Whether function bodies of a source of this shape parse lazily (`lazy_bodies`): each
     /// compiles again from its own text (`replayable`), or compiles on first call.
     pub(super) fn lazy_functions(self, replayable: bool, source_bytes: usize) -> bool {
-        replayable || self.stubbing(replayable, source_bytes).functions
+        replayable || self.stubbing(replayable, source_bytes, false).functions
     }
 }
 
 /// Source bytes from which a direct eval's functions compile on first call (`stubbing`): below
 /// it most of a bundle's code runs and the chunks cost more than they save.
 const DIRECT_EVAL_STUB_BYTES: usize = 4 << 20;
+
+/// Source bytes from which a classic script's functions compile on first call (`stubbing`).
+/// Callgrind Ir per JetStream 3 iteration against compiling at load (no-jit, Nov 18), with the
+/// compile cache unused / warm: babel-wtb (5.6 MB) first -16.7% / +4.3% (a warm load
+/// compiled nothing), steady -10.1% / -9.8%. Scripts under a megabyte mostly run their code:
+/// stubbed, chai-wtb (530 KB) went +0.3% / +8.4% first, +0.7% / +3.6% steady; postcss-wtb
+/// (1.2 MB) +0.8% / +1.4% steady; espree and source-map within 2%.
+const FIRST_CALL_SCRIPT_BYTES: usize = 2 << 20;
 
 /// Which functions of a source compile on first call.
 #[derive(Clone, Copy)]

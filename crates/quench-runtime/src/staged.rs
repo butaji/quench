@@ -122,6 +122,21 @@ pub(crate) use stage::{fill_by_rows, Passed, RecordSpace, Stage, Table, word_byt
 mod register_frame;
 pub(crate) use register_frame::{Constant, Frame, Step, bound_this, jump_if, load_this, logical_not, read_initialized_local, read_local, write_initialized_local, write_local};
 
+/// Where a row goes when its frame cannot decide a step: the VM's general step, or, for a
+/// capture access whose scopes the frame does not hold, the walk over the scopes from the
+/// activation's environment (a read) or the store into the scope it finds (a write).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Miss { General, WalkScopes, StoreThroughScopes }
+
+/// The row of `op`'s miss route (`Miss`).
+pub(crate) const fn miss(op: Op) -> Miss {
+    match op {
+        Op::LoadCapture => Miss::WalkScopes,
+        Op::StoreCapture => Miss::StoreThroughScopes,
+        _ => Miss::General,
+    }
+}
+
 /// An instruction `step` runs, with the operands a tier decoded.
 #[derive(Clone, Copy)]
 pub(crate) enum Operation<W, P> {
@@ -164,6 +179,8 @@ pub(crate) enum Operation<W, P> {
     Allocate { destination: Register, allocation: Allocation, proof: P },
     /// Continue unless an interrupt or a due collection is requested (`Frame::safepoint`).
     Safepoint { proof: P },
+    /// Continue: a record a rewrite emptied (`Op::Nop`), which reads and writes nothing.
+    Nop,
     /// The element store's host helper for `base[key] = value`, under `proof`; the frame's
     /// miss edge takes a failed store.
     IndexSetHelper { base: W, key: W, value: W, proof: P },
@@ -296,12 +313,21 @@ impl<W, P> Operation<W, P> {
                 destination: instruction.result_register(),
                 constant: instruction.constant(context)? },
             Op::Jump => Self::Jump,
+            Op::Nop => Self::Nop,
             Op::JumpFalse => Self::JumpIf {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
             _ => Self::Return { source: instruction.register_a() },
         })
+    }
+
+    /// The destination and constant index of an instruction `decode_flow` reads as `LoadConst`,
+    /// for a tier that holds its constants in a table of its own (the b-jit's Numbers): the
+    /// same decode, with the constant left for the tier to look up.
+    #[inline(always)]
+    pub(crate) fn decode_constant_load(instruction: WideInstruction) -> Option<(Register, usize)> {
+        (instruction.op() == Op::LoadConst).then(|| (instruction.result_register(), instruction.constant_index()))
     }
 
     /// The call operations of `decode`: a call or construction through its forms (`Invocation`),
@@ -314,7 +340,8 @@ impl<W, P> Operation<W, P> {
     }
 
     /// The property operations of `decode`: a plain named read, a named store and `delete`.
-    fn decode_property(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_property(instruction: WideInstruction) -> Option<Self> {
         match instruction.op() {
             Op::GetField => Self::decode_get_field(instruction),
             Op::Delete => Some(Self::Delete { destination: instruction.result_register(), base: instruction.register_b(),
@@ -328,6 +355,7 @@ impl<W, P> Operation<W, P> {
 
     /// A named read that completes no frame and writes no `this`; a nested lookup's base is the
     /// tier's own (`FieldBase::NESTED`).
+    #[inline(always)]
     fn decode_get_field(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let lookup = instruction.field_lookup()?;

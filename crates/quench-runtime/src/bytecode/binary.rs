@@ -242,6 +242,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         out.string(&import.local);
     }
     write_module_link_plan(&mut out, program.module_link_plan.as_ref());
+    write_declared_types(&mut out, program.declared_types.as_deref());
     let mut header = out;
     let mut out = BinaryWriter::with_atoms(atoms);
     out.u32(program.constants.len() as u32);
@@ -372,6 +373,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     for site in &program.regexp_literal_sites {
         out.u32(site.pattern_constant);
         out.u32(site.flags_constant);
+        out.bool(site.receiver);
     }
     out.u32(program.literal_templates.len() as u32);
     for template in &program.literal_templates {
@@ -395,6 +397,24 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         }
     }
     write_closure_tables(&mut out, program);
+    match program.kept_chunk_room() {
+        Some(room) => {
+            out.bool(true);
+            for value in room.spares.into_iter().chain(room.lengths) {
+                out.u32(value);
+            }
+            out.u16(room.site_capacity);
+            out.bool(room.direct_stubs);
+            out.u16(room.next_site);
+            out.u32(room.name_shared.len() as u32);
+            for (store, atom, site) in room.name_shared {
+                out.bool(store);
+                out.atom(atom);
+                out.u16(site);
+            }
+        }
+        None => out.bool(false),
+    }
     let order = match out.atoms {
         AtomEncoding::Program => {
             header.strings(&program.atoms);
@@ -571,6 +591,7 @@ fn decode_program(
         })
     })?;
     let module_link_plan = read_module_link_plan(&mut input)?;
+    let declared_types = read_declared_types(&mut input)?;
     let atoms = match &mut read_atoms {
         ReadAtoms::Program => input.strings()?,
         ReadAtoms::Shared(count) => {
@@ -688,6 +709,7 @@ fn decode_program(
         Ok(RegExpLiteralSite {
             pattern_constant: input.u32()?,
             flags_constant: input.u32()?,
+            receiver: input.bool()?,
         })
     })?;
     let literal_templates = input.list(|input| {
@@ -730,13 +752,25 @@ fn decode_program(
         Ok(Superinstruction::new(code))
     })?;
     let (closure_reads, first_call_scopes) = read_closure_tables(&mut input, functions.len())?;
+    let chunk_room = if input.bool()? {
+        let (mut spares, mut lengths) = ([0; 9], [0; 9]);
+        for value in spares.iter_mut().chain(lengths.iter_mut()) {
+            *value = input.u32()?;
+        }
+        let (site_capacity, direct_stubs, next_site) = (input.u16()?, input.bool()?, input.u16()?);
+        let name_shared = input.list(|input| Ok((input.bool()?, input.atom()?, input.u16()?)))?;
+        Some(super::chunk_append::KeptChunkRoom { spares, lengths, site_capacity, direct_stubs, next_site, name_shared })
+    } else {
+        None
+    };
     input.finish()?;
-    let program = super::ResidualProgram {
+    let mut program = super::ResidualProgram {
         specialized,
         kind,
         module_requests,
         module_imports,
         module_link_plan,
+        declared_types,
         source_name,
         source,
         atoms,
@@ -758,6 +792,9 @@ fn decode_program(
         closure_reads,
         wasm_lazy: None,
     };
+    if let Some(room) = &chunk_room {
+        program.restore_chunk_room(room);
+    }
     Ok(program)
 }
 
@@ -1740,6 +1777,59 @@ fn read_module_requests(input: &mut BinaryReader<'_>) -> Result<Vec<ModuleReques
         let module_type = read_optional_string(input)?;
         Ok(ModuleRequest { source, phase, module_type })
     })
+}
+
+/// The declared environment: none (0), or its declarations and enum constants (1).
+fn write_declared_types(out: &mut BinaryWriter, declared: Option<&super::DeclaredTypes>) {
+    let Some(declared) = declared else {
+        out.u8(0);
+        return;
+    };
+    out.u8(1);
+    out.u32(declared.declared.len() as u32);
+    for entry in &declared.declared {
+        out.u8(entry.kind as u8);
+        out.string(entry.name.as_deref().unwrap_or(""));
+        out.bool(entry.name.is_some());
+        out.u32(entry.start);
+        out.u32(entry.end);
+    }
+    out.u32(declared.enum_constants.len() as u32);
+    for (enumeration, member, value) in &declared.enum_constants {
+        out.string(enumeration);
+        out.string(member);
+        match value {
+            super::EnumConstant::Number(number) => {
+                out.u8(0);
+                out.u64(number.to_bits());
+            }
+            super::EnumConstant::String(text) => {
+                out.u8(1);
+                out.string(text);
+            }
+        }
+    }
+}
+
+fn read_declared_types(input: &mut BinaryReader<'_>) -> Result<Option<Box<super::DeclaredTypes>>, String> {
+    if input.u8()? == 0 { return Ok(None); }
+    let declared = input.list(|input| {
+        let kind = super::DeclaredKind::from_binary_tag(input.u8()?).ok_or_else(|| "invalid declared kind".to_string())?;
+        let name = input.string()?;
+        let named = input.bool()?;
+        Ok(super::Declared { kind, name: named.then(|| name.into_boxed_str()), start: input.u32()?, end: input.u32()? })
+    })?;
+    let enum_constants = input.list(|input| {
+        let enumeration = input.string()?.into_boxed_str();
+        let member = input.string()?.into_boxed_str();
+        let value = match input.u8()? {
+            0 => super::EnumConstant::Number(f64::from_bits(input.u64()?)),
+            1 => super::EnumConstant::String(input.string()?.into_boxed_str()),
+            _ => return Err("invalid enum constant tag".to_string()),
+        };
+        Ok((enumeration, member, value))
+    })?;
+    Ok(Some(Box::new(super::DeclaredTypes { declared, enum_constants })))
 }
 
 fn write_module_link_plan(out: &mut BinaryWriter, plan: Option<&ModuleLinkPlan>) {

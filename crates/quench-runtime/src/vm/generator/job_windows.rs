@@ -165,16 +165,25 @@ impl<H: Host> Vm<H> {
     pub(in crate::vm) fn finish_job_window(&mut self, job: JobRoot) {
         match job.kind {
             SuspendKind::AsyncFunction => {
-                if let Some(state) = self.heap.await_state_mut(job.object) {
-                    state.take_running();
+                let finished = self.heap.await_state_mut(job.object).and_then(|state| state.take_running());
+                if let Some((continuation, ..)) = finished {
+                    self.pool_finished_frame(continuation.frame);
                 }
             }
             SuspendKind::AsyncGenerator | SuspendKind::Generator => {
-                if let Some(record) = self.generator_record_mut(job.object) {
-                    record.complete();
+                let finished = self.generator_record_mut(job.object).and_then(|record| record.complete_taking());
+                if let Some(continuation) = finished {
+                    self.pool_finished_frame(continuation.frame);
                 }
             }
         }
+    }
+
+    /// A finished windowed activation's frame goes back to the frame pool, so the next call's
+    /// frame reuses its buffers instead of allocating them anew.
+    pub(in crate::vm) fn pool_finished_frame(&mut self, frame: Box<FrameRecord>) {
+        let with_base = self.with_stack.len();
+        self.pool_frame(frame.into_buffers(with_base));
     }
 
     /// `job`'s activation made a VM frame on the frame stack, where the lane's activations

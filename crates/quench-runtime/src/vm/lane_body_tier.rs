@@ -214,7 +214,7 @@ impl LaneView {
 
     /// Whether a body compiled a call of this function (`note_caller`): native callers want its
     /// body whatever its length, which only the lane's own entries ask to amortize.
-    fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
+    pub(in crate::vm) fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
     /// Warms again a body declined for its length alone, once a caller's compile meets a call to
     /// it: native callers want it whatever its length. Whether it is warming now.
@@ -247,6 +247,7 @@ impl LaneView {
         }
     }
 
+    #[inline]
     pub(super) fn note_late_call(&self) -> bool {
         let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
@@ -254,6 +255,14 @@ impl LaneView {
         late_calls == self.tiers.lane_body.late_call_calls
     }
 
+    /// Whether the late calls counted past the threshold (`note_late_call`), which only a
+    /// respecialization resets.
+    #[inline]
+    pub(super) fn late_calls_settled(&self) -> bool {
+        self.tier().history.get().late_calls > self.tiers.lane_body.late_call_calls
+    }
+
+    #[inline]
     pub(super) fn owns_record(&self, record: super::Ip) -> bool {
         let start = self.records();
         record >= start && record < start.wrapping_add(self.records.len())

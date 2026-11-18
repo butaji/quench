@@ -75,6 +75,16 @@ const forwardRest = (...xs) => sumRest(...xs);
 ops.call_rest_forward = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + forwardRest(i, 1)) | 0; } return a; };
 ops.call_closure = function (n) { const k = 5, f = (x) => (x + k) | 0; let a = 0; for (let i = 0; i < n; i++) { a = (a + f(i)) | 0; } return a; };
 ops.call_method = function (n) { const o = { k: 1, m(x) { return (x + this.k) | 0; } }; let a = 0; for (let i = 0; i < n; i++) { a = (a + o.m(i)) | 0; } return a; };
+// RegExp.prototype.test of typical patterns over one text (the regexp kit's subject); the C
+// twins in ops.c are the matcher a C programmer writes for each pattern.
+const RS = "The quick brown fox jumps over the lazy dog; contact: john.doe+tag@example.com, price $1234.56, date 2026-11-18, running jumping";
+function rxLoop(n, re) { let c = 0; for (let i = 0; i < n; i++) { if (re.test(RS)) c++; } return c; }
+ops.rx_lit = function (n) { return rxLoop(n, /lazy/); };
+ops.rx_digits = function (n) { return rxLoop(n, /\d+/); };
+ops.rx_word2 = function (n) { return rxLoop(n, /(\w+)\s(\w+)/); };
+ops.rx_email = function (n) { return rxLoop(n, /[\w.+-]+@[\w-]+\.[\w.]+/); };
+ops.rx_dotstar = function (n) { return rxLoop(n, /q.*z/); };
+ops.rx_ahead = function (n) { return rxLoop(n, /\w+(?=@)/); };
 // Kernels: one inner iteration of a benchmark-shaped loop (n-body pair step, struct array,
 // polymorphic dispatch, JSON round trip, regexp test, string building), budgeted per
 // iteration against C twins as the primitives are; a kernel's split names the primitive
@@ -94,6 +104,8 @@ ops.k_nbody_pair = function (n) {
 };
 // Allocation: an object literal, a function constructor's instance and a class instance per
 // iteration, each read back; the C twins allocate the same struct on the heap (malloc + free).
+// A one-field object literal per iteration (`{ v: i }`), consumed locally.
+ops.alloc_literal1 = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { v: i }; s = (s + p.v) | 0; } return s; };
 ops.alloc_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; s = (s + p.x + p.y) | 0; } return s; };
 function Pair(x, y) { this.x = x; this.y = y; }
 ops.alloc_ctor = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; } return s; };
@@ -215,4 +227,21 @@ function nameRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.na
 function lengthRead(n, o) { let a = 0; for (let i = 0; i < n; i++) { a = (a + o.length) | 0; } return a; }
 ops.field_name = function (n) { return nameRead(n, { id: 3, name: 4 }); };
 ops.field_length = function (n) { return lengthRead(n, { id: 3, length: 4 }); };
+// Builtin method calls outside the lane's builtin rows: the native call protocol plus a small
+// body (a search of a short needle, a short slice, a type test).
+ops.str_includes = function (n) { let a = 0; const s = S; for (let i = 0; i < n; i++) { if (s.includes("lazy")) a++; } return a; };
+ops.str_slice = function (n) { let a = 0; const s = S; for (let i = 0; i < n; i++) { a += s.slice(4, 9).length; } return a; };
+ops.arr_isarray = function (n) { const arr = [1, 2, 3]; let a = 0; for (let i = 0; i < n; i++) { if (Array.isArray(arr)) a++; } return a; };
+ops.arr_slice = function (n) { const arr = [1, 2, 3, 4]; let a = 0; for (let i = 0; i < n; i++) { a += arr.slice(0, 2).length; } return a; };
+// Builtin bodies against their C twins (TOD-1839, rule: C-shaped code runs as C). Each budget in
+// ir_budget.txt is the twin's count plus a call-dispatch allowance, not 3x C: the builtin body
+// itself must cost what C costs, and the interpreter adds only the call's dispatch.
+ops.bi_dv_get_f64 = function (n) { const dv = new DataView(new ArrayBuffer(64)); for (let j = 0; j < 8; j++) dv.setFloat64(j * 8, j + 0.5, true); let s = 0; for (let i = 0; i < n; i++) { s += dv.getFloat64((i & 7) * 8, true); } return s; };
+ops.bi_dv_set_f64 = function (n) { const dv = new DataView(new ArrayBuffer(64)); for (let i = 0; i < n; i++) { dv.setFloat64((i & 7) * 8, i, true); } return dv.getFloat64(0, true); };
+ops.bi_dv_get_u32 = function (n) { const dv = new DataView(new ArrayBuffer(64)); for (let j = 0; j < 16; j++) dv.setUint32(j * 4, j * 7); let a = 0; for (let i = 0; i < n; i++) { a = (a + dv.getUint32((i & 15) * 4)) | 0; } return a; };
+ops.bi_arr_slice = function (n) { const arr = []; for (let j = 0; j < 16; j++) arr.push(j); let a = 0; for (let i = 0; i < n; i++) { a = (a + arr.slice(4, 12).length) | 0; } return a; };
+ops.bi_arr_concat = function (n) { const x = [1, 2, 3, 4], y = [5, 6, 7, 8]; let a = 0; for (let i = 0; i < n; i++) { a = (a + x.concat(y).length) | 0; } return a; };
+ops.bi_tmpl = function (n) { const p = "ab", q = "xyz"; let a = 0; for (let i = 0; i < n; i++) { a = (a + `${p}-${i & 1023}-${q}`.length) | 0; } return a; };
+ops.bi_map_get = function (n) { const m = new Map(); for (let j = 0; j < 64; j++) m.set(j, j * 3); let a = 0; for (let i = 0; i < n; i++) { a = (a + m.get(i & 63)) | 0; } return a; };
+ops.bi_set_has = function (n) { const s = new Set(); for (let j = 0; j < 64; j += 2) s.add(j); let a = 0; for (let i = 0; i < n; i++) { if (s.has(i & 63)) a++; } return a; };
 globalThis.PRIMITIVE_OPS = ops;

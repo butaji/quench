@@ -490,9 +490,9 @@ impl LanePlan {
             fault_poll: self.lowered.region.fault_poll || self.direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             // A body that names a callee's body retires with it (`DirectCallee::method`).
             names_shapes, exits: ExitTable::of_unit(&self.unit), inlined: self.unit.frames,
-            scratch_width, caller_registers,
+            scratch_width, caller_registers, frame_reach: 0,
             amortizes, direct: self.direct, closed: self.closed,
-            framed: false, _records: Vec::new(), constructors: Box::default(),
+            framed: false, _records: Vec::new(), constructors: Box::default(), realm_bound: false,
         })
     }
 }
@@ -505,6 +505,7 @@ impl LaneMethod {
     /// A leave at a construction inside an inlined frame is the same: a construction no plan
     /// makes is generic only at a caller record (`Lowering::construct`), so the callee that
     /// holds it keeps its own body.
+    #[inline]
     pub(in crate::vm) fn feedback(&self, exit: LaneExit, program: &ResidualProgram) -> LaneExit {
         let LaneExit::Inlined { frame, pc } = exit else { return exit };
         let Some(inlined) = self.inlined.get(frame) else { return exit };

@@ -662,6 +662,61 @@ pub(crate) enum Native {
     MathInitialize,
 }
 
+/// A native's traits, each derived once at compile time from its defining predicate
+/// (`Native::derive_*`) and read with one load: the call protocol asks several per call.
+mod native_traits {
+    pub(super) const RUNS_FROM_LANE: u8 = 1;
+    pub(super) const RUNS_BESIDE_ACTIVATIONS: u8 = 2;
+    pub(super) const HOST_CONTROL: u8 = 4;
+    pub(super) const MATH_FUNCTION: u8 = 8;
+    pub(super) const INTRINSIC_SPECIES_GETTER: u8 = 16;
+}
+
+const NATIVE_TRAITS: [u8; Native::COUNT as usize] = {
+    use native_traits::*;
+    let mut table = [0u8; Native::COUNT as usize];
+    let mut index = 0;
+    while index < Native::COUNT {
+        let Some(native) = Native::from_discriminant(index) else { panic!("discriminants are dense") };
+        let mut traits = 0;
+        if native.derive_runs_from_lane() { traits |= RUNS_FROM_LANE; }
+        if native.derive_runs_beside_activations() { traits |= RUNS_BESIDE_ACTIVATIONS; }
+        if native.derive_host_control_native() { traits |= HOST_CONTROL; }
+        if native.derive_math_function() { traits |= MATH_FUNCTION; }
+        if native.derive_intrinsic_species_getter() { traits |= INTRINSIC_SPECIES_GETTER; }
+        table[index as usize] = traits;
+        index += 1;
+    }
+    table
+};
+
+impl Native {
+    #[inline(always)]
+    const fn has_trait(self, bit: u8) -> bool {
+        NATIVE_TRAITS[self as usize] & bit != 0
+    }
+
+    /// `derive_runs_from_lane`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn runs_from_lane(self) -> bool { self.has_trait(native_traits::RUNS_FROM_LANE) }
+
+    /// `derive_runs_beside_activations`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn runs_beside_activations(self) -> bool { self.has_trait(native_traits::RUNS_BESIDE_ACTIVATIONS) }
+
+    /// `derive_host_control_native`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn is_host_control_native(self) -> bool { self.has_trait(native_traits::HOST_CONTROL) }
+
+    /// `derive_math_function`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn is_math_function(self) -> bool { self.has_trait(native_traits::MATH_FUNCTION) }
+
+    /// `derive_intrinsic_species_getter`, read from the derived table.
+    #[inline(always)]
+    pub(crate) const fn is_intrinsic_species_getter(self) -> bool { self.has_trait(native_traits::INTRINSIC_SPECIES_GETTER) }
+}
+
 /// A global's cold facts, boxed with its object part so the cell stays compact.
 #[derive(Clone, Debug)]
 pub(crate) struct WasmGlobalHeader {
@@ -746,7 +801,7 @@ impl Native {
     }
 
     /// The `get [Symbol.species]` accessors, each of which returns its receiver.
-    pub(crate) fn is_intrinsic_species_getter(self) -> bool {
+    const fn derive_intrinsic_species_getter(self) -> bool {
         matches!(
             self,
             Self::ArraySpecies
@@ -757,7 +812,7 @@ impl Native {
         )
     }
 
-    pub(crate) fn is_function_native(self) -> bool {
+    pub(crate) const fn is_function_native(self) -> bool {
         matches!(
             self,
             Self::Function
@@ -800,8 +855,30 @@ impl Native {
         )
     }
 
+    /// The natives whose searches run a RegExp's matcher, after which a search that ran out of
+    /// backtracking stack raises (`Vm::regexp_search_outcome`).
+    pub(crate) const fn searches_regexps(self) -> bool {
+        matches!(
+            self,
+            Self::RegExpExec
+                | Self::RegExpTest
+                | Self::RegExpSymbolMatch
+                | Self::RegExpSymbolSearch
+                | Self::RegExpSymbolReplace
+                | Self::RegExpSymbolMatchAll
+                | Self::RegExpSymbolSplit
+                | Self::StringReplace
+                | Self::StringReplaceAll
+                | Self::StringMatch
+                | Self::StringMatchAll
+                | Self::StringSearch
+                | Self::StringSplit
+                | Self::RegExpStringIteratorNext
+        )
+    }
+
     /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
-    pub(crate) const fn is_math_function(self) -> bool {
+    const fn derive_math_function(self) -> bool {
         matches!(
             self,
             Self::MathAbs
@@ -863,7 +940,7 @@ impl Native {
 
     /// The `Reflect` functions that run an internal method of their target (`Reflect.apply`,
     /// `construct` and the like call functions, and take frames).
-    fn is_reflect_operation(self) -> bool {
+    const fn is_reflect_operation(self) -> bool {
         matches!(
             self,
             Self::ReflectGetPrototypeOf
@@ -912,7 +989,7 @@ impl Native {
     /// iteration from a frameless activation). A keyed collection's or array's iterator
     /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
-    pub(crate) fn runs_beside_activations(self) -> bool {
+    const fn derive_runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
             Self::ObjectLiteralPrototype
@@ -995,7 +1072,7 @@ impl Native {
     /// call-forwarding natives push their target as a frame there (and run under a
     /// forwarding boundary), direct `eval` reads the calling instruction, and `with` entry
     /// and exit change the running frame's object environment.
-    pub(crate) fn runs_from_lane(self) -> bool {
+    const fn derive_runs_from_lane(self) -> bool {
         !matches!(
             self,
             Self::FunctionCall
@@ -1009,7 +1086,7 @@ impl Native {
         )
     }
 
-    pub(crate) fn is_host_control_native(self) -> bool {
+    const fn derive_host_control_native(self) -> bool {
         matches!(
             self,
             Self::HostDone | Self::CreateRealm | Self::Boolean | Self::BigInt
@@ -2338,10 +2415,14 @@ impl Object {
         u64::from(self.layout)
     }
 
+    /// What a lane record's own-field hint and a call memo's step hold: the record's layout id
+    /// (`layout_id`), so that one compare of the record's own word, with no table load, proves
+    /// its exact shape, storage form, prototype link and flags. The auxiliary word a hint names
+    /// is `heap::layouts::auxiliary(hint)`.
     #[inline(always)]
     pub(crate) fn hint_shape(&self) -> u32 {
         debug_assert_eq!(self.aux() & crate::value_vec::STORAGE_FORM, self.storage_form());
-        self.aux()
+        self.layout
     }
 
     /// The storage-form bits of the auxiliary word (`value_vec::STORAGE_FORM`) the header's
@@ -2375,19 +2456,28 @@ impl Object {
         debug_assert!(!plain || self.extras_pointer().is_none());
         plain.then_some(self.payload as usize)
     }
-    /// `formed_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
-    /// where the whole auxiliary word equals `hint`, a narrow form without inline storage or
-    /// extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
+    /// `hinted_plain_start` of a narrow run (`value_vec::NARROW_FORM`): the run's first word
+    /// where the layout id equals `hint` (`hint_shape`), a narrow form without inline storage
+    /// or extras, so slot `i` is half `i` of the run counted in `u32`s from twice that word.
     #[inline(always)]
     pub(crate) fn formed_narrow_start(&self, hint: u32) -> Option<usize> {
         use crate::value_vec::{NARROW_FORM, STORAGE_FORM};
-        let narrow = hint & STORAGE_FORM == NARROW_FORM && self.aux() == hint && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
+        let narrow = self.layout == hint && super::layouts::auxiliary(hint) & STORAGE_FORM == NARROW_FORM
+            && self.payload >> u32::BITS == NARROW_RUN_TAG >> u32::BITS;
         narrow.then_some(self.payload as u32 as usize)
     }
 
 
-    /// The arena storage start of an object whose auxiliary word is `hint` whole, a lane
-    /// record's own-field hint (`hint_shape`) of the arena form; `None` for any other word or form.
+    /// The arena storage start of an object whose layout's form a hint proved the arena form
+    /// (`staged::ic::layout_form` 0): its payload word.
+    #[inline(always)]
+    pub(crate) fn proved_arena_start(&self) -> usize {
+        debug_assert_eq!(self.plain_arena_start(), Some(self.payload as usize));
+        self.payload as usize
+    }
+
+    /// The arena storage start of an object whose auxiliary word is `shape` whole, an exact
+    /// shape, which only the arena form's word equals; `None` for any other word or form.
     #[inline(always)]
     pub(crate) fn formed_plain_start(&self, hint: u32) -> Option<usize> {
         // The arena form (`STORAGE_FORM` clear) has neither inline storage nor extras, so the

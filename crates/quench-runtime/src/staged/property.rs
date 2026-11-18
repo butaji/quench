@@ -30,6 +30,7 @@ pub(crate) enum Owner {
 
 impl Owner {
     /// The owner of a field base: `this` or a register; any other base is the tier's own.
+    #[inline(always)]
     pub(crate) fn of(base: FieldBase) -> Option<Self> {
         if base == FieldBase::THIS { return Some(Self::This); }
         base.register_index().map(Self::Register)
@@ -86,6 +87,9 @@ pub(crate) struct StoreArm {
     pub(crate) slot: u16,
     pub(crate) holds: Option<Type>,
     pub(crate) raw_double: bool,
+    /// Whether the site left the record's storage form open (`Form::Either`): a raw store
+    /// then tests the inline flag at run time, which a proven arena run skips.
+    pub(crate) unformed: bool,
 }
 
 impl StoreArm {
@@ -94,20 +98,20 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub(crate) fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
-        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false }); }
+        if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, raw_double: false, unformed: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
-        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false })
+        holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), raw_double: false, unformed: false })
     }
 
     /// `StoreArm::of` for a slot whose arena words are raw doubles where `raw_double`: only a
     /// value whose type the slot's holds, a Number, stores in place, as its binary64 word, and
-    /// only into a shape whose values its `form` proves an arena run (a packed slot holds narrow
-    /// values, whatever its owner's type).
+    /// only into a shape whose values its `form` leaves an arena run (a packed slot holds narrow
+    /// values, whatever its owner's type); an open form is tested when the store runs.
     pub(crate) fn of_rep(at: (u32, u16), slot_ty: Type, fact: Type, (raw_double, form): (bool, super::Form)) -> Option<Self> {
         let arm = Self::of(at, slot_ty, fact)?;
         if !raw_double { return Some(arm); }
-        (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form == super::Form::Arena)
-            .then_some(Self { raw_double: true, ..arm })
+        (arm.holds.is_none() && fact.is_subtype(Type::NUMBER) && form != super::Form::Packed)
+            .then_some(Self { raw_double: true, unformed: form == super::Form::Either, ..arm })
     }
 }
 
@@ -131,6 +135,12 @@ pub(crate) enum StorePlan<'a> {
     /// The first of `arms` whose exact shape the receiver has stores in place where the
     /// value, the barrier and the storage admit it; every other store runs through `join`.
     Own { arms: &'a [StoreArm], join: StoreJoin },
+    /// A receiver whose layout id is `id` (a site's layout hint, `Object::hint_shape`) stores
+    /// at `slot` in place: one compare of the record's own word proves its shape, form and
+    /// flags, and the form the id's entry names picks the store with no test
+    /// (`store::own_store`, hinted). Every other store runs through `join`. The generated
+    /// own-store rows build it (`RecordPlan::own_store`).
+    Layout { id: u32, slot: u16, join: StoreJoin },
     /// The slot a loop's entry projected for this store, which the frame addresses
     /// (`PropertyFrame::entry_slot_store`).
     Entry,
@@ -300,6 +310,11 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn entry_slot_store(&mut self, _stage: &mut S, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
 
+    /// Whether the slot a loop's entry projected for this store keeps raw doubles: the store
+    /// then hands `entry_slot_store` the value's binary64 word, not its tagged one.
+    #[inline(always)]
+    fn entry_slot_raw(&self) -> bool { false }
+
     /// Continues where the run admits a direct store of the atom the access names (no method
     /// cache names it); a frame whose run changes that between accesses tests it here.
     #[inline(always)]
@@ -332,7 +347,7 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
 
 /// The record of the direct object `object`; anything else leaves at `miss`.
 #[inline(always)]
-fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+pub(crate) fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     let records = frame.object_records(stage)?;
     let direct = value::is_direct_object(stage, object);
@@ -400,13 +415,14 @@ pub(super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S,
 
 /// `ops` over the record `at` reached, where a leading shape guard is the owner's proof: its
 /// own-slot load reads through the layout the frame kept, or proves and keeps it.
+#[inline(always)]
 fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), ops: &[IcOp<'_>],
     (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
-    if let [IcOp::GuardFormed(word), IcOp::LoadSlot { slot, storage_len, .. }] = ops {
+    if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, .. }] = ops {
         return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
-    if let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
+    if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
         && frame.proven_shape(stage, owner) != Some(*shape)
         && frame.kept_layout(owner, *shape).is_none() {
         return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
@@ -458,6 +474,13 @@ pub(super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     let plans = frame.plans();
     let plan = plans.field_plan(lookup)?;
     let object = base_word(stage, frame, base, miss)?;
+    // A plan of ops over the receiver's own record, the one a lane record's hint holds, inline;
+    // every other plan through `read_with`, which recurses through nested plans.
+    if let FieldPlan::Ops(ops) = plan {
+        let at = frame.receiver_record(stage, owner, object, false, miss)?;
+        let records = frame.object_records(stage);
+        return run_owned(stage, frame, (owner, true), ops, (at, records), miss);
+    }
     read_with(stage, frame, (owner, false), object, plan, miss)
 }
 

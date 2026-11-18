@@ -106,7 +106,7 @@ pub(super) fn bound_parameters(
         body(callee, reached).all(|instruction| instruction.defined_register() != Some(parameter)).then_some(())?;
         let argument = window + parameter;
         let moved = run.iter().rposition(|instruction| instruction.defined_register() == Some(argument))?;
-        (run[moved].op().is_move() && !defines(run[moved].register_b())).then_some(())?;
+        (matches!(crate::vm::compiled::decoded(run[moved]), Some(crate::staged::Operation::Move { .. })) && !defines(run[moved].register_b())).then_some(())?;
         bound[usize::from(parameter)] = Some(run[moved].register_b());
         dropped.insert(first + moved as u32, ());
     }
@@ -131,7 +131,7 @@ const COMPLETION_LENGTH: u32 = 2;
 
 /// How many region instructions a reached callee instruction becomes.
 fn callee_length(instruction: WideInstruction, sites: &[FieldSite]) -> u32 {
-    if instruction.op().is_return() {
+    if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
         COMPLETION_LENGTH
     } else if inlined_returning(instruction) {
         // The computation, then the completion of the call.
@@ -369,7 +369,7 @@ impl<'c, 'a> Emission<'c, 'a> {
     fn callee_instruction(&mut self, view: &CallView<'_, 'a>, callee_pc: usize, instruction: WideInstruction) -> Option<()> {
         let origin = Origin::Inlined { frame: view.index, pc: callee_pc as u32 };
         let set = view.frame_mask(callee_pc)?;
-        if instruction.op().is_return() {
+        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) {
             self.complete(view, view.register(instruction.register_a()), origin, set);
             return Some(());
         }

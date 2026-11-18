@@ -48,7 +48,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
             Expression::BigIntLiteral(value) => self.bigint_literal(value),
-            Expression::RegExpLiteral(value) => self.regexp_literal(value),
+            Expression::RegExpLiteral(value) => self.regexp_literal(value, false),
             Expression::TemplateLiteral(value) => self.template_literal(value),
             Expression::TaggedTemplateExpression(value) => self.tagged_template(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
@@ -210,7 +210,9 @@ impl FunctionCompiler<'_, '_> {
         self.load_atom(atom)
     }
 
-    fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>) -> Register {
+    /// A regexp literal; `receiver` when its only use is the receiver of a `test` or `exec`
+    /// call, which lets every evaluation share one object (`RegExpLiteralSite::receiver`).
+    pub(super) fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>, receiver: bool) -> Register {
         let pattern = self
             .owner
             .constant(Constant::String(value.regex.pattern.text.as_str().into()));
@@ -230,7 +232,7 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         let flags = self.owner.constant(Constant::String(flags.into()));
-        let site = self.owner.regexp_literal_site(pattern, flags);
+        let site = self.owner.regexp_literal_site(pattern, flags, receiver);
         let destination = self.reg();
         self.emit(Op::CreateRegExpLiteral, destination, 0, 0, site);
         destination
@@ -336,6 +338,28 @@ impl FunctionCompiler<'_, '_> {
         !self.generator
             && !self.async_function
             && self.owner.atoms[atom as usize].contains(crate::bytecode::SELF_BINDING_MARKER)
+    }
+
+    /// Whether `store_atom_with_initialization` of `atom` writes only this activation's
+    /// own local (a register or a local slot): no `with` object, dynamic scope, global mirror
+    /// or immutable binding can observe or refuse it, so it runs no guest code and never throws.
+    pub(super) fn stores_locally(&self, atom: Atom, initializing: bool) -> bool {
+        let source_atom = self.parameter_binding_atom(atom);
+        let binding_kind = self.lexical_binding_kind(source_atom);
+        if self.dynamic_eval || self.with_depth != 0 || self.with_depth != self.inherited_with_depth
+            || (!initializing && binding_kind != LexicalBindingKind::Mutable)
+            || self.owner.atoms[source_atom as usize].contains("\0quench:class-binding:")
+        {
+            return false;
+        }
+        let lexical = self.active_lexical_binding(source_atom);
+        let compiler_binding = self.is_compiler_binding(source_atom);
+        let atom = lexical.unwrap_or(source_atom);
+        if self.owner.atoms[atom as usize].contains("\0quench:class-binding:") {
+            return false;
+        }
+        let mirrored = lexical.is_none() && !compiler_binding && self.function_id == 0 && !self.owner.module_goal;
+        !mirrored && (self.frame_var(atom) || lexical.is_some() || compiler_binding) && self.local_slots.contains_key(&atom)
     }
 
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {

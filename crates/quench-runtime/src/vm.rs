@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod realm_table;
 mod register_file;
 mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
@@ -129,6 +130,7 @@ mod array;
 pub(crate) mod array_buffer;
 mod array_builtins;
 mod array_copy;
+mod array_dense;
 mod array_flatten;
 mod array_group;
 mod array_indexed;
@@ -660,13 +662,13 @@ impl Realm {
 #[derive(Default)]
 struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
-    iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
+    iterator_prototypes: realm_table::RealmTable<IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     /// Original per-realm constructors for function factory allocations.
     function_constructors: FxHashMap<(Value, Native), Value>,
-    promise_constructors: FxHashMap<Value, Value>,
-    error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
-    regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
+    promise_constructors: realm_table::RealmTable<Value>,
+    error_intrinsics: realm_table::RealmTable<ErrorRealmIntrinsics>,
+    regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
@@ -2142,10 +2144,10 @@ pub(crate) struct Vm<H> {
     /// The field slots of the descriptor shape `ToPropertyDescriptor` last read
     /// (`object_descriptors::DescriptorLayout`); derived from shapes.
     descriptor_layout: Option<object_descriptors::DescriptorLayout>,
-    /// The shape a new RegExp object starts in and the one its own `lastIndex` moves it to
-    /// (`Vm::regexp_from_matcher`), as the first one recorded; derived from shapes, so
-    /// field-cache invalidation clears it.
-    regexp_object_shapes: Option<(u32, u32)>,
+    /// The header of a new RegExp object of the paired prototype: inline storage in the shape
+    /// its own `lastIndex` gives an empty object, as the first one recorded
+    /// (`Vm::regexp_from_meta`); derived from shapes, so field-cache invalidation clears it.
+    regexp_object_header: Option<(Value, crate::heap::InlineObjectHeader)>,
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layouts: Vec<(u32, u32)>,
@@ -2277,7 +2279,7 @@ impl<H: Host> Vm<H> {
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.clear_call_targets();
         // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
-        unsafe { self.programs.retire_native_calls(); }
+        unsafe { self.programs.retire_native_calls_across_realms(); }
         let leaving = ParkedRealm {
             global: previous,
             state: GlobalLexicalState {
@@ -3131,7 +3133,7 @@ impl<H: Host> Vm<H> {
         self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
-        self.regexp_object_shapes = None;
+        self.regexp_object_header = None;
         self.regexp_last_index_layouts.clear();
         self.regexp_builtin_layouts.clear();
         self.regexp_symbol_layouts.clear();

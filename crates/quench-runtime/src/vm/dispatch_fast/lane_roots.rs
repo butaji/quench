@@ -4,7 +4,7 @@
 //! with no VM frame beneath it; its `await` suspends it back into the record (`lane_await`), its
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
-use super::generator_windows::{open_window_locals, window_plan, WindowPlan};
+use super::generator_windows::{open_window_locals, cached_window_plan, WindowPlan};
 use super::super::activation::{FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
@@ -208,6 +208,8 @@ impl<H: Host> Vm<H> {
             resumed_acc: Slot::of(Value::UNDEFINED),
             callee_resume: std::ptr::null(),
             callee_acc: Value::UNDEFINED,
+            body_site: None,
+            late_settled: std::ptr::null(),
             callee_warming: false,
             leaf: NO_LEAF_CALL,
             outer: NO_OUTER_WALK,
@@ -355,11 +357,10 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let frame = self.job_frame(job)?;
-        let environment = self.window_layout(frame, code)?;
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
         // SAFETY: the owner holds the frame, which nothing moves before the resume below.
-        let plan = window_plan(self, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
-        let WindowPlan { view, parent, locals, capture, .. } = plan;
+        let plan = cached_window_plan(self, code, unsafe { &*std::ptr::from_ref(frame) })?;
+        let WindowPlan { view, parent, locals, capture, environment, .. } = plan;
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;
         self.check_execution_interrupt().ok()?;
@@ -490,6 +491,7 @@ fn job_activation(
             argc: 0,
             completion: Completion::ResumesJob,
             forwards: false,
+            kept: 0,
             environment,
             record,
         }),

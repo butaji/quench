@@ -60,50 +60,36 @@ impl<H: Host> Vm<H> {
         self.iterator_lacks_property_proving(iterator, key)
     }
 
-    /// Whether destructuring `value` with an array pattern of `elements` elements and no rest
-    /// binds element `i` to `value[i]` and ends with no call: an ordinary Array whose iteration
-    /// is intact (`array_iteration_intact`) with no indexed descriptor or sparse storage, whose
-    /// first `elements` elements are present data elements, so each iterator step reads its own
-    /// element and none is the last; then the pattern's close (the iterator is never done) finds
-    /// no `return` on `%ArrayIteratorPrototype%`'s chain. Nothing here, nor in reading those
-    /// elements, runs guest code.
-    pub(super) fn array_pattern_reads_elements(&mut self, value: Value, elements: usize) -> bool {
-        if !self.array_iteration_intact(value) {
-            return false;
-        }
-        let Some(array) = self.heap.array(value) else {
-            return false;
-        };
-        if array.has_indexed_descriptors() || self.heap.sparse_length(value).is_some() {
-            return false;
-        }
-        let stored = array.elements();
-        if stored.len() < elements || (0..elements).any(|index| stored.get(index).is_none_or(|element| element.is_deleted())) {
+    /// Whether an array pattern of `count` elements (`[a, b] = source`) reads `source`'s
+    /// elements `0..count` with no observable step: the iteration is intact
+    /// (`intact_spread_length`: a plain array of present data elements on the realm's
+    /// `Array.prototype`, whose `@@iterator` and `next` are the intrinsics), it holds at least
+    /// `count` elements, so each of the `count` steps yields its element and none reports
+    /// done, and the array iterator's chain lacks `return`, so the close that follows calls
+    /// nothing. `false` leaves the pattern to the iterator protocol.
+    pub(super) fn array_pattern_fits(&mut self, source: Value, count: usize) -> bool {
+        if !self.intact_spread_length(source).is_some_and(|length| length >= count) {
             return false;
         }
         let key = PropertyKey::string(self.runtime_atoms.iterator_return);
         let proto = self.array_iterator_proto;
-        self.iterator_absence_proved(proto, key) || self.prove_chain_lacks(proto, key)
+        if self.iterator_absence_proved(proto, key) {
+            return true;
+        }
+        self.prove_array_iterator_lacks(key)
     }
 
-    /// Whether the chain from `proto` lacks `key` in every link's shape, recording the proof
-    /// (`iterator_absence_proof`) after making each link a prototype, as
-    /// `iterator_lacks_property_proving` does.
+    /// `array_pattern_fits`'s proof that the realm's array iterator prototype chain lacks
+    /// `key`, kept for the next ask as `iterator_lacks_property_proving` keeps it.
     #[cold]
     #[inline(never)]
-    fn prove_chain_lacks(&mut self, proto: Value, key: PropertyKey) -> bool {
+    fn prove_array_iterator_lacks(&mut self, key: PropertyKey) -> bool {
+        let proto = self.array_iterator_proto;
         let Some(atom) = key.key32() else {
             return false;
         };
-        let mut link = proto;
-        while !link.is_null() {
-            let Some(data) = self.heap.ordinary_object(link) else {
-                return false;
-            };
-            if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) || self.property_shape_slot(data.shape(), key).is_some() {
-                return false;
-            }
-            link = data.proto();
+        if self.plain_property_lookup(proto, key) != Some(None) {
+            return false;
         }
         let epoch = crate::heap::prototype_layout_epoch();
         let mut link = proto;

@@ -50,6 +50,10 @@ pub const NOT: u8 = 27;
 pub const NEG: u8 = 28;
 /// `%`: the staged Number remainder (`NumberOperation::Remainder`).
 pub const REM: u8 = 29;
+/// `Math.sqrt` of a Number: the staged `NumberOperation::Math`, a double, the one definition the
+/// native runs (`staged::math::float_unary`), one `sqrtsd`. `Math.abs` is a sign mask LLVM loads from
+/// a constant pool and the rounding functions are libm calls in the stencil build: no stencil holds either.
+pub const SQRT: u8 = 30;
 
 pub const CAPTURE_ROW: u8 = 0;
 pub const INDEX_ROW: u8 = 1;
@@ -137,6 +141,9 @@ pub const GLOBAL_STORE_ROW: u8 = 30;
 /// changes.
 pub const LEXICAL_READ_ROW: u8 = 49;
 pub const LEXICAL_WRITE_ROW: u8 = 50;
+/// The ordinary value at the address in hole 1 (an inlined callee's capture slot, `staged::environment::capture_at`)
+/// into the destination; an internal marker (a dead zone, a shared slot) leaves. A hit continues at NEXT.
+pub const CALLEE_CAPTURE_ROW: u8 = 25;
 /// The destination takes the tagged word of hole 1.
 pub const CONSTANT_ROW: u8 = 31;
 /// Leaves through the taken successor unless the VM's active realm (the word at the byte offset of
@@ -159,6 +166,12 @@ pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
 pub const TYPED_STORE_ROW: u8 = TYPED_INDEX_LAST + 1;
 pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
 pub const TYPED_LENGTH_ROW: u8 = TYPED_STORE_LAST + 1;
+/// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
+/// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
+pub const IC_PROOF_ROW: u8 = TYPED_LENGTH_ROW + 1;
+pub const IC_KNOWN_GET_ROW: u8 = IC_PROOF_ROW + 1;
+pub const IC_KNOWN_SET_ROW: u8 = IC_KNOWN_GET_ROW + 1;
+pub const IC_KNOWN_SET_INT_ROW: u8 = IC_KNOWN_SET_ROW + 1;
 /// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
 pub const NON_NATIVE_KINDS: [u8; 3] = [7, 8, 9];
 /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver
@@ -229,3 +242,8 @@ pub const fn holds_int(place: u8) -> bool {
 /// What a supernode row runs first: a Number row or a heap row (`supernodes.rs`).
 pub const FIRST_NUMBER: u8 = 0;
 pub const FIRST_HEAP: u8 = 1;
+/// A tested field store's hole 3 (`site_rows::site_store_row`): the tag fields past the first tag
+/// a non-int32 word must fall outside. A slot whose observed type holds Number admits a double,
+/// which lies outside the six tags; an int32-only slot admits none, against every tag field.
+pub const STORE_ADMITS_DOUBLES: u64 = 6;
+pub const STORE_ADMITS_INT32: u64 = 1 << 16;

@@ -14,6 +14,54 @@ pub const MOVE: u8 = 3;
 pub const CONSTANT: u8 = 4;
 /// Continues at the taken successor.
 pub const GOTO: u8 = 5;
+/// `D = memory[A + B]`, the access the operator code indexes in `ACCESSES`; traps out of bounds.
+pub const LOAD: u8 = 6;
+/// `memory[A + B] = D`, likewise.
+pub const STORE: u8 = 7;
+/// Calls the `WasmEntry` in the cell at address B with the arguments from register A on and
+/// the result to D; a trap's status leaves. Its row is a `call_` row (`wasm_name`).
+pub const CALL: u8 = 8;
+/// `D = A op B` on floats (width `W32` is f32), an `F64BinaryOperator` tag; a comparison
+/// leaves an i32 flag.
+pub const FLOAT_BINARY: u8 = 9;
+/// `D = op A` on floats, an `F64UnaryOperator` tag.
+pub const FLOAT_UNARY: u8 = 10;
+/// `D = op A`, a `ScalarConversionOperator` tag; a truncation traps.
+pub const CONVERT: u8 = 11;
+/// `D = (the i32 in hole 3) ? A : B`.
+pub const SELECT: u8 = 12;
+/// Traps: `unreachable`.
+pub const TRAP: u8 = 13;
+
+/// The float operators, the conversions.
+pub const FLOAT_BINARY_COUNT: u32 = 14;
+pub const FLOAT_UNARY_COUNT: u32 = 7;
+pub const CONVERT_COUNT: u32 = 33;
+
+/// The rows LLVM compiles with a constant-pool load (float bounds and masks), which the stencil
+/// build cannot relocate yet: the truncations and unsigned conversions, and copysign. The
+/// library leaves them out, and a function using one keeps its compiled entry.
+pub const CONVERT_NEEDS_CONSTANTS: [u32; 17] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 26];
+pub const FLOAT_BINARY_NEEDS_CONSTANTS: [u32; 1] = [6];
+
+/// The frame's header words before the registers: the result pointer, the memory base and its
+/// length (the call row reloads the pins from them).
+#[allow(dead_code)] // The stitcher reads it; `build.rs` includes this file too.
+pub const FRAME_HEADER_WORDS: u64 = 3;
+
+/// The value types of an access.
+pub const T_I32: u8 = 0;
+pub const T_I64: u8 = 1;
+pub const T_F32: u8 = 2;
+pub const T_F64: u8 = 3;
+
+/// The scalar accesses (`staged::wasm_memory::Access`): type, bytes, sign-extending. Every load
+/// is one; a store is one that does not sign-extend.
+pub const ACCESSES: [(u8, usize, bool); 14] = [
+    (T_I32, 4, false), (T_I32, 1, true), (T_I32, 1, false), (T_I32, 2, true), (T_I32, 2, false),
+    (T_I64, 8, false), (T_I64, 1, true), (T_I64, 1, false), (T_I64, 2, true), (T_I64, 2, false),
+    (T_I64, 4, true), (T_I64, 4, false), (T_F32, 4, false), (T_F64, 8, false),
+];
 
 /// The width an integer row runs at.
 pub const W32: u8 = 0;

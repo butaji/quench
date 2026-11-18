@@ -10,6 +10,14 @@ impl<H: Host> Vm<H> {
     /// and arrays, and primitives. `None` leaves the call to the native itself.
     pub(in crate::vm) fn in_place_native_value(&mut self, code: &ResidualProgram, native: Native, callee: Value,
         receiver: Value, args: &[Value]) -> Option<Value> {
+        self.in_place_native_value_inline(code, native, callee, receiver, args)
+    }
+
+    /// `in_place_native_value` inlined into its caller: the lane's native call
+    /// (`lane_string_or_native_call`) enters the family function from its own frame.
+    #[inline(always)]
+    pub(in crate::vm) fn in_place_native_value_inline(&mut self, code: &ResidualProgram, native: Native, callee: Value,
+        receiver: Value, args: &[Value]) -> Option<Value> {
         // One table read selects the families that can answer `native` (`IN_PLACE_FAMILIES`),
         // tried in the same order the cascade of all eight tried them.
         let families = IN_PLACE_FAMILIES[native as usize];
@@ -92,7 +100,7 @@ const fn in_place_families(native: Native) -> u16 {
         families |= COLLECTION;
     }
     if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
-        | Native::ArrayShift | Native::ArrayIteratorNext)
+        | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArraySlice | Native::ArrayConcat)
     {
         families |= ARRAY;
     }
@@ -278,7 +286,7 @@ fn internal_slot_value<H: Host>(vm: &mut Vm<H>, native: Native, callee: Value, r
     vm.heap.is_map(receiver).then(|| vm.collection_iterator(receiver, kind).ok()).flatten()
 }
 
-/// A dense array's `indexOf`, `includes`, `splice`, `unshift` and `shift`, and an array iterator's step
+/// A dense array's `indexOf`, `includes`, `splice`, `unshift`, `shift`, `slice` and `concat`, and an array iterator's step
 /// over a plain array.
 fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, callee: Value, receiver: Value,
     args: &[Value]) -> Option<Value> {
@@ -288,6 +296,8 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
         Native::ArrayUnshift => vm.plain_array_unshift(receiver, args),
         Native::ArrayShift => vm.plain_array_shift(receiver),
         Native::ArrayIteratorNext => vm.plain_array_iterator_next(callee, receiver),
+        Native::ArraySlice => vm.plain_array_slice(receiver, args),
+        Native::ArrayConcat => vm.array_concat_dense(receiver, args),
         _ => None,
     }
 }

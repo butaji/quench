@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
             share_entry_pair: _,
             descriptor_shapes: _,
             descriptor_layout: _,
-            regexp_object_shapes: _,
+            regexp_object_header: _,
             regexp_last_index_layouts: _,
             regexp_builtin_layouts: _,
             regexp_symbol_layouts: _,
@@ -748,6 +748,8 @@ mod tests {
     }
 
     impl Host for SnapshotHost {
+        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+        const RUNS_LANE: bool = false;
         fn write_line(&mut self, line: &str) {
             self.output.borrow_mut().push(line.into());
         }

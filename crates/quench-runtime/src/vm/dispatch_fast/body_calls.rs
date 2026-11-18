@@ -216,9 +216,12 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _r
     // As `lane_body_call`: static regions recover constructions through their semantic operation.
     if !crate::DYNAMIC_EXECUTION_ENABLED { return LANE_CALL_MISSED; }
     let cx = context as usize as *mut LaneContext<H>;
-    let status = native_frames::in_innermost_frame(cx, || unsafe { lane_body_construct_in(cx, call_pc) });
+    let mut moved = true;
+    let status = native_frames::in_innermost_frame(cx, || unsafe { lane_body_construct_in(cx, call_pc, &mut moved) });
+    // A quick planned construction claims a free record of a block the bases already name and
+    // makes no collection due, so it moves no base; anything else may have.
     // SAFETY: `context` is the running lane's.
-    unsafe { refresh_body_bases::<H>(context) };
+    if moved { unsafe { refresh_body_bases::<H>(context) }; }
     status
 }
 
@@ -226,20 +229,28 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_construct<H: Host>(_vm: u64, _r
 ///
 /// # Safety
 /// As `lane_body_call_in`.
-unsafe fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64 {
+unsafe fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64, moved: &mut bool) -> u64 {
     // SAFETY: the caller's contract.
     match unsafe { BodyCall::at(cx, call_pc) } {
-        Some(call) if call.site.constructs() => body_construct(cx, &call),
+        Some(call) if call.site.constructs() => body_construct(cx, &call, moved),
         _ => miss(unsafe { vm(cx) }, Miss::Form),
     }
 }
 
-/// `lane_body_construct` of the decoded `call`.
-fn body_construct<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall) -> u64 {
+/// `lane_body_construct` of the decoded `call`, inlined into its one caller so the decoded form is not copied.
+#[inline(always)]
+fn body_construct<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, moved: &mut bool) -> u64 {
     let vm = unsafe { vm(cx) };
     // A construction's callee is a register: no receiver loads it.
     let Some(callee) = call.callee(vm, Value::UNDEFINED) else { return miss(vm, Miss::Callee) };
     if let Err(refused) = construct_admitted(cx, vm) { return refused; }
+    // The quick case, as the lane's own record makes it (`lane_planned_construct`): nothing out of
+    // line, no base moved where no collection became due.
+    if let Some(this) = planned_inline_quick(vm, callee, call.argument()) {
+        call.registers.set(call.site.result, this);
+        if vm.heap.should_collect() { note_allocation(vm); } else { *moved = false; }
+        return LANE_CALL_COMPLETED;
+    }
     // The callee's plan first, the common `new C(...)`, which needs no call target; a returned
     // construction completes by it alone.
     if let Some(this) = constructed_in_place(vm, call, callee) {
@@ -348,6 +359,7 @@ fn lane_body_call_target<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, calle
 /// `lane_activate`; by the keeping form where it keeps or gathers values or is passed more than it
 /// has parameters; by the environment form. A frame or a settling entry takes the lane's own
 /// call, which is `None`.
+#[inline]
 fn lane_call_activation(target: &ScriptCallTarget, argc: u16) -> Option<LaneActivation> {
     match target.entry {
         entry if entry.activates() && argc <= target.params.min(FIXED_ARGUMENT_COPIES) => Some(LaneActivation::Plain),
@@ -399,6 +411,7 @@ fn lane_warm_callee<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: 
 }
 
 /// The `this` a callee's body is entered with: the deleted marker where it reads a lexical one.
+#[inline]
 fn lane_body_this(target: &ScriptCallTarget, this: Value) -> Value {
     if target.this_binding == ThisBinding::Lexical || this.is_deleted() { Value::DELETED } else { this }
 }
@@ -427,6 +440,16 @@ fn lane_body_activate<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, target:
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
     let captures = capture_reads(unsafe { (*cx).registers.capture() });
     let exit = vm.run_nested_lane_method(&method, program, code, registers.0, lane_body_this(target, this), captures, cx.cast());
+    // The common end: the body returned and left no native frame, so there is nothing to
+    // resume, link or feed back (`lane_body_left` of a return), only the completion to count.
+    if let super::super::compiled::LaneExit::Returned { value, .. } = exit
+        && !native_frames::left_native_frames(cx)
+    {
+        lane_record_end(cx, own, &method, exit);
+        drop(method);
+        super::lane_note_body_end(cx, own, exit, |_| {});
+        return lane_body_completed(cx, call.ip, value, constructs);
+    }
     let (resumed, feedback) = lane_body_left(cx, registers, own, &method, exit);
     drop(method);
     if lane_leave_counts(cx, exit) {

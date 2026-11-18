@@ -182,7 +182,7 @@ impl<H: Host> Vm<H> {
             share_entry_pair: false,
             descriptor_shapes: [None; 2],
             descriptor_layout: None,
-            regexp_object_shapes: None,
+            regexp_object_header: None,
             regexp_last_index_layouts: Vec::new(),
             regexp_builtin_layouts: Vec::new(),
             regexp_symbol_layouts: Vec::new(),

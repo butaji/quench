@@ -51,20 +51,6 @@ pub(in crate::vm::dispatch_fast) fn staged_property_key(r: Registers, view: Carr
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::PropertyKey { destination, source }), Step::Value(_))
 }
 
-/// The activation's `this` into `destination` by the staged LoadThis; false, writing
-/// nothing, where the lane does not hold it (`this` is `Value::DELETED`).
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_this(r: Registers, view: Carried, this: Value, destination: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    frame.this = this;
-    match crate::staged::step(&mut stage, &mut frame, Operation::LoadThis { destination }) {
-        Step::Value(_) => true,
-        Step::Unresolved => false,
-        Step::Control(_) => unreachable!("a load transfers no control"),
-    }
-}
-
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
 /// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
 /// storing nothing, where the binding does not take the direct store.
@@ -131,15 +117,6 @@ pub(in crate::vm::dispatch_fast) fn staged_load_capture<H: Host>(cx: *mut LaneCo
     destination: u16, at: (u16, u16), root: bool) -> bool {
     load_capture_with::<H>(cx, r, view, (destination, at, root), Reads::NONE)
         || staged_load_capture_walked::<H>(cx, r, view, destination, at, root)
-}
-
-/// `staged_load_capture` of a slot of the running function's own (depth 0, not the root's),
-/// which the remembered walks never answer (`lane_capture_read`): the row alone, so a miss
-/// leaves for the caller's walk with nothing spilled for a second run.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_own_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    destination: u16, slot: u16) -> bool {
-    load_capture_with::<H>(cx, r, view, (destination, (0, slot), false), Reads::NONE)
 }
 
 /// `staged_load_capture` through the lane's remembered walks (`Reads::of_captures`).

@@ -16,7 +16,8 @@ mod store_gate;
 mod typed_view;
 pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
 use typed_view::TypedViewTable;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, NARROW_LEN, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
 mod cell;
@@ -1194,7 +1195,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Array { object });
         }
-        self.alloc_array_of(object, prototype)
+        self.alloc_slotless_array_of(object, prototype)
     }
 
     /// `alloc(Cell::Array { object })`: an array record while one is free, charged as any
@@ -1208,6 +1209,15 @@ impl Heap {
     #[inline(always)]
     fn alloc_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
         self.admit_object_contents(&object);
+        self.alloc_slotless_array_of(object, prototype)
+    }
+
+    /// `alloc_array_of` of an array with no named property (`ArrayObject::fresh`: the empty
+    /// shape, no property store), whose admission to the slot-type ledger
+    /// (`admit_object_contents`) has no slot to note or recode.
+    #[inline(always)]
+    fn alloc_slotless_array_of(&mut self, object: ArrayObject, prototype: Value) -> Value {
+        debug_assert!(object.shape() == 0);
         self.mark_prototype(prototype);
         self.charge_payload_allocation(array_payload_bytes(&object));
         match self.array_records.try_insert(object) {
@@ -1245,7 +1255,7 @@ impl Heap {
         if cfg!(feature = "profile-aggregate") {
             return self.alloc(Cell::Array { object });
         }
-        self.alloc_array_of(object, prototype)
+        self.alloc_slotless_array_of(object, prototype)
     }
 
     /// The allocation ledger's charge for one cell owning `payload` bytes beyond its slot, of
@@ -1363,6 +1373,7 @@ impl Heap {
     /// The directory of the typed array view record pages by legacy slot and its page count
     /// (`NATIVE_TYPED_ARRAY_LAYOUT`): read an entry from a current live typed array's slot
     /// index, finish before any VM safepoint, which an allocation may move the directory at.
+    #[inline]
     pub(crate) fn typed_view_directory(&self) -> (*const usize, usize) {
         self.typed_views.directory()
     }
@@ -1605,6 +1616,19 @@ impl Heap {
             join_object_slot_values(object, &mut self.properties);
             self.recode_new_object(object);
         }
+    }
+
+    /// `alloc(Cell::RegExp { object, meta })` of a fresh RegExp, which owns no payload: the
+    /// cell is built in the slot it takes rather than moved through `alloc_cell`'s match.
+    #[inline(always)]
+    pub(crate) fn alloc_regexp(&mut self, object: Object, meta: std::rc::Rc<RegExpMeta>) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::RegExp { object, meta });
+        }
+        self.admit_object_contents(&object);
+        self.mark_prototype(object.proto());
+        self.charge_payload_allocation(0);
+        self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::RegExp { object, meta })
     }
 
     /// `alloc(Cell::Function(..))` without boxing the function first: a function record
@@ -4291,6 +4315,54 @@ impl Heap {
         let stored = store_exact_slot(data, &mut self.properties, slot, value, layout);
         self.settle_widened();
         stored
+    }
+
+    /// A tracked arena's store through a lane record's hint, the layout id `hint`
+    /// (`Object::hint_shape`) at `slot`: where the record's layout is the hint, its form the
+    /// arena's (the payload is the run's start), the barrier logs nothing and the slot's owner
+    /// already holds `value`'s class (`ValueArena::held_slot_word`), one owner lookup and one
+    /// class test, no join and no settling. Otherwise `record_property_set_flat::<false>` as
+    /// before; false leaves the logged or widening store to the caller.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record; the hint's slot is one its shape holds.
+    #[inline(always)]
+    pub(crate) unsafe fn hinted_tracked_store(&mut self, record_id: u32, hint: u32, slot: u16, value: Value) -> bool {
+        // SAFETY: the caller's contract.
+        let record = unsafe { &*self.unlogged_object_record(record_id) };
+        if record.layout_id() != hint {
+            return false;
+        }
+        if crate::staged::ic::layout_form(hint) == 0
+            // SAFETY: the matched layout's shape holds `slot`, in the arena form.
+            && unsafe { self.held_arena_store(record_id, crate::staged::ic::layout_shape(hint), slot, value) } {
+            return true;
+        }
+        // SAFETY: as above.
+        unsafe { self.record_property_set_flat::<false>(record_id, usize::from(slot), value, PropertyStoreLayout::Preserve) }
+    }
+
+    /// The store of `value` at `slot` of the arena-form record `record_id` of exact `shape`
+    /// where the barrier logs nothing and the slot's owner holds `value`'s class: one owner
+    /// lookup, one class test, the encoded write. False changes nothing, for the joining store.
+    ///
+    /// # Safety
+    /// `record_id` names a live object record of exact `shape` whose values are a plain arena
+    /// run (`Object::plain_arena_start`), and `shape` holds `slot`.
+    #[inline(always)]
+    pub(crate) unsafe fn held_arena_store(&mut self, record_id: u32, shape: u32, slot: u16, value: Value) -> bool {
+        if self.object_records.store_logs(record_id, value) {
+            return false;
+        }
+        // SAFETY: the caller's contract.
+        let Some(ty) = (unsafe { self.properties.held_slot_word(shape, usize::from(slot), value) }) else {
+            return false;
+        };
+        // SAFETY: as above; the barrier admitted the write.
+        let start = unsafe { (*self.unlogged_object_record(record_id)).proved_arena_start() };
+        // SAFETY: the run holds the shape's slots.
+        unsafe { self.properties.set_flat_at(start, usize::from(slot), value, ty) };
+        true
     }
 
     /// Whether the arena keeps slot representations, which observe every store (`ValueArena::tracks`).

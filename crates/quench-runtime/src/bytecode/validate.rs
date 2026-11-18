@@ -164,11 +164,10 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
                 function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
             })
         });
+    let makes_closures = function.code.iter().any(|instruction| instruction.op() == Op::MakeClosure)
+        || function.wide.iter().any(|instruction| instruction.op() == Op::MakeClosure);
     let eligible_function = function.parent.is_some()
-        // An async body that never suspends runs to completion as an ordinary one does
-        // (`Compiler::promoted_local_plan`'s `async_body`).
-        && !(function.is_async && function.suspends())
-        && !function.is_generator
+        // A suspension saves the frame's registers, so async and generator bodies promote too.
         && !function.derived_constructor
         // An arrow inside an initializer owns its locals (`compile/arrow.rs`).
         && !(function.class_initializer && !function.is_arrow)
@@ -181,14 +180,16 @@ fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::Ato
         && !function.inherited_with_scope
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
+        // A function that makes closures promotes only parameters, under a selective capture
+        // layout that captures none of them (checked per entry below): its closures reach
+        // its environment's slots alone (`Compiler::promoted_local_plan`'s `parameters_only`).
+        && (!makes_closures || function.selective_capture_slots.is_some() && promoted.iter().all(|entry| entry.local < function.params))
         && !function.code.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
+            instruction.op().is_call_with_eval_flags() && instruction.direct_eval()
         })
         && !function.wide.iter().any(|instruction| {
-            instruction.op() == Op::MakeClosure
-                || instruction.op().is_call_with_eval_flags()
-                    && ImmediateLayout::direct_eval(instruction.imm())
+            instruction.op().is_call_with_eval_flags()
+                && ImmediateLayout::direct_eval(instruction.imm())
         });
     eligible_function
         && promoted.iter().enumerate().all(|(index, entry)| {
@@ -498,7 +499,9 @@ fn object_site_instruction_valid(
             };
             let window = instruction.register_window();
             let mut atoms = FxHashSet::default();
-            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+            // `MakeObject2` holds the two-field literal; any other nonempty width up to the
+            // window is this one's.
+            (window.count == 1 || usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS)
                 && site.atoms.len() == usize::from(window.count)
                 && site.atoms.iter().all(|atom| atoms.insert(*atom))
                 && register_window_in_bounds(window.base, u32::from(window.count), registers)
@@ -1174,9 +1177,9 @@ mod tests {
     }
 
     #[test]
-    fn non_suspending_async_promoted_locals_are_validated() {
-        // A non-suspending async body promotes its locals as an ordinary one does; one that
-        // awaits keeps them in frame slots. The validator accepts what the compiler emits, for
+    fn async_promoted_locals_are_validated() {
+        // An async body promotes its locals as an ordinary one does, awaiting or not: a
+        // suspension saves the frame's registers. The validator accepts what the compiler emits, for
         // default and trailing-comma parameter lists too (Test262 async dflt-params-*,
         // params-trailing-comma-*).
         let program = crate::Engine::specialize(
@@ -1200,7 +1203,7 @@ mod tests {
             program.functions.iter().any(|function| function.is_async && function.is_arrow && !function.local_registers.is_empty()),
             "a non-suspending async arrow with defaults and a trailing comma promotes its locals"
         );
-        assert!(!promoted("waits"), "an awaiting body keeps its locals in frame slots");
+        assert!(promoted("waits"), "an awaiting body promotes its locals too");
     }
 
     #[test]
@@ -1375,6 +1378,7 @@ mod tests {
             module_requests: Vec::new(),
             module_imports: Vec::new(),
             module_link_plan: None,
+            declared_types: None,
             source_name: String::new(),
             source: None,
             atoms: AtomTable::default(),

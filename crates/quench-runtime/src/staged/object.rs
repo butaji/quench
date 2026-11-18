@@ -110,7 +110,7 @@ pub(crate) fn header_u32<S: Stage>(stage: &mut S, at: super::region::Access, rec
 /// The record's inline-storage flag (`Object::meta`), true where its values are inline.
 #[inline(always)]
 pub(crate) fn inline_storage<S: Stage>(stage: &mut S, record: S::Word) -> S::Cond {
-    let meta = header_u32(stage, Region::Records.mutable(), record, OBJECT.meta_offset);
+    let meta = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.meta_offset);
     let inline = stage.and_imm(meta, u64::from(OBJECT.inline_storage_mask));
     stage.ne_imm(inline, 0u32)
 }
@@ -162,7 +162,7 @@ pub(crate) fn storage_form<S: Stage>(stage: &mut S, word: S::Word, bit: u32) -> 
 /// The record's encoded prototype link (`Object::proto_link`).
 #[inline(always)]
 pub(crate) fn proto_link<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
-    let meta = header_u32(stage, Region::Records.mutable(), record, OBJECT.meta_offset);
+    let meta = header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.meta_offset);
     stage.and_imm(meta, u64::from(OBJECT.proto_mask))
 }
 
@@ -525,6 +525,22 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
     match layout.slots {
         Slots::Flat(base) => flat_read(stage, base, slot, rep),
         Slots::Packed(packed) => packed_read(stage, packed, slot, rep),
+        Slots::Either { packed: Packed::Record(record), inline, flat } => {
+            // One operand for both forms (`site_offset`): a stencil numbers its holes as the row runs.
+            let offset = site_offset(stage, slot);
+            stage.choose(inline, |stage| {
+                let half = stage.shr_imm(offset, HALF_SHIFT);
+                let address = stage.add(record, half);
+                let narrow = stage.load_u32(Region::Payload.mutable(), address, OBJECT.payload_offset as i32);
+                decode_narrow(stage, narrow)
+            }, |stage| {
+                let address = stage.add(flat, offset);
+                match rep {
+                    Rep::Float64 => stage.load_f64(Region::ObjectSlots.mutable(), address, 0),
+                    Rep::Int32 | Rep::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
+                }
+            })
+        }
         Slots::Either { packed, inline, flat } => stage.choose(inline,
             |stage| packed_read(stage, packed, slot, rep), |stage| flat_read(stage, flat, slot, rep)),
         Slots::Narrow(base) => narrow_read(stage, base, slot, rep),
@@ -599,6 +615,18 @@ fn narrow_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, _rep: Rep) -> 
     let address = stage.add_imm(base, offset);
     let narrow = stage.load_u32(Region::ObjectSlots.mutable(), address, 0);
     decode_narrow(stage, narrow)
+}
+
+/// The shift from a slot's byte offset in a flat run to its half's in the packed payload word.
+const HALF_SHIFT: u64 = (OBJECT.property_value_size as u64 / HALF_BYTES).trailing_zeros() as u64;
+
+/// The byte offset of `slot` in a flat run, a per-site operand, as a word: the one operand a read of
+/// either form takes, the packed half's offset being it shifted (`HALF_SHIFT`).
+#[inline(always)]
+fn site_offset<S: Stage>(stage: &mut S, slot: u16) -> S::Word {
+    let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
+    let zero = stage.constant(0);
+    stage.add_imm(zero, offset)
 }
 
 /// Flat value `slot`: the slot is a per-site operand, so its byte offset is a hole.
