@@ -748,6 +748,8 @@ mod tests {
     }
 
     impl Host for SnapshotHost {
+        // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+        const RUNS_LANE: bool = false;
         fn write_line(&mut self, line: &str) {
             self.output.borrow_mut().push(line.into());
         }

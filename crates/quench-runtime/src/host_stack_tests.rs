@@ -7,6 +7,8 @@ struct StackHost {
     output: Rc<RefCell<Vec<String>>>,
 }
 impl Host for StackHost {
+    // Its tests exercise no lane behaviour (`Host::RUNS_LANE`).
+    const RUNS_LANE: bool = false;
     fn write_line(&mut self, text: &str) {
         self.output.borrow_mut().push(text.into());
     }
