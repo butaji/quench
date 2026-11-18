@@ -772,11 +772,14 @@ pub(crate) enum Operation<W, P> {
     StoreLocalPlain { source: Register, slot: u16, result: Option<Register> },
     /// Define `destination` from local slot `slot` where its binding is initialized (LoadLocal): a
     /// binding in its temporal dead zone, or a numeric local target (`numeric`), leaves at the
-    /// frame's miss edge.
+    /// frame's miss edge. The stencil's LOAD_CHECKED row is this operation with `numeric` false
+    /// (`read_initialized_local`); a numeric target is the lane's, not the stencil's.
     LoadLocalChecked { destination: Register, slot: u16, numeric: bool },
     /// Write `source` to local slot `slot` where its binding is initialized, or whatever its state
     /// where `initializing` (a declaration's own store), and to `result` where the instruction has
     /// one (StoreLocal). An assignment to a binding in its temporal dead zone leaves at the miss edge.
+    /// The stencil's STORE_CHECKED row is this operation with `initializing` false (`write_initialized_local`);
+    /// its LOAD_CHECKED sibling is `LoadLocalChecked`.
     StoreLocalChecked { source: Register, slot: u16, result: Option<Register>, initializing: bool },
     /// Open the temporal dead zone of local slot `slot` by writing the deleted marker (InitializeTdz).
     InitializeLocal { slot: u16 },
