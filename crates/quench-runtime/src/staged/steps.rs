@@ -226,6 +226,9 @@ pub(crate) enum RowStep {
     WasmMemory,
     /// The Wasm SIMD operators and byte shuffles on the lane's vector registers (`wasm_simd::step`).
     WasmVector,
+    /// A `Binary` or `Unary`: the Number operations, the generic comparisons and call-outs,
+    /// `!` and the `typeof` forms (`step_arith`), not the whole of `step`.
+    Arith,
     /// Any operation: the whole of `step`.
     Full,
 }
@@ -240,7 +243,7 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
         Some(Decoder::Property) => if matches!(op, Op::Delete) { RowStep::Keyed } else { RowStep::Property },
         Some(Decoder::Element) => RowStep::Keyed,
         Some(Decoder::WasmFloat) => RowStep::WasmFloat,
-        Some(Decoder::Generic) => if matches!(op, Op::Unary | Op::Binary) { RowStep::Full } else { RowStep::Generic },
+        Some(Decoder::Generic) => if matches!(op, Op::Unary | Op::Binary) { RowStep::Arith } else { RowStep::Generic },
         Some(Decoder::WasmJump) => RowStep::WasmJump,
         Some(Decoder::WasmState) => RowStep::WasmState,
         Some(Decoder::WasmMemory) => RowStep::WasmMemory,
@@ -355,6 +358,22 @@ pub(crate) fn step_wasm_access<F: Frame<Concrete>>(stage: &mut Concrete, frame: 
 pub(crate) fn step_wasm_vector<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmVector(operation) => super::wasm_simd::step(stage, frame, operation),
+        _ => Step::Unresolved,
+    }
+}
+
+/// `step` of a `Binary` or `Unary` row (`RowStep::Arith`): only the operations those decode to.
+#[inline(always)]
+pub(crate) fn step_arith<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+    match operation {
+        Operation::Number(operation) => numeric::step(stage, frame, operation),
+        Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
+            | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
+        Operation::LogicalNot { .. } => register_step(stage, frame, operation),
+        Operation::TypeofIndex { destination, source } => super::control::typeof_index(stage, frame, destination, source),
+        Operation::TypeofTest { destination, source, index, negated } =>
+            super::control::typeof_test(stage, frame, destination, source, index, negated),
+        Operation::TypeofString { destination, source } => super::control::typeof_string(stage, frame, destination, source),
         _ => Step::Unresolved,
     }
 }

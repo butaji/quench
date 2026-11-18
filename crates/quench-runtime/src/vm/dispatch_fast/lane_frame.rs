@@ -1058,7 +1058,13 @@ pub(super) use staged_ops::*;
 struct LaneFields<'a, const OP: u16, const FLAG: u8 = FLAG_UNREAD>(&'a LaneInstruction);
 
 impl<const OP: u16, const FLAG: u8> LaneFields<'_, OP, FLAG> {
-    const OPCODE: Op = match Op::from_index(OP as usize) { Some(op) => op, None => panic!("no such opcode") };
+    // A chain's absent fourth link (`staged::NO_LINK`) names no opcode; its untaken branch still
+    // names this constant, so it stands for `Nop` there.
+    const OPCODE: Op = match Op::from_index(OP as usize) {
+        Some(op) => op,
+        None if OP == crate::staged::NO_LINK => Op::Nop,
+        None => panic!("no such opcode"),
+    };
     const FLAG_ROLE: bool = matches!(Self::OPCODE.immediate_role(), crate::bytecode::ImmediateRole::BooleanFlag);
     const REGISTER_B: bool = Self::OPCODE.field_layout(crate::bytecode::InstructionField::B).is_register_field();
     const REGISTER_C: bool = Self::OPCODE.field_layout(crate::bytecode::InstructionField::C).is_register_field();
@@ -1506,6 +1512,7 @@ macro_rules! row_step {
         else if const { matches!(crate::staged::row_step($op), R::Property) } { crate::staged::step_property($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Keyed) } { crate::staged::step_keyed($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::Generic) } { crate::staged::step_generic($stage, $frame, $operation) }
+        else if const { matches!(crate::staged::row_step($op), R::Arith) } { crate::staged::step_arith($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmInt) } { crate::staged::step_wasm_int($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmFloat) } { crate::staged::step_wasm_float($stage, $frame, $operation) }
         else if const { matches!(crate::staged::row_step($op), R::WasmJump) } { crate::staged::step_wasm_jump($stage, $frame, $operation) }

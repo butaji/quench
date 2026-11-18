@@ -157,6 +157,37 @@ fn count_decisions(code: &str, file: &str, words: &Vocabulary, debt: &mut std::c
     for (at, _) in code.match_indices("fn lane_") {
         if !code[..at].ends_with(ident_char) { add("fn:lane_*".to_owned()); }
     }
+    // Hand-written b-jit stencil rows: a function of a `stencils/*_rows.rs` file whose body runs
+    // no staged row. The stencils name rows by code numbers, not opcodes, so the terms above
+    // cannot see them.
+    if file.contains("quench-bjit/stencils/") && file.ends_with("_rows.rs") {
+        for body in function_bodies(code) {
+            if !body.contains("staged::") { add("fn:stencil_hand".to_owned()); }
+        }
+    }
+}
+
+/// The bodies (from the opening brace to its match) of the functions `code` defines.
+fn function_bodies(code: &str) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    for (at, _) in code.match_indices("fn ") {
+        if code[..at].ends_with(ident_char) { continue; }
+        // The signature ends at the first `{` or `;` (a trait item with no body).
+        let Some(open) = code[at..].find(['{', ';']).map(|n| at + n) else { continue };
+        if code.as_bytes()[open] == b';' { continue; }
+        let mut depth = 0usize;
+        for (offset, c) in code[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 { bodies.push(&code[open..open + offset + 1]); break; }
+                }
+                _ => {}
+            }
+        }
+    }
+    bodies
 }
 
 /// The derivation debt of the tree, per (file, token).
