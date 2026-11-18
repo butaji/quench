@@ -288,6 +288,13 @@ pub(super) fn lane_planned_construction<H: Host>(
 /// for anything else, which `lane_planned_construction` makes.
 #[inline(always)]
 pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, r: Registers, i: &LaneInstruction) -> Option<Value> {
+    planned_inline_quick(vm, callee, lane_construct_argument(r, i))
+}
+
+/// `lane_planned_inline_quick` from the parameters' values `argument` gives: any construction
+/// site's quick case, a lane record's or a lane body's (`body_calls::constructed_in_place`).
+#[inline(always)]
+pub(super) fn planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let index = holding_construct_plan_index(vm, callee)?;
     let plan = &vm.lane_stack.construct_plans[index];
     let len = usize::from(plan.fields);
@@ -295,7 +302,6 @@ pub(super) fn lane_planned_inline_quick<H: Host>(vm: &mut Vm<H>, callee: Value, 
         return None;
     }
     const _: () = assert!(INLINE_PROPERTY_COUNT == 2, "the inline slots are filled one by one");
-    let argument = lane_construct_argument(r, i);
     let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
     if len > 0 { inline[0] = plan.passed_value(0, &argument); }
     if len > 1 { inline[1] = plan.passed_value(1, &argument); }

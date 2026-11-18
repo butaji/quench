@@ -16,7 +16,8 @@ mod store_gate;
 mod typed_view;
 pub(crate) use typed_view::{NATIVE_TYPED_ARRAY_LAYOUT, NativeView};
 use typed_view::TypedViewTable;
-pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, NARROW_LEN, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::{ArrayElements, HEADER_VALUES as ARRAY_HEADER_VALUES, DOUBLE_LEN, ENCODED_LEN, LENGTH_FROM_VALUES, OTHERS_FROM_VALUES, OTHERS_UNKNOWN, UniqueElements};
+pub(crate) use array_elements::NARROW_LEN;
 mod array_proofs;
 pub(crate) use array_proofs::{ArrayStorageProofs, LaneProofScope, retire_array_storage_proofs};
 mod cell;
@@ -1615,6 +1616,19 @@ impl Heap {
             join_object_slot_values(object, &mut self.properties);
             self.recode_new_object(object);
         }
+    }
+
+    /// `alloc(Cell::RegExp { object, meta })` of a fresh RegExp, which owns no payload: the
+    /// cell is built in the slot it takes rather than moved through `alloc_cell`'s match.
+    #[inline(always)]
+    pub(crate) fn alloc_regexp(&mut self, object: Object, meta: std::rc::Rc<RegExpMeta>) -> Value {
+        if cfg!(feature = "profile-aggregate") {
+            return self.alloc(Cell::RegExp { object, meta });
+        }
+        self.admit_object_contents(&object);
+        self.mark_prototype(object.proto());
+        self.charge_payload_allocation(0);
+        self.alloc_in_slot_with(self.tracks_young_cells(), false, || Cell::RegExp { object, meta })
     }
 
     /// `alloc(Cell::Function(..))` without boxing the function first: a function record

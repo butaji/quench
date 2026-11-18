@@ -80,6 +80,9 @@ pub(super) unsafe fn bind_frame<H: Host>(
         dispatch.local_count = usize::from(body.locals);
         dispatch.body = body as *const _;
         dispatch.residual = Rc::as_ptr(residual) as usize;
+        // A region's inline-cache stores run in place only where the VM and the program run
+        // specialized, the fact its rows were planned under (`start_osr_region`'s `stores`).
+        dispatch.stores_specialized = usize::from(vm.specialized && residual.specialized);
     }
     // A dispatch with views read its bases as the activation was made, and nothing since moved them.
     if dispatch.layout_seen == u64::MAX { dispatch.refresh_object_bases(vm); }

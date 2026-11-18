@@ -1334,6 +1334,15 @@ impl<H: Host> Vm<H> {
         Ok(f64::from_bits(bits))
     }
 
+    /// The register value of a raw i64 operation's result: an i64 as its word, which a raw
+    /// register holds; anything else (an i32 flag) as `encode_wasm_value`.
+    pub(super) fn encode_raw_wasm_value(&mut self, value: crate::WasmValue) -> Value {
+        match value {
+            crate::WasmValue::I64(word) => Value::from_bits(word as u64),
+            value => self.encode_wasm_value(value),
+        }
+    }
+
     pub(super) fn encode_wasm_value(&mut self, value: crate::WasmValue) -> Value {
         if let crate::WasmValue::FuncRef(value)
         | crate::WasmValue::ExternRef(value)

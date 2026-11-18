@@ -500,6 +500,47 @@ impl ChunkNameSites {
 }
 
 impl ProgramReplay {
+    /// What a program's first-call chunks read of its replay, which its kept form records
+    /// (`bytecode::binary`): whether its stubs include arrows, and the next name-shared site.
+    pub(crate) fn chunk_state(&self) -> (bool, u16) {
+        (self.direct_stubs, self.chunk_name_sites.next.get())
+    }
+
+    /// The name-shared sites the load gave out (`Compiler::name_shared_cache_site`), as
+    /// (store, atom, site), which a chunk's accesses of the same name take too.
+    pub(crate) fn name_shared_entries(&self) -> Vec<(bool, u32, u16)> {
+        let mut entries: Vec<_> = self.name_shared_sites.iter()
+            .map(|(&(access, atom), &site)| (access == super::NamedAccess::Store, atom, site)).collect();
+        entries.sort_unstable();
+        entries
+    }
+
+    /// The replay of a program decoded from its kept form, for its first-call chunks alone:
+    /// it replays no function (its records are encoded); its chunks share the load's
+    /// name-shared sites, `name_shared` as (store, atom, site), and give out new ones from
+    /// `next_site` on.
+    pub(crate) fn for_chunks(specialized: bool, direct_stubs: bool, next_site: u16, name_shared: &[(bool, u32, u16)]) -> Self {
+        Self {
+            source_type: oxc_span::SourceType::script(),
+            root_strict: false,
+            module_goal: false,
+            lazy_bodies: Box::default(),
+            specialized,
+            template_sites: 0,
+            atoms: ProgramAtomIndex { atoms: hashbrown::HashTable::new() },
+            exits: Box::default(),
+            functions: FxHashMap::default(),
+            name_shared_sites: name_shared.iter()
+                .map(|&(store, atom, site)| ((if store { super::NamedAccess::Store } else { super::NamedAccess::Load }, atom), site))
+                .collect(),
+            direct_stubs,
+            chunk_name_sites: ChunkNameSites::new(next_site),
+            #[cfg(feature = "verify-replay")]
+            released: FxHashMap::default(),
+            views: ReplayViews::default(),
+        }
+    }
+
     /// The ids of the functions a replay can compile.
     pub(crate) fn replayable(&self) -> impl Iterator<Item = &u32> {
         self.functions.keys()

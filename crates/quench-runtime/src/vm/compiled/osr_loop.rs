@@ -447,10 +447,27 @@ fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<
 }
 
 /// Whether `register` has definitions in `instructions` and every one is a `load`, which may
-/// give an object.
+/// give an object, or a move of a register only such loads define (`const p = a[i]; p.x`: the
+/// element read's register reaches the receiver through a `Move`) or of an entry value.
 fn loads_alone_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool) -> bool {
+    loads_define(instructions, register, load, &mut Vec::new())
+}
+
+/// `loads_alone_define`, through the moves not yet `followed`.
+fn loads_define(instructions: &[WideInstruction], register: Register, load: fn(Op) -> bool, followed: &mut Vec<Register>) -> bool {
+    if followed.contains(&register) {
+        return false;
+    }
+    followed.push(register);
     let mut definitions = instructions.iter().filter(|candidate| candidate.defined_register() == Some(register)).peekable();
-    definitions.peek().is_some() && definitions.all(|definition| load(definition.op()))
+    definitions.peek().is_some() && definitions.all(|definition| load(definition.op())
+        || (definition.op().is_move() && moved_from_load(instructions, definition.register_b(), load, followed)))
+}
+
+/// Whether a move's `source` may hold what a load gives: loads alone define it, or the loop
+/// defines it not at all, so it holds its entry value (`let p = head; while (p) p = p.next`).
+fn moved_from_load(instructions: &[WideInstruction], source: Register, load: fn(Op) -> bool, followed: &mut Vec<Register>) -> bool {
+    !instructions.iter().any(|candidate| candidate.defined_register() == Some(source)) || loads_define(instructions, source, load, followed)
 }
 
 fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
@@ -482,7 +499,7 @@ fn tagged_registers_with_failure(
     let numeric_uses: std::collections::BTreeSet<Register> = instructions
         .iter()
         .copied()
-        .filter(|instruction| !instruction.op().is_move())
+        .filter(|instruction| !matches!(super::decoded(*instruction), Some(crate::staged::Operation::Move { .. })))
         .flat_map(number_reads)
         .collect();
     let mut tagged: std::collections::BTreeSet<Register> = instructions
@@ -518,7 +535,7 @@ fn tagged_registers_with_failure(
         }))
         // A branch on a value only field reads give tests its truthiness tagged:
         // a field may hold an object.
-        .chain(instructions.iter().filter(|instruction| instruction.op().is_truthiness_jump()).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| matches!(super::decoded(**instruction), Some(crate::staged::Operation::JumpIf { .. }))).filter_map(|instruction| {
             let value = instruction.register_a();
             field_reads_alone_define(instructions, value).then_some(value)
         }))
@@ -558,7 +575,7 @@ fn tag_definition(instruction: WideInstruction, offset: usize, (constants, heade
     let Some(result) = number_definition(instruction) else {
         return Ok(());
     };
-    if instruction.op().is_move() {
+    if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) {
         let source = instruction.register_b();
         if tagged.contains(&result) || tagged.contains(&source) {
             tagged.insert(result);
@@ -650,7 +667,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
             return false;
         }
         let numeric_move_alias = instructions.iter().any(|candidate| {
-            candidate.op().is_move()
+            matches!(super::decoded(*candidate), Some(crate::staged::Operation::Move { .. }))
                 && candidate.register_b() == value
                 && numeric_uses.contains(&candidate.result_register())
         });
@@ -664,7 +681,7 @@ fn moved_without_numeric_use(instructions: &[WideInstruction], numeric_uses: &st
         else {
             break;
         };
-        if !definition.op().is_move() {
+        if !matches!(super::decoded(*definition), Some(crate::staged::Operation::Move { .. })) {
             break;
         }
         moved_argument = true;
@@ -798,7 +815,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// the computation and the `Return` it makes.
 pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
-        && !instruction.op().is_return()
+        && !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. }))
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
         && instruction.defined_register().is_some()
 }
@@ -2044,7 +2061,7 @@ fn admit(
                 admission.result(instruction)?;
             }
         }
-        opcode if opcode.is_move() => {
+        _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) => {
             if tagged.contains(&instruction.result_register()) {
                 admission.tagged(instruction.result_register())?;
                 admission.tagged(instruction.register_b())?;
@@ -2072,7 +2089,7 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        opcode if opcode.is_to_numeric() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Number(crate::staged::NumberOperation::ToNumeric { .. }))) => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
@@ -2093,7 +2110,7 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        opcode if opcode.is_require_object_coercible() => {
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::RequireObjectCoercible { .. })) => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
@@ -2165,7 +2182,7 @@ fn admit(
         _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        opcode if opcode.is_return() || opcode.is_jump() => {}
+        _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Return { .. })) || matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) => {}
         opcode if opcode.is_jump_binary_false() => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
@@ -2210,7 +2227,7 @@ fn admit(
                 admission.source(instruction.operand_c())?;
             }
         }
-        opcode if opcode.is_truthiness_jump() => {
+        _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. })) => {
             let register = instruction.register_a();
             // A tagged value's truthiness is decided natively where the value alone
             // decides it; any other value exits.
@@ -2344,7 +2361,7 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
-    let expected = if instruction.op().is_move() || instruction.op().is_truthiness_jump()
+    let expected = if matches!(super::decoded(instruction), Some(crate::staged::Operation::Move { .. })) || matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. }))
         || region.identity_branches.contains_key(&pc) || strict_number_test {
         Type::ANY
     } else {

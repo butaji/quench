@@ -166,6 +166,12 @@ pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
 pub const TYPED_STORE_ROW: u8 = TYPED_INDEX_LAST + 1;
 pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
 pub const TYPED_LENGTH_ROW: u8 = TYPED_STORE_LAST + 1;
+/// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
+/// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
+pub const IC_PROOF_ROW: u8 = TYPED_LENGTH_ROW + 1;
+pub const IC_KNOWN_GET_ROW: u8 = IC_PROOF_ROW + 1;
+pub const IC_KNOWN_SET_ROW: u8 = IC_KNOWN_GET_ROW + 1;
+pub const IC_KNOWN_SET_INT_ROW: u8 = IC_KNOWN_SET_ROW + 1;
 /// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
 pub const NON_NATIVE_KINDS: [u8; 3] = [7, 8, 9];
 /// The property-add rows (`staged::add::site_add`): an object register's or the activation's receiver

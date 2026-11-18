@@ -109,6 +109,8 @@ pub(super) struct Planned {
     pub(super) stop: Option<Stop>,
     /// The call record the row reads (`CallRecord`), which the code must not outlive.
     pub(super) owned: Option<Box<quench_bjit::call_record::CallRecord>>,
+    /// Reached only through a fast row's miss (`steps::behind`): laid out after the hot rows.
+    pub(super) cold: bool,
 }
 
 impl Planned {
@@ -129,7 +131,7 @@ impl Planned {
     }
 
     pub(super) fn single(stencil: &'static Stencil, holes: [u64; HOLES], target: Option<u32>, exit_pc: Option<u32>) -> Self {
-        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None }
+        Self { stencil, node: None, holes, branch: target.map(Branch::Pc), exits: exit_pc.map(Exit::Spilling).into_iter().collect(), pre: Vec::new(), post: Vec::new(), stop: None, owned: None, cold: false }
     }
 }
 
@@ -153,8 +155,8 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::IcGet => { let ic = decoded.ic.unwrap_or_default(); [dst_hole, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
-        Heap::IcSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        Heap::IcGet | Heap::IcKnownGet => { let ic = decoded.ic.unwrap_or_default(); [object, upper, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        Heap::IcSet { .. } | Heap::IcKnownSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
@@ -172,6 +174,8 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::Store | Heap::TypedStore(_) => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index | Heap::TypedIndex(_) if entry => [dst_hole, decoded.hole, b_hole],
+        // A narrow element decodes through the upper-word table (`elements::record_element`).
+        Heap::Index => return padded_holes([dst_hole, a_hole, b_hole, 0, crate::value::NarrowLayout::upper_words() as u64]),
         Heap::Field | Heap::TypedLength => [dst_hole, decoded.hole, 0],
         Heap::Instanceof => {
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
@@ -219,19 +223,41 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
 
 /// A site read's or store's run with its inline-cache row (`Decoded::ic`) ahead of it: the row's
 /// hit, the shape it holds, continues at the next instruction; a miss, or a destination that
-/// cannot hold the word, falls to the site row behind it, which the entry tables answer.
-fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole)]: [(Place, u64); 2], site: Planned) -> Result<Planned, String> {
-    let Some(_) = decoded.ic.filter(|_| decoded.also.is_none() && !decoded.completes && site.post.is_empty()) else { return Ok(site) };
-    let ic = match heap {
-        Heap::Site => Heap::IcGet,
-        Heap::SiteStore => Heap::IcSet { int: decoded.slot.is_some_and(|ty| ty.is_subtype(crate::typed_ir::Type::INT32)) },
-        _ => return Ok(site),
+/// cannot hold the word, falls to the site row behind it, which the entry tables answer, and then
+/// to the proof that the receiver is a direct object (`proofs`), which the receiver stays while its register
+/// holds it. A receiver every path proved takes the row that only compares its shape (`Decoded::proven`).
+fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole)]: [(Place, u64); 2], mut site: Planned) -> Result<Planned, String> {
+    let Some(_) = decoded.ic.filter(|_| matches!(heap, Heap::Site | Heap::SiteStore)) else { return Ok(site) };
+    let receiver = if heap == Heap::Site { a_hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
+    let proof = (!decoded.completes).then(|| proof_row(receiver, pc)).transpose()?;
+    if decoded.also.is_some() || decoded.completes || !site.post.is_empty() {
+        // No inline-cache row: the site row runs, then the proof, which holds the receiver's shape for the rows after it.
+        if let Some(proof) = proof {
+            site.node = None;
+            site.post.push(proof);
+        }
+        return Ok(site);
+    }
+    let int = decoded.slot.is_some_and(|ty| ty.is_subtype(crate::typed_ir::Type::INT32));
+    let ic = match (heap, decoded.proven) {
+        (Heap::Site, false) => Heap::IcGet,
+        (Heap::Site, true) => Heap::IcKnownGet,
+        (_, false) => Heap::IcSet { int },
+        (_, true) => Heap::IcKnownSet { int },
     };
     let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
     let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);
     let mut fast = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
     fast.exits = vec![Exit::Ahead(1)];
+    site.post.extend(proof);
     Ok(super::steps::behind(fast, site))
+}
+
+/// The row that leaves at the next instruction unless the object register at frame offset `receiver` is
+/// a direct object (`Heap::IcProof`).
+fn proof_row(receiver: u64, pc: u32) -> Result<Planned, String> {
+    let row = HeapRow { heap: Heap::IcProof, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    Ok(Planned::single(base_rows::stencil(row)?, padded_holes([receiver]), None, Some(pc + 1)))
 }
 
 /// Whether a row of `variant` speculates int32 operands, given whether the representations make

@@ -635,7 +635,7 @@ impl<H: Host> Vm<H> {
         // A program keeping only static text cannot compile its functions again from it. One
         // that runs from its kept form encodes each record its load releases.
         let released = if cache_key.is_some() { crate::compile::ReleasedRecords::Encoded } else { crate::compile::ReleasedRecords::Dropped };
-        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released);
+        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released, true);
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics

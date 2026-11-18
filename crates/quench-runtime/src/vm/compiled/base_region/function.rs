@@ -170,7 +170,7 @@ fn math_call(region: &LoopRegion, sites: &Sites, shape: &CallShape) -> Option<Ve
     (shape.form == CallForm::Plain && shape.argc == 1).then_some(())?;
     let local = (shape.call_pc - region.header) as usize;
     let defined = (0..local).rev().find(|at| region.instructions()[*at].written_registers().any(|register| register == shape.callee))?;
-    let GlobalRead::NativeMember { value, native, holder } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
+    let GlobalRead::NativeMember { value, native, holder, .. } = *sites.known.globals?.get(&(region.header as usize + defined))? else { return None };
     let kind = match native {
         Native::MathSqrt => Kind::Sqrt,
         _ => return None,
@@ -524,12 +524,12 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     if ending == Ending::Body && stitched.rows[0].step == Some(Step::Leave) {
         return Err("first instruction leaves".to_string());
     }
-    // A loop region's publication names no shape ids, so only a body runs inline-cache rows (`Decoded::ic`).
     let rows: Vec<Decoded> = stitched.rows.into_iter().enumerate()
-        .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else if ending == Ending::Region { Decoded { ic: None, ..row } } else { row })
+        .map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row })
         .collect();
     let kinds = row_kinds(region, &stitched.origins, spec.kinds);
-    let (reprs, homes, webs, decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), spec.seen);
+    proofs::prove(&span, &mut decoded, &reached);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
@@ -537,7 +537,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
     // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
     let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).or_else(|| held_realm(&decoded));
-    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm };
+    let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
+    let layout = Layout { span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     let mut planned = tile::tiled(&layout, &decoded, singles);
     let (code, resumes) = link(&layout, &planned)?;

@@ -51,7 +51,7 @@ macro_rules! enter_wasm_function {
         }
         // SAFETY: the program's views outlive the lane run.
         let views = unsafe { &*(*cx).views };
-        let stack = &mut vm.lane_stack;
+        let stack: &mut LaneStack = &mut vm.lane_stack;
         if let Some(lane_view) = views.get(usize::from($function)).and_then(super::program_store::derived_lane_view)
             && let Some(shape) = lane_view.activation
             && usize::from(shape.registers)

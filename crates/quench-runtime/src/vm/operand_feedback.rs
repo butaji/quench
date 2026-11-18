@@ -270,6 +270,7 @@ impl Records {
 impl std::ops::Deref for Records {
     type Target = [std::cell::UnsafeCell<LaneInstruction>];
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.cells[self.front..]
     }

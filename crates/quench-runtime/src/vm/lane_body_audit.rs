@@ -60,8 +60,13 @@ impl LaneView {
     /// interpreted, its epoch being the interpreter's. A cell entry (`counts_interpreted`
     /// false) of an interpreted epoch counts nothing and declines the body: the activation it
     /// makes enters the prologue, which counts it.
+    ///
+    /// A `recursive` entry, made from an activation of the same function, counts nothing
+    /// either: the body makes its own recursive calls directly, so its epochs never count
+    /// them, and an interpreted epoch that did would hold a fraction of the body epoch's work
+    /// (fib(10)'s 177 activations against the body's one entry retired a body 3.8x cheaper).
     #[inline(always)]
-    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool) -> bool {
+    pub(in crate::vm) fn audit_entry(&self, counts_interpreted: bool, recursive: bool) -> bool {
         let mut history = self.tier().history.get();
         if history.audit.done {
             return false;
@@ -69,8 +74,8 @@ impl LaneView {
         let period = self.tiers.lane_body.audit_period;
         let seen = history.audit.seen;
         let interpreted = (seen / period) % SIDES as u32 == INTERPRETER as u32;
-        if interpreted && !counts_interpreted {
-            return true;
+        if recursive || (interpreted && !counts_interpreted) {
+            return interpreted;
         }
         history.audit.seen = seen.wrapping_add(1);
         self.tier().history.set(history);

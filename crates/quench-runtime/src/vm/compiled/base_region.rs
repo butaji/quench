@@ -43,6 +43,7 @@ mod link;
 mod locals;
 pub(in crate::vm::compiled) use locals::env_owned;
 mod plan;
+mod proofs;
 mod repr;
 mod residuals;
 mod resume;

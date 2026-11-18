@@ -17,6 +17,12 @@ impl Lowering<'_, '_> {
             self.native += 1;
             return;
         }
+        if representation == Representation::Float64 {
+            // A field carried as a raw double (`carries_number`): the register takes the word.
+            self.set_number(state, instruction.result_register(), raw);
+            self.native += 1;
+            return;
+        }
         if representation == Representation::Int32 && instruction.op().is_load_capture() {
             // Captures have no tagged field-cache consumer. Preserve the
             // admitted view; recovery or a tagged use boxes it on demand.

@@ -744,6 +744,9 @@ impl<H: Host> Vm<H> {
         };
         // String natives make text on demand; charge it before the caller's next safepoint.
         self.heap.charge_materialized_text();
+        if native.searches_regexps() {
+            return self.regexp_search_outcome(result);
+        }
         result
     }
 

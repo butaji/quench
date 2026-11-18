@@ -128,7 +128,7 @@ impl Relations {
     /// The relations after `instruction` at `pc`.
     pub(super) fn step(&mut self, model: &Model<'_>, pc: usize, instruction: WideInstruction,
         written: &dyn Fn(WideInstruction) -> Vec<Register>) {
-        if instruction.op().is_move() && instruction.result_flags() == 0 {
+        if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) && instruction.result_flags() == 0 {
             self.copy(instruction.result_register(), instruction.register_b());
         } else {
             for register in written(instruction) { self.kill(register); }

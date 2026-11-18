@@ -241,8 +241,8 @@ fn branches_back(pc: u32, instruction: WideInstruction) -> bool {
 /// as a body's do, so a step that jumps backward may be made in place. A helper step names the register it writes, and a fast
 /// arm the register it reads; an add row also names its transition and the atom it holds unnamed.
 pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (helpers, polls): (LaneHelpers, bool)) -> Decoded {
-    match instruction.op().class() {
-        Class::Nop => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
+    match crate::vm::compiled::decoded(instruction) {
+        Some(crate::staged::Operation::Nop) => Decoded::number(Kind::Jump, None, None, None, Some(pc + 1)),
         _ => {
             let step = if branches_back(pc, instruction) && !polls { Step::Leave } else { lowering(instruction, known, helpers) };
             let helped = step.runs_helper();
@@ -467,6 +467,7 @@ pub(super) fn behind(mut fast: Planned, mut slow: Planned) -> Planned {
             Branch::Part(index) => Branch::Part(index + 1),
             pc @ Branch::Pc(_) => pc,
         });
+        part.cold = true;
         part
     }).collect();
     fast

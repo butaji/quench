@@ -57,7 +57,7 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
             // Reading a guest local defines its result without changing other
             // register homes. Its contents remain dynamic, including TDZ exits.
             for register in super::lane_region::writes(instruction) { values[usize::from(register)] = None; }
-        } else if !instruction.op().is_nop() && !instruction.op().control_flow_layout().jumps() {
+        } else if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Nop)) && !instruction.op().control_flow_layout().jumps() {
             values.fill(None);
         }
         return;
@@ -173,7 +173,7 @@ fn constants(program: &ResidualProgram, unit: &Unit, instructions: &[WideInstruc
 pub(super) fn specialize(program: &ResidualProgram, unit: &Unit, entry: usize) -> Option<Vec<WideInstruction>> {
     let mut residual: Option<Vec<WideInstruction>> = None;
     for (latch, instruction) in unit.instructions.iter().copied().enumerate() {
-        if !instruction.op().is_jump() || instruction.result_flags() != 0 { continue; }
+        if !matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Jump)) || instruction.result_flags() != 0 { continue; }
         let header = instruction.jump_target() as usize;
         if header >= latch { continue; }
         let instructions = residual.as_deref().unwrap_or(&unit.instructions);

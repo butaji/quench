@@ -519,7 +519,10 @@ impl FunctionCompiler<'_, '_> {
             let callee = self.static_member(member);
             return (callee, self.load_this_value());
         }
-        let receiver = self.expression(&member.object);
+        let receiver = match member.object.without_parentheses() {
+            Expression::RegExpLiteral(literal) if matches!(member.property.name.as_str(), "test" | "exec") => self.regexp_literal(literal, true),
+            _ => self.expression(&member.object),
+        };
         let (callee, end) = if member.optional {
             let (callee, end, jump) = self.emit_optional_prefix(receiver);
             self.patch_instruction(jump, self.code.len() as u32);
