@@ -57,11 +57,11 @@ pub fn run(config: &Config) -> Verdict {
         rows.push((op.clone(), budget.c, budget.budget, hottest(&dumps, &run.stderr)));
     }
     let mut failures = Vec::new();
-    for (op, _, _, count) in &rows {
-        if let (Some(limit), Some(count)) = (recorded.get(op).copied().flatten(), *count)
-            && count > limit
+    for (op, _, _, loop_) in &rows {
+        if let (Some(limit), Some(loop_)) = (recorded.get(op).copied().flatten(), loop_)
+            && loop_.instructions > limit
         {
-            failures.push(format!("{op}: {count} instructions exceed its ceiling {limit}"));
+            failures.push(format!("{op}: {} instructions exceed its ceiling {limit}", loop_.instructions));
         }
     }
     let rendered = render(&rows);
@@ -72,13 +72,21 @@ pub fn run(config: &Config) -> Verdict {
         return Err(failures.join("\n"));
     }
     let measured = rows.iter().filter(|row| row.3.is_some()).count();
-    let over = rows.iter().filter(|(_, _, budget, count)| count.is_some_and(|count| count > *budget)).count();
-    Ok(format!("{measured} of {} ops measured, {over} over budget; table {TABLE}", rows.len()))
+    let over = rows.iter().filter(|(_, _, budget, loop_)| loop_.as_ref().is_some_and(|loop_| loop_.instructions > *budget)).count();
+    let calls = rows.iter().filter(|row| row.3.as_ref().is_some_and(|loop_| loop_.calls > 0)).count();
+    Ok(format!("{measured} of {} ops measured, {over} over budget, {calls} with a callout in the loop; table {TABLE}", rows.len()))
+}
+
+/// One op's measured loop: its instructions per iteration and the calls it makes (a store or a
+/// load lowered as a helper callout costs a call the C twin does not have).
+struct Loop {
+    instructions: u32,
+    calls: u32,
 }
 
 /// The instructions per iteration of the op's hot loop: the dumped site the run's statistics
 /// name, else its last loop dump.
-fn hottest(directory: &Path, stderr: &str) -> Option<u32> {
+fn hottest(directory: &Path, stderr: &str) -> Option<Loop> {
     let dumps = stats::dumps(stderr);
     let hot = stats::hot_loop(stderr);
     let chosen = hot.and_then(|hot| {
@@ -87,7 +95,13 @@ fn hottest(directory: &Path, stderr: &str) -> Option<u32> {
     }).or_else(|| dumps.iter().rev().find(|dump| matches!(dump.site, stats::Site::Loop { .. })))?;
     let code = asm::disassemble(&directory.join(format!("{}.bin", chosen.name))).ok()?;
     flow::hottest(&code).map(|body| {
-        u32::try_from(body.iter().filter(|instruction| !instruction.is_nop()).count()).unwrap_or(u32::MAX)
+        let count = |holds: &dyn Fn(&str) -> bool| {
+            u32::try_from(body.iter().filter(|instruction| holds(instruction.mnemonic())).count()).unwrap_or(u32::MAX)
+        };
+        Loop {
+            instructions: u32::try_from(body.iter().filter(|instruction| !instruction.is_nop()).count()).unwrap_or(u32::MAX),
+            calls: count(&|mnemonic| mnemonic == "bl" || mnemonic == "blr"),
+        }
     })
 }
 
@@ -111,16 +125,20 @@ fn read_table(path: &Path) -> BTreeMap<String, Option<u32>> {
         .collect()
 }
 
-fn render(rows: &[(String, u32, u32, Option<u32>)]) -> String {
+fn render(rows: &[(String, u32, u32, Option<Loop>)]) -> String {
     let mut text = String::from(
         "# The ops.js primitives' hottest loops on the u-jit, instructions per iteration, against\n\
          # the C column `ir_budget.txt` keeps (`clang -O2`, loop step included) and its budget\n\
          # `3 x C + 6`. Measured from dumped machine code (`quench-gate --only\n\
-         # primitive-instructions`); `-` is not measured. Counts only shrink.\n\
-         # op u-jit C budget\n");
-    for (op, c, budget, count) in rows {
-        let field = count.map_or_else(|| "-".to_owned(), |count| count.to_string());
-        text.push_str(&format!("{op} {field} {c} {budget}\n"));
+         # primitive-instructions`); `-` is not measured. Counts only shrink. `calls` is the\n\
+         # `bl`/`blr` instructions in the loop: a load or store the tier makes as a helper\n\
+         # callout, which C does in place.\n\
+         # op u-jit C budget calls\n");
+    for (op, c, budget, loop_) in rows {
+        let (instructions, calls) = loop_.as_ref().map_or_else(
+            || ("-".to_owned(), "-".to_owned()),
+            |loop_| (loop_.instructions.to_string(), loop_.calls.to_string()));
+        text.push_str(&format!("{op} {instructions} {c} {budget} {calls}\n"));
     }
     text
 }
