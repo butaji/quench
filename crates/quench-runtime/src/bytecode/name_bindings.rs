@@ -7,7 +7,8 @@
 
 use super::{Atom, EvalBinding, EvalBindingLocation, Function};
 use super::Op;
-#[cfg(feature = "aot")]
+// The one reader, `Function::stored_slot`, is a test of the aot image.
+#[cfg(all(test, feature = "aot"))]
 use super::WideInstruction;
 use std::rc::Rc;
 
