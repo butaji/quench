@@ -115,7 +115,7 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
         product(rows, kinds, &places.ints_dst, &places.ints_src, &[true, false]);
     }
     let double_arith: Vec<u8> = (ADD..=DIV).collect();
-    for kinds in [&double_arith, &remainder, &compare, &copy] {
+    for kinds in [&double_arith, &compare, &copy] {
         product(rows, kinds, &places.floats_dst, &places.floats_src, &[false]);
     }
 }
