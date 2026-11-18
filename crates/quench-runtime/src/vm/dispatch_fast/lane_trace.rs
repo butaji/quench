@@ -3,6 +3,7 @@
 //! and every stack a nested run parked (`Vm::lane_roots`).
 use super::*;
 use crate::vm::program_store::ProgramStore;
+use super::super::activation::extend_this_env_roots;
 
 impl LaneStack {
     /// Appends to `out` every value the stack's activations hold; `programs` hold the liveness
@@ -40,7 +41,7 @@ impl LaneStack {
             match activation.kind {
                 ActivationKind::Script(_) => {
                     let registers = Registers(activation.window_ptr());
-                    out.extend([registers.this(), registers.env()]);
+                    extend_this_env_roots(out, registers.this(), registers.env());
                     out.extend_from_slice(window);
                 }
                 ActivationKind::Wasm { .. } => self.extend_wasm_roots(programs, depth, window, out),

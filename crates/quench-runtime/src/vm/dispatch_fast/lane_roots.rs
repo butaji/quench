@@ -5,7 +5,7 @@
 //! return ends the run, and any other exit makes it a frame the general loop finishes.
 use super::*;
 use super::generator_windows::{open_window_locals, cached_window_plan, WindowPlan};
-use super::super::activation::{FrameRecord, JobResume, JobRoot};
+use super::super::activation::{extend_this_env_roots, FrameRecord, JobResume, JobRoot};
 use super::super::dispatch_frame::{ExecutingProgram, LaneExit};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
@@ -128,7 +128,8 @@ impl ParkedLane {
     /// Appends to `out` every value the parked run holds.
     pub(in crate::vm) fn extend_roots(&self, programs: &crate::vm::program_store::ProgramStore, out: &mut Vec<Value>) {
         self.stack.extend_roots(programs, out);
-        out.extend(self.innermost);
+        let [this, env] = self.innermost;
+        extend_this_env_roots(out, this, env);
     }
 }
 
