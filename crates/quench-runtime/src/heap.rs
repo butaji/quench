@@ -85,6 +85,7 @@ macro_rules! reset_record_spaces {
 
 mod access;
 mod array_elements;
+pub(crate) mod growth;
 pub(crate) mod layouts;
 mod dense_growth;
 pub(crate) use dense_growth::dense_write_gap_limit;

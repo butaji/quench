@@ -10,6 +10,7 @@
 //! copies it to an allocation of its own (`make_mut`), as does the collection its array
 //! survives (`ArrayElements::leave_nursery`), so every young run's owner is a young array
 //! record its sweep shows.
+use super::growth::{GrowthPolicy, grown_capacity};
 use crate::value::Value;
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error, realloc};
 use std::ptr::NonNull;
@@ -151,15 +152,9 @@ const TRIM_MIN_LEN: usize = 16;
 /// as it moves values.
 const COMPACT_LIVE_DIVISOR: usize = 2;
 
-/// The smallest capacity a growing backing takes, as `Vec` grows from empty.
+/// The smallest capacity a growing backing takes, as `Vec` grows from empty. The backing
+/// grows by half (`GrowthPolicy::Half`, in `heap::growth`), not doubled as `Vec`.
 const MIN_GROWN_CAPACITY: usize = 4;
-
-/// A full backing grows by its capacity shifted right by this, so by half (as V8 grows
-/// fast elements), not doubled as `Vec`: appending stays amortized constant, and the slack
-/// a grown backing holds drops from up to its length to half of it. V8-v7 Crypto, whose
-/// bignum digit arrays grow by append: median RSS memory-first `--jit` 2844 -> 2728 KiB,
-/// throughput 8316 -> 7292 KiB, with Score within run noise across the suite.
-const GROWTH_SHIFT: u32 = 1;
 
 /// Packed to four bytes: an array record (`ArrayObject`) holds it in its 4-aligned payload word.
 #[repr(C, packed(4))]
@@ -1005,7 +1000,7 @@ impl UniqueElements {
         }
     }
 
-    /// Room for `additional` more values, growing by `GROWTH_SHIFT`. Inline: a backing with
+    /// Room for `additional` more values, growing by half (`GrowthPolicy::Half`). Inline: a backing with
     /// room, the common append, tests its capacity alone.
     #[inline(always)]
     pub(crate) fn reserve(&mut self, additional: usize) {
@@ -1025,7 +1020,7 @@ impl UniqueElements {
             }
         }
         let capacity = self.0.capacity();
-        let grown = required.max(capacity + (capacity >> GROWTH_SHIFT)).max(MIN_GROWN_CAPACITY);
+        let grown = grown_capacity(capacity, required, GrowthPolicy::Half { minimum: MIN_GROWN_CAPACITY });
         self.grow_to(grown);
     }
 

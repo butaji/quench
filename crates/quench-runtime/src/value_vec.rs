@@ -1,4 +1,5 @@
 use crate::Value;
+use crate::heap::growth::{GrowthPolicy, grown_capacity};
 use crate::staged::object::Rep;
 use crate::typed_ir::SlotType;
 use crate::vm::switches;
@@ -130,7 +131,7 @@ impl FreeRuns {
 /// that holds them. Quarter steps leave a range at most a fifth unused where three-quarter
 /// steps left a third (ai-astar: 250K nodes of 9 values held 12 each, 6 MB idle), and every
 /// class is a multiple of `CAPACITY_CLASS_STEP`, which `young_run_padded` copies by.
-#[inline] const fn capacity_class(len: usize) -> usize {
+#[inline] pub(crate) const fn capacity_class(len: usize) -> usize {
     if len <= MIN_CAPACITY {
         return MIN_CAPACITY;
     }
@@ -1539,7 +1540,7 @@ impl ValueArena {
         assert!(!vector.is_narrow(), "growth widens a narrow vector first");
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
-        let next = capacity_class(capacity + 1);
+        let next = grown_capacity(capacity, capacity + 1, GrowthPolicy::SizeClass);
         let young = self.holds_young_run(*vector);
         if young && vector.start() + capacity == self.nursery.top && vector.start() + next <= self.nursery.end {
             self.nursery.top = vector.start() + next;
