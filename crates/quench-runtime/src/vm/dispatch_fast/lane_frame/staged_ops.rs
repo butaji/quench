@@ -119,15 +119,6 @@ pub(in crate::vm::dispatch_fast) fn staged_load_capture<H: Host>(cx: *mut LaneCo
         || staged_load_capture_walked::<H>(cx, r, view, destination, at, root)
 }
 
-/// `staged_load_capture` of a slot of the running function's own (depth 0, not the root's),
-/// which the remembered walks never answer (`lane_capture_read`): the row alone, so a miss
-/// leaves for the caller's walk with nothing spilled for a second run.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_own_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    destination: u16, slot: u16) -> bool {
-    load_capture_with::<H>(cx, r, view, (destination, (0, slot), false), Reads::NONE)
-}
-
 /// `staged_load_capture` through the lane's remembered walks (`Reads::of_captures`).
 #[cold]
 #[inline(never)]
