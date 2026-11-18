@@ -2453,6 +2453,16 @@ impl Object {
         plain.then_some(self.payload as usize)
     }
 
+    /// `formed_plain_start` of an exact shape (`exact_shape`), which has no form bit, so the
+    /// whole-word compare alone proves the arena form without testing the hint's bits.
+    #[inline(always)]
+    pub(crate) fn exact_plain_start(&self, shape: u32) -> Option<usize> {
+        debug_assert_eq!(shape & crate::value_vec::STORAGE_FORM, 0, "an exact shape has no form bit");
+        let plain = self.aux() == shape;
+        debug_assert!(!plain || self.plain_arena_start() == Some(self.payload as usize));
+        plain.then_some(self.payload as usize)
+    }
+
     /// `plain_storage_start` as one compare of the payload: a start never exceeds
     /// `VALUE_VEC_START_BITS`, and an extras word always does, so without inline storage a
     /// payload at most that bound is the start itself.
