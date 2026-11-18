@@ -48,6 +48,32 @@ pub(super) fn declared_rest_read(program: &ResidualProgram, function: &crate::by
     (!written.contains(usize::from(register))).then_some((register, ty))
 }
 
+/// The parameter registers of `function` that the unit never writes (`written`), each with its
+/// parameter index, for member reads whose base is a declared parameter (`declared_member_type`).
+/// The rest parameter is left out, as its element reads are `declared_rest_read`'s. Only a function
+/// with a signature key (its source span start) can declare a parameter; the top level has none.
+pub(super) fn declared_member_reads(program: &ResidualProgram, function: &crate::bytecode::Function,
+    written: &CompoundBitSet) -> Vec<(Register, u16)> {
+    if program.declared_types.is_none() || function.source_span.is_none() { return Vec::new(); }
+    let rest = if function.rest { function.params.checked_sub(1) } else { None };
+    (0..function.params).filter(|index| Some(*index) != rest)
+        .filter_map(|index| {
+            let register = scalar::parameter_register(function, usize::from(index))?;
+            (!written.contains(usize::from(register))).then_some((register, index))
+        }).collect()
+}
+
+/// The checkable type of member `name` of parameter `parameter` of the function keyed by its source
+/// span start `function_start`: the member a signature declares on the parameter itself, else the
+/// field of the top-level class the parameter is typed by (`DeclaredTypes::declared_parameter_class`).
+pub(super) fn declared_member_type(program: &ResidualProgram, function_start: u32, parameter: u16, name: &str) -> Option<Type> {
+    let declared = program.declared_types.as_deref()?;
+    let bits = declared.declared_member(function_start, parameter, name)
+        .or_else(|| declared.declared_parameter_class(function_start, parameter)
+            .and_then(|class| declared.declared_field(class, name)))?;
+    checkable_declared(bits)
+}
+
 /// The annotated locals of `function` (`Function::local_registers`, named by `local_atoms`) that
 /// `DeclaredTypes::declared_local` types checkably, as the register each lives in and its type.
 /// Parameters are checked at entry instead (`scalar::declared_entry_types`). The top level keys
@@ -106,6 +132,18 @@ impl Lowering<'_, '_> {
     pub(super) fn conform_declared_rest_read(&mut self, state: &mut State, pc: usize, base: Register, result: Register) {
         let Some((rest, ty)) = self.declared_rest else { return };
         if base != rest || !self.caller_record(pc) || !self.resumes_after(pc) { return; }
+        self.conform_register(state, pc + 1, result, ty);
+    }
+
+    /// Conforms the value a named read `atom` of the entry function's declared parameter (`base`,
+    /// one of `declared_members`) yields: the result register holds the member's declared type,
+    /// checked once where the read completes. Any other base, or a name the signature does not type, is left alone.
+    pub(super) fn conform_declared_member_read(&mut self, state: &mut State, pc: usize, base: Register, atom: Atom, result: Register) {
+        let Some(&(_, parameter)) = self.declared_members.iter().find(|(register, _)| *register == base) else { return };
+        let Some(start) = self.declared_member_start else { return };
+        if !self.caller_record(pc) || !self.resumes_after(pc) { return; }
+        let program = self.program;
+        let Some(ty) = declared_member_type(program, start, parameter, &program.atoms[atom as usize]) else { return };
         self.conform_register(state, pc + 1, result, ty);
     }
 }

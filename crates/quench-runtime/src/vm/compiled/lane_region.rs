@@ -485,6 +485,11 @@ struct Lowering<'a, 'f> {
     declared_this: Option<Type>,
     /// The entry function's unwritten rest parameter register and its declared element type (`declared::declared_rest_read`).
     declared_rest: Option<(Register, Type)>,
+    /// The entry function's unwritten non-rest parameter registers, each with its parameter index
+    /// (`declared::declared_member_reads`), whose named reads the declared member types check.
+    declared_members: Vec<(Register, u16)>,
+    /// The entry function's signature key (its source span start), which `declared_members` are typed by.
+    declared_member_start: Option<u32>,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a FieldSites,
@@ -1780,6 +1785,8 @@ pub(super) fn lower(
         declared_definitions: Vec::new(),
         declared_this: None,
         declared_rest: None,
+        declared_members: Vec::new(),
+        declared_member_start: None,
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -1841,6 +1848,8 @@ pub(super) fn lower(
         lowering.declared_definitions = declared::declared_local_types(program, function);
         lowering.declared_this = declared::declared_this(program, function);
         lowering.declared_rest = declared::declared_rest_read(program, function, &lowering.written);
+        lowering.declared_members = declared::declared_member_reads(program, function, &lowering.written);
+        lowering.declared_member_start = function.source_span.map(|span| span.start);
     }
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
@@ -2765,8 +2774,19 @@ impl Lowering<'_, '_> {
             }
             // A capture's read or store, by its staged row.
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
-            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.fold_native_member(state, pc, instruction)
-                .or_else(|| self.fold_own_constant(state, pc, instruction)).or_else(|| self.get_field(state, pc, instruction)),
+            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => {
+                let ran = self.fold_native_member(state, pc, instruction)
+                    .or_else(|| self.fold_own_constant(state, pc, instruction)).or_else(|| self.get_field(state, pc, instruction));
+                // A named read of a declared parameter's member enters its destination with the member's type.
+                if ran == Some(true) && !instruction.writes_current_this() && !instruction.returns_from_frame() {
+                    if let (Some(base), Some((parts, None))) = (self.field_base(pc, instruction).and_then(|base| base.register_index()), self.field_chain(instruction)) {
+                        if let [(atom, _)] = parts.as_slice() {
+                            self.conform_declared_member_read(state, pc, base, *atom, instruction.result_register());
+                        }
+                    }
+                }
+                ran
+            }
             _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if instruction.op().class().eq(Class::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
