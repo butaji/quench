@@ -30,6 +30,7 @@ fn activation(kinds: Kinds, index: usize) -> Activation {
                 argc: 0,
                 completion: Completion::Plain,
                 forwards: false,
+                kept: 0,
                 environment: false,
                 record: std::ptr::null_mut(),
             })

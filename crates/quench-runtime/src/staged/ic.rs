@@ -15,10 +15,11 @@ use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 pub(crate) enum IcOp<'a> {
     /// The record's exact shape (`Object::exact_shape`) is this one, else the read misses.
     GuardShape(u32),
-    /// The record's whole auxiliary word is this one (`Object::hint_shape`, a lane record's
-    /// own-field hint), else the read misses: one compare proves the exact shape and the
-    /// storage form, so the `LoadSlot` after it reads its form's layout with no test.
-    GuardFormed(u32),
+    /// The record's layout id is this one (`Object::hint_shape`, a lane record's own-field
+    /// hint), else the read misses: one compare of the record's own word proves the exact
+    /// shape, the storage form, the prototype link and the flags, and the `LoadSlot` after it
+    /// reads the form's layout, which the id's table entry names, with no test.
+    GuardLayout(u32),
     /// The read moves to the record's prototype, an object record, else misses.
     Prototype,
     /// The value at `slot` of the record, whose guarded shapes keep at least `storage_len`
@@ -45,9 +46,9 @@ pub(crate) struct Reached<W, C> {
     pub(crate) record: W,
     pub(crate) shape: Option<W>,
     pub(crate) inline: Option<C>,
-    /// The record's whole auxiliary word, the one `shape` masks, where the caller loaded it.
+    /// The record's layout id, where the caller loaded it.
     pub(crate) word: Option<W>,
-    /// The storage-form bits a `GuardFormed` proved: a static input of the slot's layout.
+    /// The storage-form bits a `GuardLayout` proved: a static input of the slot's layout.
     pub(crate) formed: Option<u32>,
 }
 
@@ -68,7 +69,10 @@ pub(crate) fn run<S: Stage>(stage: &mut S, ops: &[IcOp<'_>], mut at: Reached<S::
     for op in ops {
         match *op {
             IcOp::GuardShape(shape) => guard_shape(stage, &at, shape, miss)?,
-            IcOp::GuardFormed(word) => at.formed = Some(guard_formed(stage, &at, word, miss)?),
+            IcOp::GuardLayout(id) => {
+                guard_layout(stage, &at, id, miss)?;
+                at.formed = Some(layout_form(id));
+            }
             IcOp::Prototype => {
                 let link = proto_link(stage, at.record);
                 let id = proto_object_record_id(stage, link, miss)?;
@@ -113,14 +117,32 @@ pub(super) fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
     stage.guard(same, miss)
 }
 
-/// `IcOp::GuardFormed`: continues where the reached record's whole auxiliary word is `word`;
-/// the storage-form bits it proved.
+/// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
 #[inline(always)]
-pub(super) fn guard_formed<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, word: u32, miss: S::Miss) -> Option<u32> {
-    let loaded = at.word.unwrap_or_else(|| super::object::header_u32(stage, Region::ShapeWord.mutable(), at.record, OBJECT.auxiliary_offset));
-    let same = { let word = stage.site(u64::from(word)); stage.eq_imm(loaded, word) };
-    stage.guard(same, miss)?;
-    Some(word & FORM_BITS)
+pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<()> {
+    let loaded = at.word.unwrap_or_else(|| layout_id(stage, at.record));
+    let same = { let id = stage.site(u64::from(id)); stage.eq_imm(loaded, id) };
+    stage.guard(same, miss)
+}
+
+/// The record's layout id (`Object::layout_id`), the one header word it keeps.
+#[inline(always)]
+pub(crate) fn layout_id<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+    stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32)
+}
+
+/// The storage-form bits of layout `id`, read from its interned entry: a fact of the id, so a
+/// specializer folds it at compile time. `id` is one a record's layout matched (an interned
+/// id, its entry readable with no bound test).
+#[inline(always)]
+pub(crate) fn layout_form(id: u32) -> u32 {
+    crate::heap::layouts::word(id) as u32 & FORM_BITS
+}
+
+/// The exact shape of layout `id` (`Object::exact_shape`), any word (`layouts::auxiliary`).
+#[inline(always)]
+pub(crate) fn layout_shape(id: u32) -> u32 {
+    crate::heap::layouts::auxiliary(id) & !FORM_BITS
 }
 
 /// Every storage-form bit of an auxiliary word.
@@ -203,8 +225,10 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
     // An exact shape has no form bits, so the whole word equals it only in the arena form,
     // whose payload is the run's start: one compare proves the shape and the form.
+    // The caller's contract: an exact shape, so no form bit needs testing.
+    debug_assert_eq!(shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form), 0, "an exact shape has no form bit");
     let whole = stage.eq_imm(word, u64::from(shape));
-    if shape & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0 && stage.known(whole) == Some(true) {
+    if stage.known(whole) == Some(true) {
         let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
         let run = arena_run(&mut stage, payload);
         let layout = Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
@@ -226,33 +250,33 @@ pub(crate) const HINTED_FORM: u32 = u32::MAX;
 pub(crate) const TAGGED_SLOTS: u32 = 1 << 26;
 const _: () = assert!(TAGGED_SLOTS & (OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form) == 0);
 
-/// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a whole
-/// auxiliary word (`Object::hint_shape`): one compare proves the exact shape and the storage
-/// form, which the hint's form bits, equal to the record's, then tell.
+/// `concrete_own_field_hit` through a lane record's own-field hint, whose `hint` is a layout
+/// id (`Object::hint_shape`): one compare of the record's own word proves the exact shape and
+/// the storage form, which the id's entry then tells.
 ///
-/// A fixed `FORM` is the form of every hint a record of it holds whole: its handler is
-/// chosen from the hint it is installed with (`own_formed_handler`), and a later hint either
-/// re-chooses it or names no object's word (a cleared hint), so equality proves `FORM` too.
+/// A fixed `FORM` is the form of every hint a record of it holds: its handler is chosen from
+/// the hint it is installed with (`own_formed_handler`), and a later hint either re-chooses it
+/// or names no object's layout (a cleared hint), so equality proves `FORM` too.
 ///
 /// # Safety
-/// As for `concrete_own_field_hit`; for a fixed `FORM`, a hint some object's word equals
+/// As for `concrete_own_field_hit`; for a fixed `FORM`, a hint some object's layout equals
 /// names `FORM`.
 #[inline(always)]
 pub(crate) unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::heap::Object,
     property_values: *const crate::Value, hint: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let word = layout_id(&mut stage, record);
     // A fixed form's hint names it (the caller's contract), so equality proves that form
-    // and its layout is read without testing the bits; no narrow run's word matches it.
+    // and its layout is read without testing the bits; no narrow run's layout matches it.
     let tagged = FORM != HINTED_FORM && FORM & TAGGED_SLOTS != 0;
     let form = if FORM == HINTED_FORM { FORM } else { FORM & !TAGGED_SLOTS };
-    // The same row a specializer runs (`IcOp::GuardFormed`, then the proved form's layout):
+    // The same row a specializer runs (`IcOp::GuardLayout`, then the proved form's layout):
     // one compare proves shape and form, and the layout tests no form bit.
     let at = Reached { word: Some(word), ..Reached::bare(record) };
-    let bits = guard_formed(&mut stage, &at, hint, ())?;
-    debug_assert!(form == HINTED_FORM || bits == form, "a fixed form's matched hint names it");
-    let bits = if form == HINTED_FORM { bits } else { form };
+    guard_layout(&mut stage, &at, hint, ())?;
+    debug_assert!(form == HINTED_FORM || layout_form(hint) == form, "a fixed form's matched hint names it");
+    let bits = if form == HINTED_FORM { layout_form(hint) } else { form };
     let layout = slot_layout(&mut stage, &Reached { formed: Some(bits), ..at }, Form::Either, usize::from(slot) + 1, ())?;
     let word = read_slot(&mut stage, layout, slot, Rep::Tagged);
     // Packed and narrow slots hold narrow values, never a raw double (`packed_read`,

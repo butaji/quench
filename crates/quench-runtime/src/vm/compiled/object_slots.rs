@@ -47,7 +47,7 @@ pub(super) struct ObjectHeader {
     pub(super) inline: ir::Value,
     /// The record's address, computed once for the header loads and every later read.
     pub(super) address: ir::Value,
-    /// The whole auxiliary word `shape` masks, where it was loaded (`IcOp::GuardFormed`).
+    /// The record's layout id, where it was loaded (`IcOp::GuardLayout`).
     pub(super) word: Option<ir::Value>,
 }
 
@@ -160,16 +160,16 @@ pub(super) fn exact_shape(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlags
     exact_shape_word(builder, flags, address).0
 }
 
-/// `exact_shape` with the whole auxiliary word it masks.
+/// `exact_shape` with the record's layout id (`I32`), the word it was read through.
 pub(super) fn exact_shape_word(builder: &mut FunctionBuilder<'_>, flags: ir::MemFlagsData, address: ir::Value) -> (ir::Value, ir::Value) {
     let layout = crate::heap::NATIVE_OBJECT_LAYOUT;
-    let id = builder.ins().load(types::I32, flags, address, layout.layout_offset as i32);
-    let id = builder.ins().uextend(types::I64, id);
+    let layout_id = builder.ins().load(types::I32, flags, address, layout.layout_offset as i32);
+    let id = builder.ins().uextend(types::I64, layout_id);
     let offset = builder.ins().imul_imm_u(id, 8);
     let base = builder.ins().iconst(types::I64, crate::heap::layouts::table_base() as i64);
     let entry = builder.ins().iadd(base, offset);
     let word = builder.ins().load(types::I32, flags, entry, layout.auxiliary_offset as i32);
-    (builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form))), word)
+    (builder.ins().band_imm_u(word, i64::from(!(layout.inline_form | layout.extras_form | layout.narrow_form))), layout_id)
 }
 
 /// `staged::object::inline_storage`'s residual for the record at `record`.
@@ -201,9 +201,10 @@ pub(crate) struct NativeFieldLoad {
     /// Whether the slot's arena words are raw doubles (its owner's type is Number under float
     /// slots): its load reads the double and boxes it (`staged::object::read_slot`).
     pub(crate) raw_double: bool,
-    /// For an own read, the whole auxiliary word (`Object::hint_shape`) of the receivers the
-    /// site's lane record last answered: the read guards it in one compare, proving the shape
-    /// and the storage form, and reads that form's layout with no test (`IcOp::GuardFormed`).
+    /// For an own read, the layout id (`Object::hint_shape`) of the receivers the site's lane
+    /// record last answered: the read guards it in one compare of the record's own word,
+    /// proving the shape and the storage form, and reads that form's layout, a fact of the id,
+    /// with no test (`IcOp::GuardLayout`).
     pub(crate) formed: Option<u32>,
 }
 

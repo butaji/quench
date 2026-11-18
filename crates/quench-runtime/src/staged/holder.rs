@@ -43,7 +43,8 @@ mod tests {
         let record = heap.object(object).unwrap();
         let guard = record.guard_word();
         let header = crate::heap::layouts::word(guard as u32);
-        assert_eq!(header as u32, record.hint_shape());
+        assert_eq!(guard as u32, record.hint_shape());
+        assert_eq!(header as u32 & !crate::staged::ic::FORM_BITS, record.exact_shape());
         assert_eq!((header >> u32::BITS) as u32 & ProtoLink::of(prototype).bits(), ProtoLink::of(prototype).bits());
         let watch = Rc::new(PublishedCode::new(()));
         let hint = Value::integer(42);

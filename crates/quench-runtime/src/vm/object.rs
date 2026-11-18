@@ -1601,7 +1601,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `own_field_entry_hit` through a lane record's own-field hint (`form_hint`), whose
-    /// receiver is a whole auxiliary word: one compare proves the shape and storage form.
+    /// receiver is a layout id: one compare proves the shape and storage form.
     #[inline(always)]
     pub(super) fn own_field_hint_hit<const FORM: u32>(&self, hint: FieldCache, receiver: &Object) -> Option<Value> {
         // SAFETY: as for `own_field_entry_hit`; the hint's shape is an own entry's.
@@ -1609,7 +1609,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// `entry`, an own entry `object` just answered, as a lane record's own-field hint: its
-    /// shape with `object`'s storage form (`Object::hint_shape`), which the hinted hits compare
+    /// object's layout id (`Object::hint_shape`), which the hinted hits compare
     /// whole (`own_field_hint_hit`, `hinted_primary_field_store_hit`,
     /// `hinted_polymorphic_field_hit`). An entry the object does not match stays as recorded.
     #[inline(always)]
@@ -1623,7 +1623,7 @@ impl<H: Host> Vm<H> {
 
     /// `entry`, which just answered a read of the direct object `object`, as a call memo's step
     /// (`record_field_formed_hit`): its receiver shape, and its holder's where it names one,
-    /// as whole auxiliary words (`Object::hint_shape`), so each compare also proves the storage
+    /// as layout ids (`Object::hint_shape`), so each compare also proves the storage
     /// form. An entry the objects do not match stays as recorded.
     pub(super) fn formed_entry(&self, entry: FieldCache, object: Value) -> FieldCache {
         let Some(receiver) = object.direct_object_index().map(|id| self.heap.object_record_by_id(id)) else {
@@ -2557,7 +2557,7 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.record_object_value(object)?;
         // Exact shapes: a match proves a layout outside dictionary storage, so each hit
         // reads its slot flat (`Object::exact_shape`).
-        // The hint is a whole auxiliary word (`form_hint`); the entries record exact shapes.
+        // The hint is a layout id (`form_hint`); the entries record exact shapes.
         if hint.receiver == receiver.hint_shape() {
             // SAFETY: as for `cached_field_hit`; the hint is one of the site's own entries.
             let value = unsafe { self.heap.property_get_flat(receiver, usize::from(hint.slot)) };

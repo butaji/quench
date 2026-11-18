@@ -120,6 +120,13 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn arguments_length(&mut self, _stage: &mut S, _slot: u16) -> Option<(S::Word, Self::Fact)> { None }
 
+    /// A rest view's read (`Protocol::RestView`): `rest.length` (`get` false) or `rest[key]`
+    /// of the values its activation kept past its first `fixed` parameters; `None` where the
+    /// frame keeps none of its own or `key` is no index they hold. The row answers the value and
+    /// its runner defines the destination.
+    #[inline(always)]
+    fn rest_view(&mut self, _stage: &mut S, _get: bool, _fixed: usize, _key: Option<Register>) -> Option<(S::Word, Self::Fact)> { None }
+
     /// The VM's own operation `operation` (`CallOut`), run in place where a row's words do not
     /// decide it, defining `result` where the operation has one: the word it defined with the
     /// fact the frame keeps of it, or a placeholder word where it defines none. `None` where the
