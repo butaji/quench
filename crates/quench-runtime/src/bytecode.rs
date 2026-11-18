@@ -2219,7 +2219,9 @@ impl Function {
     }
 
     fn derive_activation_bindings_observable(&self, tables: &impl FactTables) -> bool {
-        self.activation_binding_reads(tables)
+        // A suspending kind keeps its `this` in its frame record across suspensions; only what
+        // its body reads keeps the implicit bindings.
+        self.is_class_constructor || self.body_binding_reads(tables)
             || self.instructions_of(|op| op == Op::MakeClosure).any(|instruction| {
                 tables
                         .function_is_arrow(instruction.closure_function_index() as usize)
