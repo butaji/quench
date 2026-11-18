@@ -11174,69 +11174,6 @@ fn compare_jump_load_handler<H: Host>(jump: Op, load: Op, backward: bool, acc: u
 }
 
 lane_handler! {
-    /// An i32 operator of a constant (`FIRST`) and the register comparison jump `JUMP` reading
-    /// its result as either operand (`(x & mask) == y`): two records run here, the result
-    /// written as its own record writes it.
-    fn lane_immediate_compare_jump<FIRST: u16, JUMP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
-        let operator = const {
-            match I32BinaryOperator::from_immediate_op(opcode(FIRST)) {
-                Some(operator) => operator,
-                None => panic!("not an i32 immediate operator"),
-            }
-        };
-        let comparison = const {
-            match I32BinaryOperator::from_jump_op(opcode(JUMP)) {
-                Some(comparison) => comparison,
-                None => panic!("not an i32 register comparison jump"),
-            }
-        };
-        let Ok(result) = operator.evaluate(r.i32(i.b), i.imm() as i32) else {
-            return exit(ip);
-        };
-        let encoded = view.integers.encode(result);
-        r.set(i.a, encoded);
-        let view = Carried { acc: Slot::of(encoded), ..view };
-        let jump_ip = following(ip);
-        // SAFETY: the view fuses an immediate operator only with a following comparison jump.
-        let jump = unsafe { &*jump_ip };
-        let operand = |register: u16| if register == i.a { result } else { r.i32(register) };
-        let Ok(taken) = comparison.evaluate(operand(jump.a), operand(jump.b)) else {
-            return exit(jump_ip);
-        };
-        if taken != 0 {
-            resume!(cx, lane_jump::<H>(cx, r, jump_ip, BACKWARD, view, None));
-        }
-        next!(cx, r, following(jump_ip), view)
-    }
-}
-
-/// The immediate-operator comparison-jump handler for operator `first`, register comparison
-/// jump `jump`.
-fn immediate_compare_jump_handler<H: Host>(first: Op, jump: Op, backward: bool) -> Option<Handler> {
-    macro_rules! jumps {
-        ($first:ident; $($jump:ident),+) => {
-            match (jump as u16, backward) {
-                $(
-                    (opc::$jump, false) => Some(lane_immediate_compare_jump::<H, { opc::$first }, { opc::$jump }, false> as Handler),
-                    (opc::$jump, true) => Some(lane_immediate_compare_jump::<H, { opc::$first }, { opc::$jump }, true> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    macro_rules! tested {
-        ($first:ident) => {
-            jumps!($first; WasmJumpI32Equal, WasmJumpI32NotEqual)
-        };
-    }
-    // Masked tag tests; each further pairing is another family of handler copies.
-    match first as u16 {
-        opc::WasmI32AndImmediate => tested!(WasmI32AndImmediate),
-        _ => None,
-    }
-}
-
-lane_handler! {
     /// An i32 operator `OP` (reading through field `ACC`; a comparison, typically), a constant
     /// load and a select choosing among their results and other registers (`cur = cur > clip
     /// ? 0 : cur`): three records run here, each result written as its own record writes it,
@@ -20351,24 +20288,6 @@ fn derive_lane_view<'live, H: Host>(
                 continue;
             };
             if let Some(fused) = offset_mask_jump_handler::<H>(first.op(), jump.op(), backward, acc) {
-                records[pc].handler = fused as *const ();
-            }
-        }
-        // An i32 operator of a constant and a register comparison jump reading its result run as
-        // one record.
-        for pc in 0..records.len().saturating_sub(1) {
-            let (first, jump) = (decoded[pc], decoded[pc + 1]);
-            if !serves(records[pc].handler, first.op() as u16, ACC_NONE)
-                || I32BinaryOperator::from_jump_op(jump.op()).is_none()
-                || (jump.a() != first.a() && jump.b() != first.a())
-            {
-                continue;
-            }
-            let Some((backward, _)) = plain_served(records[pc + 1].handler, jump.op() as u16, &[ACC_NONE, ACC_A, ACC_B])
-            else {
-                continue;
-            };
-            if let Some(fused) = immediate_compare_jump_handler::<H>(first.op(), jump.op(), backward) {
                 records[pc].handler = fused as *const ();
             }
         }

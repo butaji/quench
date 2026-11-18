@@ -242,7 +242,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 42] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 44] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -265,6 +265,9 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 42] = [
     (Op::WasmI32AddImmediate as u16, Op::WasmI32AddImmediateJumpNonZero as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI32AddImmediate as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Add as u16, FUSED_PLAIN),
+    // An i32 `and` with an immediate, then the register comparison jump on its result.
+    (Op::WasmI32AndImmediate as u16, Op::WasmJumpI32Equal as u16, FUSED_PLAIN),
+    (Op::WasmI32AndImmediate as u16, Op::WasmJumpI32NotEqual as u16, FUSED_PLAIN),
     // A constant then the direct Wasm store of it (the store reads the constant's register).
     (Op::LoadConst as u16, Op::WasmI32Store as u16, FUSED_PLAIN),
     (Op::LoadConst as u16, Op::WasmI64Store as u16, FUSED_PLAIN),
