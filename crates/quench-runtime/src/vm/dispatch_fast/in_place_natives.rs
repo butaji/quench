@@ -80,12 +80,14 @@ const fn in_place_families(native: Native) -> u16 {
     if matches!(native, Native::ObjectCreate | Native::ObjectPrototypeHasOwnProperty
         | Native::ObjectPrototypePropertyIsEnumerable | Native::ObjectHasOwn | Native::ObjectIs | Native::ReflectGet
         | Native::ReflectHas | Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries
-        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor)
+        | Native::ReflectGetPrototypeOf | Native::ObjectPrototypeToString | Native::SymbolFor | Native::ObjectAssign
+        | Native::ObjectGetPrototypeOf)
     {
         families |= OBJECT;
     }
     if matches!(native, Native::MapSet | Native::MapDelete | Native::MapClear | Native::SetAdd | Native::SetDelete
-        | Native::SetClear | Native::ArrayBufferIsView)
+        | Native::SetClear | Native::ArrayBufferIsView | Native::TypedArrayAt | Native::Uint8ArrayIndexOf
+        | Native::Uint8ArrayIncludes | Native::Uint8ArrayFill)
         || super::super::data_view::data_view_element(native)
         || super::super::date::date_reads(native)
     {
@@ -93,7 +95,8 @@ const fn in_place_families(native: Native) -> u16 {
     }
     if matches!(native, Native::ArrayIndexOf | Native::ArrayIncludes | Native::ArraySplice | Native::ArrayUnshift
         | Native::ArrayShift | Native::ArrayIteratorNext | Native::ArraySlice | Native::ArrayConcat | Native::ArrayFill
-        | Native::ArrayFrom | Native::ArrayOf | Native::ArrayJoin)
+        | Native::ArrayFrom | Native::ArrayOf | Native::ArrayJoin | Native::ArrayAt | Native::ArrayLastIndexOf
+        | Native::ArrayReverse | Native::ArrayToReversed | Native::ArrayWith)
     {
         families |= ARRAY;
     }
@@ -104,7 +107,8 @@ const fn in_place_families(native: Native) -> u16 {
     }
     if matches!(native, Native::StringFromCharCode | Native::Boolean | Native::String | Native::Number
         | Native::NumberString | Native::StringLocaleCompare | Native::GlobalIsNaN | Native::GlobalIsFinite
-        | Native::NumberIsNaN | Native::NumberIsFinite | Native::NumberIsInteger | Native::NumberIsSafeInteger)
+        | Native::NumberIsNaN | Native::NumberIsFinite | Native::NumberIsInteger | Native::NumberIsSafeInteger
+        | Native::NumberFixed)
     {
         families |= PRIMITIVE;
     }
@@ -184,8 +188,9 @@ fn math_value(native: Native, args: &[Value]) -> Option<Value> {
 /// property query by a string key (`Vm::plain_own_property_query`), `Object.is`, an object's
 /// keys, values or entries its shape lists (`Vm::plain_enumerable_own_properties`), `super`
 /// reads (`Reflect.get` and `Reflect.getPrototypeOf` of an ordinary target, whose data
-/// property read ignores the receiver), `Symbol.for` of a string and
-/// `Object.prototype.toString` (`object_to_string_in_place`).
+/// property read ignores the receiver), `Object.assign` of plain data properties
+/// (`Vm::plain_object_assign`), `Symbol.for` of a string and `Object.prototype.toString`
+/// (`object_to_string_in_place`).
 fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, receiver: Value, args: &[Value]) -> Option<Value> {
     let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
     match native {
@@ -200,6 +205,9 @@ fn object_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native,
         _ if let Some(kind) = super::super::object_keys::EnumerableOwnPropertyKind::of(native) =>
             vm.plain_enumerable_own_properties(argument, kind),
         Native::ReflectGetPrototypeOf => Some(vm.heap.ordinary_object(*args.first()?)?.proto()),
+        // Copies of plain data properties onto a plain target (`Vm::plain_object_assign`).
+        Native::ObjectAssign => vm.plain_object_assign(args),
+        Native::ObjectGetPrototypeOf => vm.plain_object_get_prototype_of(args),
 
         Native::ObjectPrototypeToString => object_to_string_in_place(vm, code, receiver),
         // The registry lookup of a string key, which ToString leaves as it is.
@@ -255,6 +263,10 @@ fn collection_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Nat
         Native::ArrayBufferIsView => Some(Value::boolean(vm.is_array_buffer_view(args.first().copied().unwrap_or(Value::UNDEFINED)))),
         _ if super::super::data_view::data_view_element(native) => vm.plain_data_view_access(native, receiver, args),
         _ if super::super::date::date_reads(native) => vm.plain_date_get(native, receiver),
+        Native::TypedArrayAt => vm.plain_typed_at(native, receiver, args),
+        Native::Uint8ArrayIndexOf => vm.plain_typed_index_of(native, receiver, args),
+        Native::Uint8ArrayIncludes => vm.plain_typed_includes(native, receiver, args),
+        Native::Uint8ArrayFill => vm.plain_typed_fill(native, receiver, args),
         _ => None,
     }
 }
@@ -295,6 +307,11 @@ fn array_value<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, native: Native, 
         Native::ArrayFrom => vm.plain_array_from(receiver, args),
         Native::ArrayOf => vm.plain_array_of(receiver, args),
         Native::ArrayJoin => vm.plain_array_join(receiver, args),
+        Native::ArrayAt => vm.plain_array_at(receiver, args),
+        Native::ArrayLastIndexOf => vm.plain_array_last_index_of(receiver, args),
+        Native::ArrayReverse => vm.plain_array_reverse(receiver, args),
+        Native::ArrayToReversed => vm.plain_array_to_reversed(receiver, args),
+        Native::ArrayWith => vm.plain_array_with(receiver, args),
         _ => None,
     }
 }
@@ -314,6 +331,8 @@ fn primitive_value<H: Host>(vm: &mut Vm<H>, native: Native, receiver: Value, arg
         Native::Number if !args.is_empty() => vm.primitive_to_number(argument).map(Value::number),
         Native::NumberString if args.first().is_none_or(|radix| radix.is_undefined() || radix.as_number() == Some(DECIMAL)) =>
             Some(vm.heap.alloc_string(super::super::wtf16::JsString::from_number(receiver.as_number()?))),
+        Native::NumberString => vm.plain_number_to_string(receiver, args),
+        Native::NumberFixed => vm.plain_number_to_fixed(receiver, args),
         Native::StringLocaleCompare => default_locale_compare(vm, receiver, args),
         Native::GlobalIsNaN | Native::GlobalIsFinite =>
             super::super::number::global_number_predicate(native, vm.primitive_to_number(argument)?).map(Value::boolean),

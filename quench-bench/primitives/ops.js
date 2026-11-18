@@ -252,4 +252,15 @@ ops.bi_map = function (n) { const arr16 = [11, 48, 85, 21, 58, 95, 31, 68, 4, 42
 ops.bi_parse = function (n) { const txt = '{"a":1,"b":[1,2,3],"c":"xyz"}'; let a = 0; for (let i = 0; i < n; i++) { a = (a + JSON.parse(txt).a) | 0; } return a; };
 ops.bi_keys = function (n) { const o = { a: 1, b: 2, c: 3, d: 4 }; let a = 0; for (let i = 0; i < n; i++) { a = (a + Object.keys(o).length) | 0; } return a; };
 ops.bi_assign = function (n) { const o = { a: 1, b: 2, c: 3, d: 4 }; let a = 0; for (let i = 0; i < n; i++) { a = (a + Object.assign({}, o).a) | 0; } return a; };
+ops.bi_arr_at = function (n) { const arr16 = [11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62]; let a = 0; for (let i = 0; i < n; i++) { a = (a + arr16.at(i & 15)) | 0; } return a; };
+ops.bi_arr_lastindexof = function (n) { const arr16 = [11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62]; let a = 0; for (let i = 0; i < n; i++) { a = (a + arr16.lastIndexOf(4)) | 0; } return a; };
+ops.bi_arr_reverse = function (n) { const arr16 = [11, 48, 85, 21, 58, 95, 31, 68, 4, 42, 79, 15, 52, 89, 25, 62]; let a = 0; for (let i = 0; i < n; i++) { arr16.reverse(); a = (a + arr16[0]) | 0; } return a; };
+ops.bi_num_tofixed = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + (i * 0.5).toFixed(2).length) | 0; } return a; };
+ops.bi_num_radix = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + (i & 1023).toString(16).length) | 0; } return a; };
+ops.bi_getproto = function (n) { const o = { a: 1 }; let a = 0; for (let i = 0; i < n; i++) { a = (a + (Object.getPrototypeOf(o) === Object.prototype)) | 0; } return a; };
+ops.bi_u8_fill = function (n) { const u8 = new Uint8Array(64); let a = 0; for (let i = 0; i < n; i++) { u8.fill(i & 255); a = (a + u8[0]) | 0; } return a; };
+ops.bi_f64_indexof = function (n) { const f64 = new Float64Array(16); for (let j = 0; j < 16; j++) f64[j] = j * 0.5; let a = 0; for (let i = 0; i < n; i++) { a = (a + f64.indexOf((i & 15) * 0.5)) | 0; } return a; };
+ops.bi_regexp_test = function (n) { const re = /ab+c/; let a = 0; for (let i = 0; i < n; i++) { a = (a + re.test("xxabbbc")) | 0; } return a; };
+ops.bi_regexp_exec = function (n) { const re = /ab+c/; let a = 0; for (let i = 0; i < n; i++) { a = (a + re.exec("xxabbbc").index) | 0; } return a; };
+ops.bi_obj_keys2 = function (n) { const o = { a: 1, b: 2 }; let a = 0; for (let i = 0; i < n; i++) { a = (a + Object.keys(o).length) | 0; } return a; };
 globalThis.PRIMITIVE_OPS = ops;

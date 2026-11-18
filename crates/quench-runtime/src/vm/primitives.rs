@@ -414,7 +414,7 @@ impl<H: Host> Vm<H> {
                     && let Some(super::wtf16::Units::Ascii(bytes)) = receiver.existing_units()
                 {
                     let text: smallvec::SmallVec<[u8; 64]> = bytes.iter().copied().cycle().take(size).collect();
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&text)));
+                    return Ok(self.heap.alloc_ascii_run(&text));
                 }
                 Ok(self.heap.alloc_string(receiver.repeat(count)))
             }
@@ -451,7 +451,7 @@ impl<H: Host> Vm<H> {
                         bytes.extend(padding);
                         bytes.extend_from_slice(text);
                     }
-                    return Ok(self.heap.alloc_string(super::wtf16::JsString::from_ascii_bytes(&bytes)));
+                    return Ok(self.heap.alloc_ascii_run(&bytes));
                 }
                 let receiver_units = receiver.units().to_vec();
                 let fill_len = target - receiver_units.len();

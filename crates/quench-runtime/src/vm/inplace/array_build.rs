@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
             _ => &b","[..],
         };
         let bytes = self.join_dense_ascii(receiver, separator)?;
-        Some(self.heap.alloc_string(JsString::from_ascii_bytes(&bytes)))
+        Some(self.heap.alloc_ascii_run(&bytes))
     }
 
     /// The `join` text of the dense array `receiver` with `separator` between elements; `None`

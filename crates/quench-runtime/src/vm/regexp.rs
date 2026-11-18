@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod steady;
+mod steady_ascii;
 mod steady_strings;
 mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;

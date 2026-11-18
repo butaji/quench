@@ -27,12 +27,16 @@ impl EnumerableOwnPropertyKind {
 }
 
 impl<H: Host> Vm<H> {
-    /// EnumerableOwnProperties of an object whose shape answers it (`shape_enumerable_keys`,
-    /// `shape_enumerable_data_items`): no guest code runs and nothing raises. `None` leaves
-    /// Proxies, accessors and every other object to the general path.
+    /// EnumerableOwnProperties of an object whose shape answers it (`plain_object_keys`'s
+    /// memoized key strings first, then `shape_enumerable_keys`, `shape_enumerable_data_items`):
+    /// no guest code runs and nothing raises. `None` leaves Proxies, accessors and every other
+    /// object to the general path.
     pub(super) fn plain_enumerable_own_properties(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         if kind != EnumerableOwnPropertyKind::Key {
             return self.shape_enumerable_data_items(object, kind);
+        }
+        if let Some(keys) = self.plain_object_keys(object) {
+            return Some(keys);
         }
         let keys: EnumerableKeys<Value> =
             self.shape_enumerable_keys(object)?.into_iter().map(|atom| self.atom_string(atom)).collect();

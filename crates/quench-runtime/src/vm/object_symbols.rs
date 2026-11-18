@@ -360,7 +360,7 @@ impl<H: Host> Vm<H> {
     /// for `Set`, no accessor or read-only property up the target's chain intercepts it. The
     /// copy then runs no guest code and cannot throw, so it gathers every value first and
     /// writes them in order. `false`, before any effect, leaves the copy to the general path.
-    fn copy_plain_properties(
+    pub(super) fn copy_plain_properties(
         &mut self,
         target: Value,
         source: Value,

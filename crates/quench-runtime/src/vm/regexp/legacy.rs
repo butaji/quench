@@ -267,29 +267,6 @@ impl<H: Host> Vm<H> {
         self.record_regexp_legacy(this, input, |input| LegacyRegExpMatch::Pending { input, matcher, start, storage })
     }
 
-    /// Whether the legacy statics already hold the pending match that
-    /// `record_regexp_legacy_pending` would record for the RegExp of `meta` over the ASCII
-    /// `bytes`: the same matcher over the same input storage from the same start, as a loop
-    /// testing one regexp on one string records.
-    #[inline(always)]
-    pub(in crate::vm) fn regexp_legacy_pending_holds(&self, meta: &crate::heap::RegExpMeta, bytes: &[u8], matcher: &Rc<quench_regexp::Regex>, start: usize) -> bool {
-        let Some(state) = self.realm.intrinsics.regexp_intrinsics.get(&self.realm.globals) else {
-            return false;
-        };
-        let LegacyRegExpMatch::Pending { input: held, matcher: held_matcher, start: held_start, storage } = &state.legacy.last else {
-            return false;
-        };
-        let enabled = matches!(meta.legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if owner == state.constructor);
-        if !enabled || state.legacy.input_override.is_some() || *held_start != start || !Rc::ptr_eq(held_matcher, matcher) {
-            return false;
-        }
-        match storage {
-            Some(storage) => *storage == (bytes.as_ptr() as usize, bytes.len()),
-            // Other text, short text above all, is the same input where its units are the same.
-            None => matches!(held.existing_units(), Some(super::wtf16::Units::Ascii(held)) if held == bytes),
-        }
-    }
-
     pub(super) fn record_regexp_legacy(
         &mut self,
         this: Value,
@@ -321,6 +298,29 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(())
+    }
+}
+
+impl RegExpIntrinsics {
+    /// Whether this realm's legacy statics already hold the pending match that
+    /// `record_regexp_legacy_pending` would record for the RegExp of `meta` over the ASCII
+    /// `bytes`: the same matcher over the same input storage from the same start, as a loop
+    /// testing one regexp on one string records. Read from the record a steady call already
+    /// looked up (`Vm::steady_ascii_plan`), with no second lookup of the realm's.
+    #[inline(always)]
+    pub(super) fn legacy_pending_holds(&self, meta: &crate::heap::RegExpMeta, bytes: &[u8], matcher: &Rc<quench_regexp::Regex>, start: usize) -> bool {
+        let LegacyRegExpMatch::Pending { input: held, matcher: held_matcher, start: held_start, storage } = &self.legacy.last else {
+            return false;
+        };
+        let enabled = matches!(meta.legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if owner == self.constructor);
+        if !enabled || self.legacy.input_override.is_some() || *held_start != start || !Rc::ptr_eq(held_matcher, matcher) {
+            return false;
+        }
+        match storage {
+            Some(storage) => *storage == (bytes.as_ptr() as usize, bytes.len()),
+            // Other text, short text above all, is the same input where its units are the same.
+            None => matches!(held.existing_units(), Some(super::wtf16::Units::Ascii(held)) if held == bytes),
+        }
     }
 }
 

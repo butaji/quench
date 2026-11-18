@@ -67,8 +67,10 @@ impl Regex {
         if start > bytes.len() || bytes.len() - start < complete.min_length {
             return Some(None);
         }
+        // `required_bytes` holds no literal the program's own prefix search finds
+        // (`CompleteMatcher::lower`), so a held one is scanned for with no second test.
         if let Some(literal) = complete.required_bytes.as_ref().filter(|_| !sticky) {
-            if !program.searches_prefix(literal.needle()) && literal.find(&bytes[start..]).is_none() {
+            if literal.find(&bytes[start..]).is_none() {
                 return Some(None);
             }
         }

@@ -10,9 +10,11 @@ use std::ops::Range;
 mod heap_builder;
 mod error_message;
 mod plain_write;
+mod parse_stacks;
 pub(crate) use plain_write::JsonPlainCache;
 use error_message::json_syntax_message;
 use heap_builder::{short_run_ends, JsonBuildError, JsonHeapBuilder};
+use parse_stacks::{JsonFrame, JsonStacks};
 pub(super) use heap_builder::JsonParseCache;
 
 const JSON_NULL_INITIAL: u16 = b'n' as u16;
@@ -658,6 +660,12 @@ trait JsonBuilder {
     ) -> Self::Value;
     /// A primitive parsed from `source`, the text a reviver's context exposes.
     fn primitive(&mut self, value: Self::Value, source: Units<'_>) -> Self::Value;
+    /// The empty stacks a parse gathers members on: a builder that parses again lends its own.
+    fn stacks(&mut self) -> JsonStacks<Self::Value, Self::Key, Self::Layout> {
+        JsonStacks::with_room()
+    }
+    /// The stacks a parse finished with, which a builder that parses again keeps.
+    fn keep_stacks(&mut self, _stacks: JsonStacks<Self::Value, Self::Key, Self::Layout>) {}
 }
 
 #[derive(Clone, Copy)]
@@ -757,41 +765,40 @@ pub(crate) fn json_literal_length(text: &str) -> Option<usize> {
     (!check.proto_key).then_some(length)
 }
 
-/// A container whose members a parse is gathering: where its members start on the parse's
-/// stacks, and an object's layout so far.
-enum JsonFrame<L> {
-    Array { values: usize },
-    Object { values: usize, keys: usize, layout: L },
-}
-
 /// A parse of `units` into `builder`'s values, iterative as V8's `JsonParser` is, so nesting
 /// is bounded by memory rather than the native stack. Containers gather their members on
-/// two stacks the whole parse shares, so each takes exactly its members' storage once.
+/// two stacks the whole parse shares, so each takes exactly its members' storage once. The
+/// builder lends the stacks (`JsonBuilder::stacks`) and takes them back when the parse ends.
 struct JsonParser<'a, 'b, T, B: JsonBuilder> {
     units: &'a [T],
     index: usize,
     builder: &'b mut B,
     values: Vec<B::Value>,
     keys: Vec<B::Key>,
+    frames: Vec<JsonFrame<B::Layout>>,
 }
 
-/// The members a parse's stacks start with room for, which most texts' containers fit.
-const JSON_STACK_START: usize = 16;
+/// The stacks go back to the builder whether the parse finished or stopped at an error.
+impl<T, B: JsonBuilder> Drop for JsonParser<'_, '_, T, B> {
+    fn drop(&mut self) {
+        let stacks = JsonStacks {
+            values: std::mem::take(&mut self.values),
+            keys: std::mem::take(&mut self.keys),
+            frames: std::mem::take(&mut self.frames),
+        };
+        self.builder.keep_stacks(stacks);
+    }
+}
 
 impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
     fn new(units: &'a [T], builder: &'b mut B) -> Self {
-        Self {
-            units,
-            index: 0,
-            builder,
-            values: Vec::with_capacity(JSON_STACK_START),
-            keys: Vec::with_capacity(JSON_STACK_START),
-        }
+        let JsonStacks { values, keys, frames } = builder.stacks();
+        Self { units, index: 0, builder, values, keys, frames }
     }
 
     /// The JSON text that is all of the units.
     fn parse(mut self) -> Result<B::Value, JsonParseError> {
-        let value = self.value()?;
+        let value = self.root_value()?;
         match self.token() {
             None => Ok(value),
             Some(_) => Err(self.error(JsonSyntax::NonWhitespaceAfter)),
@@ -800,13 +807,21 @@ impl<'a, 'b, T: JsonUnit, B: JsonBuilder> JsonParser<'a, 'b, T, B> {
 
     /// The JSON text the units start with, and the units it spans.
     fn parse_prefix(mut self) -> Result<(B::Value, usize), JsonParseError> {
-        let value = self.value()?;
+        let value = self.root_value()?;
         Ok((value, self.index))
     }
 
-    /// The JSON value at the current unit, which the parse moves past.
-    fn value(&mut self) -> Result<B::Value, JsonParseError> {
-        let mut frames: Vec<JsonFrame<B::Layout>> = Vec::with_capacity(JSON_STACK_START);
+    /// The JSON value at the current unit, which the parse moves past. The frames leave the
+    /// parser meanwhile, so a frame's layout and the parser are borrowed apart.
+    fn root_value(&mut self) -> Result<B::Value, JsonParseError> {
+        let mut frames = std::mem::take(&mut self.frames);
+        let value = self.value(&mut frames);
+        self.frames = frames;
+        value
+    }
+
+    /// `root_value`, gathering containers on `frames`.
+    fn value(&mut self, frames: &mut Vec<JsonFrame<B::Layout>>) -> Result<B::Value, JsonParseError> {
         'value: loop {
             let token = self.token();
             let start = self.index;
