@@ -1291,6 +1291,19 @@ pub(super) struct OnlineFacts<'a> {
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(super) names: Option<&'a dyn Fn(u16, Atom) -> Option<(crate::staged::add_plan::Transition, u64)>>,
+    /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
+    /// a read of it folds under an identity guard and a dependency on the object's exact shape.
+    pub(super) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
+}
+
+/// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
+/// guards by identity, the exact shape it depends on (whose write retires the body), and the
+/// value the member holds while the object is marked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct OwnConstant {
+    pub(super) object: Value,
+    pub(super) shape: u32,
+    pub(super) value: Value,
 }
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its

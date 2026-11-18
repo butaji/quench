@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn class_fields_and_parameter_properties_are_declared_types() {
         let source = "class P { x: number; y: string | undefined; constructor(public z: boolean) {} }";
-        let bit = |kind: V| 1_u16 << kind as u16;
+        let bit = |kind: V| crate::typed_ir::Languages::of(kind).bits();
         assert_eq!(fields_of(source), [
             ("x".to_string(), bit(V::Number), false),
             ("y".to_string(), bit(V::String) | bit(V::Undefined), false),
@@ -105,8 +105,8 @@ mod tests {
         let declared: &DeclaredTypes = program.declared_types.as_deref().unwrap();
         let p = source.find("class P").unwrap() as u32;
         let q = source.find("class Q").unwrap() as u32;
-        assert_eq!(declared.declared_field(p, "x"), Some(1_u16 << V::Number as u16));
-        assert_eq!(declared.declared_field(q, "x"), Some(1_u16 << V::String as u16));
+        assert_eq!(declared.declared_field(p, "x"), Some(crate::typed_ir::Languages::of(V::Number).bits()));
+        assert_eq!(declared.declared_field(q, "x"), Some(crate::typed_ir::Languages::of(V::String).bits()));
         assert_eq!(declared.declared_field(p, "s"), None);
         assert_eq!(declared.declared_field(p, "missing"), None);
     }

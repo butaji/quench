@@ -5272,5 +5272,5 @@ fn declared_number_field(p: &ResidualProgram, function: u32, atom: Atom) -> bool
     let Some(class_start) = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start) else {
         return false;
     };
-    declared.declared_field(class_start, &p.atoms[atom as usize]) == Some(1u16 << crate::ValueType::Number as u16)
+    declared.declared_field(class_start, &p.atoms[atom as usize]) == Some(crate::typed_ir::Languages::of(crate::ValueType::Number).bits())
 }

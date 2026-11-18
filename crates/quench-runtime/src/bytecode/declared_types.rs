@@ -58,7 +58,7 @@ pub(crate) struct DeclaredField {
     /// The field's name: a non-computed identifier key, or a constructor parameter property's
     /// parameter name. Private `#name` keys are not recorded.
     pub(crate) name: Box<str>,
-    /// Language bits (`1 << ValueType as u16`) the declared type admits for the field's value.
+    /// Language bits (`typed_ir::Languages`) the declared type admits for the field's value.
     pub(crate) languages: u16,
     /// `static` class member (a static field is not an instance field).
     pub(crate) is_static: bool,
@@ -134,14 +134,12 @@ impl DeclaredTypes {
     }
 
     /// The declared signature of the function whose source span starts at `start`, when declared.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the declared-fact seeding reads it next"))]
     pub(crate) fn declared_signature(&self, start: u32) -> Option<&DeclaredSignature> {
         self.signatures.iter().rev().find(|signature| signature.start == start)
     }
 
     /// The declared language types of local `name` of the function starting at `function`
     /// (`u32::MAX` for the top level), when the program declares one (the last declaration wins).
-    #[cfg_attr(not(test), expect(dead_code, reason = "the declared-fact seeding reads it next"))]
     pub(crate) fn declared_local(&self, function: u32, name: &str) -> Option<u16> {
         self.locals.iter().rev()
             .find(|local| local.function == function && &*local.name == name)

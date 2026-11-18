@@ -86,9 +86,11 @@ use captures::RootedRead;
 #[path = "lane_region/headers.rs"] mod headers;
 #[path = "lane_region/hoisted_reads.rs"] mod hoisted_reads;
 #[path = "lane_region/field_reads.rs"] mod field_reads;
+#[path = "lane_region/own_constants.rs"] mod own_constants;
 #[path = "lane_region/number_domains.rs"] mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] mod loop_arrays;
 #[path = "lane_region/call_frames.rs"] mod call_frames;
+#[path = "lane_region/declared.rs"] mod declared;
 use call_frames::{CallSite, Leave, ReturnSite, Site};
 #[path = "lane_region/call_outs.rs"] mod call_outs;
 #[path = "lane_region/jumps.rs"] mod jumps;
@@ -464,6 +466,9 @@ struct Lowering<'a, 'f> {
     params: usize,
     /// The lowered function, which an exception it raises names as its source (`Lowering::throw`).
     function_id: u32,
+    /// The entry function's annotated locals: the register each lives in and the language type its
+    /// annotation seeds (`declared::declared_local_types`).
+    declared_definitions: Vec<(Register, Type)>,
     helpers: LaneHelpers,
     /// The proved shapes and slots of each field cache site the unit reads or writes.
     fields: &'a FieldSites,
@@ -1046,18 +1051,19 @@ impl<'a, 'f> Lowering<'a, 'f> {
     fn conform_language(&mut self, state: &mut State, target: usize, register: Register, ty: Type) {
         use crate::ValueType::{Boolean, Function, Null, Object, Undefined};
         use crate::staged::Stage;
+        use crate::typed_ir::Languages;
         use crate::staged::value::{is_boolean, is_direct_function, is_direct_object, is_null, is_undefined};
         let index = usize::from(register);
         let kinds = [Boolean, Undefined, Null, Object, Function];
         let bits = kinds.into_iter().filter(|kind| Type::language(*kind).is_subtype(ty))
-            .fold(0u16, |bits, kind| bits | (1u16 << kind as u16));
+            .fold(Languages::EMPTY, |set, kind| set | Languages::of(kind)).bits();
         if !scalar::checkable(bits) || Type::languages(bits) != ty || state.values[index].value.ty.is_subtype(ty) { return; }
         let value = self.tagged(state, register);
         let exit = self.guard_exit(state, target as u32);
         let member = {
             let stage = &mut super::object_slots::emit(&mut self.builder);
             let mut member: Option<ir::Value> = None;
-            for kind in kinds.into_iter().filter(|kind| bits & (1u16 << *kind as u16) != 0) {
+            for kind in kinds.into_iter().filter(|kind| Languages::from_bits(bits).contains(*kind)) {
                 let test = match kind {
                     Boolean => is_boolean(stage, value),
                     Undefined => is_undefined(stage, value),
@@ -1737,6 +1743,7 @@ pub(super) fn lower(
         registers_base,
         entry_words: (entry_this, entry_captures),
         callee_slots: Vec::new(),
+        declared_definitions: Vec::new(),
         registers,
         written: CompoundBitSet::with_capacity(count),
         consumed: CompoundBitSet::with_capacity(unit.instructions.len()),
@@ -1795,6 +1802,7 @@ pub(super) fn lower(
     if !numeric {
         scalar::require_entry_types(program, function, &instructions, |pc| generic.contains(&entry_leave(unit)) || heap.contains(pc), &lowering.written, &mut initial);
         scalar::declared_entry_types(function, &lowering.written, &mut initial);
+        lowering.declared_definitions = declared::declared_local_types(program, function);
     }
     let own_shape = |pc: usize| {
         let instruction = instructions[pc];
@@ -2715,7 +2723,8 @@ impl Lowering<'_, '_> {
             }
             // A capture's read or store, by its staged row.
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
-            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.fold_native_member(state, pc, instruction).or_else(|| self.get_field(state, pc, instruction)),
+            _ if instruction.op().is_get_field() && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.fold_native_member(state, pc, instruction)
+                .or_else(|| self.fold_own_constant(state, pc, instruction)).or_else(|| self.get_field(state, pc, instruction)),
             _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
             _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
@@ -2757,6 +2766,7 @@ impl Lowering<'_, '_> {
         match ran {
             Some(falls) => {
                 self.native += 1;
+                if falls { self.conform_declared_definitions(state, pc, instruction); }
                 falls
             }
             None => {
@@ -3357,6 +3367,7 @@ impl Lowering<'_, '_> {
         let callee = self.direct.get(&pc).map(|callee| unsafe { &**callee });
         let call = CallSite { callee, record, context: self.context, registers: self.registers_base, completed, missed, raised,
             stop: self.call_out_stop(), leave: self.leave_site() };
+        let returns = callee.filter(|_| !site.constructs()).and_then(|callee| declared::declared_return(self.program, callee.target.function));
         self.step_with(state, frame::Edges::ValueGuarded { miss: generic }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
         self.reentries.push(completed);
         // A returning call's completion is its activation's: the lane completes it with the
@@ -3368,6 +3379,7 @@ impl Lowering<'_, '_> {
         state.call_effect();
         self.reload_property_arena();
         self.reload_result(state, site.result);
+        if let Some(ty) = returns { self.conform_declared_result(state, pc, site.result, ty); }
         true
     }
 
