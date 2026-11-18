@@ -15,6 +15,14 @@ fn known(function: &ir::Function, value: ir::Value) -> Option<(u64, i64)> {
     Some((unsigned, signed))
 }
 
+/// `value` cut to `ty`'s width, sign-extended as the frontend writes an immediate.
+fn fit(ty: ir::Type, value: u64) -> i64 {
+    let bits = ty.bits();
+    if bits >= 64 { return value as i64; }
+    let unsigned = value & ((1u64 << bits) - 1);
+    ((unsigned << (64 - bits)) as i64) >> (64 - bits)
+}
+
 /// Decides the comparisons of known constants and takes the one edge of each branch on a
 /// decided condition, once SSA has resolved every variable to its definition (while lowering,
 /// a variable read in an unsealed block is still a parameter). The edges not taken leave their
@@ -39,6 +47,26 @@ pub(super) fn decide(function: &mut ir::Function) -> usize {
                     };
                     let result_ty = function.dfg.value_type(function.dfg.first_result(inst));
                     function.replace(inst).iconst(result_ty, i64::from(holds));
+                }
+                InstructionData::Binary { opcode, args } => {
+                    let (Some((a, _)), Some((b, _))) = (known(function, args[0]), known(function, args[1])) else { continue };
+                    let ty = function.dfg.value_type(function.dfg.first_result(inst));
+                    if !ty.is_int() || ty.bits() > 64 { continue; }
+                    let width = ty.bits();
+                    let shift = |b: u64| (b % u64::from(width)) as u32;
+                    let value = match opcode {
+                        Opcode::Iadd => a.wrapping_add(b), Opcode::Isub => a.wrapping_sub(b), Opcode::Imul => a.wrapping_mul(b),
+                        Opcode::Band => a & b, Opcode::Bor => a | b, Opcode::Bxor => a ^ b,
+                        Opcode::Ishl => a.wrapping_shl(shift(b)), Opcode::Ushr => a.wrapping_shr(shift(b)),
+                        _ => continue,
+                    };
+                    function.replace(inst).iconst(ty, fit(ty, value));
+                }
+                InstructionData::Unary { opcode: opcode @ (Opcode::Ireduce | Opcode::Uextend | Opcode::Sextend), arg } => {
+                    let Some((unsigned, signed)) = known(function, arg) else { continue };
+                    let ty = function.dfg.value_type(function.dfg.first_result(inst));
+                    let value = if opcode == Opcode::Sextend { signed as u64 } else { unsigned };
+                    function.replace(inst).iconst(ty, fit(ty, value));
                 }
                 InstructionData::Brif { arg, blocks, .. } => {
                     let Some((flag, _)) = known(function, arg) else { continue };
