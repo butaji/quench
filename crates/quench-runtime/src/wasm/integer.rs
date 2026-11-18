@@ -3,7 +3,9 @@
 
 use super::{WasmTrap, WasmValue};
 
-use super::numeric::{NumericResult, selectors};
+#[cfg(test)]
+use super::numeric::NumericResult;
+use super::numeric::selectors;
 use crate::staged::ConcreteWasm;
 use crate::staged::machine::MachineStage;
 use crate::staged::wasm::{Width, binary_result, integer_binary, unary_result};
@@ -18,10 +20,14 @@ macro_rules! binary_family {
                 matches!(self, Self::Add | Self::Subtract | Self::Multiply)
             }
 
+            /// The operator written out on its own: the oracle the staged rules are tested
+            /// against (`staged::wasm_tests`); execution goes through the staged rules (`evaluate`).
+            #[cfg(test)]
             #[inline(always)] pub(crate) fn apply(self, $($argument: $signed),+) -> Result<WasmValue, WasmTrap> {
                 self.result($($argument),+).map(|value| value.into_wasm(WasmValue::$variant))
             }
 
+            #[cfg(test)]
             #[inline(always)]
             fn result(self, $($argument: $signed),+) -> Result<NumericResult<$signed>, WasmTrap> {
                 type $signed_alias = $signed;
@@ -45,6 +51,7 @@ macro_rules! unary_family {
      $($name:ident, $wasm:ident => $body:expr;)+) => {
         selectors!($enum; $($name, $wasm;)+);
         impl $enum {
+            #[cfg(test)]
             #[inline(always)] pub(crate) fn apply(self, $argument: $signed) -> WasmValue {
                 type $signed_alias = $signed;
                 let result: NumericResult<$signed> = match self { $(Self::$name => $body,)+ };
