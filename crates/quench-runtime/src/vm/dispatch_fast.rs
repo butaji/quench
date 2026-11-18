@@ -1505,6 +1505,16 @@ impl Carried {
     fn script_in<H: Host>(cx: *mut LaneContext<H>, incoming: Carried) -> Self {
         Self { integers: incoming.integers, ..Self::script(cx) }
     }
+
+    /// What the general step of `instruction` carries on: `script_in`, with the accumulator its
+    /// result register now holds, since the record was selected as an accumulator producer
+    /// (`LaneHandler::produces`) and the next record may read the accumulator for it.
+    #[inline(always)]
+    fn stepped<H: Host>(cx: *mut LaneContext<H>, incoming: Carried, r: Registers, instruction: WideInstruction) -> Self {
+        let produced = matches!(instruction.op().field_layout(InstructionField::A), FieldLayout::ResultRegister);
+        let acc = if produced { Slot::of(r.get(instruction.result_register())) } else { Slot::unset() };
+        Self { acc, ..Self::script_in(cx, incoming) }
+    }
 }
 
 /// The capacity the lane stack reserves once (virtual until touched): values and activations
@@ -3380,7 +3390,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_load_this, staged_property_key, staged_require_iterator_result, staged_typeof_index};
+use lane_frame::{is_row, lane_row, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, staged_load_name, NameBinding, NameRead, staged_jump, staged_jump_if, staged_property_key, staged_require_iterator_result, staged_typeof_index};
 
 
 lane_handler! {
@@ -4001,19 +4011,7 @@ lane_handler! {
         note_allocation(vm);
         // SAFETY: the step continues at a record of the running frame's view.
         let target = unsafe { (*cx).base.add(next) };
-        if next <= pc { return exit(target); }
-        // A record the view registered as an accumulator producer (a generated row whose `a` is
-        // its result register, `handler_for`) may fall back here; the record after it then reads
-        // the carried accumulator, so the step defines it from the register as the row would.
-        let carried = Carried::script_in(cx, view);
-        let op = instruction.op();
-        if lane_runs_row(op)
-            && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
-            && !matches!(op.staged(), Some(crate::bytecode::Decoder::Local))
-        {
-            next!(cx, r, target, Carried { acc: Slot::of(r.get(instruction.a())), ..carried })
-        }
-        next!(cx, r, target, carried)
+        if next > pc { next!(cx, r, target, Carried::stepped(cx, view, r, instruction)) } else { exit(target) }
     }
 }
 
@@ -4050,7 +4048,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     if let (Some(value), Some(result)) = (value, result) {
         r.set(result, value);
     }
-    Resumed::At(r, following(ip), Carried::script(cx))
+    Resumed::At(r, following(ip), Carried::stepped(cx, Carried::script(cx), r, instruction))
 }
 
 /// Make `operation` of the record at `ip` from the lane, as its general step would: in a
@@ -5070,17 +5068,6 @@ lane_handler! {
 
 
 script_handler! {
-    /// `this` where the lane holds it; the frame's `this` takes `lane_load_frame_this`,
-    /// so this handler makes no call and saves no registers.
-    fn lane_load_this<>(cx, r, ip, i, view) {
-        if !staged_load_this(r, view, r.this(), i.a) {
-            sibling!(lane_load_frame_this::<H>, r, ip, view)
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
-script_handler! {
     /// `LoadCallee`: the function the innermost script activation runs, or the frame's when
     /// none does, as its activation filled its self binding (`Vm::initialize_frame_locals`).
     fn lane_load_callee<>(cx, r, ip, i, view) {
@@ -5095,20 +5082,6 @@ script_handler! {
         next!(cx, r, following(ip), view)
     }
 }
-
-script_handler! {
-    /// `LoadThis` of the frame's `this` (`lane_this`).
-    #[inline(never)]
-    fn lane_load_frame_this<>(cx, r, ip, i, view) {
-        // An uninitialized `this` throws on the general path.
-        let Some(value) = (unsafe { lane_this(cx, r) }) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
 
 /// A lane record's register field as a staged operand: a lane field names a register of the
 /// running function, below `Operand::PAYLOAD_MASK`, so the operand's kind test folds away.
@@ -21716,7 +21689,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         Class::StoreName => Some(lane_store_name_first::<H>),
         Class::DefineArrayElement => Some(lane_define_array_element::<H>),
         Class::StoreLocal | Class::StoreEnvLocal => Some(lane_store_local::<H>),
-        Class::LoadThis => Some(lane_load_this::<H>),
         Class::LoadCallee => Some(lane_load_callee::<H>),
         Class::InitializeTdz => Some(lane_initialize_tdz::<H>),
         Class::CloneEnv => Some(lane_clone_env::<H>),
