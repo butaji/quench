@@ -2417,14 +2417,15 @@ impl<'a> Compiler<'a> {
         let mut visible = FxHashSet::default();
         let mut bindings = Vec::new();
         for (marker, slot) in scope.iter() {
-            let text = self.atoms[marker as usize].to_owned();
+            // Only a capture-prefixed name is copied: most scope entries are not captures.
             let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
-                text.strip_prefix(kind.capture_prefix())
-                    .map(|name| (kind, name))
+                self.atoms[marker as usize]
+                    .strip_prefix(kind.capture_prefix())
+                    .map(|name| (kind, name.to_owned()))
             }) else {
                 continue;
             };
-            let atom = self.atom(name);
+            let atom = self.atom(&name);
             if !visible.insert(atom) {
                 continue;
             }
@@ -2493,7 +2494,7 @@ impl<'a> Compiler<'a> {
         source_line_starts: std::borrow::Cow<'a, [usize]>,
         source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
     ) -> Self {
-        let atoms = CompilerAtoms::new(atom_prefix);
+        let atoms = CompilerAtoms::new(atom_prefix, source.len() / 32);
         Self {
             source,
             text,
