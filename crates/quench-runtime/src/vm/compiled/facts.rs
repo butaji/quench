@@ -387,7 +387,17 @@ fn transfer_observed(types: &mut [Type], instruction: WideInstruction, constants
 /// and every backedge must preserve the entry hypothesis. Rejecting one input
 /// removes that assumption from all dependent proofs on the next iteration.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitSet,
+pub(super) fn inductive_int32(initial: &mut [Type], candidates: CompoundBitSet,
+    body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
+    constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
+    own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
+    inductive(initial, candidates, Type::INT32, body, instructions, leaders, constants, written, own_shape, native_calls, observed)
+}
+
+/// `inductive_int32` for the header contract `required`: an int32, or a Number (an
+/// accumulator that enters as an int32 or a double and every definition keeps a Number).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn inductive(initial: &mut [Type], mut candidates: CompoundBitSet, required: Type,
     body: std::ops::RangeInclusive<usize>, instructions: &[WideInstruction], leaders: &CompoundBitSet,
     constants: &[Constant], written: &dyn Fn(WideInstruction) -> Vec<Register>,
     own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, native_calls: bool, observed: Observed<'_>) -> Option<Facts> {
@@ -395,15 +405,15 @@ pub(super) fn inductive_int32(initial: &mut [Type], mut candidates: CompoundBitS
     // work is bounded by candidate count, without a semantic iteration cap.
     while !candidates.is_empty() {
         let mut inputs = initial.to_vec();
-        for register in candidates.iter() { inputs[register] = Type::INT32; }
+        for register in candidates.iter() { inputs[register] = required; }
         let facts = analyze(*body.start(), &inputs, instructions, leaders, constants, written, own_shape, native_calls, Seeds::observing(observed));
         let mut rejected: CompoundBitSet = CompoundBitSet::with_capacity(initial.len());
         for register in candidates.iter() {
-            if !facts.backedge().get(register).is_some_and(|ty| ty.is_int32()) { rejected.insert(register); }
+            if !facts.backedge().get(register).is_some_and(|ty| ty.is_subtype(required)) { rejected.insert(register); }
         }
         facts.for_each_definition(instructions, leaders, constants, written, native_calls, |pc, register, ty| {
             let index = usize::from(register);
-            if body.contains(&pc) && candidates.contains(index) && !ty.is_int32() { rejected.insert(index); }
+            if body.contains(&pc) && candidates.contains(index) && !ty.is_subtype(required) { rejected.insert(index); }
         });
         if rejected.is_empty() {
             initial.copy_from_slice(&inputs);
