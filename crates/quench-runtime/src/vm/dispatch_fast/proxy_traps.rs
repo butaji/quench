@@ -135,7 +135,7 @@ fn lane_activate_trap<H: Host, const N: usize>(cx: *mut LaneContext<H>, r: Regis
 /// or fractional number, an object whose ToPropertyKey runs guest code).
 fn keyed_trap_atom<H: Host>(vm: &mut Vm<H>, key: Value) -> Option<crate::bytecode::Atom> {
     if let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) {
-        return Some(vm.lookup_array_index_atom(index).unwrap_or_else(|| vm.intern_atom(&index.to_string())));
+        return Some(vm.index_key_atom(index));
     }
     vm.string_key_atom(key)
 }

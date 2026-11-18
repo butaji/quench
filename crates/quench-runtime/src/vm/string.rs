@@ -453,12 +453,12 @@ impl<H: Host> Vm<H> {
                 vm.box_primitive_object(raw)?
             };
             vm.with_call_roots([raw], |vm| {
-                let atom = vm.intern_atom("length");
+                let atom = vm.length_atom;
                 let length = vm.get_property(p, raw, atom)?;
                 let length = vm.regexp_to_length_value(p, length)?;
                 let mut output = JsString::from_str("");
                 for index in 0..length {
-                    let atom = vm.intern_atom(&index.to_string());
+                    let atom = vm.index_key_atom(index);
                     let segment = vm.get_property(p, raw, atom)?;
                     let segment = vm.coerce_js_string(p, segment)?;
                     output.push_js_string(&segment);

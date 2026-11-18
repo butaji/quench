@@ -996,11 +996,7 @@ impl<H: Host> Vm<H> {
             | Native::IntlDateTimeFormatResolvedOptions => {
                 self.intl_date_time_format_native(p, native, this, args)
             }
-            Native::DateNow => Ok(Value::number(
-                HostContext::new(&mut self.host)
-                    .invoke(CapabilityId::ClockMillis, None)
-                    .trunc(),
-            )),
+            Native::DateNow => Ok(self.date_now()),
             Native::DateGetTime
             | Native::DateValueOf
             | Native::DateGetTimezoneOffset
@@ -1937,11 +1933,17 @@ impl<H: Host> Vm<H> {
         Some(self.heap.alloc_bigint(value))
     }
 
+    /// `Date.now()`: the host clock's milliseconds, truncated. It runs no guest code, so the
+    /// lane answers it in place (`steady_native_value`) as the native call does.
+    pub(super) fn date_now(&mut self) -> Value {
+        Value::number(HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None).trunc())
+    }
+
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by
     /// code units, which runs no guest code.
     pub(super) fn string_relation(&self, op: u32, left: Value, right: Value) -> Option<bool> {
         let (left, right) = (self.heap.string(left)?, self.heap.string(right)?);
-        let ordering = left.units().cmp(&right.units());
+        let ordering = left.order(right);
         NumberRelation::from_operator(op)?.of_ordering(ordering)
     }
 
@@ -2234,7 +2236,7 @@ impl<H: Host> Vm<H> {
                 .try_reserve(length)
                 .map_err(|_| self.type_error(p, "array-like list is too large".into()))?;
             for index in 0..length {
-                let atom = self.intern_atom(&index.to_string());
+                let atom = self.index_key_atom(index);
                 let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
                 if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
                     && !self.heap.is_string(element)

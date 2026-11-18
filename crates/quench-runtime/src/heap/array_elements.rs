@@ -500,6 +500,13 @@ impl ArrayElements {
         unsafe { self.header.as_ptr().cast::<u8>().add(VALUES_OFFSET).cast::<u64>() }
     }
 
+    /// A narrow backing's words (`Value::to_narrow`); `None` for any other backing.
+    #[inline]
+    pub(crate) fn narrow_words(&self) -> Option<&[u32]> {
+        // SAFETY: a narrow backing's first `len` words are initialized narrow values.
+        self.is_narrow().then(|| unsafe { std::slice::from_raw_parts(self.narrow_values(), self.len()) })
+    }
+
     #[inline(always)]
     fn narrow_values(&self) -> *const u32 {
         // SAFETY: as in `values`.

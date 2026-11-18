@@ -89,4 +89,97 @@ ops.k_dispatch = function (n) { const tasks = [new KernelTaskA(3), new KernelTas
 ops.k_json = function (n) { const o = { id: 0, name: "ab", ok: true }; let a = 0; for (let i = 0; i < n; i++) { o.id = i & 1023; const t = JSON.stringify(o); a = (a + JSON.parse(t).id + t.length) | 0; } return a; };
 ops.k_regexp = function (n) { const r = /o+x/, words = ["foox", "bar", "ox", "zoooox"]; let a = 0; for (let i = 0; i < n; i++) { if (r.test(words[i & 3])) a++; } return a; };
 ops.k_str_build = function (n) { let a = 0, s = ""; for (let i = 0; i < n; i++) { s += "k" + (i & 7); if ((i & 63) === 63) { a += s.length; s = ""; } } return a + s.length; };
+// Builtins that run no user code: one call's fixed cost (Date.now) and a dense search's cost
+// per element (includes / indexOf over 64 int32, about 40 elements read per call).
+ops.date_now = function (n) { let a = 0; for (let i = 0; i < n; i++) { a = (a + (Date.now() & 1)) | 0; } return a > -1 ? 1 : 0; };
+ops.arr_includes = function (n) { const arr = []; for (let j = 0; j < 64; j++) arr.push(j * 2); let a = 0; for (let i = 0; i < n; i++) { if (arr.includes(i & 127)) a++; } return a; };
+ops.arr_indexof = function (n) { const arr = []; for (let j = 0; j < 64; j++) arr.push(j * 2); let a = 0; for (let i = 0; i < n; i++) { a = (a + arr.indexOf(i & 127)) | 0; } return a; };
+// The twenty C-parity kernels (TOD-1807, scoreboard in crates/quench-tier-corpus/ir_budget.txt):
+// each isolates one mechanism, with a C twin in ops.c of the same work per iteration. Inner
+// loops run over 16 elements unless noted, so an iteration is a fixed amount of work.
+function kvFib(n) { return n < 2 ? n : (kvFib(n - 1) + kvFib(n - 2)) | 0; }
+function kvAdd(a, b) { return (a + b) | 0; }
+function KvNode(val, next) { this.val = val; this.next = next; }
+class KvRect { constructor(w, h) { this.w = w; this.h = h; } area() { return this.w * this.h; } }
+function kvGcd(a, b) { while (b !== 0) { const t = a % b; a = b; b = t; } return a; }
+ops.k01_sum_or = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + i) | 0; } return s; };
+ops.k02_fib = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = (s + kvFib(10)) | 0; } return s; };
+ops.k03_call_add = function (n) { let s = 0; for (let i = 0; i < n; i++) { s = kvAdd(s, i); } return s; };
+function kvDot(n, p) { let s = 0; for (let i = 0; i < n; i++) { s += p.x * p.x + p.y * p.y; } return s; }
+ops.k04_dot = function (n) { return kvDot(n, { x: 1.5, y: 2.25 }); };
+function kvFieldAdd(n, p, dx) { for (let i = 0; i < n; i++) { p.x += dx; } return p.x; }
+ops.k05_field_add = function (n) { return kvFieldAdd(n, { x: 0.5, y: 0 }, 0.25); };
+ops.k06_list = function (n) {
+  let head = null; for (let j = 15; j >= 0; j--) head = new KvNode(j, head);
+  let s = 0; for (let i = 0; i < n; i++) { let p = head; while (p) { s = (s + p.val) | 0; p = p.next; } } return s;
+};
+ops.k07_area = function (n) { const r = new KvRect(3, 4); let s = 0; for (let i = 0; i < n; i++) { s = (s + r.area()) | 0; } return s; };
+function kvEscape(n, a, b) { let s = 0; for (let i = 0; i < n; i++) { const v = { x: a.x + b.x, y: a.y + b.y }; s += v.x * v.y; } return s; }
+ops.k08_escape = function (n) { return kvEscape(n, { x: 1.5, y: 2 }, { x: 0.25, y: 3 }); };
+ops.k09_reduce = function (n) {
+  const arr = []; for (let j = 0; j < 16; j++) arr.push(j);
+  let s = 0; for (let i = 0; i < n; i++) { s = (s + arr.reduce((t, v) => t + v, 0)) | 0; } return s;
+};
+ops.k10_f64_sum = function (n) {
+  const a = new Float64Array(16); for (let j = 0; j < 16; j++) a[j] = j + 0.5;
+  let s = 0; for (let i = 0; i < n; i++) { for (let j = 0; j < a.length; j++) s += a[j]; } return s;
+};
+ops.k11_saxpy = function (n) {
+  const x = new Float64Array(16), y = new Float64Array(16); for (let j = 0; j < 16; j++) x[j] = j;
+  const k = 0.5; for (let i = 0; i < n; i++) { for (let j = 0; j < y.length; j++) y[j] += k * x[j]; } return y[15];
+};
+ops.k12_copy = function (n) {
+  const src = new Int32Array(16), dst = new Int32Array(16); for (let j = 0; j < 16; j++) src[j] = j;
+  let s = 0; for (let i = 0; i < n; i++) { src[i & 15] = i; for (let j = 0; j < src.length; j++) dst[j] = src[j]; s = (s + dst[i & 15]) | 0; } return s;
+};
+ops.k13_matmul = function (n) {
+  const N = 4, a = new Float64Array(16), b = new Float64Array(16), c = new Float64Array(16);
+  for (let j = 0; j < 16; j++) { a[j] = j * 0.25; b[j] = 1 - j * 0.125; }
+  for (let r = 0; r < n; r++) {
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { let t = 0; for (let k = 0; k < N; k++) t += a[i * N + k] * b[k * N + j]; c[i * N + j] = t; }
+    a[r & 15] = (r & 7) * 0.125;
+  }
+  return c[5];
+};
+ops.k14_bsearch = function (n) {
+  const a = new Int32Array(64); for (let j = 0; j < 64; j++) a[j] = j * 2;
+  let s = 0; for (let i = 0; i < n; i++) { const key = (i * 7) & 127; let lo = 0, hi = a.length; while (lo < hi) { const mid = (lo + hi) >>> 1; if (a[mid] < key) lo = mid + 1; else hi = mid; } s = (s + lo) | 0; } return s;
+};
+ops.k15_isort = function (n) {
+  const a = new Int32Array(8); let s = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < 8; j++) a[j] = ((j * 5 + i) & 7) * 3;
+    for (let j = 1; j < a.length; j++) { const v = a[j]; let k = j - 1; while (k >= 0 && a[k] > v) { a[k + 1] = a[k]; k--; } a[k + 1] = v; }
+    s = (s + a[i & 7]) | 0;
+  }
+  return s;
+};
+ops.k16_sieve = function (n) {
+  const f = new Uint8Array(64); let s = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < 64; j++) f[j] = 0;
+    for (let p = 2; p * p < 64; p++) if (f[p] === 0) for (let m = p * p; m < 64; m += p) f[m] = 1;
+    s = (s + f[i & 63]) | 0;
+  }
+  return s;
+};
+ops.k17_hash = function (n) {
+  const str = "abcdefghijklmnop"; let h = 0;
+  for (let i = 0; i < n; i++) { for (let j = 0; j < str.length; j++) h = (Math.imul(h, 31) + str.charCodeAt(j)) | 0; } return h;
+};
+ops.k18_math = function (n) {
+  let s = 0;
+  for (let i = 0; i < n; i++) { const x = i * 0.5 + 0.25; s += Math.sqrt(x) + Math.abs(x - 100) + Math.floor(x) + Math.clz32(i) + (i >>> 3); } return s;
+};
+ops.k19_gcd = function (n) { let s = 0; for (let i = 0; i < n; i++) { const a = (i & 1023) + 1000; s = (s + kvGcd(a, 360) + ((a / 7) | 0)) | 0; } return s; };
+ops.k20_switch = function (n) {
+  const code = new Uint8Array(16); for (let j = 0; j < 16; j++) code[j] = (j * 7 + 3) & 3;
+  let acc = 1;
+  for (let i = 0; i < n; i++) {
+    for (let pc = 0; pc < code.length; pc++) {
+      switch (code[pc]) { case 0: acc = (acc + 1) | 0; break; case 1: acc = acc ^ 0x5a; break; case 2: acc = (acc * 3) | 0; break; case 3: acc = acc >> 1; break; }
+    }
+  }
+  return acc;
+};
 globalThis.PRIMITIVE_OPS = ops;

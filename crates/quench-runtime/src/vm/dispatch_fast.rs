@@ -673,7 +673,7 @@ pub(super) use body_calls::{lane_body_call, lane_body_construct};
 mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(super) mod operand_feedback;
-use operand_feedback::{has_operand_feedback, note_bigint_kinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, note_widened, Records};
+use operand_feedback::{has_operand_feedback, note_kind, OperandKinds, note_first_miss, note_number_kinds, note_operands, note_pair_result, note_widened, Records};
 #[path = "lane_body_tier.rs"]
 mod lane_body_tier;
 #[path = "loop_tier.rs"]
@@ -2450,6 +2450,17 @@ impl LaneStack {
         self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
+    /// Retires everything this stack resolved before the collection that ended under `key`
+    /// (the new epoch and the realm): call targets, function targets and read memos name
+    /// callees, environments and storages the collection may have swept, whose heap indices
+    /// the next allocations reuse. The collector calls it, so a lane run that continues past
+    /// any call out that collected (a native such as `gc()`, a host callback, an allocation
+    /// that made a collection due) never admits a target of a swept closure whose index a
+    /// new closure took: its depth-0 captures would read the dead closure's storage.
+    pub(super) fn retire_after_collection(&mut self, key: (u64, Value)) {
+        self.enter_generation(key);
+    }
+
     fn enter_generation(&mut self, key: (u64, Value)) {
         if self.generation == NO_SCRIPT_GENERATION || self.generation_key != key {
             self.generation = self.generation.wrapping_add(1);
@@ -2534,7 +2545,41 @@ pub(super) struct LaneNativeCall {
 #[repr(C)]
 struct LaneBinding {
     resume: unsafe fn(*mut ()),
+    /// Drops what the context resolved under the collection epoch before
+    /// (`retire_lane_binding`), for its owning Host.
+    retire: unsafe fn(*mut ()),
     object_base: *const Object,
+}
+
+/// Drops the storage pointers a lane context resolved before a collection, as
+/// `lane_after_nested_collection` does after an in-place operation collected: the run's
+/// capture storage (whose `CAPTURE_STORES` tag let stores skip the barrier until the next
+/// collection), its last outer capture walk, a frame's captured-locals storage and a Wasm
+/// instance's slots. Each is found again by the path that found it first. The context's
+/// stack is retired by the collector itself (`LaneStack::retire_after_collection`).
+unsafe fn retire_lane_binding<H: Host>(context: *mut ()) {
+    let cx = context.cast::<LaneContext<H>>();
+    // SAFETY: the prefix's callback was installed for this context's Host; the context is
+    // live while it is the thread's running or a suspended outer one.
+    unsafe {
+        (*cx).registers.set_capture(std::ptr::null());
+        (*cx).outer = NO_OUTER_WALK;
+        (*cx).frame_storage = NO_FRAME_STORAGE;
+        (*cx).instance_slots = (Value::DELETED, std::ptr::null());
+    }
+}
+
+/// Retires the thread's running lane context after a collection ran under it: a native call
+/// out of the lane (`gc()`, a host callback) or an allocation that made one due. The run
+/// continues past the call with nothing it resolved under the epoch before.
+pub(super) fn retire_running_lane_context() {
+    let cx = tls_lane_context();
+    if cx.is_null() {
+        return;
+    }
+    // SAFETY: every active context has the repr(C) `LaneBinding` prefix, whose callback
+    // owns its actual Host type.
+    unsafe { (cx.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(cx) };
 }
 
 unsafe fn resume_lane_binding<H: Host>(context: *mut ()) {
@@ -4065,12 +4110,8 @@ fn lane_in_place<H: Host, T>(
 fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
     let vm = unsafe { vm(cx) };
     vm.lane_stack.enter_generation((vm.heap.collection_epoch(), vm.realm.globals));
-    unsafe {
-        (*cx).registers.set_capture(std::ptr::null());
-        (*cx).outer = NO_OUTER_WALK;
-        (*cx).frame_storage = NO_FRAME_STORAGE;
-        (*cx).instance_slots = (Value::DELETED, std::ptr::null());
-    }
+    // SAFETY: `cx` is the running context, of this Host.
+    unsafe { retire_lane_binding::<H>(cx.cast()) };
 }
 
 script_handler! {
@@ -5147,18 +5188,44 @@ script_handler! {
     }
 }
 
+/// `lane_value_jump`'s `OP` of a comparison record (`lane_relation_value`), whose operator
+/// the record carries.
+const RELATION_VALUE: u32 = u32::MAX;
+
 script_handler! {
-    /// `lane_relation_value` whose next record branches on the boolean it writes
-    /// (`lane_jump_false`, or `lane_jump_true` where `WHEN`; `specialize_relation_jumps`), a
-    /// comparison kept as a value and also tested, as `return (s & HELD) != 0 || ...`: the
-    /// comparison, its value and the branch as one record. Any other pair takes the value's
-    /// own path, which continues at the jump record.
-    fn lane_relation_value_jump<CONSTANT: bool, BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
-        let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
-        let Some(holds) = super::operations::integer_relation(operator, left, right) else {
-            sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
+    /// A value record whose next record branches on the value it writes (`lane_jump_false`, or
+    /// `lane_jump_true` where `WHEN`; `specialize_value_jumps`): the value, its register write
+    /// and the branch as one record. `OP` is `RELATION_VALUE` for an integer comparison kept as
+    /// a value and also tested (`lane_relation_value`, as `return (s & HELD) != 0 || ...`), else
+    /// the integer bitwise or remainder operator of a `lane_operator_integer_constant` record
+    /// (`if (i & 3)`, whose canonical bytecode keeps the operator and the test apart). Any other
+    /// operand takes the value's own path, which continues at the jump record. Without `WRITE`
+    /// the value's register is dead past the jump (`specialize_value_jumps`), so only the branch
+    /// reads the value.
+    fn lane_value_jump<CONSTANT: bool, BACKWARD: bool, WHEN: bool, OP: u32, WRITE: bool>(cx, r, ip, i, view) {
+        let holds = if OP == RELATION_VALUE {
+            let (operator, left, right) = lane_relation_operands::<CONSTANT>(r, i);
+            let Some(holds) = super::operations::integer_relation(operator, left, right) else {
+                sibling!(lane_relation_value_other::<H, CONSTANT>, r, ip, Carried::script_in(cx, view))
+            };
+            if WRITE {
+                r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
+            }
+            holds
+        } else {
+            let Some(value) = r.int(i.b).and_then(|left| super::operations::integer_pair_operator::<OP>(left, i.imm() as i32))
+            else {
+                sibling!(lane_operator_integer_constant_first_miss::<H, OP>, r, ip, Carried::script_in(cx, view))
+            };
+            if WRITE {
+                r.set(i.a, value);
+            }
+            // A bitwise result of two integers is an integer; a remainder may be -0 (`-8 % 4`).
+            match value.as_int() {
+                Some(integer) => integer != 0,
+                None => value.as_number().is_some_and(|number| number != 0.0 && !number.is_nan()),
+            }
         };
-        r.set(i.a, if holds { Value::TRUE } else { Value::FALSE });
         let jump_ip = following(ip);
         if holds == WHEN {
             resume!(cx, lane_jump::<H>(r, jump_ip, BACKWARD, Carried::script_in(cx, view), None));
@@ -5208,13 +5275,26 @@ script_handler! {
         if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION)
             && let Some((left, left_int)) = r.number_kind(i.b)
             && let Some((right, right_int)) = r.number_kind(i.c)
-            && let Some(number) = super::operations::number_operator::<OP>(left, right)
         {
-            let value = Value::number(number);
-            // SAFETY: an arithmetic record of the running view; only two int32 can widen.
-            if left_int && right_int { unsafe { note_widened(cx, ip, value) } }
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
+            // Two int32 again, as a site that met a double once mostly sees afterwards
+            // (`-a + i` after its one `-0`): the checked int32 step, which widens itself,
+            // in place of the round trip through doubles. Only two int32 can widen.
+            if left_int && right_int {
+                let value = if OP == DIVISION {
+                    super::operations::number_operator::<OP>(left, right).map(Value::number)
+                } else {
+                    super::operations::integer_pair_operator::<OP>(r.i32(i.b), r.i32(i.c))
+                };
+                if let Some(value) = value {
+                    // SAFETY: an arithmetic record of the running view.
+                    unsafe { note_widened(cx, ip, value) };
+                    r.set(i.a, value);
+                    next!(cx, r, following(ip), Carried::script_in(cx, view))
+                }
+            } else if let Some(number) = super::operations::number_operator::<OP>(left, right) {
+                r.set(i.a, Value::number(number));
+                next!(cx, r, following(ip), Carried::script_in(cx, view))
+            }
         }
         let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c))
         else {
@@ -5282,7 +5362,7 @@ script_handler! {
             && let Some(value) = lane_bigint_value(cx, OP, left, right)
         {
             // SAFETY: the record is an arithmetic record of the running view.
-            unsafe { note_bigint_kinds(cx, ip) };
+            unsafe { note_kind(cx, ip, OperandKinds::BIGINT) };
             r.set(i.a, value);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
@@ -6063,6 +6143,20 @@ script_handler! {
     #[inline(never)]
     fn lane_set_index_proved_miss<>(cx, r, ip, i, view) {
         if !lane_proved_heap_store(cx, r, i) {
+            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
+        }
+        // A site that stores a heap value stores heap values: it tries that store first from now.
+        requicken::<H>(ip, lane_set_index_proved_heap::<H>);
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
+    /// `lane_set_index_proved` of a site whose stores are heap values (`arr[i] = o`), as
+    /// `lane_set_index_proved_miss` found: the admitted heap store first, then the immediate
+    /// one, else `lane_proof_miss`. One record, not the immediate store's miss and this.
+    fn lane_set_index_proved_heap<>(cx, r, ip, i, view) {
+        if !lane_proved_heap_store(cx, r, i) && lane_proved_store(cx, r, i).is_none() {
             sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -7490,7 +7584,9 @@ script_handler! {
                 // A live hint another receiver of this site answers stays: rewriting it at
                 // every receiver switch re-marked and re-watched the prototype each time
                 // (V8-v7 Richards: 0.71M rewrites, 5% of its run).
-                if matches!(hit, super::object::PolymorphicHit::Holder) {
+                // SAFETY: `ip` is this live `GetField` record.
+                let kept = unsafe { (*ip).operand.field.shape == HOLDER_HINT && vm.holder_hint_live((*ip).call_link.get()) };
+                if matches!(hit, super::object::PolymorphicHit::Holder) && !kept {
                     set_prototype_hint(ip, |owned| {
                         if owned.is_some_and(|index| vm.holder_hint_live(index)) {
                             return None;
@@ -7906,7 +8002,7 @@ script_handler! {
     /// `lane_get_length`.
     fn lane_get_length_typed<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(length) = vm.typed_array_geometry_read(r.get(i.b), vm.length_atom) else {
+        let Some(length) = vm.typed_array_geometry_read_inline(r.get(i.b), vm.length_atom) else {
             sibling!(lane_get_length::<H>, r, ip, view)
         };
         r.set(i.a, length);
@@ -9612,8 +9708,25 @@ script_handler! {
     /// path. Out of line, so the integer case keeps few values live.
     #[inline(never)]
     fn lane_jump_binary_false_registers_other<BACKWARD: bool, OP: u32>(cx, r, ip, i, view) {
+        let (left, right) = (r.get(i.b), r.get(i.c));
+        // Two string records under an ordering operator: their code-unit order decides, the
+        // first answer `lane_relation_other` gives the pair, and the pair is no Number one
+        // for `requicken_number_relation` to move.
+        if left.direct_string_index().is_some()
+            && right.direct_string_index().is_some()
+            && let operator = relation_operator::<OP>(i)
+            && super::operations::NumberRelation::from_operator(operator).is_some()
+            && let Some(holds) = unsafe { vm(cx) }.string_relation(operator, left, right)
+        {
+            // SAFETY: the record is a comparison record of the running view.
+            unsafe { note_kind(cx, ip, OperandKinds::STRING) };
+            if !holds {
+                resume!(cx, lane_jump::<H>(r, ip, BACKWARD, Carried::script_in(cx, view), None));
+            }
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         // SAFETY: the record is a comparison record of the running view.
-        unsafe { note_operands(cx, ip, r.get(i.b), r.get(i.c)) };
+        unsafe { note_operands(cx, ip, left, right) };
         // SAFETY: as above.
         unsafe { requicken_number_relation::<H, BACKWARD, OP, false, false>(cx, ip, r.get(i.b), r.get(i.c)) };
         let Some(holds) = lane_relation::<H>(relation_operator::<OP>(i), r.get(i.b), r.get(i.c)) else {
@@ -9940,6 +10053,14 @@ fn lane_relation_other<H: Host>(operator: u32, left: Value, right: Value) -> Opt
             || (right.is_null() || right.is_undefined()) && left.as_number().is_some())
     {
         return Some(matches!(operator, 1 | STRICT_INEQUALITY_OPERATOR));
+    }
+    // An ordering operator (`<`, `<=`, `>`, `>=`) is decided by its operand pair alone: the
+    // membership, prototype and identity tests below never answer it.
+    if super::operations::NumberRelation::from_operator(operator).is_some() {
+        return vm.string_relation(operator, left, right)
+            .or_else(|| vm.bigint_relation(operator, left, right))
+            .or_else(|| vm.primitive_comparison(operator, left, right))
+            .or_else(|| vm.number_binary(operator, left, right)?.truthiness());
     }
     vm.instanceof_truthy(operator, left, right)
         .or_else(|| vm.plain_in(operator, left, right))
@@ -15924,6 +16045,7 @@ impl<H: Host> Vm<H> {
             Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean),
             Native::JsonStringify => self.json_stringify_plain_call(args),
+            Native::DateNow => Some(self.date_now()),
             _ => None,
         }
     }
@@ -22870,7 +22992,7 @@ fn derive_lane_view<'live, H: Host>(
         specialize_script_calls::<H>(&mut records, function.undefined_register);
         specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
         specialize_moved_index_reads::<H>(&mut records);
-        specialize_relation_jumps::<H>(&mut records);
+        specialize_value_jumps::<H>(&decoded, &mut records, live().map(|masks| &**masks));
         specialize_array_literals::<H>(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
@@ -23720,6 +23842,7 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
         (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
         (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
         (lane_set_index::<H> as Handler, lane_set_index_proved::<H> as Handler, 0),
+        (lane_set_index::<H> as Handler, lane_set_index_proved_heap::<H> as Handler, 0),
         (lane_set_index_move::<H> as Handler, lane_set_index_move_proved::<H> as Handler, 0),
     ]
     .into_iter()
@@ -23799,30 +23922,66 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
     }
 }
 
-/// Gives each integer comparison kept as a value (`lane_relation_value`) whose next record
-/// branches on that value (`lane_jump_false`, `lane_jump_true`) the fused comparison and branch
-/// (`lane_relation_value_jump`). The jump record stays, for jumps that enter it and for the
-/// comparisons the fused record leaves to the value's own path.
-fn specialize_relation_jumps<H: Host>(records: &mut [LaneInstruction]) {
+/// Gives each integer comparison kept as a value (`lane_relation_value`), and each integer
+/// bitwise or remainder operator with an integer constant (`lane_operator_integer_constant`),
+/// whose next record branches on that value (`lane_jump_false`, `lane_jump_true`) the fused
+/// value and branch (`lane_value_jump`). The jump record stays, for jumps that enter it and for
+/// the operands the fused record leaves to the value's own path.
+fn specialize_value_jumps<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+    use super::operations::{BITWISE_AND, BITWISE_OR, BITWISE_XOR, REMAINDER, SHIFT_LEFT, SHIFT_RIGHT};
+    macro_rules! fused {
+        ($constant:literal, $op:expr, $write:literal) => {
+            [
+                lane_value_jump::<H, $constant, false, false, { $op }, $write> as Handler,
+                lane_value_jump::<H, $constant, true, false, { $op }, $write>,
+                lane_value_jump::<H, $constant, false, true, { $op }, $write>,
+                lane_value_jump::<H, $constant, true, true, { $op }, $write>,
+            ]
+        };
+    }
+    macro_rules! integer_constant {
+        ($($op:ident),*) => {
+            [$((lane_operator_integer_constant::<H, $op> as Handler as *const (), fused!(true, $op, true), fused!(true, $op, false)),)*]
+        };
+    }
+    // Per value handler: the fused records that write the value, and those that may not.
+    let values: [(*const (), [Handler; 4], [Handler; 4]); 8] = {
+        let [a, b, c, d, e, f] = integer_constant!(BITWISE_AND, BITWISE_OR, BITWISE_XOR, REMAINDER, SHIFT_LEFT, SHIFT_RIGHT);
+        let relation = |constant: bool| -> (*const (), [Handler; 4], [Handler; 4]) {
+            if constant {
+                (lane_relation_value::<H, true> as Handler as *const (), fused!(true, RELATION_VALUE, true), fused!(true, RELATION_VALUE, false))
+            } else {
+                (lane_relation_value::<H, false> as Handler as *const (), fused!(false, RELATION_VALUE, true), fused!(false, RELATION_VALUE, false))
+            }
+        };
+        [relation(false), relation(true), a, b, c, d, e, f]
+    };
+    let jumps: [*const (); 4] = [
+        lane_jump_false::<H, false> as Handler as *const (),
+        lane_jump_false::<H, true> as Handler as *const (),
+        lane_jump_true::<H, false> as Handler as *const (),
+        lane_jump_true::<H, true> as Handler as *const (),
+    ];
     for pc in 0..records.len().saturating_sub(1) {
         let (value, jump) = (&records[pc], &records[pc + 1]);
-        let Some(constant) = [false, true].into_iter().find(|&constant| {
-            value.handler == if constant { lane_relation_value::<H, true> as Handler } else { lane_relation_value::<H, false> as Handler } as *const ()
-        }) else {
-            continue;
-        };
         if jump.a != value.a {
             continue;
         }
-        let tests: [(*const (), Handler); 4] = [
-            (lane_jump_false::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, false> } else { lane_relation_value_jump::<H, false, false, false> }),
-            (lane_jump_false::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, false> } else { lane_relation_value_jump::<H, false, true, false> }),
-            (lane_jump_true::<H, false> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, false, true> } else { lane_relation_value_jump::<H, false, false, true> }),
-            (lane_jump_true::<H, true> as Handler as *const (), if constant { lane_relation_value_jump::<H, true, true, true> } else { lane_relation_value_jump::<H, false, true, true> }),
-        ];
-        if let Some(&(_, fused)) = tests.iter().find(|(handler, _)| *handler == jump.handler) {
-            records[pc].handler = fused as *const ();
-        }
+        let Some(&(_, writes, reads)) = values.iter().find(|(handler, _, _)| *handler == value.handler) else {
+            continue;
+        };
+        let Some(index) = jumps.iter().position(|&handler| handler == jump.handler) else {
+            continue;
+        };
+        // Dead past the jump: neither successor of the jump record (the next record, the jump's
+        // target) has the value live before it.
+        let dead_before = |at: usize| {
+            live.and_then(|masks| masks.get(at))
+                .is_some_and(|before| crate::compile::liveness::register_dead(before, usize::from(value.a)))
+        };
+        let target = decoded[pc + 1].imm() as usize;
+        let dead = dead_before(pc + 2) && dead_before(target);
+        records[pc].handler = if dead { reads[index] } else { writes[index] } as *const ();
     }
 }
 

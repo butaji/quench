@@ -31,23 +31,30 @@ pub(crate) const SHORT_UNITS_OFFSET: u64 = (offset_of!(ShortForm, text) + offset
 pub(crate) const SHARED_POINTER_OFFSET: i32 = offset_of!(SharedForm<str>, storage) as i32;
 pub(crate) const SHARED_LENGTH_OFFSET: i32 = SHARED_POINTER_OFFSET + size_of::<usize>() as i32;
 /// How far into that allocation the units start: where `Rc::as_ptr` points from the pointer the
-/// record keeps (a probe of the compiler's own `Rc`, never a literal). Bytes and UTF-16 units
-/// start at the same distance, which the probe asserts.
+/// record keeps. A constant, so a string read folds it into its address; a test probes the
+/// compiler's own `Rc` for both bytes and UTF-16 units.
+#[inline(always)]
 pub(crate) fn shared_units_offset() -> u64 {
-    static OFFSET: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *OFFSET.get_or_init(|| {
-        let ascii: Rc<str> = Rc::from("probe");
-        let wide: Rc<[u16]> = Rc::from([u16::from(b'a'), u16::from(b'b')]);
-        let distance = |data: *const u8, handle: *const u8| {
-            // SAFETY: a handle starts with the pointer to its allocation, which `SharedForm` places.
-            let allocation = unsafe { (handle as *const usize).read() };
-            data as usize - allocation
-        };
-        let (narrow, units) = (distance(Rc::as_ptr(&ascii) as *const u8, &ascii as *const Rc<str> as *const u8),
-            distance(Rc::as_ptr(&wide) as *const u8, &wide as *const Rc<[u16]> as *const u8));
-        assert_eq!(narrow, units, "both storages start at one distance");
-        narrow as u64
-    })
+    SHARED_UNITS_OFFSET
+}
+
+/// `Rc`'s allocation is `#[repr(C)] RcInner { strong, weak, value }`, so units of an
+/// alignment no larger than a word start two words in; the test `shared_units_offset_matches_rc`
+/// probes the compiler's own `Rc` against it.
+const SHARED_UNITS_OFFSET: u64 = 2 * size_of::<usize>() as u64;
+
+#[cfg(test)]
+#[test]
+fn shared_units_offset_matches_rc() {
+    let ascii: Rc<str> = Rc::from("probe");
+    let wide: Rc<[u16]> = Rc::from([u16::from(b'a'), u16::from(b'b')]);
+    let distance = |data: *const u8, handle: *const u8| {
+        // SAFETY: a handle starts with the pointer to its allocation, which `SharedForm` places.
+        let allocation = unsafe { (handle as *const usize).read() };
+        (data as usize - allocation) as u64
+    };
+    assert_eq!(distance(Rc::as_ptr(&ascii) as *const u8, &ascii as *const Rc<str> as *const u8), SHARED_UNITS_OFFSET);
+    assert_eq!(distance(Rc::as_ptr(&wide) as *const u8, &wide as *const Rc<[u16]> as *const u8), SHARED_UNITS_OFFSET);
 }
 
 const _: () = assert!(offset_of!(SharedForm<str>, storage) == offset_of!(SharedForm<[u16]>, storage));

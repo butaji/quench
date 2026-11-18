@@ -147,7 +147,7 @@ impl<H: Host> Vm<H> {
         // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
         // that atom (`string_key_atom`) instead of parsing it.
         if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
-            let atom = self.lookup_array_index_atom(index).unwrap_or_else(|| self.intern_atom(&index.to_string()));
+            let atom = self.index_key_atom(index);
             return Ok(self.atom_string(atom));
         }
         let text = self.coerce_js_string(program, primitive)?;

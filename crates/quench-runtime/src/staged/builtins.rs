@@ -29,6 +29,7 @@ pub(crate) enum UnitWidth {
 }
 
 impl UnitWidth {
+    #[inline(always)]
     const fn bytes(self) -> u64 {
         match self {
             Self::Narrow => size_of::<u8>() as u64,

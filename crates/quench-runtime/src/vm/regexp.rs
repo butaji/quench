@@ -643,7 +643,7 @@ impl<H: Host> Vm<H> {
                     let mut next_source = 0;
                     for result in results {
                         vm.with_call_roots([result], |vm| {
-                            let atom = vm.intern_atom("length");
+                            let atom = vm.length_atom;
                             let length = vm.get_property(p, result, atom)?;
                             let length = vm.regexp_to_length_value(p, length)?;
                             let atom = vm.intern_atom("0");
@@ -658,7 +658,7 @@ impl<H: Host> Vm<H> {
                                 position.max(0.0).min(input.units().len() as f64) as usize;
                             let mut captures = Vec::new();
                             for index in 1..length {
-                                let atom = vm.intern_atom(&index.to_string());
+                                let atom = vm.index_key_atom(index);
                                 let capture = vm.get_property(p, result, atom)?;
                                 let capture = if capture.is_undefined() {
                                     capture
@@ -1533,7 +1533,7 @@ impl<H: Host> Vm<H> {
                         );
                     }
                     let last_index_atom = vm.intern_atom("lastIndex");
-                    let length_atom = vm.intern_atom("length");
+                    let length_atom = vm.length_atom;
                     let mut p_index = 0usize;
                     let mut q = 0usize;
                     while q < size {
@@ -1568,7 +1568,7 @@ impl<H: Host> Vm<H> {
                             let length = vm.get_property(p, result, length_atom)?;
                             let captures = vm.regexp_to_length_value(p, length)?.saturating_sub(1);
                             for index in 1..=captures {
-                                let atom = vm.intern_atom(&index.to_string());
+                                let atom = vm.index_key_atom(index);
                                 let capture = vm.get_property(p, result, atom)?;
                                 if vm.append_fresh_array_element(array, capture) >= limit {
                                     return Ok((end, true));

@@ -1147,7 +1147,7 @@ impl<H: Host> Vm<H> {
         let entry = self.typed_views.entry(object);
         // `fill_typed_view` clamps the count to `i32::MAX`: a longer view takes the full read.
         (entry.view == object.to_bits() && entry.epoch == crate::heap::view_epoch() && entry.length < i32::MAX as usize)
-            .then(|| Value::number(entry.length as f64))
+            .then(|| Value::length(entry.length))
     }
 
     /// The element of the typed array `object` at `key` from its cached entry
