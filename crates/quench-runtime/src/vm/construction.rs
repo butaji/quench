@@ -451,9 +451,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// A closure's object allocated finished: its own `length`, `name` and `prototype` under
-    /// `shape`, as the recorded adds would leave them, inline where they fit, else in the
-    /// property arena. Inline: a closure's making is mostly this, and its object returns
-    /// through no temporary.
+    /// `shape`, as the recorded adds would leave them, inline where they fit and have narrow
+    /// forms, else in the property arena. Inline: a closure's making is mostly this, and its
+    /// object returns through no temporary. A wide value takes the arena rather than boxing
+    /// `ObjectExtras` (`with_property_storage` has no arena of its own to widen into).
     #[inline(always)]
     pub(super) fn finished_closure_object(
         &mut self,
@@ -463,11 +464,14 @@ impl<H: Host> Vm<H> {
         prototype: Option<Value>,
     ) -> crate::heap::Object {
         if finished_closure_fits(prototype) {
-            return crate::heap::Object::with_property_storage(
-                function_prototype,
-                crate::value_vec::ValueVec::inline_property_storage(shape),
-                finished_closure_slots(&named, prototype),
-            );
+            let slots = finished_closure_slots(&named, prototype);
+            if crate::heap::Object::inline_values_narrow(&slots) {
+                return crate::heap::Object::with_property_storage(
+                    function_prototype,
+                    crate::value_vec::ValueVec::inline_property_storage(shape),
+                    slots,
+                );
+            }
         }
         let [length, name] = named;
         let values: [Value; FINISHED_CLOSURE_SLOTS] = [length, name, prototype.unwrap_or(Value::UNDEFINED)];
