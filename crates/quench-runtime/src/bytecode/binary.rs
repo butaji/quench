@@ -252,6 +252,7 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     write_declared_types(&mut out, program.declared_types.as_deref());
     let mut header = out;
     let mut out = BinaryWriter::with_atoms(atoms);
+    out.bytes.reserve(program.functions.len() * ESTIMATED_RECORD_BYTES);
     out.u32(program.constants.len() as u32);
     for value in &program.constants {
         match value {
@@ -332,14 +333,10 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
         if let Some(record) = unlowered {
             let enclosing = enclosing_names_static(program, &static_names, record.parent);
             let names_static = record.own_names_resolve_statically(program) && enclosing;
-            let body = std::mem::take(&mut out.bytes);
             out.unlowered = true;
-            write_function(&mut out, &record, &program.superinstructions, 0);
+            let span = append_to(&mut out, &mut region, |out| write_function(out, &record, &program.superinstructions, 0));
             out.unlowered = false;
-            let bytes = std::mem::replace(&mut out.bytes, body);
-            let start = region.len();
-            region.extend_from_slice(&bytes);
-            write_deferred_entry(&mut out, &region, start..region.len());
+            write_deferred_entry(&mut out, &region, span);
             static_names.push(names_static);
             continue;
         }
@@ -352,26 +349,21 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
                 write_deferred_entry(&mut out, &region, record);
                 names_static
             }
-            None => {
-                let body = std::mem::take(&mut out.bytes);
-                let names_static = program.with_record(index, |record| {
-                    let names_static = *record.static_name_scope.get_or_init(|| {
-                        record.own_names_resolve_statically(program)
-                            && enclosing_names_static(program, &static_names, record.parent)
-                    });
-                    let facts = record.derived_facts(program, names_static);
-                    write_function(&mut out, record, &program.superinstructions, facts);
-                    names_static
+            None if deferred => {
+                let mut names_static = false;
+                let span = append_to(&mut out, &mut region, |out| {
+                    names_static = write_record(program, index, &static_names, out);
                 });
-                let record = std::mem::replace(&mut out.bytes, body);
-                if deferred {
-                    let start = region.len();
-                    region.extend_from_slice(&record);
-                    write_deferred_entry(&mut out, &region, start..region.len());
-                } else {
-                    out.u32(u32::try_from(record.len()).expect("a function record fits u32 bytes"));
-                    out.bytes.extend_from_slice(&record);
-                }
+                write_deferred_entry(&mut out, &region, span);
+                names_static
+            }
+            None => {
+                // The root's record follows its length, which is backpatched once it is written.
+                let length_at = out.bytes.len();
+                out.u32(0);
+                let names_static = write_record(program, index, &static_names, &mut out);
+                let length = u32::try_from(out.bytes.len() - length_at - size_of::<u32>()).expect("a function record fits u32 bytes");
+                out.bytes[length_at..length_at + size_of::<u32>()].copy_from_slice(&length.to_le_bytes());
                 names_static
             }
         };
@@ -881,6 +873,30 @@ fn decode_program(
 
 /// The body's entry for a deferred record, `record` of `region`: its length, its place and its
 /// checksum, which a decoder checks as it decodes the record (`decode_deferred_function`).
+/// Runs `write` with `target` as `out`'s bytes, so what it writes appends to `target` where it
+/// stays; returns the span it took there. A record is encoded in place, not copied from a buffer.
+fn append_to(out: &mut BinaryWriter, target: &mut Vec<u8>, write: impl FnOnce(&mut BinaryWriter)) -> std::ops::Range<usize> {
+    std::mem::swap(&mut out.bytes, target);
+    let start = out.bytes.len();
+    write(out);
+    let end = out.bytes.len();
+    std::mem::swap(&mut out.bytes, target);
+    start..end
+}
+
+/// Writes function `index`'s record (`write_function`) at the end of `out`, and returns whether
+/// its names resolve statically, given the facts of the functions encoded before it.
+fn write_record(program: &super::ResidualProgram, index: usize, static_names: &[bool], out: &mut BinaryWriter) -> bool {
+    program.with_record(index, |record| {
+        let names_static = *record.static_name_scope.get_or_init(|| {
+            record.own_names_resolve_statically(program) && enclosing_names_static(program, static_names, record.parent)
+        });
+        let facts = record.derived_facts(program, names_static);
+        write_function(out, record, &program.superinstructions, facts);
+        names_static
+    })
+}
+
 fn write_deferred_entry(out: &mut BinaryWriter, region: &[u8], record: std::ops::Range<usize>) {
     out.u32(u32::try_from(record.len()).expect("a function record fits u32 bytes"));
     out.u32(u32::try_from(record.start).expect("deferred records fit u32 bytes"));
@@ -1183,9 +1199,13 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         if out.packed || out.unlowered {
             return;
         }
-        let plain = match function.plain_locals.get() {
-            Some(words) => words.to_vec(),
-            None => function.plain_local_slots(superinstructions).words().to_vec(),
+        let computed;
+        let plain: &[u64] = match function.plain_locals.get() {
+            Some(words) => &words[..],
+            None => {
+                computed = function.plain_local_slots(superinstructions);
+                computed.words()
+            }
         };
         for byte in 0..usize::from(function.locals).div_ceil(u8::BITS as usize) {
             out.u8((plain[byte / 8] >> (byte % 8 * 8)) as u8);
@@ -1554,6 +1574,13 @@ pub(super) fn deferred_record_bytes(records: &super::EncodedRecords, index: usiz
     records.bytes.as_ref().as_ref().get(start..start + record.length as usize)
 }
 
+/// A lowered instruction's fixed-width record: four `u16` fields and a `u32` immediate.
+const INSTRUCTION_BYTES: usize = 4 * size_of::<u16>() + size_of::<u32>();
+
+/// The bytes a function record takes on average, which `encode_program` reserves for the body
+/// up front. An estimate: a larger record grows the buffer as it always did.
+const ESTIMATED_RECORD_BYTES: usize = 256;
+
 pub(super) struct BinaryWriter {
     pub(super) bytes: Vec<u8>,
     atoms: AtomEncoding,
@@ -1606,22 +1633,32 @@ impl BinaryWriter {
     fn atom_pair(&mut self, value: (u32, u16)) { self.atom(value.0); self.u16(value.1); }
     fn optional_atom_pair(&mut self, value: Option<(u32, u16)>) { self.u8(value.is_some() as u8); if let Some(value) = value { self.atom_pair(value); } }
     /// An instruction, whose immediate is an atom when it names one.
+    #[inline]
     fn instruction(&mut self, op: Op, a: u16, b: u16, c: u16, imm: u32) {
         if self.packed {
-            let imm = if op.immediate_names_atom(b) { self.encoded_atom(imm) } else { imm };
-            let mut record = [0u8; 2 * 3 + 3 * 3 + 5];
-            let mut at = 0;
-            for value in [op as u32, u32::from(a), u32::from(b), u32::from(c), imm] {
-                let mut value = value;
-                while value >= 0x80 { record[at] = value as u8 | 0x80; at += 1; value >>= 7; }
-                record[at] = value as u8;
-                at += 1;
-            }
-            self.bytes.extend_from_slice(&record[..at]);
-            return;
+            return self.packed_instruction(op, a, b, c, imm);
         }
-        self.u16(op as u16); self.u16(a); self.u16(b); self.u16(c);
-        if op.immediate_names_atom(b) { self.atom(imm) } else { self.u32(imm) }
+        let imm = if op.immediate_names_atom(b) { self.encoded_atom(imm) } else { imm };
+        let mut record = [0u8; INSTRUCTION_BYTES];
+        record[0..2].copy_from_slice(&(op as u16).to_le_bytes());
+        record[2..4].copy_from_slice(&a.to_le_bytes());
+        record[4..6].copy_from_slice(&b.to_le_bytes());
+        record[6..8].copy_from_slice(&c.to_le_bytes());
+        record[8..].copy_from_slice(&imm.to_le_bytes());
+        self.bytes.extend_from_slice(&record);
+    }
+    /// An instruction's LEB128 record, for a packed writer (`pack_unlowered`).
+    fn packed_instruction(&mut self, op: Op, a: u16, b: u16, c: u16, imm: u32) {
+        let imm = if op.immediate_names_atom(b) { self.encoded_atom(imm) } else { imm };
+        let mut record = [0u8; 2 * 3 + 3 * 3 + 5];
+        let mut at = 0;
+        for value in [op as u32, u32::from(a), u32::from(b), u32::from(c), imm] {
+            let mut value = value;
+            while value >= 0x80 { record[at] = value as u8 | 0x80; at += 1; value >>= 7; }
+            record[at] = value as u8;
+            at += 1;
+        }
+        self.bytes.extend_from_slice(&record[..at]);
     }
     pub(super) fn u8(&mut self, value: u8) { self.bytes.push(value); }
     fn bool(&mut self, value: bool) { self.u8(u8::from(value)); }
@@ -1706,8 +1743,7 @@ impl<'a> BinaryReader<'a> {
             return Ok((op, a, b, c, imm));
         }
         const FIELD: usize = size_of::<u16>();
-        const RECORD: usize = 4 * FIELD + size_of::<u32>();
-        let record = self.array::<RECORD>()?;
+        let record = self.array::<INSTRUCTION_BYTES>()?;
         let field = |index: usize| u16::from_le_bytes([record[index * FIELD], record[index * FIELD + 1]]);
         let op = Op::from_index(usize::from(field(0))).ok_or_else(|| String::from("invalid residual opcode"))?;
         let (a, b, c) = (field(1), field(2), field(3));

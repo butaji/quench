@@ -3590,15 +3590,12 @@ impl<'a> Compiler<'a> {
         let rewrites_pend = self.rewrites_pend(&room);
         let code = self.deferred_rewrite_code + room.code();
         let cache_capacity = room.cache_capacity(self.cache_sites);
-        let (mut method_sites, mut method_arguments) =
-            Self::flatten_method_sites(self.method_sites.into_vec());
+        // `AppendVec::with_headroom` takes each table's exact length, so these need no shrinking first.
+        let (method_sites, method_arguments) = Self::flatten_method_sites(self.method_sites.into_vec());
         let atoms = self.atoms.table();
         let replay_atoms = self.first_call.keep_replay(replays.is_empty())
             .then(|| replay::ProgramAtomIndex::new(self.atoms.interned(), &atoms));
-        let mut constants = self.constants.into_vec();
-        constants.shrink_to_fit();
-        method_sites.shrink_to_fit();
-        method_arguments.shrink_to_fit();
+        let constants = self.constants.into_vec();
         let field_sites = self.field_sites.into_vec();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
