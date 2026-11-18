@@ -855,6 +855,28 @@ impl Native {
         )
     }
 
+    /// The natives whose searches run a RegExp's matcher, after which a search that ran out of
+    /// backtracking stack raises (`Vm::regexp_search_outcome`).
+    pub(crate) const fn searches_regexps(self) -> bool {
+        matches!(
+            self,
+            Self::RegExpExec
+                | Self::RegExpTest
+                | Self::RegExpSymbolMatch
+                | Self::RegExpSymbolSearch
+                | Self::RegExpSymbolReplace
+                | Self::RegExpSymbolMatchAll
+                | Self::RegExpSymbolSplit
+                | Self::StringReplace
+                | Self::StringReplaceAll
+                | Self::StringMatch
+                | Self::StringMatchAll
+                | Self::StringSearch
+                | Self::StringSplit
+                | Self::RegExpStringIteratorNext
+        )
+    }
+
     /// The functions of the `Math` object (`MATH_FUNCTIONS`, which its test keeps equal).
     const fn derive_math_function(self) -> bool {
         matches!(

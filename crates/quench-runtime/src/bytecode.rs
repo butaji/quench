@@ -3357,6 +3357,10 @@ pub(crate) enum LiteralStep {
 pub(crate) struct RegExpLiteralSite {
     pub pattern_constant: u32,
     pub flags_constant: u32,
+    /// The literal's only use is as the receiver of a `test` or `exec` call (`/re/.test(s)`):
+    /// while those builtins are intact the object never escapes, so one object per site
+    /// serves every evaluation (`Vm::regexp_literal_of`).
+    pub receiver: bool,
 }
 
 #[derive(Clone, Copy, Debug)]

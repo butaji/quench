@@ -49,7 +49,8 @@ impl Compiler {
     /// The code of an alternation: one `Dispatch` of the subject's unit where every branch's
     /// start units are known ranges, else a split before each branch but the last.
     pub(super) fn alternation(&mut self, alternatives: &[Expr], flags: Flags) -> Result<(), Unsupported> {
-        let ranges = self.dispatch_ranges(alternatives, flags);
+        // A table dispatches on the unit at the position, which a backward branch reads last.
+        let ranges = if self.backward { None } else { self.dispatch_ranges(alternatives, flags) };
         let dispatch = ranges.as_ref().map(|_| self.emit(Inst::Dispatch { table: 0 }));
         let (mut exits, mut entries) = (Vec::new(), Vec::new());
         for (index, alternative_expr) in alternatives.iter().enumerate() {

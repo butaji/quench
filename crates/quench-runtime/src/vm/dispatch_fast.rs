@@ -16198,7 +16198,7 @@ fn lane_native_value<H: Host>(
         // The DataView Float64 lane, in every mode: one read of the view and one of its
         // buffer; a miss takes the native, which coerces and throws.
         Native::DataViewGetFloat64 | Native::DataViewSetFloat64 => {
-            let value = vm.lane_data_view_float64(native, receiver, args);
+            let value = vm.plain_data_view_access(native, receiver, args);
             if value.is_some() {
                 if vm.execution_mode == super::ExecutionMode::Compiled {
                     vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
@@ -16440,6 +16440,7 @@ fn lane_regexp_call<H: Host>(
     let Some(result) = steady else {
         return lane_string_or_native_call(cx, ip, native, callee, receiver, args);
     };
+    let result = vm.regexp_search_outcome(result);
     // The call's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {

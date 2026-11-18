@@ -1,16 +1,12 @@
 use super::*;
 use super::array_view::{Match, Search};
 
-/// Where `Vm::array_species_is_array_create` found `Array.prototype.constructor` for an array
-/// of `shape`, which has no own `constructor`, under `epoch`. A change to the prototype's layout
-/// advances the epoch; shape compaction advances it too, so a proof never names a renumbered shape.
-/// The slot's value may change in place, so each use reads it.
+/// An array shape `Vm::array_species_is_array_create` found without an own `constructor`, for
+/// arrays of `prototype`. Shape compaction renumbers shapes and clears it with the field caches.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct ArraySpeciesProof {
     shape: u32,
-    epoch: u64,
     prototype: Value,
-    constructor_slot: usize,
 }
 
 impl<H: Host> Vm<H> {
@@ -533,6 +529,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = self.box_object_or_type_error(p, this)?;
+        if let Some(result) = self.array_concat_dense(source, args) {
+            return Ok(result);
+        }
         let target = self.array_species_create(p, source, 0)?;
         // `target` is held only here while guest code (getters, traps) can collect.
         self.with_call_roots([target], |vm| {
@@ -542,21 +541,7 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| JsError("Symbol.isConcatSpreadable is not initialized".into()))?;
             let mut next = 0usize;
             for item in std::iter::once(source).chain(args.iter().copied()) {
-                let spreadable = if vm.concat_spreadable_absent(item, spreadable_atom) {
-                    // An Array no `@@isConcatSpreadable` reaches: the Get reads `undefined`
-                    // and IsArray holds.
-                    true
-                } else if vm.is_object_like(item) {
-                    let value = vm.get_index(p, item, spreadable_atom)?;
-                    if value.is_undefined() {
-                        vm.is_array(p, item)?
-                    } else {
-                        vm.truthy(value)
-                    }
-                } else {
-                    false
-                };
-                if !spreadable {
+                if !vm.concat_item_spreadable(p, item, spreadable_atom)? {
                     if next as f64 >= MAX_SAFE_INTEGER {
                         return Err(
                             vm.type_error(p, "array concat index exceeds safe integer".into())
@@ -968,10 +953,8 @@ impl<H: Host> Vm<H> {
         // ArraySpeciesCreate is this realm's ArrayCreate and every element of the range is a
         // present own data element: the result is a new array of those values, made at once
         // instead of holes that each CreateDataPropertyOrThrow fills.
-        if self.array_species_is_array_create(object)
-            && let Some(values) = self.present_dense_elements(object, start..end)
-                .map(|values| smallvec::SmallVec::<[Value; 16]>::from_slice(&values))
-        {
+        let mut values = smallvec::SmallVec::<[Value; 16]>::new();
+        if self.array_species_is_array_create(object) && self.extend_present_dense(object, start..end, &mut values) {
             return Ok(self.array_of(&values));
         }
         let result = self.array_species_create(p, object, count)?;
@@ -1045,12 +1028,13 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether ArraySpeciesCreate of `source` is this realm's ArrayCreate with every Get on the
-    /// way reading a data property: an ordinary Array with no own `constructor` whose
-    /// prototype is this realm's `Array.prototype`, which holds this realm's `Array` as its
-    /// `constructor`, whose `@@species` is the intrinsic getter. A proof for the receiver's
-    /// shape under the current `prototype_layout_epoch` names the slot to read
-    /// (`ArraySpeciesProof`).
+    /// way reading a data property or the intrinsic getter: an ordinary Array with no own
+    /// `constructor` whose prototype is this realm's `Array.prototype`, which holds the realm's
+    /// `Array` as its `constructor` (`IntactFuse::ArrayConstructor`), whose `@@species` is the
+    /// intrinsic getter (`IntactFuse::ArraySpecies`). Past the first call for a shape, two fuse
+    /// bits and one slot read.
     pub(super) fn array_species_is_array_create(&mut self, source: Value) -> bool {
+        use crate::code_dependencies::IntactFuse;
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let Some(array) = self.heap.array(source) else {
             return false;
@@ -1058,94 +1042,30 @@ impl<H: Host> Vm<H> {
         if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != prototype {
             return false;
         }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
-        let proof = match self.array_species_proof {
-            Some(proof) if proof.shape == shape && proof.epoch == epoch && proof.prototype == prototype => proof,
-            _ => match self.prove_array_species(shape, prototype, epoch) {
-                Some(proof) => proof,
-                None => return false,
-            },
-        };
-        self.object_data(prototype)
-            .and_then(|data| self.heap.property_get(data, proof.constructor_slot))
-            .is_some_and(|constructor| self.realm_array_constructor(constructor) && self.has_intrinsic_species_getter(constructor))
-    }
-
-    /// Whether `item` is an ordinary Array of this realm that no `@@isConcatSpreadable` reaches:
-    /// neither its own shape nor `Array.prototype` nor `Object.prototype` (the whole chain) has
-    /// the key. Then `Get(item, @@isConcatSpreadable)` reads `undefined` without running guest
-    /// code and IsArray holds, so `concat` spreads it. A proof for the item's shape holds while
-    /// the prototype layout epoch does: any change to either prototype's shape or prototype
-    /// advances it.
-    pub(super) fn concat_spreadable_absent(&mut self, item: Value, symbol: Value) -> bool {
-        let Some(array) = self.heap.array(item) else {
-            return false;
-        };
-        if array.is_arguments_object() || array.has_side_descriptors() || array.proto() != self.array_proto {
+        let shape = array.shape();
+        if self.array_species_proof != Some(ArraySpeciesProof { shape, prototype }) && !self.array_shape_lacks_constructor(shape, prototype) {
             return false;
         }
-        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
-        if self.concat_spreadable_proof == Some((shape, epoch)) {
-            return true;
+        if !self.fuse_intact_at(IntactFuse::ArrayConstructor, prototype) {
+            return false;
         }
-        self.prove_concat_spreadable_absent(shape, symbol, epoch)
+        let slot = self.heap.dependencies().fuses().slot(IntactFuse::ArrayConstructor);
+        let Some(constructor) = self.object_data(prototype).and_then(|data| self.heap.property_get(data, slot)) else {
+            return false;
+        };
+        self.fuse_intact_at(IntactFuse::ArraySpecies, constructor)
     }
 
+    /// Whether array shape `shape` has no own `constructor`, remembered for a shape that keeps
+    /// its properties (no dictionary).
     #[cold]
     #[inline(never)]
-    fn prove_concat_spreadable_absent(&mut self, shape: u32, symbol: Value, epoch: u64) -> bool {
-        let key = PropertyKey::symbol(symbol);
-        if self.shape_is_dictionary(shape) || self.property_shape_slot(shape, key).is_some() {
-            return false;
+    fn array_shape_lacks_constructor(&mut self, shape: u32, prototype: Value) -> bool {
+        let lacks = self.property_shape_slot(shape, PropertyKey::string(self.runtime_atoms.constructor)).is_none();
+        if lacks && !self.shape_is_dictionary(shape) {
+            self.array_species_proof = Some(ArraySpeciesProof { shape, prototype });
         }
-        let (array_proto, object_proto) = (self.array_proto, self.object_proto);
-        let lacks = |vm: &Self, holder: Value, parent: Value| {
-            vm.object_data(holder).is_some_and(|data| {
-                data.proto() == parent && !vm.shape_is_dictionary(data.shape()) && vm.property_shape_slot(data.shape(), key).is_none()
-            })
-        };
-        if !lacks(self, array_proto, object_proto) || !lacks(self, object_proto, Value::NULL) {
-            return false;
-        }
-        self.heap.mark_prototype(array_proto);
-        self.heap.mark_prototype(object_proto);
-        // Marking an object that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.concat_spreadable_proof = Some((shape, epoch));
-        }
-        true
-    }
-
-    /// Whether `value` is this realm's `Array`, the constructor ArrayCreate stands for.
-    pub(super) fn realm_array_constructor(&self, value: Value) -> bool {
-        matches!(
-            self.heap.function(value),
-            Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. }) if *realm == self.realm.globals
-        )
-    }
-
-    /// `array_species_is_array_create`'s lookups past its proof, recorded once the prototype
-    /// it reads is a marked prototype, so a later change to its layout advances the epoch and
-    /// retires the proof.
-    #[cold]
-    #[inline(never)]
-    fn prove_array_species(&mut self, shape: u32, prototype: Value, epoch: u64) -> Option<ArraySpeciesProof> {
-        let key = PropertyKey::string(self.runtime_atoms.constructor);
-        if self.property_shape_slot(shape, key).is_some() {
-            return None;
-        }
-        let data = self.object_data(prototype)?;
-        let constructor_slot = self.property_shape_slot(data.shape(), key)?;
-        if self.slot_attributes(data, constructor_slot)?.accessor {
-            return None;
-        }
-        let proof = ArraySpeciesProof { shape, epoch, prototype, constructor_slot };
-        self.heap.mark_prototype(prototype);
-        // Marking an object that was no prototype yet leaves the epoch where it was.
-        if crate::heap::prototype_layout_epoch() == epoch {
-            self.array_species_proof = Some(proof);
-        }
-        Some(proof)
+        lacks
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
@@ -1243,3 +1163,4 @@ impl<H: Host> Vm<H> {
         })
     }
 }
+
