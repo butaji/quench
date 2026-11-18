@@ -524,8 +524,7 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
                 let address = stage.add(flat, offset);
                 match rep {
                     Representation::Float64 => stage.load_f64(Region::ObjectSlots.mutable(), address, 0),
-                    Representation::Int32 | Representation::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
-                    Representation::Int64 => unreachable!("a slot word is never an Int64"),
+                    Representation::Int32 | Representation::Int64 | Representation::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
                 }
             })
         }
@@ -575,9 +574,7 @@ fn flat_read_at<S: Stage>(stage: &mut S, base: S::Word, index: S::Word, rep: Rep
     let address = stage.add(base, offset);
     match rep {
         Representation::Float64 => stage.load_f64(Region::ObjectSlots.mutable(), address, 0),
-        // Slots never hold Int64 words: a slot's owner projects only Int32, Float64 or Tagged.
-        Representation::Int64 => unreachable!("a slot word is never an Int64"),
-        Representation::Int32 | Representation::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
+        Representation::Int32 | Representation::Int64 | Representation::Tagged => stage.load_u64(Region::ObjectSlots.mutable(), address, 0),
     }
 }
 
@@ -628,9 +625,7 @@ fn flat_read<S: Stage>(stage: &mut S, base: S::Word, slot: u16, rep: Representat
             let address = stage.add_imm(base, offset);
             stage.load_f64(Region::ObjectSlots.mutable(), address, 0)
         }
-        // Slots never hold Int64 words: a slot's owner projects only Int32, Float64 or Tagged.
-        Representation::Int64 => unreachable!("a slot word is never an Int64"),
-        Representation::Int32 | Representation::Tagged => stage.load_site(Region::ObjectSlots.mutable(), base, offset),
+        Representation::Int32 | Representation::Int64 | Representation::Tagged => stage.load_site(Region::ObjectSlots.mutable(), base, offset),
     }
 }
 

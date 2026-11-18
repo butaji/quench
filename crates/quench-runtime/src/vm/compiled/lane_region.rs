@@ -1064,6 +1064,8 @@ impl<'a, 'f> Lowering<'a, 'f> {
                     Null => is_null(stage, value),
                     Object => is_direct_object(stage, value),
                     Function => is_direct_function(stage, value),
+                    // Not in `kinds`: no exact one-word test.
+                    _ => continue,
                 };
                 member = Some(match member { Some(any) => stage.any(any, test), None => test });
             }

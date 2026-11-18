@@ -164,8 +164,6 @@ pub(crate) fn store_slot<S: Stage>(stage: &mut S, record: S::Word, payload: S::W
 pub(crate) fn store_word<S: Stage>(stage: &mut S, address: S::Word, value: S::Word, rep: Representation) {
     match rep {
         Representation::Float64 => stage.store_f64(Region::ObjectSlots.mutable(), address, 0, value),
-        // Slots never hold Int64 words: a slot's owner projects only Int32, Float64 or Tagged.
-        Representation::Int64 => unreachable!("a slot word is never an Int64"),
-        Representation::Int32 | Representation::Tagged => stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value),
+        Representation::Int32 | Representation::Int64 | Representation::Tagged => stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value),
     }
 }
