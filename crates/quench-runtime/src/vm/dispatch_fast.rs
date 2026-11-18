@@ -3264,7 +3264,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, lane_runs_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 lane_handler! {
@@ -4222,7 +4222,7 @@ script_handler! {
 
 script_handler! {
     /// `delete base[key]` by the staged row: a string key on an ordinary object runs no guest
-    /// code (`lane_delete_value`); any other deletion takes the general path.
+    /// code (`delete_value_in_lane`); any other deletion takes the general path.
     #[inline(never)]
     fn lane_delete<>(cx, r, ip, i, view) {
         if !lane_frame::staged_delete(cx, r, [i.a, i.b, i.c], i.imm() != 0) {
@@ -4567,7 +4567,7 @@ script_handler! {
             // A walk that settled on a root binding requickens the record to its root row (`FLAG_ROOT`),
             // which reads the binding through the same reads this walk takes.
             if lane_capture_settles_on_root::<H>(cx, depth) {
-                requicken::<H>(ip, lane_row::<H, { crate::staged::LOAD_CAPTURE_ROW }, ACC_NONE, FLAG_ROOT> as Handler);
+                requicken::<H>(ip, generated_row::<H, { crate::staged::LOAD_CAPTURE_ROW }, ACC_NONE, FLAG_ROOT> as Handler);
             }
             next!(cx, r, following(ip), view)
         }
@@ -16364,7 +16364,7 @@ impl LaneHandler {
 }
 
 /// The opcode of the catalog's keyed read: the element row whose record defines a result
-/// register (`Decoder::Element`), whose generated row (`lane_row`) a register-keyed read runs.
+/// register (`Decoder::Element`), whose generated row (`generated_row`) a register-keyed read runs.
 pub(in crate::vm) const ELEMENT_READ: u16 = {
     let mut index = 0;
     loop {
@@ -16377,11 +16377,11 @@ pub(in crate::vm) const ELEMENT_READ: u16 = {
     }
 };
 
-/// The generated keyed read (`lane_row` of `ELEMENT_READ`) of a register base and key.
-const fn element_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
+/// The generated keyed read (`generated_row` of `ELEMENT_READ`) of a register base and key.
+const fn element_read_row<H: Host>() -> Handler { generated_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
 
 /// The opcode of the catalog's keyed store: the element row whose record defines no result register
-/// (`Decoder::Element`), whose generated row (`lane_row`) a register-keyed store runs.
+/// (`Decoder::Element`), whose generated row (`generated_row`) a register-keyed store runs.
 pub(in crate::vm) const ELEMENT_WRITE: u16 = {
     let mut index = 0;
     loop {
@@ -16404,14 +16404,14 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     };
     // Past the first 256 opcodes only generated rows run in the lane; the rest leave it, as
     // before the table covered them, and instantiate nothing.
-    if OP >= 256 && !lane_runs_row(op) && !jumps_by_row(op) {
+    if OP >= 256 && !admits_row(op) && !jumps_by_row(op) {
         return None;
     }
     if jumps_by_row(op) {
         return Some(LaneHandler { handler: row_jump::<H, OP, BACKWARD, FLAG_UNREAD>, produces: false });
     }
-    if lane_runs_row(op) {
-        return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
+    if admits_row(op) {
+        return Some(LaneHandler { handler: generated_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
     }
     let handler: Handler = match other_handler::<H>(op) {
         Some(handler) => handler,
@@ -16463,7 +16463,7 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
 }
 
 /// Dense fast handlers cover every opcode, in whole table rows: a generated row
-/// (`lane_runs_row`) runs from its table entry whatever its index.
+/// (`admits_row`) runs from its table entry whatever its index.
 const TABLE_SLOTS: usize = Op::COUNT.next_multiple_of(TABLE_ROW as usize);
 
 /// Opcodes per generated table row.
@@ -17037,7 +17037,7 @@ fn derive_lane_view<'live, H: Host>(
                             _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
                         })
                     })
-            } else if lane_runs_row(op) && op.reads_arguments()
+            } else if admits_row(op) && op.reads_arguments()
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
             {
@@ -17089,7 +17089,7 @@ fn derive_lane_view<'live, H: Host>(
             // step, which decodes them, so no row tests for them.
             let row = tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten();
             let selected = selected.map(|chosen| {
-                let flagged = lane_runs_row(op)
+                let flagged = admits_row(op)
                     && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
                     && instruction.a() & !crate::bytecode::REGISTER_MASK != 0;
                 if flagged && row.is_some_and(|row| row.handler as *const () == chosen.handler as *const ()) {
@@ -17620,7 +17620,7 @@ fn specialize_returning_binaries<H: Host>(decoded: &[WideInstruction], constants
 /// (`lane_return_constant`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
 fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
-    let load = lane_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
+    let load = generated_row::<H, { crate::staged::LOAD_CONST_ROW }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let ret = lane_return::<H, NOT_LEAF> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == load && records[pc + 1].handler == ret && records[pc + 1].a == records[pc].a {
@@ -17636,12 +17636,12 @@ mod loop_kernel;
 /// the array's storage (`proof_span`) and runs its own full check where that declines.
 fn proved_row<H: Host>(handler: *const ()) -> Option<Handler> {
     if plain_row::<H, ELEMENT_READ>(handler) {
-        return Some(lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET>);
+        return Some(generated_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET>);
     }
     // A store keeps its generic record (`lane_set_index`) until a proof names it: the keyed store
     // has no row of its own in the lane, so this is the one place a store's row is installed.
     if handler == lane_set_index::<H> as Handler as *const () {
-        return Some(lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET>);
+        return Some(generated_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET>);
     }
     None
 }
@@ -17732,7 +17732,7 @@ fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction) -> O
     Some(lane_frame::fused_row::<H, { crate::staged::INC_DEC_ROW }, { crate::staged::JUMP_ROW }, { crate::staged::FUSED_PLAIN }>(backward))
 }
 
-/// Whether `record`, an `IncDec` running its row (`lane_row`), decrements (its immediate flag);
+/// Whether `record`, an `IncDec` running its row (`generated_row`), decrements (its immediate flag);
 /// `None` for any other record.
 fn update_direction<H: Host>(record: &LaneInstruction) -> Option<bool> {
     is_row::<H, { crate::staged::INC_DEC_ROW }>(record.handler).then(|| record.imm() != 0)
@@ -17852,11 +17852,11 @@ fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInst
         let handler: Handler = match (load, environment) {
             // A captured slot's load keeps its environment row (`LoadEnvLocal`'s `Names` row).
             (true, true) => continue,
-            (true, false) => lane_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_UNREAD>,
+            (true, false) => generated_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_UNREAD>,
             _ if function.is_self_binding_slot(slot) => continue,
             // An environment slot's store keeps its row, which misses to the general store.
             (false, true) => continue,
-            (false, false) => lane_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_UNREAD>,
+            (false, false) => generated_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_UNREAD>,
         };
         record.handler = handler as *const ();
     }

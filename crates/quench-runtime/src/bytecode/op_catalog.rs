@@ -289,7 +289,7 @@ impl Traits {
     /// A lane step that leaves its loop (`ForInNext` once no key is left), which the lane's loop
     /// dispatch makes with its own handler.
     pub(crate) const LANE_LOOP_EXIT: Self = Self(1 << 30);
-    /// An op whose lane handler is its staged row (`lane_row`), generated rather than written; the
+    /// An op whose lane handler is its staged row (`generated_row`), generated rather than written; the
     /// flow rows that fall through have theirs without the trait.
     pub(crate) const ROW_HANDLER: Self = Self(1u32 << 31);
 

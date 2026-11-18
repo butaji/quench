@@ -34,7 +34,7 @@ script_handler! {
 
 script_handler! {
     /// `StringConcat` (`Miss::Concat`) of a window whose parts the row's pure concatenation declined
-    /// (`lane_concat_value`): a string of parts, or the parts that convert with no guest code
+    /// (`concat_value_in_lane`): a string of parts, or the parts that convert with no guest code
     /// (`Vm::pure_string_concat_apart`), made as the general loop makes it. A window holding any
     /// other value, or a result past the string length limit, takes the general path.
     #[inline(never)]

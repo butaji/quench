@@ -11,7 +11,7 @@ use crate::staged::{Allocation, CallOut, Concrete, Constant, Edge, Frame, Global
 /// guest code; `None` leaves the instruction to the general path.
 type AllocationMaker = unsafe fn(*mut (), Registers, Allocation) -> Option<Value>;
 
-/// The definer of a frame's array literal element (`lane_define_element`): the VM's definition of
+/// The definer of a frame's array literal element (`define_element_in_lane`): the VM's definition of
 /// `value` at `index` into the literal array `array`; false leaves the definition to the general path.
 type ElementDefiner = unsafe fn(*mut (), u64, u32, u64) -> bool;
 
@@ -227,7 +227,7 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The window transfer a `Yield` or `YieldStar` row makes (`generator_yields::yield_in_lane`,
     /// `yield_star_in_lane`), where the row is one.
     yields: Option<YieldSuspension>,
-    /// The resumption a transfer hands the lane (`Edge::Transfer`), taken by `lane_row`.
+    /// The resumption a transfer hands the lane (`Edge::Transfer`), taken by `generated_row`.
     transfer: Option<Resumed>,
     /// The running function, which a `LoadCallee` row reads (`running_callee`), where the row is one.
     callee: Option<(*mut (), unsafe fn(*mut ()) -> Option<Value>)>,
@@ -326,7 +326,7 @@ struct GlobalStore {
 
 impl<const ACC: u8> LaneFrame<ACC> {
     /// The transfer of a `Yield` or `YieldStar` row whose operand is `operand`: the window's resumption,
-    /// held for `lane_row` to take (`Edge::Transfer`); `None` where the window declines.
+    /// held for `generated_row` to take (`Edge::Transfer`); `None` where the window declines.
     fn transfer_yield(&mut self, operand: Register) -> Option<Edge> {
         let yields = self.yields?;
         // SAFETY: the running lane's context, record and register file.
@@ -350,8 +350,8 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
     #[inline(always)]
     fn hosted<H: Host>(registers: Registers, view: Carried, cx: *mut LaneContext<H>) -> Self {
-        let host = LaneHost { cx: cx.cast(), allocate: lane_allocation::<H>, define: lane_define_element::<H>, delete: lane_delete_value::<H>,
-            read_name: lane_name_value::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
+        let host = LaneHost { cx: cx.cast(), allocate: allocation_in_lane::<H>, define: define_element_in_lane::<H>, delete: delete_value_in_lane::<H>,
+            read_name: name_value_in_lane::<H>, type_of: type_of_in_lane::<H>, typeof_name: typeof_string_in_lane::<H>,
             set_name: set_function_name_in_lane::<H>, name: None };
         Self { host: Some(host), ..Self::new(registers, view) }
     }
@@ -1113,7 +1113,7 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
     }
 }
 
-/// `lane_row`'s `FLAG`: a row whose immediate is a boolean flag (`ImmediateRole::BooleanFlag`) reads it
+/// `generated_row`'s `FLAG`: a row whose immediate is a boolean flag (`ImmediateRole::BooleanFlag`) reads it
 /// from the record until its first run, which requickens the record to the instantiation of its flag
 /// (`FLAG_CLEAR`, `FLAG_SET`), so the flag is a static operand the row folds (an increment and a
 /// decrement are two handlers of one row). For any other row, `FLAG_SET` states the fact the view
@@ -1122,7 +1122,7 @@ impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP,
 pub(in crate::vm::dispatch_fast) const FLAG_UNREAD: u8 = 0;
 pub(in crate::vm::dispatch_fast) const FLAG_CLEAR: u8 = 1;
 pub(in crate::vm::dispatch_fast) const FLAG_SET: u8 = 2;
-/// `lane_row`'s `FLAG` for a by-name load (`NameLoad`) whose first run resolved its name to a
+/// `generated_row`'s `FLAG` for a by-name load (`NameLoad`) whose first run resolved its name to a
 /// native an internal name stands for (`NameRead::Native`).
 pub(in crate::vm::dispatch_fast) const FLAG_NAME_NATIVE: u8 = 3;
 /// `FLAG` of a by-name load resolved to the global `undefined` (`NameBinding::Undefined`).
@@ -1162,7 +1162,7 @@ pub(in crate::vm::dispatch_fast) const FLAG_LOOP: u8 = 14;
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(in crate::vm::dispatch_fast) const FLAG_ROOT: u8 = 15;
 
-/// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
+/// Whether opcode `op`'s lane handler is its staged row (`generated_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
 /// that joins gets its handler with no line written here.
 /// Whether opcode `op`'s row defines the carried accumulator: its record's `a` is its result
@@ -1175,7 +1175,7 @@ pub(in crate::vm::dispatch_fast) const fn row_produces(op: Op) -> bool {
         && matches!(crate::staged::miss(op), crate::staged::Miss::General)
 }
 
-pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
+pub(in crate::vm::dispatch_fast) const fn admits_row(op: Op) -> bool {
     matches!(op.control_flow_layout(), crate::bytecode::ControlFlowLayout::Fallthrough)
         && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
             || op.traits().has(crate::bytecode::Traits::ROW_HANDLER))
@@ -1204,7 +1204,7 @@ fn scope_reads<H: Host, const FLAG: u8>(cx: *mut LaneContext<H>, ip: super::Ip, 
     })
 }
 
-/// The frame `lane_row` steps opcode `OP`'s row over: the register file and the carried view, and
+/// The frame `generated_row` steps opcode `OP`'s row over: the register file and the carried view, and
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
 fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneContext<H>, r: Registers, ip: super::Ip, i: &LaneInstruction, view: Carried) -> LaneFrame<ACC> {
@@ -1428,14 +1428,14 @@ pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: 
     }
 }
 
-/// The row handler of by-name load `load` for a record in binding state `FLAG` (`lane_row`'s
+/// The row handler of by-name load `load` for a record in binding state `FLAG` (`generated_row`'s
 /// instantiation over the load's opcode, with an accumulator-free record, since a load answers
 /// no accumulator).
 pub(in crate::vm::dispatch_fast) const fn name_row<H: Host, const FLAG: u8>(load: crate::staged::NameLoad) -> Handler {
     match load {
-        crate::staged::NameLoad::Read => lane_row::<H, { crate::staged::LOAD_NAME_ROW }, ACC_NONE, FLAG> as Handler,
-        crate::staged::NameLoad::Call => lane_row::<H, { crate::staged::LOAD_NAME_CALL_ROW }, ACC_NONE, FLAG> as Handler,
-        crate::staged::NameLoad::Typeof => lane_row::<H, { crate::staged::LOAD_NAME_TYPEOF_ROW }, ACC_NONE, FLAG> as Handler,
+        crate::staged::NameLoad::Read => generated_row::<H, { crate::staged::LOAD_NAME_ROW }, ACC_NONE, FLAG> as Handler,
+        crate::staged::NameLoad::Call => generated_row::<H, { crate::staged::LOAD_NAME_CALL_ROW }, ACC_NONE, FLAG> as Handler,
+        crate::staged::NameLoad::Typeof => generated_row::<H, { crate::staged::LOAD_NAME_TYPEOF_ROW }, ACC_NONE, FLAG> as Handler,
     }
 }
 
@@ -1464,28 +1464,28 @@ const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
 
 /// The row handler of a window's by-name store (`GLOBAL_WRITE_ROW` at `FLAG_SCOPE`): the scope's store first.
 pub(in crate::vm::dispatch_fast) const fn scoped_store_row<H: Host>() -> Handler {
-    lane_row::<H, { crate::staged::GLOBAL_WRITE_ROW }, ACC_NONE, FLAG_SCOPE> as Handler
+    generated_row::<H, { crate::staged::GLOBAL_WRITE_ROW }, ACC_NONE, FLAG_SCOPE> as Handler
 }
 
 /// The row handler of a window's environment-local store (`STORE_ENV_LOCAL_ROW`) at `FLAG`.
 pub(in crate::vm::dispatch_fast) const fn scoped_local_row<H: Host, const FLAG: u8>() -> Handler {
-    lane_row::<H, { crate::staged::STORE_ENV_LOCAL_ROW }, ACC_NONE, FLAG> as Handler
+    generated_row::<H, { crate::staged::STORE_ENV_LOCAL_ROW }, ACC_NONE, FLAG> as Handler
 }
 
 /// The row handler of a closure (`MAKE_CLOSURE_ROW`) in a window, at `FLAG`.
 pub(in crate::vm::dispatch_fast) const fn closure_row<H: Host, const FLAG: u8>() -> Handler {
-    lane_row::<H, { crate::staged::MAKE_CLOSURE_ROW }, ACC_NONE, FLAG> as Handler
+    generated_row::<H, { crate::staged::MAKE_CLOSURE_ROW }, ACC_NONE, FLAG> as Handler
 }
 
 /// Opcode `OP`'s row handler for a record of which the view proved its row's fact (`FLAG_SET`),
 /// where `handler` is the plain row (`FLAG_UNREAD`, no accumulator field): a capture access at
 /// depth 0 then reads its slot without testing the depth.
 pub(in crate::vm::dispatch_fast) fn row_near<H: Host, const OP: u16>(handler: *const ()) -> Option<Handler> {
-    (handler == lane_row::<H, OP, ACC_NONE, FLAG_UNREAD> as Handler as *const ())
-        .then_some(lane_row::<H, OP, ACC_NONE, FLAG_SET> as Handler)
+    (handler == generated_row::<H, OP, ACC_NONE, FLAG_UNREAD> as Handler as *const ())
+        .then_some(generated_row::<H, OP, ACC_NONE, FLAG_SET> as Handler)
 }
 
-/// Whether `handler` is opcode `OP`'s generated row handler (`lane_row`), at any accumulator field:
+/// Whether `handler` is opcode `OP`'s generated row handler (`generated_row`), at any accumulator field:
 /// the passes that fuse a record by its handler find the row whichever field the view carried.
 pub(in crate::vm::dispatch_fast) fn is_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
     is_row_flagged::<H, OP, FLAG_UNREAD>(handler) || is_row_flagged::<H, OP, FLAG_CLEAR>(handler)
@@ -1494,8 +1494,8 @@ pub(in crate::vm::dispatch_fast) fn is_row<H: Host, const OP: u16>(handler: *con
 
 /// `is_row` at one `FLAG`.
 fn is_row_flagged<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) -> bool {
-    let rows: [Handler; ACC_POSITIONS] = [lane_row::<H, OP, ACC_NONE, FLAG>, lane_row::<H, OP, ACC_A, FLAG>,
-        lane_row::<H, OP, ACC_B, FLAG>, lane_row::<H, OP, ACC_C, FLAG>, lane_row::<H, OP, ACC_PAIR, FLAG>];
+    let rows: [Handler; ACC_POSITIONS] = [generated_row::<H, OP, ACC_NONE, FLAG>, generated_row::<H, OP, ACC_A, FLAG>,
+        generated_row::<H, OP, ACC_B, FLAG>, generated_row::<H, OP, ACC_C, FLAG>, generated_row::<H, OP, ACC_PAIR, FLAG>];
     rows.iter().any(|row| *row as *const () == handler)
 }
 
@@ -1594,7 +1594,7 @@ macro_rules! row_decode {
 
 lane_handler! {
     /// The lane handler of every jump `jumps_by_row` admits, generated from its staged row as
-    /// `lane_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
+    /// `generated_row` is: the record's decoder (flow, or generic for a comparison) reads it, the row
     /// steps on `Concrete` over the lane's frame, and its edge picks the continuation. A jump to
     /// its target runs the lane's jump (`lane_jump`), whose backward edge (`BACKWARD`, which the
     /// view fixes per record) is a safepoint.
@@ -1643,14 +1643,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// The lane handler of every opcode `lane_runs_row` admits, generated from its staged row
+    /// The lane handler of every opcode `admits_row` admits, generated from its staged row
     /// rather than written: the record decodes by the row family's one decoder
     /// (`Operation::decode_flow`), the row steps on `Concrete` over the lane's frame, and the
     /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
     /// row to the residual a hand-written handler would be (Futamura's first projection).
-    pub(super) fn lane_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+    pub(super) fn generated_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
         if LaneFields::<OP, FLAG>::FLAG_ROLE && FLAG == FLAG_UNREAD {
-            let flagged: Handler = if i.imm() != 0 { lane_row::<H, OP, ACC, FLAG_SET> } else { lane_row::<H, OP, ACC, FLAG_CLEAR> };
+            let flagged: Handler = if i.imm() != 0 { generated_row::<H, OP, ACC, FLAG_SET> } else { generated_row::<H, OP, ACC, FLAG_CLEAR> };
             requicken::<H>(ip, flagged);
             sibling!(flagged, r, ip, view)
         }
@@ -1716,7 +1716,7 @@ lane_handler! {
     /// `A`'s register dead and `B` does not name it); `FUSED_RAW` runs as `FUSED_PLAIN` here.
     pub(super) fn fused_rows<A: u16, B: u16, BACKWARD: bool, MODE: u8>(cx, r, ip, i, view) {
         // Row `A` at flag `$flag`: a flagged row (`LaneFields::FLAG_ROLE`) reads its flag here,
-        // from the record, rather than requickening (`lane_row`).
+        // from the record, rather than requickening (`generated_row`).
         macro_rules! step_a { ($flag:expr) => {{
             let fields = LaneFields::<A, { $flag }>(i);
             let Some(operation) = row_decode!(A, { $flag }, fields) else { sibling!(lane_general_step::<H>, r, ip, view) };
@@ -1910,7 +1910,7 @@ pub(in crate::vm::dispatch_fast) const fn chain_row<H: Host, const L0: u16, cons
 /// Whether `handler` is opcode `OP`'s window row (`FLAG_WINDOW`): a local record of a plain slot in
 /// an environment window's function, which `window_local_handler` gives its row.
 fn is_window_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
-    lane_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
+    generated_row::<H, OP, ACC_NONE, FLAG_WINDOW> as Handler as *const () == handler
 }
 
 /// `chains!` index `chain` within `staged::FUSED_CHAINS` (past its end, entry 0 again).
@@ -1985,7 +1985,7 @@ pub(in crate::vm::dispatch_fast) fn plain_row<H: Host, const OP: u16>(handler: *
 
 /// Whether `handler` is opcode `OP`'s row with no accumulator field at any flag.
 fn is_row_flagged_plain<H: Host, const OP: u16>(handler: *const ()) -> bool {
-    [lane_row::<H, OP, ACC_NONE, FLAG_UNREAD> as Handler, lane_row::<H, OP, ACC_NONE, FLAG_CLEAR>, lane_row::<H, OP, ACC_NONE, FLAG_SET>]
+    [generated_row::<H, OP, ACC_NONE, FLAG_UNREAD> as Handler, generated_row::<H, OP, ACC_NONE, FLAG_CLEAR>, generated_row::<H, OP, ACC_NONE, FLAG_SET>]
         .iter().any(|row| *row as *const () == handler)
 }
 
@@ -2074,19 +2074,19 @@ fn jump_row_backward<H: Host, const OP: u16>(handler: *const ()) -> bool {
 ///
 /// # Safety
 /// `cx` is the running lane's context and `r` its register file.
-unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
+unsafe fn allocation_in_lane<H: Host>(cx: *mut (), r: Registers, allocation: Allocation) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     match allocation {
         Allocation::Empty => Some(lane_new_object(unsafe { vm(cx) })),
         Allocation::Array { length } => Some(lane_new_hole_array(unsafe { vm(cx) }, length as usize)),
         Allocation::ArrayOf { elements } => Some(lane_literal_array_value(unsafe { vm(cx) }, r, elements)),
         Allocation::RegExp { site } => lane_regexp_literal_value(cx, site),
-        Allocation::ConstArray { constant, count } => lane_const_array_value(cx, constant, count),
+        Allocation::ConstArray { constant, count } => const_array_value_in_lane(cx, constant, count),
         Allocation::ObjectPair { site, first, second } => Some(lane_object_pair(cx, r, site, [first, second])),
         Allocation::ObjectLiteral { site, window } => Some(lane_object_literal_value(cx, r, site, window)),
         Allocation::Closure { function } => lane_closure_value_of(cx, function),
-        Allocation::Template { template } => lane_template_value(cx, template),
-        Allocation::Concat { window } => lane_concat_value(cx, r, window),
+        Allocation::Template { template } => template_value_in_lane(cx, template),
+        Allocation::Concat { window } => concat_value_in_lane(cx, r, window),
     }
 }
 
@@ -2096,7 +2096,7 @@ unsafe fn lane_allocation<H: Host>(cx: *mut (), r: Registers, allocation: Alloca
 /// # Safety
 /// `cx` is the running lane's context. Called through `LaneHost::define`, a constant function pointer.
 #[inline(always)]
-unsafe fn lane_define_element<H: Host>(cx: *mut (), array: u64, index: u32, value: u64) -> bool {
+unsafe fn define_element_in_lane<H: Host>(cx: *mut (), array: u64, index: u32, value: u64) -> bool {
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     vm.define_literal_element(Value::from_bits(array), index as usize, Value::from_bits(value))
 }
@@ -2109,7 +2109,7 @@ unsafe fn lane_define_element<H: Host>(cx: *mut (), array: u64, index: u32, valu
 /// `cx` is the running lane's context. Called through `LaneHost::read_name`, a constant
 /// function pointer in the inlined frame `row_frame` builds for a by-name load, so the call inlines.
 #[inline(always)]
-unsafe fn lane_name_value<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
+unsafe fn name_value_in_lane<H: Host>(cx: *mut (), read: NameRead, atom: u32) -> Option<Value> {
     let vm = unsafe { vm(cx.cast::<LaneContext<H>>()) };
     match read {
         NameRead::Native => {
@@ -2196,7 +2196,7 @@ unsafe fn iterator_pop_in_lane<H: Host>(cx: *mut ()) -> bool {
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn lane_delete_value<H: Host>(cx: *mut (), base: Value, key: Value) -> Option<Value> {
+unsafe fn delete_value_in_lane<H: Host>(cx: *mut (), base: Value, key: Value) -> Option<Value> {
     let cx = cx.cast::<LaneContext<H>>();
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
@@ -2261,7 +2261,7 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
 /// The array of the `count` program constants from `constant` (`Vm::const_array_value`);
 /// `None` where the range is outside the program's constants.
 #[inline(never)]
-fn lane_const_array_value<H: Host>(cx: *mut LaneContext<H>, constant: u32, count: u16) -> Option<Value> {
+fn const_array_value_in_lane<H: Host>(cx: *mut LaneContext<H>, constant: u32, count: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let value = vm.const_array_value(unsafe { (*cx).program }, constant as usize, usize::from(count))?;
@@ -2272,7 +2272,7 @@ fn lane_const_array_value<H: Host>(cx: *mut LaneContext<H>, constant: u32, count
 /// The value of literal template `template` in a frame's own lane run (`Vm::literal_template`);
 /// `None` inside a lane activation, whose frame is not the context's, or where it fails.
 #[inline(never)]
-fn lane_template_value<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Option<Value> {
+fn template_value_in_lane<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     if !vm.lane_stack.activations.is_empty() {
         return None;
@@ -2287,7 +2287,7 @@ fn lane_template_value<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Optio
 /// The string of the parts in `window`, each converted without guest code
 /// (`Vm::pure_string_concat`); `None` where any part needs the general path.
 #[inline(never)]
-fn lane_concat_value<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: RegisterWindow) -> Option<Value> {
+fn concat_value_in_lane<H: Host>(cx: *mut LaneContext<H>, r: Registers, window: RegisterWindow) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let base = usize::from(window.base);
     // SAFETY: the context's program outlives the lane run.
