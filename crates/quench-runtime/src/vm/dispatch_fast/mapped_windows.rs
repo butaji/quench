@@ -118,8 +118,8 @@ pub(super) fn window_binding<H: Host>(vm: &Vm<H>, r: Registers, body: &Function,
 // merge: theirs' mapped-parameter handlers (`lane_load_mapped_parameter`, `lane_store_mapped_parameter`)
 // are kept under ours-style names. They read the element through `Vm::mapped_window_element`, which
 // only theirs' object_array/arguments.rs defines, and no row of ours requickens to them, so they are
-// unused here until that helper and the row wiring are merged. Ours' `window_arguments` (dispatch_fast.rs)
-// reads the element through `stored_arguments_element`.
+// unused here until that helper and the row wiring are merged. Ours reads the element through
+// `stored_arguments_element`.
 /// The `arguments` object the running window activation made on entry, and the home of its
 /// parameter `slot`, for the window whose entries start at register `registers`; `None` in a
 /// frame's run, which the general path serves.

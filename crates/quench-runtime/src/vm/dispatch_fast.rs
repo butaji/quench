@@ -3718,21 +3718,6 @@ use loop_body::LoopBody;
 use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, generated_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
-lane_handler! {
-    /// `LoadLocal` and `LoadEnvLocal` of an initialized binding a VM frame owns
-    /// (`staged::read_initialized_local` over the binding, `lane_frame::staged_load_local_checked`); any other read
-    /// takes the general path.
-    fn load_local_miss<>(cx, r, ip, i, view) {
-        if !(unsafe { (*cx).registers }.env().is_deleted()
-            && i.a & crate::bytecode::NUMERIC_LOCAL_TARGET == 0
-            && lane_frame::staged_load_local_checked::<H, ACC_NONE>(cx, r, view, i.a, i.imm() as usize))
-        {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
-}
-
 mod capture_append;
 mod mapped_windows;
 mod string_case_filter;
@@ -3790,26 +3775,6 @@ fn lane_window_closure_value<H: Host>(
     };
     note_allocation(vm);
     value
-}
-
-lane_handler! {
-    /// `StoreLocal` and `StoreEnvLocal` to a binding a VM frame owns that
-    /// `lane_frame::staged_store_local_checked` completes; any other store takes the general
-    /// path. A `StoreEnvLocal` of a function that resolves names at run time, which may
-    /// write a `with` object's binding instead, has no record (`derive_lane_view`) but the
-    /// scoped window's (`scoped_names::scoped_local_store_miss`).
-    fn store_local_miss<>(cx, r, ip, i, view) {
-        let value = r.get(i.a);
-        let stored = unsafe { (*cx).registers }.env().is_deleted()
-            && lane_frame::staged_store_local_checked::<H, ACC_NONE>(cx, r, view, (i.a, i.imm() as usize), i.c != 0);
-        if !stored {
-            return exit(ip);
-        }
-        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
-            r.set(register, value);
-        }
-        next!(cx, r, following(ip), view)
-    }
 }
 
 /// The value of a register or constant operand; other operand kinds take
@@ -3921,28 +3886,6 @@ pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i
     if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
 }
 
-script_handler! {
-    /// `InitializeTdz`: opens the binding's dead zone wherever the frame keeps it, as the
-    /// general path does (`Vm::owner_binding_mut`).
-    fn initialize_tdz_miss<>(cx, r, ip, i, view) {
-        // An activation's own environment holds its bindings (its window's locals), which the frame's owner
-        // lookup does not reach: the general path opens them.
-        if !unsafe { (*cx).registers }.env().is_deleted() {
-            return exit(ip);
-        }
-        // SAFETY: the context's program outlives the lane run.
-        let Some(binding) = (unsafe { vm(cx) }).owner_binding_mut(
-            unsafe { &*(*cx).code },
-            VarOwner::Frame(unsafe { (*cx).frame() }),
-            i.imm() as usize,
-        ) else {
-            return exit(ip);
-        };
-        *binding = Value::DELETED;
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// The environment clone of plan `plan` a `CloneEnv` row makes in the lane context `cx` over its
 /// register file `r` (`Vm::clone_frame_environment`, `Vm::iteration_environment`). `window` is the
 /// register count of the environment window the record names, 0 where it names none. In a frame's own
@@ -4012,27 +3955,6 @@ unsafe fn clone_environment_of<H: Host>(cx: *mut (), r: Registers, window: u16, 
         entries.add(usize::from(WINDOW_SLOTS)).write(std::mem::transmute::<u64, Value>(storage as u64));
     }
     true
-}
-
-script_handler! {
-    /// `ToPropertyKey` of a value its row leaves (`Miss::PropertyKeyValue`): of a symbol, which is
-    /// itself, or of an integer, its decimal string; any other value, which may run guest code
-    /// or format a float, takes the general step in place.
-    fn lane_to_property_key<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let value = r.get(i.b);
-        let key = if let Some(integer) = value.as_int() {
-            let key = vm.heap.alloc_string(crate::vm::wtf16::JsString::from_str(&integer.to_string()));
-            note_allocation(vm);
-            key
-        } else if vm.heap.is_symbol(value) {
-            value
-        } else {
-            sibling!(lane_general_step::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, key);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
 }
 
 
@@ -4192,31 +4114,6 @@ fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction,
 #[inline(always)]
 pub(super) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
-}
-
-script_handler! {
-    /// The `Binary` row's miss (`Miss::Binary`) for operands its value declines: the general operation made in place
-    /// (`lane_in_place`), which may reach guest code (a proxy's `has`, a
-    /// `Symbol.hasInstance`, a `valueOf` or `toString`) or throw. A numeric local target takes
-    /// the general path.
-    #[inline(never)]
-    fn binary_general_miss<>(cx, r, ip, i, view) {
-        let operator = i.imm();
-        if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
-            return exit(ip);
-        }
-        let (Some(left), Some(right)) = (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
-        else {
-            return exit(ip);
-        };
-        let Some(value) = lane_in_place(cx, ip, |vm, code| vm.binary(code, operator, left, right)) else {
-            return exit(ip);
-        };
-        // Guest code the operator ran made the activations frames, whose registers these are.
-        let r = unsafe { (*cx).registers };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
 }
 
 /// A `Binary` record's value where it runs no guest code: Number arithmetic and
@@ -5063,20 +4960,6 @@ fn store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Value) 
         // (`CAPTURE_STORES`); no collection runs in the lane.
         .and_then(|slots| unsafe { crate::heap::EnvironmentSlots::write_storage(slots, usize::from(slot), value) })
         .is_some()
-}
-
-script_handler! {
-    /// `StoreCapture` past the running function's dense slots, or of a capture past its own
-    /// scope: the lane's store (`store_to_capture`), else the general path.
-    #[inline(never)]
-    fn store_outer_capture_miss<>(cx, r, ip, i, view) {
-        let imm = i.imm();
-        let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-        if !lane_frame::staged_store_capture::<H>(cx, r, view, i.a, (depth, slot)) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), view)
-    }
 }
 
 /// The running lane activation's dense capture slots, the view a lane body's reads take
@@ -8704,22 +8587,10 @@ fn lane_inlined_activation<H: Host>(
     unsafe { (*cx).base.add(callee_pc as usize) }
 }
 
-script_handler! {
-    /// `JumpFalse` (`WHEN` false) or `JumpTrue` (`WHEN` true) of a heap value whose cell
-    /// decides its truthiness; out of line, so the common tests make no call.
-    #[inline(never)]
-    fn jump_test_cell_miss<BACKWARD: bool, WHEN: bool>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.heap_cell_truthy(r.get(i.a)) == WHEN {
-            resume!(cx, take_jump::<H>(cx, r, ip, BACKWARD, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 #[path = "vector_region.rs"]
 mod vector_region;
 mod wasm_instance;
-use wasm_instance::{lane_instance_binding_memory, lane_wasm_memory_address, lane_wasm_memory_load, lane_wasm_memory_store};
+use wasm_instance::lane_instance_binding_memory;
 
 
 /// The float operators a lane record runs as one hardware operation or
@@ -12099,7 +11970,6 @@ fn lane_promise_native_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, native: Na
 }
 
 mod named_keys;
-mod denoted;
 mod wasm_calls;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use named_keys::named_key_element;
@@ -13395,84 +13265,10 @@ unsafe fn lane_keeping_activation<H: Host>(cx: *mut LaneContext<H>) -> Option<(u
     Some((script.argc, activation.function()))
 }
 
-script_handler! {
-    /// `frame_arguments` as a record: `ArgumentGet` of a function whose `arguments` binding is
-    /// no forwarding one, the index its `b` register, and the `ArgumentsLength` row's miss
-    /// (`staged::Miss::ArgumentsBinding`). `None` takes the general path.
-    #[inline(never)]
-    fn lane_frame_arguments<GET: bool>(cx, r, ip, i, view) {
-        let index = if GET { r.get(i.b) } else { Value::UNDEFINED };
-        let Some(value) = frame_arguments::<H, GET>(cx, r, i.imm() as u16, index) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
-    }
-}
-
-/// The count (`GET` false) or the element at `index` (`GET` true) of the `arguments` binding in
-/// local `slot` of a function whose binding is no forwarding one, in its frame's own lane run, as
-/// `Vm::read_arguments_binding` reads it: an unmaterialized binding answers its length
-/// and the indices it kept from the frame's values; a materialized object its own data
-/// `length` in its creation layout (`Vm::arguments_object_length`) and its stored
-/// elements no parameter mapping reaches (`Vm::plain_arguments_element`). Any other read,
-/// a mapped element (which aliases a parameter) among them, takes the general path. A
-/// suspended function's window holds the object made on entry (`window_arguments`).
-#[inline(always)]
-fn frame_arguments<H: Host, const GET: bool>(cx: *mut LaneContext<H>, r: Registers, slot: u16, index: Value) -> Option<Value> {
-    // An environment activation keeps the values passed after its locals
-    // (`Function::reads_passed_arguments_only`); a suspended function's window keeps the
-    // object itself (`Function::arguments_ride_window`).
-    if !unsafe { (*cx).registers }.env().is_deleted() {
-        let vm = unsafe { vm(cx) };
-        let (function, argc) = vm.lane_stack.activations.last().and_then(|activation| {
-            let script = activation.script().filter(|script| script.environment)?;
-            Some((activation.function, script.argc))
-        })?;
-        // SAFETY: the context's program outlives the lane run.
-        let body = unsafe { &*(*cx).code }.function(function as usize);
-        if body.is_generator || body.is_async {
-            return window_arguments::<H, GET>(vm, r, slot, index, body);
-        }
-        let value = if GET {
-            let index = index.as_int().and_then(|index| u16::try_from(index).ok()).filter(|index| *index < argc)?;
-            // A parameter's element is the parameter while the mapping aliases it.
-            let local = if index < body.params && body.arguments_alias_parameters() {
-                index
-            } else {
-                body.locals + index
-            };
-            r.get(body.registers + WINDOW_LOCALS + local)
-        } else {
-            Value::integer(i32::from(argc))
-        };
-        return Some(value);
-    }
-    let vm = unsafe { vm(cx) };
-    let frame = unsafe { (*cx).frame() };
-    // SAFETY: the context's program outlives the lane run.
-    let code = unsafe { &*(*cx).code };
-    let binding = vm.load_local_binding(code, VarOwner::Frame(frame), usize::from(slot), None).ok()?;
-    let kept = &vm.frames[frame].original_arguments;
-    match (binding == Value::UNMATERIALIZED_ARGUMENTS, GET) {
-        (true, false) => Some(Value::length(kept.len())),
-        (true, true) => index
-            .as_int()
-            .and_then(|index| usize::try_from(index).ok())
-            .and_then(|index| kept.get(index).copied()),
-        (false, false) => vm.arguments_object_length(binding),
-        (false, true) => index
-            .as_int()
-            .and_then(|index| usize::try_from(index).ok())
-            .and_then(|index| vm.plain_arguments_element(binding, index)),
-    }
-}
-
 /// The count of the running function's `arguments` binding in local `slot`, for the
 /// `ArgumentsLength` row (`Frame::arguments_length`): a keeping activation's kept-value count.
 /// `KEPT`: the view proved `slot` its function's kept arguments (`Function::kept_arguments`).
-/// `None` leaves the count to the row's miss, which reads the frame's or window's binding
-/// (`lane_frame_arguments`).
+/// `None` leaves the count to the row's general step, which reads the frame's or window's binding.
 ///
 /// # Safety
 /// `cx` is the running lane's context, and `slot` its function's validated local slot.
@@ -13485,20 +13281,6 @@ unsafe fn arguments_count<H: Host, const KEPT: bool>(cx: *mut LaneContext<H>, sl
         return Some(Value::integer(i32::from(argc)));
     }
     None
-}
-
-/// `ArgumentsLength` or `ArgumentGet` in the window of a suspended function: the `arguments`
-/// object it made on entry is the function's local `slot` (`mapped_windows::window_binding`),
-/// read as a materialized object is, a mapped element too: the window's writes to its parameter
-/// reach it (`mapped_windows`). `None` takes the general path.
-#[inline(always)]
-fn window_arguments<H: Host, const GET: bool>(vm: &Vm<H>, r: Registers, slot: u16, index: Value, body: &Function) -> Option<Value> {
-    let binding = mapped_windows::window_binding(vm, r, body, usize::from(slot));
-    if !GET {
-        return vm.arguments_object_length(binding);
-    }
-    let index = usize::try_from(index.as_int()?).ok()?;
-    vm.stored_arguments_element(binding, index)
 }
 
 /// The frameless target of a lane call to `callee`, resolved on first use.
@@ -14210,7 +13992,7 @@ pub(in crate::vm) unsafe extern "C" fn lane_body_arguments_length<H: Host>(_vm: 
 }
 
 /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
-/// unmaterialized binding holds (`Miss::ArgumentsElement`); any other key leaves at the record.
+/// unmaterialized binding holds; any other key leaves at the record.
 pub(in crate::vm) unsafe extern "C" fn lane_body_argument_get<H: Host>(_vm: u64, _residual: u64, context: u64, slot: u64, index: u64) -> u64 {
     if !crate::DYNAMIC_EXECUTION_ENABLED || context == 0 { return Value::DELETED.to_bits(); }
     let cx = context as usize as *mut LaneContext<H>;
@@ -18078,7 +17860,7 @@ fn derive_lane_view<'live, H: Host>(
                 && kept_arguments.get_or_init(|| function.kept_arguments()).is_some()
             {
                 // The binding a keeping activation may leave unmaterialized is read by the local read's
-                // binding rules (`Miss::LocalLoad`), which materialize it or forward its marker.
+                // binding rules (the general step), which materialize it or forward its marker.
                 Some(LaneHandler { handler: lane_frame::checked_local_hand::<H>(op) as Handler, produces: false })
             } else if crate::staged::calls(op) && lane_iteration_step(&decoded, pc) {
                 Some(LaneHandler {
@@ -18844,8 +18626,8 @@ const CAPTURE_WRITE: u16 = crate::staged::STORE_CAPTURE_ROW;
 
 /// Gives each capture record its handler by the capture's depth, which the bytecode fixes. A
 /// record past the function's own scope keeps its row: an outer `LoadCapture` reads through the
-/// lane's remembered walks (`Reads::of_captures`), an outer `StoreCapture` misses to
-/// `Miss::StoreThroughScopes` (`store_outer_capture_miss`). A depth-0 record is its row read as
+/// lane's remembered walks (`Reads::of_captures`), an outer `StoreCapture` takes the general step.
+/// A depth-0 record is its row read as
 /// the zero depth it is (`row_near`).
 fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
     for pc in 0..records.len() {
@@ -18869,9 +18651,8 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
 
 /// Gives each frame `LoadLocal` record the handler of its slot's static binding facts
 /// (`LOCAL_LOAD_ROW`): a slot a mapped `arguments` mirrors, or a self binding, keeps the
-/// general handler. A `StoreLocal` keeps the general store (`store_local_miss`) for every slot:
-/// its binding is resolved there (`staged_store_local_checked`), which also covers a captured
-/// environment's slot.
+/// general handler. A `StoreLocal` keeps the row for every slot: its binding is resolved there
+/// (the row's frame, else the general step), which also covers a captured environment's slot.
 fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
     for record in records.iter_mut() {
         let slot = record.imm() as usize;

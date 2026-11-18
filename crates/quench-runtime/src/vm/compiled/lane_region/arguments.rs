@@ -19,7 +19,7 @@ impl Lowering<'_, '_> {
     }
 
     /// `ArgumentGet` of that binding at an integer index a keeping activation kept or an
-    /// unmaterialized binding holds (`Miss::ArgumentsElement`); any other key leaves at the record.
+    /// unmaterialized binding holds; any other key leaves at the record.
     pub(super) fn arguments_get(&mut self, state: &mut State, pc: u32, instruction: WideInstruction) -> Option<bool> {
         let index = self.tagged(state, instruction.register_b());
         self.arguments_read(state, pc, instruction, LaneHelper::ArgumentGet, &[index])

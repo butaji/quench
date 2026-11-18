@@ -25,7 +25,7 @@ pub(super) unsafe fn yield_in_lane<H: Host>(cx: *mut (), record: Ip, r: Register
 
 /// `yield*` of a generator activation the lane runs over its record, which a `YieldStar` row
 /// transfers to (`Frame::suspend_yield_star`) (`yield_star_in_window`). `None` where no
-/// generator runs the lane, which `yield_star_miss` takes.
+/// generator runs the lane, which the general path takes (`lane_exit`).
 ///
 /// # Safety
 /// `cx` is the running lane's context, `record` the running record of its view, and `r` its register file.
@@ -74,14 +74,6 @@ script_handler! {
             vm.lane_stack.pop_activation();
             vm.lane_completion.set(LaneCompletion::Suspended(value));
         }
-        exit(ip)
-    }
-}
-
-script_handler! {
-    /// `yield*` the frame does not suspend in place (`yield_star_in_lane` declined): the general path.
-    #[inline(never)]
-    pub(super) fn yield_star_miss<>(cx, r, ip, i, view) {
         exit(ip)
     }
 }
@@ -186,11 +178,11 @@ script_handler! {
     }
 }
 
-/// The handlers of a frame's suspensions (`yield_miss`, `yield_star_miss`, `lane_await`).
+/// The handlers of a frame's suspensions (`yield_miss`, `lane_exit` for `yield*`, `lane_await`).
 pub(super) const fn suspend_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::Yield => Some(yield_miss::<H>),
-        Class::YieldStar => Some(yield_star_miss::<H>),
+        Class::YieldStar => Some(super::lane_exit::<H>),
         Class::Await => Some(lane_await::<H>),
         _ => None,
     }

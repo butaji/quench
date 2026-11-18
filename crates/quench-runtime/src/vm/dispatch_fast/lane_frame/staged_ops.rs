@@ -2,18 +2,6 @@
 //! record, steps the operation on the concrete stage, and answers the edge or the written value.
 use super::*;
 
-/// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
-/// dense slots, by the staged operation and the lane's own store (`store_to_capture`); false,
-/// storing nothing, where the binding does not take the direct store.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_store_capture<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    source: u16, (depth, slot): (u16, u16)) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    frame.captures = Some(CaptureStores::of(cx));
-    matches!(crate::staged::step(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
-}
-
 
 
 /// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected
@@ -47,50 +35,5 @@ fn load_capture_with<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carri
     frame.capture_slots = Some(capture_reads(unsafe { (*cx).registers }.capture()));
     frame.reads = reads;
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::LoadCapture { destination, depth, slot, root }), Step::Value(_))
-}
-
-/// `LoadLocal` and `LoadEnvLocal` of `slot` into `destination` by `staged::read_initialized_local`, over the binding
-/// the frame owns (`Vm::owner_binding_mut`: its environment's slot once the environment is captured, else its local)
-/// as a one-slot window; false, writing nothing, for a root body's frame, a slot outside the frame or a binding in
-/// its temporal dead zone, which the general path raises. A slot a mapped `arguments` aliases reads the argument.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_load_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, destination: u16, slot: usize) -> bool {
-    let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
-    let function = code.function(vm.frames[frame].function as usize);
-    if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID {
-        return false;
-    }
-    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
-    let Some(word) = read_initialized_local(&mut stage, &mut window, destination, 0, ()) else { return false };
-    if crate::vm::arguments::mapped_arguments_slot(function, slot).is_some() {
-        r.set(destination, vm.mapped_argument_load(code, VarOwner::Frame(frame), slot, Value::from_bits(word)));
-    }
-    true
-}
-
-/// `StoreLocal` and `StoreEnvLocal` of `source` to `slot` over the binding the frame owns, by
-/// `staged::write_initialized_local` (`staged::write_local` for the store that initializes its binding), mirrored
-/// into a mapped `arguments` (`Vm::mapped_argument_store`); false, writing nothing, for a root
-/// body's frame, a self binding, a slot outside the frame or an assignment to a binding in its temporal dead zone.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_store_local_checked<H: Host, const ACC: u8>(cx: *mut LaneContext<H>,
-    r: Registers, view: Carried, (source, slot): (u16, usize), initializing: bool) -> bool {
-    let vm = unsafe { vm(cx) };
-    let (code, frame) = (unsafe { &*(*cx).code }, unsafe { (*cx).frame() });
-    let function = code.function(vm.frames[frame].function as usize);
-    if vm.frames[frame].function == super::super::ROOT_FUNCTION_ID || function.is_self_binding_slot(slot) {
-        return false;
-    }
-    let Some(binding) = vm.owner_binding_mut(code, VarOwner::Frame(frame), slot).map(std::ptr::from_mut) else { return false };
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut window = LaneFrame::<ACC>::with_locals(r, view, Value::DELETED, binding, 1);
-    let stored = if initializing { write_local(&mut stage, &mut window, source, 0, Some(())) } else { write_initialized_local(&mut stage, &mut window, source, 0, ()) };
-    let Some(word) = stored else { return false };
-    vm.mapped_argument_store(code, VarOwner::Frame(frame), slot, Value::from_bits(word));
-    true
 }
 

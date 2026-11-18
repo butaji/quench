@@ -2547,7 +2547,7 @@ impl Function {
     }
 
     /// Whether the `arguments` object a suspending function made on entry rides its window as
-    /// the local it was stored in, which the lane reads in place (`lane_frame_arguments`): a
+    /// the local it was stored in, which the lane reads in place: a
     /// window local, or, for a binding a closure captures, its slot in the environment the
     /// window makes (`mapped_windows::window_binding`). A mapped object (`arguments_alias_parameters`) aliases
     /// parameters that live in the window as well, the captured ones among them, which ride the
