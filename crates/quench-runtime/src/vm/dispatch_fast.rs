@@ -21575,7 +21575,8 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     } else {
         if lane_runs_row(op) {
             // The row defines the accumulator where its record's `a` is its result register.
-            let produces = matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister);
+            let produces = matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister)
+                && !matches!(op.staged(), Some(crate::bytecode::Decoder::Local));
             return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces });
         }
         match op.class() {
