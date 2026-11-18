@@ -664,6 +664,12 @@ pub(super) fn math_inline_call(native: Native, args: &[Value]) -> Option<Value> 
             math_numbers(native, &[first.as_number()?, second.as_number()?]).map(Value::number)
         }
         [only] => {
+            // An int32's absolute value is an int32 but at -2^31: no conversion to a double and
+            // back. (The integral functions keep their double path: their arguments are
+            // doubles far more often, and a test first costs those.)
+            if native == Native::MathAbs && let Some(x) = only.as_int() && x != i32::MIN {
+                return Some(Value::integer(x.abs()));
+            }
             let number = only.as_number()?;
             math_unary(native, number).or_else(|| math_numbers(native, &[number])).map(Value::number)
         }
