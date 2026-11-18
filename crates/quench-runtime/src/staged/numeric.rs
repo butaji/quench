@@ -325,9 +325,18 @@ fn increment<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     destination: Register, source: Register, decrement: bool,
     overflow: Overflow) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
-    let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else { return Step::Unresolved };
-    let one = stage.i32_constant(1);
     let operation = if decrement { NumberArithmetic::Subtract } else { NumberArithmetic::Add };
+    let Some(value) = frame.int_operand(stage, Operand::register(source), miss) else {
+        // A stage that found the operand no int32 (the interpreter's, or a tier that knows it a
+        // binary64) steps the binary64 by one.
+        let Some(number) = frame.number_operand(stage, Operand::register(source), miss) else { return Step::Unresolved };
+        let one = stage.f64_constant(1.0);
+        let result = stage.float_arithmetic(operation, number, one);
+        let fact = frame.number_fact();
+        frame.write(stage, destination, result, fact);
+        return Step::Value(result);
+    };
+    let one = stage.i32_constant(1);
     int_arithmetic_result(stage, frame, destination, value, one, operation, (overflow, NegativeZero::Exit), miss)
 }
 

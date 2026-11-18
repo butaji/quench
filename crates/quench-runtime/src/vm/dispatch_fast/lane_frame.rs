@@ -378,16 +378,16 @@ pub(super) use staged_ops::*;
 /// handler's const generic. The lane admits a register-defining record only without result flags
 /// (a returning one takes `returning_handler`), so its `a` is the result register as it is.
 #[derive(Clone, Copy)]
-struct LaneFields<'a, const OP: u16>(&'a LaneInstruction);
+struct LaneFields<'a, const OP: u16, const FLAG: u8 = FLAG_UNREAD>(&'a LaneInstruction);
 
-impl<const OP: u16> LaneFields<'_, OP> {
+impl<const OP: u16, const FLAG: u8> LaneFields<'_, OP, FLAG> {
     const OPCODE: Op = match Op::from_index(OP as usize) { Some(op) => op, None => panic!("no such opcode") };
-    const FLAG: bool = matches!(Self::OPCODE.immediate_role(), crate::bytecode::ImmediateRole::BooleanFlag);
+    const FLAG_ROLE: bool = matches!(Self::OPCODE.immediate_role(), crate::bytecode::ImmediateRole::BooleanFlag);
     const REGISTER_B: bool = Self::OPCODE.field_layout(crate::bytecode::InstructionField::B).is_register_field();
     const REGISTER_C: bool = Self::OPCODE.field_layout(crate::bytecode::InstructionField::C).is_register_field();
 }
 
-impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
+impl<const OP: u16, const FLAG: u8> crate::staged::Fields for LaneFields<'_, OP, FLAG> {
     #[inline(always)]
     fn op(self) -> Op {
         // A constant of the instantiation, so the decode's match folds to the one arm.
@@ -411,10 +411,23 @@ impl<const OP: u16> crate::staged::Fields for LaneFields<'_, OP> {
         }
         // A flag the compiler writes is 0 or 1; any other word reads as set, so the flag's decode
         // is the one test.
-        let imm = if Self::FLAG { self.0.imm().min(1) } else { self.0.imm() };
+        let imm = match (Self::FLAG_ROLE, FLAG) {
+            (true, FLAG_CLEAR) => 0,
+            (true, FLAG_SET) => 1,
+            (true, _) => self.0.imm().min(1),
+            (false, _) => self.0.imm(),
+        };
         WideInstruction::new(self.op(), self.0.a, self.0.b, self.0.c, imm)
     }
 }
+
+/// `lane_row`'s `FLAG`: a row whose immediate is a boolean flag (`ImmediateRole::BooleanFlag`) reads it
+/// from the record until its first run, which requickens the record to the instantiation of its flag
+/// (`FLAG_CLEAR`, `FLAG_SET`), so the flag is a static operand the row folds (an increment and a
+/// decrement are two handlers of one row). Any other row ignores it.
+pub(in crate::vm::dispatch_fast) const FLAG_UNREAD: u8 = 0;
+pub(in crate::vm::dispatch_fast) const FLAG_CLEAR: u8 = 1;
+pub(in crate::vm::dispatch_fast) const FLAG_SET: u8 = 2;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -442,8 +455,14 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: 
 /// Whether `handler` is opcode `OP`'s generated row handler (`lane_row`), at any accumulator field:
 /// the passes that fuse a record by its handler find the row whichever field the view carried.
 pub(in crate::vm::dispatch_fast) fn is_row<H: Host, const OP: u16>(handler: *const ()) -> bool {
-    let rows: [Handler; ACC_POSITIONS] = [lane_row::<H, OP, ACC_NONE>, lane_row::<H, OP, ACC_A>, lane_row::<H, OP, ACC_B>,
-        lane_row::<H, OP, ACC_C>, lane_row::<H, OP, ACC_PAIR>];
+    is_row_flagged::<H, OP, FLAG_UNREAD>(handler) || is_row_flagged::<H, OP, FLAG_CLEAR>(handler)
+        || is_row_flagged::<H, OP, FLAG_SET>(handler)
+}
+
+/// `is_row` at one `FLAG`.
+fn is_row_flagged<H: Host, const OP: u16, const FLAG: u8>(handler: *const ()) -> bool {
+    let rows: [Handler; ACC_POSITIONS] = [lane_row::<H, OP, ACC_NONE, FLAG>, lane_row::<H, OP, ACC_A, FLAG>,
+        lane_row::<H, OP, ACC_B, FLAG>, lane_row::<H, OP, ACC_C, FLAG>, lane_row::<H, OP, ACC_PAIR, FLAG>];
     rows.iter().any(|row| *row as *const () == handler)
 }
 
@@ -453,10 +472,15 @@ lane_handler! {
     /// (`Operation::decode_flow`), the row steps on `Concrete` over the lane's frame, and the
     /// step picks the continuation. `OP` and `ACC` are static, so rustc folds the decode and the
     /// row to the residual a hand-written handler would be (Futamura's first projection).
-    pub(super) fn lane_row<OP: u16, ACC: u8>(cx, r, ip, i, view) {
+    pub(super) fn lane_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        if LaneFields::<OP, FLAG>::FLAG_ROLE && FLAG == FLAG_UNREAD {
+            let flagged: Handler = if i.imm() != 0 { lane_row::<H, OP, ACC, FLAG_SET> } else { lane_row::<H, OP, ACC, FLAG_CLEAR> };
+            requicken::<H>(ip, flagged);
+            sibling!(flagged, r, ip, view)
+        }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
-        let fields = LaneFields::<OP>(i);
-        let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
+        let fields = LaneFields::<OP, FLAG>(i);
+        let decoded = match const { LaneFields::<OP, FLAG>::OPCODE.staged() } {
             Some(crate::bytecode::Decoder::Flow) => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
             Some(crate::bytecode::Decoder::Local) => Operation::decode_local(crate::staged::Fields::wide(fields)),
             Some(crate::bytecode::Decoder::Value) => Operation::decode_value(crate::staged::Fields::wide(fields)),

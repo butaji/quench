@@ -532,7 +532,6 @@ vm/dispatch_fast.rs Class:ForInStart 1
 vm/dispatch_fast.rs Class:GetField 2
 vm/dispatch_fast.rs Class:GetIndex 1
 vm/dispatch_fast.rs Class:GetIterator 1
-vm/dispatch_fast.rs Class:IncDec 1
 vm/dispatch_fast.rs Class:InitializeTdz 1
 vm/dispatch_fast.rs Class:IteratorCleanupPop 1
 vm/dispatch_fast.rs Class:IteratorCleanupPush 1
@@ -602,7 +601,7 @@ vm/dispatch_fast.rs Class:WasmSelect 1
 vm/dispatch_fast.rs Class:WasmSimd 2
 vm/dispatch_fast.rs Class:WasmSimdShuffle 2
 vm/dispatch_fast.rs JsDenotation:NumericBinary 1
-vm/dispatch_fast.rs fn:lane_* 606
+vm/dispatch_fast.rs fn:lane_* 604
 vm/dispatch_fast.rs is:is_await 2
 vm/dispatch_fast.rs is:is_binary 1
 vm/dispatch_fast.rs is:is_call 4
@@ -636,6 +635,7 @@ vm/dispatch_fast.rs is:is_wasm_instance_binding 2
 vm/dispatch_fast.rs is:is_wasm_memory_address 1
 vm/dispatch_fast.rs is:is_wasm_memory_fill 1
 vm/dispatch_fast.rs is:is_wasm_memory_size 1
+vm/dispatch_fast.rs op:IncDec 3
 vm/dispatch_fast.rs op:Jump 1
 vm/dispatch_fast.rs op:LoadConst 3
 vm/dispatch_fast.rs op:LoadLocalPlain 2
