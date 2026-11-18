@@ -144,6 +144,15 @@ pub(crate) trait CallFrame<S: Stage>: Frame<S> {
         None
     }
 
+    /// The `next` step of a sync `yield*`'s delegate (`DelegationStep::Next`) made by the frame in
+    /// place: the control that runs it, whose result arrives in `state` with this instruction run
+    /// again (`delegation`). `None`, before any effect, where the frame calls `next` instead.
+    #[inline(always)]
+    fn delegation_in_place(&mut self, _stage: &mut S, _step: super::DelegationStep<S::Word>, _state: Register)
+        -> Option<Self::Control> {
+        None
+    }
+
     /// Make the lane's activations frames, as a native that observes the frame stack needs
     /// (`Native::runs_beside_activations` is false): a native that runs beside them is entered
     /// without. The caller's registers stay where they are.

@@ -227,7 +227,7 @@ fn suspensions_decode_to_rows_a_plain_frame_leaves_unresolved() {
     let context = crate::staged::DecodeContext::of_constants(&[]);
     let pair = crate::bytecode::ImmediateLayout::register_pair_immediate(4, 5);
     let delegation = Suspension::YieldStar { iterator: 3, state: 4, next: 5 };
-    for (op, expected) in [(Op::Await, Suspension::Await), (Op::Yield, Suspension::Yield), (Op::YieldStar, delegation)] {
+    for (op, expected) in [(Op::Await, Suspension::Await), (Op::Yield, Suspension::Yield { conversion: crate::staged::YieldConversion::Resolve }), (Op::YieldStar, delegation)] {
         let imm = if op == Op::YieldStar { pair } else { 0 };
         let row = Operation::<u64, ()>::decode(WideInstruction::new(op, 1, 2, 3, imm), context);
         let Some(Operation::Suspend { kind, destination: 1, value: 2 }) = row else { panic!("{op:?} decodes to a suspension row") };
