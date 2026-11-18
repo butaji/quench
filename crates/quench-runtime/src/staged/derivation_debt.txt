@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 1990
+# total 1988
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -146,9 +146,7 @@ vm/compiled/base_region/globals.rs Class:LoadName 2
 vm/compiled/base_region/globals.rs Class:LoadNameCall 2
 vm/compiled/base_region/globals.rs is:is_load_name_call 1
 vm/compiled/base_region/locals.rs Class:InitializeTdz 2
-vm/compiled/base_region/locals.rs Class:LoadEnvLocal 1
 vm/compiled/base_region/locals.rs Class:LoadLocal 2
-vm/compiled/base_region/locals.rs Class:StoreEnvLocal 1
 vm/compiled/base_region/locals.rs Class:StoreLocal 3
 vm/compiled/base_region/names.rs Class:SetFunctionName 1
 vm/compiled/base_region/sites.rs Class:Binary 1
