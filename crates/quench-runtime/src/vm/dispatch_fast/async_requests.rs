@@ -97,9 +97,8 @@ pub(super) fn lane_suspend_request<H: Host>(cx: *mut LaneContext<H>, r: Register
     let depth = vm.lane_stack.activations.len() - 1;
     let activation = *vm.lane_stack.activations.last().expect("a request's activation runs");
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a request runs as a script activation") };
-    // SAFETY: the record lies in the running view.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    vm.suspend_request_window(script.callee, (pc + 1, i.a & crate::bytecode::REGISTER_MASK, depth), yielded, value);
+    let (pc, destination) = super::generator_yields::resume_point(cx, ip, i);
+    vm.suspend_request_window(script.callee, (pc, destination, depth), yielded, value);
     vm.lane_stack.pop_activation();
     let (memory, _) = lane_restore_caller(cx, &activation);
     let promise = take_request_promise(vm);

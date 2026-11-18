@@ -5,6 +5,7 @@
 //! return completes the generator.
 use super::*;
 use super::super::activation::{FrameRecord, GeneratorRecord};
+use super::generator_yields::resume_point;
 
 impl Activation {
     /// What its caller's frame resumes with when the activation becomes a frame, as the register
@@ -397,10 +398,9 @@ fn lane_resume_generated<H: Host>(vm: &mut Vm<H>, activation: &Activation, memor
 /// `yield` of the running generator activation (`running_generator`): the frame suspends in
 /// place, resuming after this record, and its caller continues with the step's result.
 pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
-    // SAFETY: the record lies in the running view.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
     // The generator receives the next value in this record's A register.
-    lane_suspend_generator(cx, pc + 1, i.a & crate::bytecode::REGISTER_MASK, r.get(i.b), None)
+    let (pc, destination) = resume_point(cx, ip, i);
+    lane_suspend_generator(cx, pc, destination, r.get(i.b), None)
 }
 
 /// `yield*` of the running generator activation (`running_generator`): a step of a delegate
@@ -411,7 +411,7 @@ pub(super) fn lane_yield_in_window<H: Host>(cx: *mut LaneContext<H>, r: Register
 pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i: &LaneInstruction) -> Resumed {
     let vm = unsafe { vm(cx) };
     let (state, next_method) = ImmediateLayout::register_pair(i.imm());
-    let destination = i.a & crate::bytecode::REGISTER_MASK;
+    let (after, destination) = resume_point(cx, ip, i);
     let waiting = r.get(state);
     if waiting.is_undefined() {
         let (delegate, method) = (r.get(i.c), r.get(next_method));
@@ -431,7 +431,5 @@ pub(super) fn lane_yield_star_in_window<H: Host>(cx: *mut LaneContext<H>, r: Reg
         return Resumed::At(r, following(ip), Carried::script(cx));
     }
     // The generator resumes at this record, which takes the value its caller sends next.
-    // SAFETY: the record lies in the running view.
-    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-    lane_suspend_generator(cx, pc, destination, Value::UNDEFINED, Some(waiting))
+    lane_suspend_generator(cx, after - 1, destination, Value::UNDEFINED, Some(waiting))
 }

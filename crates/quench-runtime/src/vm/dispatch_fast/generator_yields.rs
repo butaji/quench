@@ -29,9 +29,6 @@ script_handler! {
         {
             let vm = unsafe { vm(cx) };
             let mut value = r.get(i.b);
-            // SAFETY: the record lies in the running view.
-            let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-            let destination = i.a & crate::bytecode::REGISTER_MASK;
             if job.kind == SuspendKind::AsyncGenerator {
                 // The yield awaits its value, converted as an `await`'s source is.
                 let Some(source) = lane_await_source(cx, r, value) else {
@@ -39,15 +36,37 @@ script_handler! {
                 };
                 value = source;
                 note_allocation(vm);
-                vm.suspend_async_generator_yield(job, pc + 1, destination, value, 0);
-            } else {
-                vm.suspend_job_window(job, pc + 1, destination, value, 0);
             }
-            vm.lane_stack.pop_activation();
-            vm.lane_completion.set(LaneCompletion::Suspended(value));
+            lane_suspend_job_root(cx, ip, i, job, value, true);
         }
         exit(ip)
     }
+}
+
+/// Where a frame stopping at the `yield` or `await` record `i` at `ip` resumes: the pc after
+/// the record, and the register that takes the value it is resumed with. Every lane suspension
+/// (`lane_yield_in_window`, `lane_suspend_request`, `lane_suspend_job_root`) reads it here.
+#[inline(always)]
+pub(super) fn resume_point<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction) -> (usize, crate::bytecode::Register) {
+    // SAFETY: the record lies in the running view.
+    let pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    (pc + 1, i.a & crate::bytecode::REGISTER_MASK)
+}
+
+/// The activation a job's lane run is rooted in (`LaneRoot::Job`) stops at the record `i` at
+/// `ip` with `value`, a `yield` when `yielded`, else an `await`: its frame suspends into its
+/// owner as its kind does (`Vm::suspend_async_generator_yield` for an async generator's
+/// `yield`, `Vm::suspend_job_window` for the rest), the activation pops, and the run ends.
+fn lane_suspend_job_root<H: Host>(cx: *mut LaneContext<H>, ip: Ip, i: &LaneInstruction, job: JobRoot, value: Value, yielded: bool) {
+    let vm = unsafe { vm(cx) };
+    let (pc, destination) = resume_point(cx, ip, i);
+    if yielded && job.kind == SuspendKind::AsyncGenerator {
+        vm.suspend_async_generator_yield(job, pc, destination, value, 0);
+    } else {
+        vm.suspend_job_window(job, pc, destination, value, 0);
+    }
+    vm.lane_stack.pop_activation();
+    vm.lane_completion.set(LaneCompletion::Suspended(value));
 }
 
 script_handler! {
@@ -111,11 +130,7 @@ script_handler! {
             r.set(i.a & crate::bytecode::REGISTER_MASK, settled);
             next!(cx, r, following(ip), Carried::script(cx))
         }
-        // SAFETY: the record lies in the running view.
-        let pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        vm.suspend_job_window(job, pc + 1, i.a & crate::bytecode::REGISTER_MASK, value, 0);
-        vm.lane_stack.pop_activation();
-        vm.lane_completion.set(LaneCompletion::Suspended(value));
+        lane_suspend_job_root(cx, ip, i, job, value, false);
         exit(ip)
     }
 }
