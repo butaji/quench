@@ -1127,6 +1127,10 @@ pub(in crate::vm::dispatch_fast) const FLAG_SCOPE: u8 = 10;
 pub(in crate::vm::dispatch_fast) const FLAG_SCOPE_ENVIRONMENT: u8 = 11;
 /// `FLAG` of a closure in a window activation whose names do not resolve through its scope.
 pub(in crate::vm::dispatch_fast) const FLAG_WINDOW_CLOSURE: u8 = 12;
+/// `FLAG` of a by-name load whose scope the compiler left open (an eval's code, or a function with an eval of
+/// its own): the row's miss is the probe (`name_probe`), which asks the general path where the name lands and
+/// then settles the record (`settle_name_record`).
+pub(in crate::vm::dispatch_fast) const FLAG_PROBE: u8 = 13;
 
 /// Whether opcode `op`'s lane handler is its staged row (`lane_row`): a row that falls through,
 /// of the flow family or one the catalog marks `ROW_HANDLER`. Derived from the catalog, so a row
@@ -1423,6 +1427,7 @@ const fn name_miss_kind<H: Host, const FLAG: u8, const KIND: u8>() -> Handler {
         FLAG_NAME_GLOBAL => super::lane_load_global_name_refresh::<H, KIND, false> as Handler,
         FLAG_NAME_GLOBAL_SCOPED => super::lane_load_global_name_refresh::<H, KIND, true> as Handler,
         FLAG_NAME_UNDEFINED | FLAG_NAME_INTRINSIC | FLAG_SCOPE => super::lane_exit::<H> as Handler,
+        FLAG_PROBE => super::probe_handler::<H, KIND>(),
         _ => super::lane_load_name_resolve::<H, KIND> as Handler,
     }
 }

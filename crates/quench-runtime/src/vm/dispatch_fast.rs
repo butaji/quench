@@ -10480,8 +10480,10 @@ script_handler! {
                 // Any other name's scope is a runtime fact, which the general path's read settles
                 // (`lane_load_name_probe`).
                 if !unsafe { vm(cx) }.atom_class(i.imm()).contains(AtomClass::INTERNAL) {
-                    requicken::<H>(ip, probe_handler::<H, KIND>());
-                    sibling!(probe_handler::<H, KIND>(), r, ip, Carried::script_in(cx, view))
+                    // The probe is the row's miss at `FLAG_PROBE` (`name_probe`), which settles the record after.
+                    let probing = name_row::<H, { lane_frame::FLAG_PROBE }>(load);
+                    requicken::<H>(ip, probing);
+                    sibling!(probing, r, ip, Carried::script_in(cx, view))
                 }
                 requicken::<H>(ip, lane_exit::<H>);
                 return exit(ip);

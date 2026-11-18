@@ -33,7 +33,7 @@ pub(in crate::vm) fn settle_name_record<H: Host>(view: &LaneView, pc: usize, op:
     requicken::<H>(unsafe { view.records().add(pc) }, handler);
 }
 
-/// The handler of a by-name read of kind `KIND` whose scope is left to the general path's read.
+/// The miss arm of a by-name read of kind `KIND` at `FLAG_PROBE`: its scope is left to the general path's read.
 pub(super) const fn probe_handler<H: Host, const KIND: u8>() -> Handler {
     lane_load_name_probe::<H, KIND>
 }
