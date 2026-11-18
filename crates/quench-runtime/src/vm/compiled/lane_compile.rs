@@ -579,7 +579,7 @@ impl LaneMethod {
         let calls_here = self.inlined.iter().any(|call| call.parent == Some(frame) && call.call == pc);
         let constructs_here = program.function_get(inlined.target.function as usize)
             .and_then(|body| body.instructions().nth(pc as usize))
-            .is_some_and(|instruction| instruction.op().class() == crate::bytecode::Class::Construct);
+            .is_some_and(|instruction| crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Construct));
         if !calls_here && !constructs_here {
             return exit;
         }

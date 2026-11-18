@@ -62,7 +62,7 @@ pub(crate) fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     stage.eq_imm(bits, crate::Value::NULL.to_bits())
 }
 
-/// The value word of the int32 whose zero-extended payload is `payload` (`Value::integer`).
+/// The value word of an int32 whose 64-bit `payload` is its zero-extended bits (`Value::int`).
 #[inline(always)]
 pub(crate) fn int_word<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
     stage.or_imm(payload, ValueLayout::INT_TAG)

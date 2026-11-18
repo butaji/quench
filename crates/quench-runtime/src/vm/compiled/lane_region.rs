@@ -729,7 +729,7 @@ fn numeric_instruction(program: &ResidualProgram, instruction: WideInstruction) 
     if instruction.writes_current_this()
         || (instruction.result_flags() != 0 && !instruction.returns_from_frame()) { return false; }
     match instruction.op() {
-        opcode if opcode.is_load_const() => program.constants.get(instruction.constant_index())
+        _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::LoadConst) => program.constants.get(instruction.constant_index())
             .and_then(super::facts::immediate).is_some(),
         _ if instruction.op().traits().has(crate::bytecode::Traits::SCALAR_REGION) => true,
         _ => instruction.op().js_denotation() == JsDenotation::NumericBinary
@@ -744,14 +744,11 @@ fn register_offset(register: Register) -> i32 {
 pub(super) fn int_tagged(builder: &mut FunctionBuilder<'_>, int: ir::Value) -> ir::Value {
     let mut stage = emit(builder);
     let payload = stage.raw_unary(Unary::ZeroExtend(Lane::I64), int);
-    stage.raw_binary_imm(Binary::Or, payload, crate::value::ValueLayout::INT_TAG as i64)
+    crate::staged::value::int_word(&mut stage, payload)
 }
 
 pub(super) fn is_int_tagged(builder: &mut FunctionBuilder<'_>, bits: ir::Value) -> ir::Value {
-    let shift = i64::from(crate::value::ValueLayout::TAG_SHIFT);
-    let mut stage = emit(builder);
-    let tag = stage.raw_binary_imm(Binary::ShiftRightUnsigned, bits, shift);
-    stage.raw_compare_imm(Relation::Equal, tag, (crate::value::ValueLayout::INT_TAG >> shift) as i64)
+    crate::staged::value::is_int(&mut emit(builder), bits)
 }
 
 /// The tagged Boolean a predicate `holds` selects: the boxed `true` where it holds, else the boxed `false`.
@@ -1225,8 +1222,8 @@ fn reads_only(constants: &[crate::bytecode::Constant], instruction: WideInstruct
 fn reads_slot(constants: &[crate::bytecode::Constant], instruction: WideInstruction) -> Option<bool> {
     Some(match instruction.op() {
         _ if instruction.op().traits().has(Traits::FRAME_ONLY) => true,
-        opcode if opcode.is_load_const() => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
-        opcode if opcode.is_inc_dec() => instruction.numeric_local_target().is_none(),
+        _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::LoadConst) => constants.get(instruction.constant_index()).and_then(super::facts::immediate).is_some(),
+        _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::IncDec) => instruction.numeric_local_target().is_none(),
         _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) => instruction.result_flags() == 0 && instruction.capture_depth() == 0,
         _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this() && !instruction.returns_from_frame(),
         _ => return None,
@@ -1833,7 +1830,7 @@ pub(super) fn lower(
         // input directly. This selects a checked entry contract; a fractional
         // or wider bound resumes the original header with its value unchanged.
         let instruction = instructions[entry_pc];
-        if !lowering.facts.backedge().is_empty() && instruction.op().is_jump_binary_false()
+        if !lowering.facts.backedge().is_empty() && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. }))
             && matches!(super::operations::NumberRelation::from_operator(instruction.binary_operator_field()),
                     Some(super::operations::NumberRelation::LessThan | super::operations::NumberRelation::LessEqual
                         | super::operations::NumberRelation::GreaterThan | super::operations::NumberRelation::GreaterEqual)) {
@@ -2072,7 +2069,7 @@ impl Lowering<'_, '_> {
     fn truncated(&self, pc: usize, register: Register) -> bool {
         let (at, register) = self.reader(pc + 1, register);
         let Some(next) = self.unit.instructions.get(at).copied() else { return false };
-        if !next.op().is_binary() || next.returns_from_frame() || next.writes_current_this() { return false; }
+        if !crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary) || next.returns_from_frame() || next.writes_current_this() { return false; }
         let reads = [next.operand_b(), next.operand_c()].iter().filter(|operand| operand.register_index() == Some(register)).count();
         if reads == 0 || !(next.result_register() == register || self.dead_after(at, register)) { return false; }
         let operator = next.binary_operator();
@@ -2693,7 +2690,7 @@ impl Lowering<'_, '_> {
         let pc32 = pc as u32;
         let plain = instruction.result_flags() == 0;
         let ran = match instruction.op() {
-            opcode if opcode.is_throw() => self.throw(state, pc, instruction),
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Throw) => self.throw(state, pc, instruction),
             // A call, a construction in the caller's window and a return: the staged operations
             // the tier's facts admit (`call_rows`).
             _ if self.scalar_call_admitted(state, pc, instruction) => Some(self.scalar_call(state, pc, instruction)),
@@ -2702,7 +2699,8 @@ impl Lowering<'_, '_> {
             _ if self.is_call_out(instruction) => Some(self.call_out_step(state, pc, instruction)),
             _ if self.is_register_row(instruction) => Some(self.register_step(state, pc, instruction)),
             _ if self.is_window_row(pc, instruction) => Some(self.window_step(state, pc, instruction)),
-            opcode if (opcode.is_load_name() || opcode.is_load_name_call()) && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
+            _ if matches!(crate::staged::Operation::<(), ()>::decode_load_name(instruction, ()), Some(crate::staged::Operation::LoadName { .. }))
+                && plain && self.global_reads.contains_key(&pc) => Some(self.global_read(state, pc, instruction)),
             _ if matches!(super::decoded(instruction), Some(crate::staged::Operation::Nop)) && plain => match self.unit.markers.iter().position(|marker| *marker == pc) {
                 Some(frame) => Some(self.inline_call(state, pc, frame)),
                 None => Some(true),
@@ -2719,14 +2717,14 @@ impl Lowering<'_, '_> {
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
             _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) && instruction.result_flags() & !(crate::bytecode::SET_THIS_REGISTER | crate::bytecode::RETURN_REGISTER) == 0 => self.fold_native_member(state, pc, instruction).or_else(|| self.get_field(state, pc, instruction)),
             _ if self.is_element_row(instruction) => Some(self.element_step(state, pc, instruction)),
-            _ if instruction.op().class().eq(Class::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::SetFunctionName) && plain && self.completion.status_and_pc() => self.function_name(state, pc, instruction),
             _ if matches!((plain, instruction.op().field_store()), (true, Some(_))) => self.set_field(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericBinary && instruction.numeric_local_target().is_none() => {
                 self.operator(state, pc, instruction).or_else(|| self.binary_call_out(state, pc, instruction))
             }
-            opcode if opcode.is_unary() && plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Unary) && plain && instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
                 && instruction.register_b() < self.unit.registers => self.typeof_index(state, pc, instruction),
-            opcode if opcode.is_unary() && crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
+            _ if crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::Unary) && crate::bytecode::typeof_test(instruction.unary_operator()).is_some()
                 && !self.helpers.is_numeric() => self.typeof_test(state, pc, instruction),
             _ if instruction.op().js_denotation() == JsDenotation::NumericUnary
                 && instruction.register_b() < self.unit.registers => self.unary(state, pc, instruction),
@@ -2735,9 +2733,9 @@ impl Lowering<'_, '_> {
             // The entry function's own `arguments` binding, whose values the activation kept
             // or an unmaterialized binding holds; an inlined callee's reads its own, which no
             // window of this activation holds.
-            _ if plain && instruction.op().class().eq(Class::ArgumentsLength) && self.own_arguments_read(pc, instruction) =>
+            _ if plain && matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::ArgumentsLength { .. })) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_length(state, pc32, instruction),
-            _ if plain && instruction.op().class().eq(Class::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
+            _ if plain && crate::staged::meaning::means(instruction, crate::staged::meaning::Meaning::ArgumentGet) && self.own_arguments_read(pc, instruction) =>
                 self.arguments_get(state, pc32, instruction),
             _ if plain && self.is_jump(instruction) => return self.jump(state, pc, instruction),
             _ if plain && matches!(super::decoded(instruction), Some(crate::staged::Operation::JumpIf { .. })) => {
@@ -3616,7 +3614,7 @@ impl Lowering<'_, '_> {
             if boundaries.contains(at) || self.unit.markers.contains(&at) { break; }
             let instruction = self.unit.instructions[at];
             let operator = match instruction.op() {
-                opcode if opcode.is_jump_binary_false() => Some(instruction.binary_operator_field()),
+                _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::CompareJump { .. })) => Some(instruction.binary_operator_field()),
                 _ if instruction.op().js_denotation() == JsDenotation::NumericBinary => Some(instruction.binary_operator()),
                 _ => None,
             };
@@ -4470,7 +4468,7 @@ impl Lowering<'_, '_> {
             && instruction.result_flags() == 0
             && let Some(next) = self.unit.instructions.get(pc + 1).copied()
             && next.result_flags() == 0
-            && next.op().is_binary()
+            && crate::staged::meaning::means(next, crate::staged::meaning::Meaning::Binary)
             && super::operations::NumberBitwise::from_js_instruction(next.op(), next.binary_operator())
                 == Some(super::operations::NumberBitwise::Or)
             && next.operand_b().register_index() == Some(destination)

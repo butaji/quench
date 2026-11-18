@@ -36,6 +36,7 @@ mod spread;
 mod admission;
 mod delete;
 mod decode;
+pub(crate) mod meaning;
 mod captures;
 pub(crate) mod compare;
 pub(crate) use global::{lexical_read, GlobalBinding, GlobalFrame};
