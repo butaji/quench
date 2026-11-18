@@ -11218,7 +11218,7 @@ mod tests {
             let mut vm = Vm::new(crate::test_host::TestHost::default());
             vm.initialize_shared(&Rc::new(native.residual().clone()), super::super::builtins::RealmScope::Complete).unwrap();
             let prepared = vm.prepare_native_script(native).unwrap();
-            vm.programs.attach_native_js(ProgramId::MAIN, prepared.native.unwrap()).unwrap();
+            vm.programs.attach_native_js(ProgramId::MAIN, prepared.native.unwrap(), &prepared.program).unwrap();
             #[cfg(not(quench_profiled))]
             {
                 vm.programs.enable_js_jit_diagnostics();

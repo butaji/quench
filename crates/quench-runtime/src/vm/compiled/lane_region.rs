@@ -4178,6 +4178,16 @@ impl Lowering<'_, '_> {
 }
 
 /// Continue only when `condition` is false; `fallback` otherwise.
+/// The lane context the running payload binds, guarded: an eager image's native-only entry runs
+/// no interpreter lane loop, so it binds none, and the record leaves at `exit` for the general
+/// path, which reads only the dispatch payload.
+fn emit_lane_context(builder: &mut FunctionBuilder<'_>, payload: ir::Value, exit: ir::Block) -> ir::Value {
+    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+    let bound = emit(builder).raw_compare_imm(Relation::NotEqual, context, 0);
+    emit_js_guard(builder, bound, exit);
+    context
+}
+
 fn emit_js_guard_not(builder: &mut FunctionBuilder<'_>, condition: ir::Value, fallback: ir::Block) {
     let passed = builder.create_block();
     emit(builder).branch_if(condition, (fallback, &[]), (passed, &[]));

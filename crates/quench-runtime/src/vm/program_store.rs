@@ -2677,8 +2677,13 @@ impl ProgramStore {
     }
 
     #[cfg(feature = "native-execution")]
-    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>) -> Result<(), String> {
+    pub(super) fn attach_native_js(&mut self, id: ProgramId, code: Rc<super::native_program::NativeJsCode>, compiled_for: &crate::ResidualProgram) -> Result<(), String> {
         let entry = self.entry_mut(id).ok_or("native JS program is missing")?;
+        // Code names its program's records by index: attached to another program, its first
+        // entry reads the wrong instruction (`native semantic opcode does not match`). The
+        // program that holds the id must be the one the code was compiled from, else the id
+        // keeps no native code and runs the shared bodies.
+        if !entry.residual.shares_records_with(compiled_for) { return Ok(()); }
         if entry.native_js.is_some() {
             return Err("native JS program already has code".into());
         }

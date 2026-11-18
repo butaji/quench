@@ -180,7 +180,12 @@ mod tests {
 mod exact_steps {
     use super::*;
 
+    /// The ledger of the target whose lowering it records: the x86-64 file is the one the
+    /// column was kept for, and AArch64 leaves its own rows (`aot-exact-steps-aarch64.txt`).
+    #[cfg(target_arch = "x86_64")]
     const BUDGET: &str = include_str!("../../../aot-exact-steps.txt");
+    #[cfg(not(target_arch = "x86_64"))]
+    const BUDGET: &str = include_str!("../../../aot-exact-steps-aarch64.txt");
 
     /// The records of every function of `source` that its ahead lane body does not lower, so a
     /// trampoline hands them to the per-PC fallback: a function with no body counts all its

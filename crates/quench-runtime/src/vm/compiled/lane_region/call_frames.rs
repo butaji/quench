@@ -259,7 +259,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
         }
         stage.builder.switch_to_block(helper);
         let which = if site.constructs() { LaneHelper::ConstructCall } else { LaneHelper::Call };
-        let context = emit_js_payload_word(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let context = super::emit_lane_context(stage.builder, self.payload, call.missed);
         let record = stage.raw_const(Lane::I64, i64::from(call.record));
         let address = self.helpers.address(&mut stage.builder, which);
         let status = emit_lane_helper_call(stage.builder, self.payload, address, &[context, record]);

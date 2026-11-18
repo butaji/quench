@@ -56,7 +56,7 @@ pub(super) fn vm_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, opera
 pub(super) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallOutSite, decides: bool,
     result: Option<Register>) -> Option<(ir::Value, RegisterFact)> {
     let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = frame.edges else { return None };
-    let status = call_helper(frame, stage, site);
+    let status = call_helper(frame, stage, site, miss);
     let holds = decides.then(|| stage.eq_imm(status, LANE_CALL_HOLDS as u64));
     let completed = stage.builder.create_block();
     let plain = stage.eq_imm(status, LANE_CALL_COMPLETED as u64);
@@ -91,13 +91,13 @@ fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [
 
 /// The helper's call: the registers the body wrote go to the lane's file first, each in its
 /// tagged form, made on a copy of the facts so only this slow path pays for it.
-fn call_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallOutSite) -> ir::Value {
+fn call_helper(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, site: &CallOutSite, miss: ir::Block) -> ir::Value {
     let mut scratch = frame.state.clone();
     for register in &site.spill {
         let bits = super::register_tagged(stage.builder, frame.registers, &mut scratch, *register);
         stage.store_u64(FRAME, site.registers, register_offset(*register), bits);
     }
-    let context = emit_js_payload_word(stage.builder, frame.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+    let context = super::emit_lane_context(stage.builder, frame.payload, miss);
     let record = stage.constant(u64::from(site.record));
     let helper = frame.helpers.address(&mut stage.builder, LaneHelper::VmStep);
     emit_lane_helper_call(stage.builder, frame.payload, helper, &[context, record])

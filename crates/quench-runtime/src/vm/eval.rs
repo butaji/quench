@@ -687,7 +687,7 @@ impl<H: Host> Vm<H> {
         let Some(id) = self.store_dynamic_program_shared(prepared.program.clone()) else { return Ok(None); };
         #[cfg(feature = "native-execution")]
         if let Some(code) = &prepared.native {
-            self.programs.attach_native_js(id, code.clone()).map_err(JsError::validation)?;
+            self.programs.attach_native_js(id, code.clone(), &prepared.program).map_err(JsError::validation)?;
         }
         Ok(Some(id))
     }
@@ -726,7 +726,7 @@ impl<H: Host> Vm<H> {
                 };
                 #[cfg(feature = "native-execution")]
                 if let Some(code) = self.programs.native_js_code(script.state.source).cloned() {
-                    self.programs.attach_native_js(id, code).map_err(JsError::validation)?;
+                    self.programs.attach_native_js(id, code, &script.state.program).map_err(JsError::validation)?;
                 }
                 self.programs.bind_script_instance(script.state.source, realm, id);
                 id

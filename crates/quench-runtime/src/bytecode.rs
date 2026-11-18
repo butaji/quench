@@ -4205,6 +4205,21 @@ impl ResidualProgram {
     pub fn function_count(&self) -> usize {
         self.functions.len()
     }
+
+    /// Whether `other` is the same program by the records compiled code names: its parse goal,
+    /// source text, and every function's registers and operation sequence.
+    #[cfg(feature = "native-execution")]
+    pub(crate) fn shares_records_with(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.source_text() == other.source_text()
+            && self.function_count() == other.function_count()
+            && (0..self.function_count()).all(|index| {
+                let (left, right) = (self.function(index), other.function(index));
+                left.registers == right.registers
+                    && left.instructions().map(crate::bytecode::WideInstruction::op)
+                        .eq(right.instructions().map(crate::bytecode::WideInstruction::op))
+            })
+    }
     pub fn instruction_count(&self) -> usize {
         self.functions
             .iter()

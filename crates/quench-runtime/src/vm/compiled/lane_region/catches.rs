@@ -234,7 +234,8 @@ impl Lowering<'_, '_> {
                 self.store_word(regions::frame(), value, address, 0);
             }
             Bind::Frame(register) => {
-                let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+                let exit = self.guard_exit(state, pc as u32);
+                let context = super::emit_lane_context(&mut self.builder, self.payload, exit);
                 let record = self.raw_const(Lane::I64, pc as i64);
                 self.helper_call(LaneHelper::HandlerEdge, &[context, record, value]);
                 self.allocated(state);

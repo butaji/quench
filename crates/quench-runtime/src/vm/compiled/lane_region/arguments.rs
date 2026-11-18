@@ -30,7 +30,7 @@ impl Lowering<'_, '_> {
     /// which reads the materialized object.
     fn arguments_read(&mut self, state: &mut State, pc: u32, instruction: WideInstruction, helper: LaneHelper, operands: &[ir::Value]) -> Option<bool> {
         let exit = self.guard_exit(state, pc);
-        let context = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+        let context = super::emit_lane_context(&mut self.builder, self.payload, exit);
         let slot = self.raw_const(Lane::I64, i64::from(instruction.local_slot() as u16));
         let mut arguments = vec![context, slot];
         arguments.extend_from_slice(operands);

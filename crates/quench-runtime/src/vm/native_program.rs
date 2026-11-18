@@ -266,9 +266,10 @@ impl<H: Host> Vm<H> {
             return Err(JsError::validation("native module has the wrong parse goal".into()));
         }
         let prepared = self.prepare_native_script(native)?;
+        let program = prepared.program.clone();
         let id = self.store_module_program_shared(prepared.program)
             .ok_or_else(|| JsError::validation("native module program store is full".into()))?;
-        self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"))
+        self.programs.attach_native_js(id, prepared.native.expect("native module code admitted"), &program)
             .map_err(JsError::validation)?;
         Ok(id)
     }
@@ -312,7 +313,7 @@ impl<H: Host> Vm<H> {
         self.check_execution_interrupt()?;
         self.restore_snapshot_state(bytes, Some(&native.program), read_host).map_err(|error| JsError::validation(error.0))?;
         self.install_restored_main(native.program.clone());
-        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)
+        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone(), &native.program).map_err(JsError::validation)
     }
 
     pub(crate) fn execute_native_program(
@@ -377,7 +378,7 @@ impl<H: Host> Vm<H> {
         self.replay_frozen_assumptions(native);
         self.initialize_shared(&native.program, super::builtins::RealmScope::Complete)?;
         self.materialize_frozen_constants(native);
-        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone()).map_err(JsError::validation)?;
+        self.programs.attach_native_js(ProgramId::MAIN, native.code.clone(), &native.program).map_err(JsError::validation)?;
         for module in modules {
             if native.program.kind == crate::bytecode::ProgramKind::Module
                 && crate::module_identity::same_name(&module.program.source_name, &native.program.source_name) {

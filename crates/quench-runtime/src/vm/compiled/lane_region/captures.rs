@@ -107,7 +107,7 @@ fn capture_miss(builder: &mut FunctionBuilder<'_>, reach: Reach, site: &CaptureS
 
 /// A capture's read by the lane's own lookup (`dispatch_fast::lane_body_capture`); a miss leaves.
 fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), exit: ir::Block) -> ir::Value {
-    let (context, packed) = capture_operands(builder, reach.0, at);
+    let (context, packed) = capture_operands(builder, reach.0, at, exit);
     let value = call_helper(builder, reach, LaneHelper::CaptureGet, &[context, packed]);
     let hit = emit(builder).raw_compare_imm(Relation::NotEqual, value, Value::DELETED.to_bits() as i64);
     emit_js_guard(builder, hit, exit);
@@ -118,7 +118,7 @@ fn capture_get(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), 
 /// it does not take leaves at `exit`.
 pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at: (u16, u16), value: ir::Value,
     exit: ir::Block) {
-    let (context, packed) = capture_operands(builder, reach.0, at);
+    let (context, packed) = capture_operands(builder, reach.0, at, exit);
     let stored = call_helper(builder, reach, LaneHelper::CaptureSet, &[context, packed, value]);
     let stored = emit(builder).raw_compare_imm(Relation::NotEqual, stored, 0);
     emit_js_guard(builder, stored, exit);
@@ -126,8 +126,8 @@ pub(super) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, at:
 
 /// The lane context and the packed capture (depth in the high half, slot in the low) a capture
 /// helper takes.
-fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (depth, slot): (u16, u16)) -> (ir::Value, ir::Value) {
-    let context = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, lane_context));
+fn capture_operands(builder: &mut FunctionBuilder<'_>, payload: ir::Value, (depth, slot): (u16, u16), exit: ir::Block) -> (ir::Value, ir::Value) {
+    let context = super::emit_lane_context(builder, payload, exit);
     let packed = emit(builder).raw_const(Lane::I64, i64::from(u32::from(depth) << u16::BITS | u32::from(slot)));
     (context, packed)
 }
