@@ -6,15 +6,18 @@
 //! needs neither the family test nor the record table test: one compare of the record's auxiliary word with
 //! the entry's shape proves the shape and flat plain values (`Heap::IcKnownGet`, `Heap::IcKnownSet`), as a C
 //! struct access over a tagged union costs. A loop's header joins the entry, where nothing is proved, and the
-//! code is not resumed at a row some proof reaches (`Decoded::relies`): a resume skips the access.
+//! code is not resumed at a row a proof the body established reaches (`Decoded::relies`): a resume skips the
+//! access. A proof the entry seed alone reaches needs no such gate: a resume stub re-runs the declared entry rows.
 
 use super::*;
 
 /// What one row runs knowing: the registers whose value was proved a direct object, by the register that
-/// defined the value (a copy's proof is its source's), and the copies still holding their source's value.
+/// defined the value (a copy's proof is its source's), the subset an access in the body proved (`established`,
+/// so `objects` minus `established` is the entry seed's alone), and the copies still holding their source's value.
 #[derive(Clone, Default, PartialEq)]
 struct Proved {
     objects: Vec<Register>,
+    established: Vec<Register>,
     copies: Vec<(Register, Register)>,
 }
 
@@ -31,6 +34,7 @@ impl Proved {
     /// `register` written: its proof, its copy and the copies of its old value go.
     fn write(&mut self, register: Register) {
         self.objects.retain(|held| *held != register);
+        self.established.retain(|held| *held != register);
         self.copies.retain(|(copy, source)| *copy != register && *source != register);
     }
 }
@@ -58,6 +62,9 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
         if !proved.objects.contains(&root) {
             proved.objects.push(root);
         }
+        if !proved.established.contains(&root) {
+            proved.established.push(root);
+        }
     }
     let source = copied(row).map(|source| proved.root(source));
     for written in [row.dst, row.also].into_iter().flatten() {
@@ -73,20 +80,24 @@ fn after(row: &Decoded, before: &Proved) -> Proved {
 fn meet(a: &Proved, b: &Proved) -> Proved {
     Proved {
         objects: a.objects.iter().filter(|held| b.objects.contains(held)).copied().collect(),
+        established: a.established.iter().filter(|held| b.established.contains(held)).copied().collect(),
         copies: a.copies.iter().filter(|copy| b.copies.contains(copy)).copied().collect(),
     }
 }
 
 /// Marks each reached row whose receiver every path proves a direct object (`Decoded::proven`), and
-/// each row some proof reaches (`Decoded::relies`), which the code must not be resumed at.
-pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits) {
+/// each row a proof the body established reaches (`Decoded::relies`), which the code must not be resumed at.
+/// `entry` holds the registers the entry proves plain direct objects and the function never writes
+/// (`declared::exact_objects`): they are proved at every row, from the entry on, and a resume stub
+/// re-establishes them with the declared entry rows.
+pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits, entry: &[Register]) {
     let count = rows.len();
     // `None`: no path reaches the row yet (the top of the meet).
     let mut before: Vec<Option<Proved>> = vec![None; count];
     if count == 0 {
         return;
     }
-    before[0] = Some(Proved::default());
+    before[0] = Some(Proved { objects: entry.to_vec(), ..Proved::default() });
     let mut pending = vec![0];
     while let Some(k) = pending.pop() {
         let Some(held) = before[k].clone() else { continue };
@@ -112,7 +123,7 @@ pub(super) fn prove(span: &Span, rows: &mut [Decoded], reached: &Bits) {
         if !reached.contains(k) {
             continue;
         }
-        row.relies = !held.objects.is_empty();
+        row.relies = !held.established.is_empty();
         row.proven = receiver(row).is_some_and(|register| held.holds(register));
     }
 }

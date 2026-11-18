@@ -1,10 +1,10 @@
 //! The Number rows over tagged `Value` words: one stencil per (kind, destination, operands,
-//! speculate) combination, compiled by LLVM from the runtime's own rows. Arithmetic and
-//! comparisons are `staged::numeric::step`, the rows the interpreter and the Cranelift tiers
-//! run, over the stencil's operand places (`places.rs`); a bitwise row is the interpreter's
-//! `NumberBitwise` over `I32BitwiseStage`. What this file adds is the dispatch from a row's
-//! codes to those rows (which representation a place's proof asks for) and the rows that
-//! compute nothing: moves, guards, tagging and jumps.
+//! speculate) combination, compiled by LLVM from the runtime's own rows. Every row that the
+//! interpreter decodes to a staged `Operation` runs that operation's step over the stencil's
+//! operand places (`places.rs`): arithmetic, relations, bitwise, negation and the Number-valued
+//! moves, jumps, truthiness and polls. What this file adds is the dispatch from a row's codes to
+//! those operations (which representation a place's proof asks for), and the rows that have no
+//! staged operation: the guard that proves a representation and the tag of a fresh int slot.
 //!
 //! A row computes into `Out`: continue at the next row, branch to the taken successor, or leave
 //! through exit 0 with the registers as they were at the row's start (every proof comes before
@@ -14,8 +14,8 @@ use crate::bytecode::Operand;
 use crate::places::{DEST, LEFT, Places, RIGHT};
 use crate::typed_ir::Representation;
 use crate::staged::math::FloatUnary;
-use crate::staged::{Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Overflow, Step, jump_if as branch_on_truth, logical_not, numeric};
-use crate::vm::operations::{I32BitwiseStage, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
+use crate::staged::{Comparison, Concrete, Domain, Frame, NegativeZero, NumberOperation, NumericFrame, Operation, Overflow, Step, numeric, step, step_arith, step_flow, step_generic};
+use crate::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary, number_bitwise_f64_result};
 pub(crate) use crate::words::*;
 
 pub(crate) use crate::codes::*;
@@ -64,9 +64,15 @@ fn finish<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, done: b
     if frame.writes_fit(done) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
+/// The outcome of a staged step that decides a branch: the taken successor where the frame took
+/// the branch, the next row where it did not, and an exit where the step left.
 #[inline(always)]
-fn jump_if(s: S, fails: bool) -> Out {
-    if fails { Out::Taken(s) } else { Out::Next(s) }
+fn branched<const D: u8, const A: u8, const B: u8>(decided: Step<u64, ()>, frame: Places<D, A, B>) -> Out {
+    match decided {
+        Step::Control(()) if frame.taken => Out::Taken(frame.s),
+        Step::Control(()) => Out::Next(frame.s),
+        _ => Out::Exit(frame.s),
+    }
 }
 
 /// The staged Number operation over the row's places: its word, `None` where it left.
@@ -86,13 +92,6 @@ fn arithmetic<const K: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Pl
     staged(frame, operation).is_some()
 }
 
-/// The staged relation of kind `K` in `domain`: its predicate, `None` where an operand failed.
-#[inline(always)]
-fn relation<const K: u8, const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>, domain: Domain) -> Option<bool> {
-    let (left, right) = (Operand::register(LEFT), Operand::register(RIGHT));
-    staged(frame, NumberOperation::Relation { left, right, relation: relation_of(K), domain }).map(|word| word != 0)
-}
-
 /// An arithmetic row: doubles where a place holds one (and for a division), int32s where the
 /// row speculates them, else ints while both operand words are ints and the result is exact,
 /// any other Number through doubles.
@@ -110,51 +109,52 @@ fn arith_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: boo
     finish(frame, done)
 }
 
-/// A comparison row, which branches to the taken successor where the relation fails.
+/// A comparison row, which branches to the taken successor where the relation fails: the
+/// interpreter's `CompareJump` of a Number relation, over the domain the row's places prove.
 #[inline(always)]
 fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
-    let held = if is_double_row::<K, D, A, B>() {
-        relation::<K, D, A, B>(&mut frame, Domain::Float64)
+    let domain = if is_double_row::<K, D, A, B>() {
+        Domain::Float64
     } else if SPEC {
-        relation::<K, D, A, B>(&mut frame, Domain::Int32)
+        Domain::Int32
     } else if frame.both_int() {
         frame.prove_ints();
-        relation::<K, D, A, B>(&mut frame, Domain::Int32)
+        Domain::Int32
     } else {
-        relation::<K, D, A, B>(&mut frame, Domain::Float64)
+        Domain::Float64
     };
-    match held {
-        Some(holds) => jump_if(frame.s, !holds),
-        None => Out::Exit(frame.s),
-    }
+    let comparison = Comparison::Relation { relation: relation_of(K), domain };
+    let operation = Operation::CompareJump { comparison, left: Operand::register(LEFT), right: Operand::register(RIGHT), negate: true };
+    branched(step_generic(&mut Concrete::from_hole(0), &mut frame, operation), frame)
 }
 
-/// A bitwise row: int32 operands (a speculating row takes int words only, a general row any
-/// Number that fits an int32) through the interpreter's `NumberBitwise`.
+/// A bitwise row: the interpreter's `NumberBitwise` of two operands' ToInt32, defining an int32
+/// (`NumberOperation::Bitwise`). The one result no int32 holds is a zero-fill shift of a negative
+/// dividend by a zero count, which the staged step leaves: a destination that holds no int32 takes
+/// that Number here, its operands proved once more on this leave path only.
 #[inline(always)]
-fn bitwise_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: bool>(mut frame: Places<D, A, B>) -> Out {
-    let (Some(x), Some(y)) = (frame.bitwise_operand(LEFT, !SPEC), frame.bitwise_operand(RIGHT, !SPEC)) else {
+fn bitwise_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let (left, right, operation) = (Operand::register(LEFT), Operand::register(RIGHT), bitwise_of(K));
+    let done = staged(&mut frame, NumberOperation::Bitwise { destination: DEST, left, right, operation }).is_some();
+    if done || holds_int(D) || operation != NumberBitwise::ShiftRightUnsigned {
+        return finish(frame, done);
+    }
+    let mut stage = Concrete::from_hole(0);
+    let (Some(x), Some(y)) = (frame.int32_operand(&mut stage, left, ()), frame.int32_operand(&mut stage, right, ())) else {
         return Out::Exit(frame.s);
     };
-    let (x, y, operation) = (x as u32 as i32, y as u32 as i32, bitwise_of(K));
-    let bits = operation.apply(&mut I32BitwiseStage, x, y);
-    let result = if operation.keeps_int32(bits) {
-        (u64::from(bits as u32), Representation::Int32)
-    } else if holds_int(D) {
-        return Out::Exit(frame.s);
-    } else {
-        // A Number past `i32::MAX` is no int word, so its bits are its tagged word.
-        (number_bitwise_f64_result(operation, x, y).to_bits(), Representation::Tagged)
-    };
-    frame.write(&mut Concrete::from_hole(0), DEST, result.0, result.1);
+    // A Number past `i32::MAX` is no int word, so its bits are its tagged word.
+    let widened = number_bitwise_f64_result(operation, x as u32 as i32, y as u32 as i32).to_bits();
+    frame.write(&mut stage, DEST, widened, Rep::Tagged);
     finish(frame, true)
 }
 
-/// A move or a spill: the first operand into the destination, converted to its representation.
+/// A move or a spill: the first operand into the destination, converted to its representation
+/// (`Operation::Move`).
 #[inline(always)]
 fn copy_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    frame.move_register(&mut Concrete::from_hole(0), DEST, LEFT);
-    finish(frame, true)
+    let copied = step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::Move { destination: DEST, source: LEFT });
+    finish(frame, matches!(copied, Step::Value(_)))
 }
 
 /// Branches to the taken successor unless the first operand is what the destination holds: a
@@ -178,6 +178,7 @@ fn guard_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) 
 
 /// A taken backward edge counts in the run's counter, word 0 of the loop entry record: hole 1
 /// and 2 are the offsets of the context's payload pointer and of the entry pointer in the payload.
+/// No staged operation counts edges, so this is the stencil's own.
 #[inline(always)]
 fn count_backedge(s: &S) {
     unsafe {
@@ -189,48 +190,66 @@ fn count_backedge(s: &S) {
 }
 
 /// Whether an interrupt was requested: the context's pointer (at hole 0) to a byte, nonzero.
+/// The frame's `safepoint` answers it for the staged `Operation::Safepoint`.
 #[inline(always)]
-fn interrupted(s: &S) -> bool {
+pub(crate) fn interrupted(s: &S) -> bool {
     unsafe { *(((s.ctx + hole::<0>()) as *const *const u8).read()) != 0 }
 }
 
-/// A jump that polls the interrupt flag first where `WATCHED`, and counts a taken edge where `COUNT`.
+/// The staged `Operation::Safepoint` over the row's places: whether the row may continue.
 #[inline(always)]
-fn jump<const WATCHED: bool, const COUNT: bool>(s: S) -> Out {
-    if WATCHED {
-        if interrupted(&s) {
-            return Out::Exit(s);
-        }
-        if COUNT {
-            count_backedge(&s);
-        }
+fn poll_step<const D: u8, const A: u8, const B: u8>(frame: &mut Places<D, A, B>) -> bool {
+    matches!(step(&mut Concrete::from_hole(0), frame, Operation::Safepoint { proof: () }), Step::Value(_))
+}
+
+/// A jump (`Operation::Jump`) that polls the interrupt flag first where `WATCHED`, and counts a
+/// taken edge where `COUNT`.
+#[inline(always)]
+fn jump_row<const WATCHED: bool, const COUNT: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    if WATCHED && !poll_step(&mut frame) {
+        return Out::Exit(frame.s);
     }
-    Out::Taken(s)
-}
-
-/// Polls the interrupt flag and continues.
-#[inline(always)]
-fn poll(s: S) -> Out {
-    if interrupted(&s) { Out::Exit(s) } else { Out::Next(s) }
-}
-
-/// A conditional jump on the first operand's truthiness (`staged::jump_if`): to the taken
-/// successor where it is `WHEN`; a value whose heap cell decides it leaves.
-#[inline(always)]
-fn truth_row<const WHEN: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    match branch_on_truth(&mut Concrete::from_hole(0), &mut frame, LEFT, WHEN) {
-        Step::Control(()) if frame.taken => Out::Taken(frame.s),
-        Step::Control(()) => Out::Next(frame.s),
+    if WATCHED && COUNT {
+        count_backedge(&frame.s);
+    }
+    match step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::Jump) {
+        Step::Control(()) => Out::Taken(frame.s),
         _ => Out::Exit(frame.s),
     }
 }
 
+/// Polls the interrupt flag (`Operation::Safepoint`) and continues.
+#[inline(always)]
+fn poll_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    if poll_step(&mut frame) { Out::Next(frame.s) } else { Out::Exit(frame.s) }
+}
+
+/// The control rows: a jump (polling the interrupt flag, watching the loop's budget, or neither)
+/// and the poll alone.
+#[inline(always)]
+fn control_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>) -> Out {
+    match K {
+        JUMP => jump_row::<false, false, D, A, B>(frame),
+        JUMP_POLL => jump_row::<true, true, D, A, B>(frame),
+        JUMP_WATCH => jump_row::<true, false, D, A, B>(frame),
+        _ => poll_row(frame),
+    }
+}
+
+/// A conditional jump on the first operand's truthiness (`Operation::JumpIf`): to the taken
+/// successor where it is `WHEN`; a value whose heap cell decides it leaves.
+#[inline(always)]
+fn truth_row<const WHEN: bool, const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
+    let jumped = step_flow(&mut Concrete::from_hole(0), &mut frame, Operation::JumpIf { register: LEFT, taken: WHEN });
+    branched(jumped, frame)
+}
+
 /// The logical negation of the first operand's truthiness into the destination
-/// (`staged::logical_not`).
+/// (`Operation::LogicalNot`).
 #[inline(always)]
 fn not_row<const D: u8, const A: u8, const B: u8>(mut frame: Places<D, A, B>) -> Out {
-    let done = matches!(logical_not(&mut Concrete::from_hole(0), &mut frame, DEST, LEFT), Step::Value(_));
-    finish(frame, done)
+    let negated = step_arith(&mut Concrete::from_hole(0), &mut frame, Operation::LogicalNot { destination: DEST, source: LEFT });
+    finish(frame, matches!(negated, Step::Value(_)))
 }
 
 /// The Number negation of the first operand, through doubles (`-0` is a double, which an int32
@@ -257,23 +276,13 @@ fn math_row<const K: u8, const D: u8, const A: u8, const B: u8>(mut frame: Place
     finish(frame, done)
 }
 
-/// The tag of a fresh int slot: the upper half of its word.
+/// The tag of a fresh int slot: the upper half of its word. No staged operation writes a slot's
+/// tag half alone; the stencil's own representation write.
 #[inline(always)]
 fn tag_init(s: S) -> Out {
     // SAFETY: the frame slot of hole 0 is writable; the stencil writes its tag half only.
     unsafe { (slot::<0>(&s).wrapping_add(HIGH_HALF_AT) as *mut u32).write(INT_HIGH as u32) };
     Out::Next(s)
-}
-
-/// The control rows: a jump (polling the interrupt flag, watching the loop's budget, or neither) and the poll alone.
-#[inline(always)]
-fn control_row<const K: u8>(s: S) -> Out {
-    match K {
-        JUMP => jump::<false, false>(s),
-        JUMP_POLL => jump::<true, true>(s),
-        JUMP_WATCH => jump::<true, false>(s),
-        _ => poll(s),
-    }
 }
 
 /// The staged remainder of the row's operands in `domain`; whether it produced its result.
@@ -354,9 +363,9 @@ pub(crate) fn run<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC
     match K {
         MOVE | COPY | SPILL => copy_row(frame),
         ADD..=DIV => arith_row::<K, D, A, B, SPEC>(frame),
-        AND..=USHR => bitwise_row::<K, D, A, B, SPEC>(frame),
+        AND..=USHR => bitwise_row::<K, D, A, B>(frame),
         LT..=NE => compare_row::<K, D, A, B, SPEC>(frame),
-        JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K>(frame.s),
+        JUMP | JUMP_POLL | JUMP_WATCH | POLL => control_row::<K, D, A, B>(frame),
         GUARD => guard_row(frame),
         JUMP_TRUE => truth_row::<true, D, A, B>(frame),
         JUMP_FALSE => truth_row::<false, D, A, B>(frame),

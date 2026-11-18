@@ -1600,7 +1600,7 @@ pub(in crate::vm) struct Activation {
 pub(in crate::vm) use quench_bjit::shared_words::KIND_NATIVE;
 /// Where the kind's tag lies in an activation.
 pub(in crate::vm) const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
-const _: () = assert!(KIND_OFFSET == crate::staged::frame::ACTIVATION_KIND_OFFSET);
+const _: () = assert!(KIND_OFFSET == crate::staged::frame::ACTIVATION_KIND_OFFSET && KIND_NATIVE == crate::staged::frame::KIND_NATIVE);
 const _: () = assert!(std::mem::size_of::<Activation>() == crate::staged::frame::ACTIVATION_BYTES);
 const KIND_SCRIPT: u8 = 1;
 const KIND_WASM: u8 = 2;

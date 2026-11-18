@@ -158,7 +158,8 @@ pub(super) struct Layout<'a> {
     pub(super) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
     pub(super) realm: Option<RealmProof>,
-    /// Per row, whether a receiver proof reaches it (`Decoded::relies`): no resume stub enters there.
+    /// Per row, whether a proof the body established reaches it (`Decoded::relies`): no resume stub enters there.
+    /// Proofs the entry seed alone reaches get a stub, whose entry rows re-run the declared guards (`guards`).
     pub(super) relies: &'a [bool],
     /// The entry tests of the declared parameters the function never writes (`declared::entry_guards`).
     pub(super) guards: Vec<EntryGuard>,

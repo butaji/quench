@@ -41,8 +41,16 @@ mod site_rows;
 mod layout;
 mod numeric;
 mod places;
+mod places_call;
+mod places_property;
+mod places_environment;
+mod places_heap;
+mod places_view;
+mod places_names;
 mod stage;
 mod staged;
+#[macro_use]
+mod staged_rows;
 mod supernode_rows;
 mod wasm;
 mod wasm_codes;

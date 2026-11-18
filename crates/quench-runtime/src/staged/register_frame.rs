@@ -215,10 +215,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn environment(&mut self, _stage: &mut S) -> Option<(S::Word, Self::Fact)> { None }
 
-    /// Store `value` to environment slot `slot`; `None` where the frame cannot, leaving the
-    /// binding rules (an uninitialized or constant binding, a `with` scope) to the host.
+    /// Store `value` to environment slot `slot`, or with `initialize` define it as the first value
+    /// of its binding (`environment::environment_slot_define`) rather than store to an initialized
+    /// one (`environment_slot_store`); `None` where the frame cannot, leaving the binding rules (an
+    /// uninitialized or constant binding, a `with` scope) to the host.
     #[inline(always)]
-    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word) -> Option<()> { None }
+    fn environment_write(&mut self, _stage: &mut S, _slot: u16, _value: S::Word, _initialize: bool) -> Option<()> { None }
 
     /// The count of the arguments binding in local `slot`, an int32 word; `None` where the
     /// binding is not one only kept values answer.

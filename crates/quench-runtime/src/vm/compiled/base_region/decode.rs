@@ -147,7 +147,7 @@ impl Decoded {
     /// `instanceof` of a constructor's `prototype`, a global object's slot, an add, or a store in place for an atom no method cache
     /// names. A change of the fact retires the code, and a run already inside it learns that from the invalidation word (`Heap::Live`).
     pub(super) fn holds_stable(&self) -> bool {
-        self.add.is_some() || self.folded.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
+        self.add.is_some() || self.folded.is_some() || self.holder.is_some() || matches!(self.heap, Some(Heap::SiteStore | Heap::ThisStore)) || self.instanceof.is_some() || self.global.is_some() || self.lexical.is_some()
     }
 
     /// The observed type of the slot a store row writes in place: a global object's slot or a field's.
@@ -347,7 +347,6 @@ pub(super) fn heap_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32,
         Some(Operation::StoreCapture { .. }) => capture_store_row(facts, instruction),
         Some(Operation::ElementRead { .. }) => index_read_row(region, facts, instruction),
         Some(Operation::ElementWrite { .. }) => Some(index_write_row(region, facts, instruction)),
-        Some(Operation::RequireObjectCoercible { .. }) => Some(Decoded::heap(Heap::Array, None, Some(Source::Register(instruction.register_b())), None)),
         Some(Operation::LoadThis { .. }) => this_row(instruction),
         Some(Operation::LoadLocalPlain { .. }) => load_local_row(instruction),
         Some(Operation::StoreLocalPlain { result: None, .. }) => store_local_row(instruction),
@@ -461,6 +460,30 @@ fn unary_row(instruction: WideInstruction, operation: crate::vm::operations::Num
         NumberUnary::Negate => row(Kind::Neg),
         NumberUnary::Plus => Decoded { checked: true, ..row(Kind::Move) },
     })
+}
+
+/// The staged row (`staged_rows.rs`) of a `Binary` that no numeric row takes: `%`, and a relation or an equality as its
+/// value. `kind_of` names none of them for a value form, so they reach the lowering (`steps::fast_arm`).
+pub(super) fn staged_binary(operator: u32) -> Option<u8> {
+    [
+        (BinaryOperator::Remainder, numeric::library::STAGED_REMAINDER),
+        (BinaryOperator::LessThan, numeric::library::STAGED_RELVAL_LT),
+        (BinaryOperator::LessEqualThan, numeric::library::STAGED_RELVAL_LE),
+        (BinaryOperator::GreaterThan, numeric::library::STAGED_RELVAL_GT),
+        (BinaryOperator::GreaterEqualThan, numeric::library::STAGED_RELVAL_GE),
+        (BinaryOperator::Equality, numeric::library::STAGED_LOOSE_EQ),
+        (BinaryOperator::Inequality, numeric::library::STAGED_LOOSE_NE),
+        (BinaryOperator::StrictEquality, numeric::library::STAGED_STRICT_EQ),
+        (BinaryOperator::StrictInequality, numeric::library::STAGED_STRICT_NE),
+    ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, code)| code)
+}
+
+/// The staged row of a `Unary` that no unary row takes: `~` and `void`.
+pub(super) fn staged_unary(operator: u32) -> Option<u8> {
+    [
+        (UnaryOperator::BitwiseNot, numeric::library::STAGED_BITWISE_NOT),
+        (UnaryOperator::Void, numeric::library::STAGED_VOID),
+    ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, code)| code)
 }
 
 /// Bits in a word's high half.

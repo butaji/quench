@@ -209,6 +209,8 @@ pub(crate) fn tag_languages(word: u64) -> u64 {
         (word == NULL, language::NULL),
         (word == UNDEFINED, language::UNDEFINED),
         (object, language::OBJECT),
+        (family == DIRECT_OBJECT_TAG, language::OBJECT_PLAIN),
+        (family == DIRECT_ARRAY_TAG, language::ARRAY),
         (family == DIRECT_FUNCTION_TAG, language::FUNCTION),
     ];
     classes.iter().fold(0, |languages, &(hit, bit)| if hit { languages | u64::from(bit) } else { languages })

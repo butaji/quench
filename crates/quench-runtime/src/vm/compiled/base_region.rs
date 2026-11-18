@@ -38,6 +38,7 @@ pub(in crate::vm::compiled) mod callees;
 mod decode;
 pub(in crate::vm::compiled) mod declared;
 mod entry_facts;
+mod fold;
 pub(in crate::vm::compiled) mod function;
 pub(in crate::vm) use function::inlined_exit_key;
 mod globals;

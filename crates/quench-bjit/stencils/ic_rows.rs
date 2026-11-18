@@ -33,21 +33,19 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, SITE_OBJECT_AT};
+use crate::codes::{IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM, SITE_OBJECT_AT};
 use crate::heap_rows::{payload, word_at};
 use crate::layout::{JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED};
 use crate::numeric::{HOLE_A, Out, S, deliver, is_int, number_word};
+use crate::places::Places;
+use crate::places_property::{Callout, receiver_read, receiver_set, run_planned};
 use crate::stage::StencilStage;
-use crate::staged::ic::{self, IcOp, Reached};
-use crate::staged::object::{Form, direct_object_record, object_record_at};
+use crate::staged::ic::{self, IcOp};
+use crate::staged::object::{Form, Rep, direct_object_record, object_record_at};
 use crate::staged::region::Region;
-use crate::typed_ir::Representation as Rep;
-
-use crate::typed_ir::Representation;
-use crate::staged::slot_store::{own_flat_known, own_flat_store, proved_flat_store};
+use crate::staged::slot_store::{own_flat_known, proved_flat_store};
 use crate::staged::value::direct_object_id;
 use crate::staged::Stage;
-use crate::typed_ir::Type;
 use crate::words::{hole, hole64};
 
 /// The hole the receiver's frame offset is in: for a get, the upper half of hole 0, whose lower half
@@ -70,21 +68,6 @@ fn receiver<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) -> Opt
     Some((id, record, records))
 }
 
-/// The word the entry's ops read from the receiver: its own slot, packed or flat as its inline flag
-/// says (one operand, the flat byte offset, serves both: `object::site_offset`), or the slot of its
-/// prototype, which keeps its values in the arena (`IcOp::LoadPrototypeSlot`).
-#[inline(always)]
-fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
-    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-    let (_, record, records) = receiver::<GET_RECEIVER>(s, &mut stage, payload)?;
-    let at = Reached::bare(record);
-    if HOLDER {
-        let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
-        ic::run(&mut stage, &ops, at, Some(records), ())
-    } else {
-        ic::own_field(&mut stage, record, 0, 0, ())
-    }
-}
 
 /// A hit of a chained row skips the site's other entries.
 #[inline(always)]
@@ -101,11 +84,23 @@ fn miss<const CHAINED: bool>(s: S) -> Out {
     if CHAINED { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// A get: `GetField` of the receiver (hole 1) through the entry's ops, the own slot (`GuardShape`,
+/// `LoadSlot`) or the prototype's (`Prototype`, then the holder's shape and its arena slot); the
+/// word goes to the destination `D`.
 #[inline(always)]
 fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
-    match read::<HOLDER>(&s, payload) {
-        Some(word) => hit::<CHAINED>(deliver::<D>(s, word)),
-        None => miss::<CHAINED>(s),
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let mut places = Places::<D, MEM, MEM>::new(s);
+    let word = if HOLDER {
+        let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
+        run_planned(&mut stage, &mut places, ops, Callout::Plan, receiver_read())
+    } else {
+        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Arena, storage_len: 1 }];
+        run_planned(&mut stage, &mut places, ops, Callout::Plan, receiver_read())
+    };
+    match word {
+        Some(word) => hit::<CHAINED>(deliver::<D>(places.s, word)),
+        None => miss::<CHAINED>(places.s),
     }
 }
 
@@ -122,28 +117,16 @@ fn store_admitted(stage: &mut StencilStage, payload: u64) -> Option<()> {
     Some(())
 }
 
-/// The store of the Number in the value place into the receiver's flat slot (a packed receiver
-/// misses into the site row, which repacks or widens it); a slot of int32
-/// type (`INT`) takes int32 words only, so no compiled read of the slot's type is widened.
-#[inline(always)]
-fn write<const INT: bool, const A: u8>(s: &S, payload: usize) -> Option<()> {
-    let word = number_word::<A, HOLE_A>(s)?;
-    if INT && !is_int(word) {
-        return None;
-    }
-    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-    store_admitted(&mut stage, payload as u64)?;
-    let (id, record, _) = receiver::<SET_RECEIVER>(s, &mut stage, payload)?;
-    // The word is a Number, which the slot's observed type holds (the stitcher's proof), so it
-    // widens no observation and joins no barrier log: the gate does not apply.
-    own_flat_store(&mut stage, record, id, 0, 0, (word, if INT { Representation::Int32 } else { Representation::Tagged }, Type::NUMBER), ())
-}
-
+/// A set: `SetField` of the value (`A`, hole 1) into the receiver (hole 0), through the entry's
+/// flat own slot (`FlatStore`); an int32 row takes int32 values only, so no compiled read of the
+/// slot's type is widened.
 #[inline(always)]
 fn set_row<const INT: bool, const CHAINED: bool, const A: u8>(s: S, payload: usize) -> Out {
-    match write::<INT, A>(&s, payload) {
-        Some(()) => hit::<CHAINED>(Out::Next(s)),
-        None => miss::<CHAINED>(s),
+    let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
+    let mut places = Places::<MEM, A, MEM>::new(s);
+    match run_planned(&mut stage, &mut places, [], Callout::FlatStore { int: INT }, receiver_set()) {
+        Some(_) => hit::<CHAINED>(Out::Next(places.s)),
+        None => miss::<CHAINED>(places.s),
     }
 }
 

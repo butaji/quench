@@ -27,13 +27,20 @@ const _: () = {
     assert!(language(ValueType::Undefined) == bits::UNDEFINED && language(ValueType::Null) == bits::NULL);
     assert!(language(ValueType::Boolean) == bits::BOOLEAN && language(ValueType::Number) == bits::NUMBER);
     assert!(language(ValueType::Object) == bits::OBJECT && language(ValueType::Function) == bits::FUNCTION);
+    assert!(bits::ARRAY & bits::OBJECT_PLAIN == 0 && bits::ARRAY & (bits::OBJECT | bits::FUNCTION) == 0);
+    assert!(bits::OBJECT_PLAIN & (bits::OBJECT | bits::FUNCTION) == 0);
 };
+
+/// The exact plain-object and array bits: each is a direct object family word too, so its `OBJECT`
+/// bit is set by `tag_languages` as well, and a set naming `object` admits both.
+const ARRAY: u16 = quench_bjit::shared_words::language::ARRAY;
+const OBJECT_PLAIN: u16 = quench_bjit::shared_words::language::OBJECT_PLAIN;
 
 /// The language types a value's tag word alone decides, with no heap read: the immediates (a
 /// Number, a Boolean, `null`, `undefined`) and the direct object and direct function families. A
 /// String, a Symbol or a BigInt needs a heap read, so a set naming one gets no entry check.
 const TAG_DECIDED: u16 = language(ValueType::Number) | language(ValueType::Boolean) | language(ValueType::Null)
-    | language(ValueType::Undefined) | language(ValueType::Object) | language(ValueType::Function);
+    | language(ValueType::Undefined) | language(ValueType::Object) | language(ValueType::Function) | ARRAY | OBJECT_PLAIN;
 
 /// What a declared parameter type gives the b-jit's entry: exactly a Number, proved through the
 /// register's representation, or a set of tag-decided language types (`language` bits), tested at once.
@@ -121,18 +128,37 @@ pub(super) fn entry_numbers(function: &Function) -> Vec<Register> {
     declared(function).filter(|(register, fact)| *fact == DeclaredFact::Number && !written.contains(usize::from(*register))).map(|(register, _)| register).collect()
 }
 
-/// A `typeof` test of a register the entry proves exactly a direct function (`Languages(FUNCTION)`: its
-/// entry test admits no other word, and no instruction writes it): `typeof` of a direct function is
-/// `'function'`, so the test is that Boolean, written to the destination as a constant. `None` for any other row.
+/// The registers the entry proves exactly a plain direct object (`Languages(OBJECT_PLAIN)`), never written:
+/// `proofs::prove` starts from them, so the inline-cache rows on them take the known-shape form
+/// (`Heap::IcKnownGet`, `Heap::IcKnownSet`), whose record indexing assumes a plain object.
+pub(super) fn exact_objects(function: &Function) -> Vec<Register> {
+    entry_guards(function).into_iter().filter(|guard| guard.languages == OBJECT_PLAIN).map(|guard| guard.register).collect()
+}
+
+/// The hook for a class-typed parameter's prototype check. A parameter typed by a top-level class would
+/// enter with its class's prototype holder here, and the entry would test the record's prototype word,
+/// which the exact plain-object fact does not check. Pending the class facts of the fact store
+/// (`DeclaredTypes::declared_parameter_class`, not yet landed): `None` for every parameter until then.
+#[allow(dead_code, reason = "the class-typed parameter check lands with the fact store's declared_parameter_class")]
+pub(super) fn class_prototype(_function: &Function, _register: Register) -> Option<u32> {
+    None
+}
+
+/// A `typeof` test of a register the entry proves exactly a direct function (`Languages(FUNCTION)`) or
+/// exactly a direct object or array (`OBJECT_PLAIN` and `ARRAY` only: `typeof` of each is `'object'`): the
+/// entry test admits no other word, and no instruction writes the register, so the test is that Boolean,
+/// written to the destination as a constant. `None` for any other row.
 pub(super) fn typeof_fold(function: &Function, instruction: WideInstruction) -> Option<Decoded> {
     if instruction.op().class() != Class::Unary || instruction.result_flags() != 0 {
         return None;
     }
     let (index, negated) = crate::bytecode::typeof_test(instruction.unary_operator())?;
-    if guard_languages(function, instruction.register_b())? != language(ValueType::Function) {
-        return None;
-    }
-    let holds = (index == crate::bytecode::typeof_name_index("function")?) != negated;
+    let name = match guard_languages(function, instruction.register_b())? {
+        languages if languages == language(ValueType::Function) => "function",
+        languages if languages & !(OBJECT_PLAIN | ARRAY) == 0 => "object",
+        _ => return None,
+    };
+    let holds = (index == crate::bytecode::typeof_name_index(name)?) != negated;
     Some(Decoded::number(Kind::Move, Some(instruction.result_register()), Some(Source::Value(Value::boolean(holds).to_bits())), None, None))
 }
 
@@ -147,7 +173,7 @@ fn guard_languages(function: &Function, register: Register) -> Option<u16> {
 /// set holding a Number or a Boolean may be either, so it has no constant truth.
 fn constant_truth(languages: u16) -> Option<bool> {
     const FALSY: u16 = language(ValueType::Null) | language(ValueType::Undefined);
-    const TRUTHY: u16 = language(ValueType::Object) | language(ValueType::Function);
+    const TRUTHY: u16 = language(ValueType::Object) | language(ValueType::Function) | ARRAY | OBJECT_PLAIN;
     if languages & !FALSY == 0 {
         Some(false)
     } else if languages & !TRUTHY == 0 {
@@ -220,7 +246,8 @@ mod tests {
     #[test]
     fn tag_decided_sets_are_tested_at_entry() {
         for set in [language(ValueType::Boolean), language(ValueType::Null) | language(ValueType::Undefined),
-            language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined)] {
+            language(ValueType::Object), language(ValueType::Function), language(ValueType::Number) | language(ValueType::Undefined),
+            ARRAY, OBJECT_PLAIN, ARRAY | OBJECT_PLAIN | language(ValueType::Undefined)] {
             assert_eq!(DeclaredFact::of(set), Some(DeclaredFact::Languages(set)));
         }
     }

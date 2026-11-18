@@ -42,3 +42,5 @@ pub(crate) const PLAIN_PROGRAM_AT: usize = 16;
 /// An activation record's size and where its kind tag lies (`Activation`).
 pub(crate) const ACTIVATION_BYTES: usize = 128;
 pub(crate) const ACTIVATION_KIND_OFFSET: usize = 72;
+/// The tag of a native direct call's frame (`quench_bjit::shared_words::KIND_NATIVE`, asserted equal by the runtime).
+pub(crate) const KIND_NATIVE: u8 = 0;

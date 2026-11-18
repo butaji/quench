@@ -13,6 +13,8 @@
 //! get an empty table.
 #[path = "build/bytes.rs"]
 mod bytes;
+#[path = "build/call_rows.rs"]
+mod call_rows;
 #[path = "build/checks.rs"]
 mod checks;
 #[path = "src/class.rs"]
@@ -52,10 +54,14 @@ const SOURCE: &str = "stencils/rows.rs";
 /// Environment variable of each rustc process naming its shard's instance file (`rows.rs` reads
 /// it with `env!`).
 const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
+/// Environment variable of each rustc process naming the file of `call_rows`' invocations (`build/call_rows.rs`),
+/// which `stencils/call_rows.rs` includes; only the fixed-rows shard compiles that module.
+const CALL_ROWS_VAR: &str = "QUENCH_STENCIL_CALL_ROWS";
 /// The shard that also defines the fixed rows of the target's `stencils/entry*.rs` (cfg
 /// `fixed_rows`), so no name is defined twice.
 const FIXED_ROWS_SHARD: usize = 0;
-const EXIT_PREFIX: usize = 4;
+/// The prefix of an exit hole (`HOLE_EXIT<k>`) that precedes its index.
+const EXIT_PREFIX: usize = "EXIT".len();
 /// The stencil libraries of an x86-64 build: the table's name and the `-C target-cpu` it is built for. Another
 /// target has the baseline table alone, which also names the second.
 const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("V3", Some("x86-64-v3"))];
@@ -97,6 +103,7 @@ fn main() {
     for (shard, part) in parts.iter().enumerate() {
         fs::write(instance_file(&out, shard), part.concat()).unwrap();
     }
+    fs::write(call_rows_file(&out), call_rows::invocations()).unwrap();
     let variants: &[(&str, Option<&str>)] = if arch == Arch::X86_64 { &VARIANTS } else { &VARIANTS[..1] };
     let built: Vec<_> = variants.iter().map(|(name, cpu)| (*name, compile_shards(&out, parts.len(), (arch, read), *cpu))).collect();
     let mut tables = String::new();
@@ -125,6 +132,10 @@ fn instances(arch: Arch) -> Vec<String> {
 
 fn instance_file(out: &Path, shard: usize) -> PathBuf {
     out.join(format!("instances_{shard}.rs"))
+}
+
+fn call_rows_file(out: &Path) -> PathBuf {
+    out.join("call_rows.rs")
 }
 
 /// What `checks` counted over a library's rows: the rows that keep a stack frame, and those whose hot path
@@ -174,7 +185,7 @@ fn compile(out: &Path, shard: usize, cpu: Option<&str>) -> PathBuf {
     if shard == FIXED_ROWS_SHARD {
         command.args(["--cfg", "fixed_rows"]);
     }
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).arg("-o").arg(&object).arg(SOURCE).status().expect("run rustc");
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out)).arg("-o").arg(&object).arg(SOURCE).status().expect("run rustc");
     assert!(status.success(), "rustc failed on {SOURCE} (shard {shard})");
     object
 }

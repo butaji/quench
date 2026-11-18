@@ -55,7 +55,7 @@
 use super::*;
 use super::call_plan::{self, CallChain, CallForm, CallPart, CallPlan, CallShape, Choice};
 use super::callees::chains;
-use super::decode::staged_of;
+use super::decode::{staged_binary, staged_of, staged_unary};
 use super::super::{LaneHelper, LaneHelpers};
 use crate::staged::{Operation, Protocol};
 use crate::bytecode::Op;
@@ -176,7 +176,9 @@ fn fast_arm(instruction: WideInstruction, known: Known) -> Option<Heap> {
             // derivation debt: no staged::Operation for SetFunctionName (the naming is a recorded site, `names`)
             Class::SetFunctionName => names::of(known, instruction).map(names::Name::heap),
             // derivation debt: no staged::Operation for the `typeof` string and `typeof` test operators
-            Class::Unary => typeof_arm(instruction.unary_operator()),
+            Class::Unary => staged_unary_arm(instruction).or_else(|| typeof_arm(instruction.unary_operator())),
+            Class::Binary => staged_binary_arm(instruction),
+            Class::RequireObjectCoercible => staged_plain_arm(instruction, numeric::library::STAGED_COERCIBLE),
             _ => None,
         },
     }
@@ -195,6 +197,26 @@ fn appends_one(instruction: WideInstruction) -> bool {
         && instruction.boolean_field(InstructionField::C) == Some(false)
 }
 
+/// The staged fast arm of a `Binary` no numeric row takes (`staged_binary`), over two register operands: a constant
+/// operand has no staged row.
+fn staged_binary_arm(instruction: WideInstruction) -> Option<Heap> {
+    let code = staged_binary(instruction.binary_operator())?;
+    let registers = instruction.operand_b().register_index().is_some() && instruction.operand_c().register_index().is_some();
+    (instruction.result_flags() == 0 && registers).then_some(Heap::Staged(code))
+}
+
+/// The staged fast arm of a `Unary` no unary row takes (`staged_unary`): a `void` that returns from the frame is the
+/// general step's (its record returns the value).
+fn staged_unary_arm(instruction: WideInstruction) -> Option<Heap> {
+    let code = staged_unary(instruction.unary_operator())?;
+    (instruction.result_flags() == 0 && !instruction.returns_from_frame()).then_some(Heap::Staged(code))
+}
+
+/// The staged fast arm `code` of an instruction whose only operand is its register `b` (`RequireObjectCoercible`).
+fn staged_plain_arm(instruction: WideInstruction, code: u8) -> Option<Heap> {
+    (instruction.result_flags() == 0).then_some(Heap::Staged(code))
+}
+
 /// The registers a fast arm reads: its operand in `a`, and for an append the array it writes
 /// through, the way a store names its array (`Decoded::base`).
 fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, Option<Register>) {
@@ -202,9 +224,21 @@ fn fast_operands(instruction: WideInstruction, fast: Heap) -> (Option<Source>, O
         Heap::Add { .. } => adds::operands(instruction),
         Heap::Name { .. } => (Some(Source::Register(instruction.register_a())), None),
         Heap::Append => (instruction.optional_register_b().map(Source::Register), Some(instruction.register_a())),
+        Heap::Staged(numeric::library::STAGED_VOID) => (None, None),
+        Heap::Staged(numeric::library::STAGED_BITWISE_NOT | numeric::library::STAGED_COERCIBLE) => (Some(Source::Register(instruction.register_b())), None),
+        Heap::Staged(_) => (instruction.operand_b().register_index().map(Source::Register), None),
         _ => (Some(Source::Register(instruction.register_b())), None),
     }
 }
+
+/// The second register a staged binary's fast arm reads (its right operand), beside `fast_operands`' left.
+fn fast_right(instruction: WideInstruction, fast: Heap) -> Option<Source> {
+    match fast {
+        Heap::Staged(_) if instruction.op().class() == Class::Binary => instruction.operand_c().register_index().map(Source::Register),
+        _ => None,
+    }
+}
+
 
 /// Whether a loop region makes `instruction` by its call row (`Step::Call`): a call a body's chain makes
 /// (`callees::chains`) that completes no activation, where the helper table has the region call
@@ -263,10 +297,14 @@ pub(super) fn decode_step(pc: u32, instruction: WideInstruction, known: Known, (
                 Step::Fast(fast) | Step::Guard(fast) => fast_operands(instruction, fast),
                 _ => (None, None),
             };
+            let right = match step {
+                Step::Fast(fast) => fast_right(instruction, fast),
+                _ => None,
+            };
             let add = adds::of(known, instruction).filter(|add| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == add.heap()));
             let name = names::of(known, instruction).filter(|name| matches!(step, Step::Fast(fast) | Step::Guard(fast) if fast == name.heap()));
             let result = written.next();
-            Decoded { target, a: read, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, result) }
+            Decoded { target, a: read, b: right, base, also: written.next(), add, name, atom: add.map(|_| instruction.atom_index()), ..Decoded::step(step, result) }
         }
     }
 }
@@ -437,7 +475,7 @@ fn plan_fast(decoded: &Decoded, fast: Heap, layout: &Layout, pc: u32, slow: Opti
     if (read != Place::Mem || second != Place::Mem) && fast.reads_frame_word() {
         return slow.map_or_else(|| leave(pc), Ok);
     }
-    let row = HeapRow { heap: fast, dst: written, a: read, b: Place::Mem, entry: false };
+    let row = HeapRow { heap: fast, dst: written, a: read, b: second, entry: false };
     let holes = heap_holes(decoded, homes, fast, false, [written_hole, read_hole, second_hole]);
     let behind_parts = slow.as_ref().map_or(0, |slow| 1 + slow.pre.len() + slow.post.len());
     let mut run = Planned::single(base_rows::stencil(row)?, holes, None, slow.is_none().then_some(pc));

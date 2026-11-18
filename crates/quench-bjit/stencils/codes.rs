@@ -232,15 +232,48 @@ codes! { u8;
     TYPED_LENGTH_ROW;
     /// The receiver-proof rows (`ic_rows.rs`, `base_region::proofs`): the proof that the object register is of the
     /// entry's exact shape with flat values, and the guardless read and stores of a receiver every path proved so.
-    IC_PROOF_ROW;
-    IC_KNOWN_GET_ROW;
-    IC_KNOWN_SET_ROW;
-    IC_KNOWN_SET_INT_ROW;
+    IC_PROOF_ROW,
+    IC_KNOWN_GET_ROW,
+    IC_KNOWN_SET_ROW,
+    IC_KNOWN_SET_INT_ROW,
+    /// A declared parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a word
+    /// whose language its tag alone decides, in the mask of hole 1 (`shared_words::language`), where the mask
+    /// is the declared set. A hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
+    DECLARED_ROW,
+    /// `String.prototype.charCodeAt` of a flat string (hole 1: the receiver's frame slot) at an int32 index in range (hole 2):
+    /// the code unit, an int32 into the destination (hole 0). Any other receiver, index or form leaves through EXIT0 with
+    /// nothing written, to the call's own step.
+    CHAR_CODE_AT_ROW,
+    /// `parseInt` of a flat string (hole 1: the frame slot) in radix 10 (`staged::parse_int::decimal_int32`): the int32
+    /// into the destination (hole 0). Any other text leaves through EXIT0 with nothing written.
+    PARSE_INT_ROW,
+    /// The staged rows (`staged_rows.rs`): a Number operation the planner's operator tables do not name, a relation or
+    /// an equality in value form, `~`, `void`, `InitializeTdz` of a frame local and `RequireObjectCoercible`. Each is a
+    /// fast arm over register operands, its destination a frame slot; `STAGED_FIRST..=STAGED_LAST` is the run
+    /// `heap_rows::run` routes to `staged_rows::run`.
+    STAGED_REMAINDER,
+    STAGED_RELVAL_LT,
+    STAGED_RELVAL_LE,
+    STAGED_RELVAL_GT,
+    STAGED_RELVAL_GE,
+    STAGED_RELVAL_EQ,
+    STAGED_RELVAL_NE,
+    STAGED_BITWISE_NOT,
+    STAGED_INIT_LOCAL,
+    STAGED_COERCIBLE,
+    STAGED_VOID,
+    STAGED_LOOSE_EQ,
+    STAGED_LOOSE_NE,
+    STAGED_STRICT_EQ,
+    STAGED_STRICT_NE,
 }
 /// `TYPED_KINDS` is the `TypedArrayKind` count: the kinds of a typed row's block.
 pub const TYPED_KINDS: u8 = 12;
 pub const TYPED_INDEX_LAST: u8 = TYPED_INDEX_ROW + TYPED_KINDS - 1;
 pub const TYPED_STORE_LAST: u8 = TYPED_STORE_ROW + TYPED_KINDS - 1;
+/// The first and last staged codes: one heap-space run after the parse-int row.
+pub const STAGED_FIRST: u8 = STAGED_REMAINDER;
+pub const STAGED_LAST: u8 = STAGED_STRICT_NE;
 /// The discriminants of the kinds with no native element (BigInt64, BigUint64, Float16), which have no row.
 pub const NON_NATIVE_KINDS: [u8; 3] = [7, 8, 9];
 /// Every naming row's code.

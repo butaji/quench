@@ -20,6 +20,12 @@ pub mod language {
     pub const NUMBER: u16 = 1 << 3;
     pub const OBJECT: u16 = 1 << 7;
     pub const FUNCTION: u16 = 1 << 8;
+    /// A direct array word (`DIRECT_ARRAY_TAG` exactly). Its `OBJECT` bit is also set, as every direct
+    /// object family word's is, so a set naming `object` admits it.
+    pub const ARRAY: u16 = 1 << 9;
+    /// A plain direct object word (`DIRECT_OBJECT_TAG` exactly), the object family's canonical tag: the
+    /// one whose record the inline-cache rows index. Its `OBJECT` bit is also set.
+    pub const OBJECT_PLAIN: u16 = 1 << 10;
 }
 
 /// The discriminants of `FlatUnits`, which a string record starts with.

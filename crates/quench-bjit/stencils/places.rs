@@ -11,9 +11,8 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{payload, word_at};
-use crate::layout::{JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_RECEIVER};
-use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, value};
-use crate::typed_ir::Representation;
+use crate::layout::{JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_RECEIVER};
+use crate::staged::{Concrete, Constant, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, value};
 use crate::words::*;
 
 pub(crate) const DEST: Register = 0;
@@ -173,6 +172,16 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
     if put_tagged::<D>(&mut s, word) { Out::Next(s) } else { Out::Exit(s) }
 }
 
+/// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
+/// and every result fit its place, else the row leaves with the state as it was.
+#[inline(always)]
+pub(crate) fn settle<const D: u8, const A: u8, const B: u8>(frame: Places<D, A, B>, step: Step<u64, ()>, next: fn(S) -> Out) -> Out {
+    match step {
+        Step::Value(_) if !frame.refused => next(frame.s),
+        _ => Out::Exit(frame.s),
+    }
+}
+
 /// Writes `value`, held in `rep`, to the destination; false where the place cannot hold it.
 #[inline(always)]
 fn put<const D: u8>(s: &mut S, value: u64, rep: Representation) -> bool {
@@ -241,12 +250,6 @@ impl<const D: u8, const A: u8, const B: u8> Places<D, A, B> {
         both_int(tagged_place::<A, HOLE_A>(&self.s), tagged_place::<B, HOLE_B>(&self.s))
     }
 
-    /// The int32 operand `register` of a bitwise row, proved here.
-    #[inline(always)]
-    pub(crate) fn bitwise_operand(&self, register: Register, numbers: bool) -> Option<u64> {
-        by_place!(register, bitwise_place(&self.s, numbers))
-    }
-
     /// Whether the row may continue: nothing the staged row did was refused by a place.
     #[inline(always)]
     pub(crate) fn writes_fit(&self, step_ok: bool) -> bool {
@@ -290,8 +293,11 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     fn define_this(&mut self, _stage: &mut Concrete, _destination: Register, this: u64) {
         self.refused |= !put::<D>(&mut self.s, this, Representation::Tagged);
     }
-    fn constant(&mut self, _stage: &mut Concrete, _constant: Constant) -> (u64, Representation) {
-        unreachable!("a Number row's constants are its places")
+    /// A program constant as its tagged word (`Constant::value`, the runtime's `Value` bits): the staged rows read
+    /// `void`'s `undefined` this way, where a Number row's constants are its places.
+    #[inline(always)]
+    fn constant(&mut self, _stage: &mut Concrete, constant: Constant) -> (u64, Rep) {
+        (constant.value.to_bits(), Rep::Tagged)
     }
     #[inline(always)]
     fn truthiness(&mut self, _stage: &mut Concrete, register: Register) -> Option<bool> {
@@ -301,7 +307,54 @@ impl<const D: u8, const A: u8, const B: u8> Frame<Concrete> for Places<D, A, B> 
     fn branch(&mut self, _stage: &mut Concrete, condition: bool) {
         self.taken = condition;
     }
-    fn jump(&mut self, _stage: &mut Concrete) { unreachable!("a row jumps by its kind") }
+    fn jump(&mut self, _stage: &mut Concrete) { self.taken = true; }
+
+    // The array operations' answers (`places_heap`).
+    #[inline(always)]
+    fn direct_array(&mut self, stage: &mut Concrete, source: Register) -> Option<()> { self.heap_direct_array(stage, source) }
+
+    #[inline(always)]
+    fn array_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Rep)> { self.heap_array_length(stage, source) }
+
+    #[inline(always)]
+    fn typed_length(&mut self, stage: &mut Concrete, source: Register) -> Option<(u64, Rep)> { self.heap_typed_length(stage, source) }
+
+    #[inline(always)]
+    fn array_append(&mut self, stage: &mut Concrete, array: Register, value: u64) -> Option<()> { self.heap_array_append(stage, array, value) }
+
+    /// ForInNext's fast arm (`places_names`).
+    #[inline(always)]
+    fn vm_step(&mut self, stage: &mut Concrete, operation: crate::staged::CallOut, _result: Option<Register>) -> Option<(u64, Rep)> {
+        self.call_out_fast(stage, operation)
+    }
+
+    /// The typeof string table at hole 2 (`places_names`).
+    #[inline(always)]
+    fn typeof_string(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Rep)> { self.typeof_entry(stage, name) }
+
+    #[inline(always)]
+    fn capture_slot(&mut self, stage: &mut Concrete, depth: u16, slot: u16, root: bool) -> Option<(u64, Rep)> {
+        self.capture_read(stage, depth, slot, root)
+    }
+
+    #[inline(always)]
+    fn store_capture(&mut self, stage: &mut Concrete, depth: u16, slot: u16, value: u64) -> Option<()> {
+        self.capture_store(stage, depth, slot, value)
+    }
+
+    #[inline(always)]
+    fn environment(&mut self, _stage: &mut Concrete) -> Option<(u64, Rep)> { self.environment_storage() }
+
+    #[inline(always)]
+    fn environment_write(&mut self, stage: &mut Concrete, slot: u16, value: u64, initialize: bool) -> Option<()> {
+        self.environment_store(stage, slot, value, initialize)
+    }
+
+    /// A pending interrupt or due collection leaves the row (`numeric::interrupted`).
+    #[inline(always)]
+    fn safepoint(&mut self, _stage: &mut Concrete, _proof: ()) -> Option<()> {
+        (!crate::numeric::interrupted(&self.s)).then_some(())
+    }
     #[inline(always)]
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, Representation) {
         (if condition { crate::Value::TRUE } else { crate::Value::FALSE }.to_bits(), Representation::Tagged)
@@ -341,12 +394,15 @@ fn local_slot(s: &S, slot: u16) -> Option<usize> {
     (locals != 0 && u64::from(slot) < count).then(|| locals + usize::from(slot) * core::mem::size_of::<u64>())
 }
 
-impl<const D: u8, const A: u8, const B: u8> GlobalFrame<Concrete> for Places<D, A, B> {}
 impl<const D: u8, const A: u8, const B: u8> crate::staged::PropertyFrame<Concrete> for Places<D, A, B> {}
-impl<const D: u8, const A: u8, const B: u8> crate::staged::ElementFrame<Concrete> for Places<D, A, B> {}
-impl<const D: u8, const A: u8, const B: u8> crate::staged::CallFrame<Concrete> for Places<D, A, B> {}
 
 impl<const D: u8, const A: u8, const B: u8> NumericFrame<Concrete> for Places<D, A, B> {
+    /// ToInt32 of the operand: an int place as it is, a double truncated (`bitwise_place`).
+    #[inline(always)]
+    fn int32_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
+        by_place!(operand.register_index()?, bitwise_place(&self.s, true))
+    }
+
     #[inline(always)]
     fn int_operand(&mut self, _stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<u64> {
         let (register, proved) = (operand.register_index()?, self.proved);
