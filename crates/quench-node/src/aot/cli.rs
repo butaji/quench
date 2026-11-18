@@ -146,7 +146,12 @@ fn build_bootstrap(program: &Path, output: &Path) -> Result<(), String> {
         Ok(bytes) => bytes,
         Err(error) => return Err(error.to_string()),
     };
-    let images = quench_runtime::AheadImages::finish_recording();
+    let mut images = quench_runtime::AheadImages::finish_recording();
+    // The snapshot build stores no program of its own (`initialize_for_snapshot` installs the
+    // entry), so the entry itself is the one program whose bodies and loops can ship; a stored
+    // program's images would be recorded above, by `Vm::store_program`.
+    let entry = quench_runtime::AheadImages::compile(&program);
+    if !entry.is_empty() { images.push(entry); }
     fs::write(output, bytes).map_err(|error| error.to_string())?;
     if !images.is_empty() {
         fs::write(output.with_extension("ahead"), quench_runtime::AheadImages::bundle(&images))
@@ -242,10 +247,19 @@ fn compile(options: Options) -> Result<(), String> {
     manifest.set_hand_back_on_leave(matches!(options.support, SourceSupport::Dynamic));
     let compiled = manifest.compile()?;
     report["native_code_units"] = json!(compiled.units.len());
+    // The programs the image will run are the compiled units (the module factory included):
+    // their lane bodies and loops ship as an ahead bundle the produced image loads before it
+    // executes (`execute_native_process_entry_with_ahead`).
+    let bootstrap = work.0.join("bootstrap.bin");
+    let ahead: Vec<_> = std::iter::once(&compiled.entry).chain(compiled.units.iter().map(|unit| &unit.program))
+        .map(quench_runtime::AheadImages::compile).filter(|images| !images.is_empty()).collect();
+    if !ahead.is_empty() {
+        fs::write(bootstrap.with_extension("ahead"), quench_runtime::AheadImages::bundle(&ahead))
+            .map_err(|error| error.to_string())?;
+    }
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
     let inputs = compiled.emit(&images)?;
-    let bootstrap = work.0.join("bootstrap.bin");
     let mut worker = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     worker.args(["compile", BOOTSTRAP_WORKER_OPTION])
         .arg(images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT)))
