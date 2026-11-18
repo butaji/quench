@@ -887,6 +887,7 @@ impl<H: Host> Vm<H> {
             }
             roots.extend(self.holder_hints.holder.iter().flat_map(|hint| [hint.holder, hint.value]));
             roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
+            roots.extend(self.holder_hints.own.iter().flat_map(|hint| [hint.holder, hint.value]));
             roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
             self.private_site_homes.for_each_value(|value| roots.push(value));
         }

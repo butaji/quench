@@ -115,6 +115,26 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, 
     Some(stage.add_imm(zero, value))
 }
 
+/// The value the own-constant hint `(record, watch, value)` records for the object part at
+/// `at`: `None` (leaving at `miss`) for any record but the hinted one, or once the watch on its
+/// values no longer holds. A receiver that is always one object, whose slot the code reads and
+/// nothing rewrites (an enum, a namespace, a module's exports, a configuration object), reads
+/// as its value: one compare of the record's address and the watch's flag. Two objects of one
+/// layout (two enums with the same members) share a layout but never a record.
+#[inline(always)]
+pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u64, watch: u64, value: u64,
+    miss: S::Miss) -> Option<S::Word> {
+    let record = stage.site(record);
+    let same = stage.eq_imm(at, record);
+    stage.guard(same, miss)?;
+    let watch = stage.site(watch);
+    let holds = stage.assumption(watch);
+    stage.guard(holds, miss)?;
+    let zero = stage.constant(0);
+    let value = stage.site(value);
+    Some(stage.add_imm(zero, value))
+}
+
 /// The value the string hint `(watch, value)` records for the receiver word `word`: `None`
 /// (leaving at `miss`) for any receiver but a direct string, or once the watch on
 /// `String.prototype`'s values no longer holds.
