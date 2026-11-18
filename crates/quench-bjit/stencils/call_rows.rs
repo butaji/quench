@@ -256,12 +256,27 @@ unsafe fn fill_window<const ARGC: usize>(args: usize, top: usize, room: usize) {
     // stack's top, which the admission proved free.
     unsafe {
         let passed: [u64; ARGC] = (args as *const [u64; ARGC]).read();
-        for k in 0..room {
-            let word = if k < ARGC { *passed.get_unchecked(k) } else { Value::UNDEFINED.to_bits() };
-            ((top + (k << WORD_SHIFT)) as *mut u64).write_volatile(word);
+        for (k, word) in passed.iter().enumerate() {
+            ((top + (k << WORD_SHIFT)) as *mut u64).write_volatile(*word);
+        }
+        // The `undefined` past the arguments: a few words (`window_fill`), so straight stores for
+        // the first `FILL_UNROLLED` and a plain loop past them, where a vectorized loop's set-up
+        // cost more than the stores it made.
+        let undefined = Value::UNDEFINED.to_bits();
+        let mut k = ARGC;
+        while k < room && k < ARGC + FILL_UNROLLED {
+            ((top + (k << WORD_SHIFT)) as *mut u64).write_volatile(undefined);
+            k += 1;
+        }
+        while k < room {
+            ((top + (k << WORD_SHIFT)) as *mut u64).write_volatile(undefined);
+            k += 1;
         }
     }
 }
+
+/// The `undefined` words past the arguments a call writes with straight stores (`fill_window`).
+const FILL_UNROLLED: usize = 4;
 
 /// What admission found: the callee's cell, the lane stack's values' top where its window goes, the
 /// window's size and the activations' top where its native frame goes.
