@@ -91,18 +91,6 @@ pub(crate) trait Stage {
     /// site reaches the stage through here.
     fn site(&mut self, v: u64) -> Self::Imm;
     fn constant(&mut self, bits: u64) -> Self::Word;
-    /// The Wasm integer operators (`staged::wasm_int`) the interpreter runs on machine words. Each
-    /// takes the operands' raw words (an i32's low 32 bits are its value) and answers the result word,
-    /// or `None` where the stage does not run it here, or the operator traps (the row then leaves).
-    /// The i64 result is `(word, is_i32)`: a comparison's flag is an i32.
-    #[inline(always)]
-    fn wasm_i32_binary(&mut self, _operator: crate::wasm::integer::I32BinaryOperator, _left: Self::Word, _right: Self::Word) -> Option<Self::Word> { None }
-    #[inline(always)]
-    fn wasm_i32_unary(&mut self, _operator: crate::wasm::integer::I32UnaryOperator, _value: Self::Word) -> Option<Self::Word> { None }
-    #[inline(always)]
-    fn wasm_i64_binary(&mut self, _operator: crate::wasm::integer::I64BinaryOperator, _left: Self::Word, _right: Self::Word) -> Option<(Self::Word, bool)> { None }
-    #[inline(always)]
-    fn wasm_i64_unary(&mut self, _operator: crate::wasm::integer::I64UnaryOperator, _value: Self::Word) -> Option<(Self::Word, bool)> { None }
     /// The loads and stores say which alias region they touch and whether it can change while
     /// code runs (`Access`): a specializer tags the access so Cranelift may reorder and hoist
     /// it, and Concrete and the stencil stage ignore it.

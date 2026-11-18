@@ -23,7 +23,6 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
             | Operation::GlobalTypeof { .. } | Operation::GlobalWrite { .. } | Operation::LoadName { .. } | Operation::Protocol { .. }
             | Operation::ForInNext { .. } | Operation::EnumeratedGet { .. } | Operation::SpreadCall { .. } | Operation::SuperCall { .. }
             | Operation::LoadCapture { .. } | Operation::StoreCapture { .. } | Operation::CloneEnv { .. } => super::names::step(stage, frame, operation),
-        Operation::WasmInt(operation) => wasm_int::step(stage, frame, operation),
         value => value_step(stage, frame, value),
     }
 }
@@ -218,9 +217,10 @@ pub(crate) const fn row_step(op: Op) -> RowStep {
     }
 }
 
-/// `step` of a Wasm integer row (`RowStep::WasmInt`).
+/// `step` of a Wasm integer row (`RowStep::WasmInt`) on the interpreter's stage and frame; any
+/// other operation is unresolved.
 #[inline(always)]
-pub(crate) fn step_wasm_int<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
+pub(crate) fn step_wasm_int<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: Operation<u64, ()>) -> Step<u64, F::Control> {
     match operation {
         Operation::WasmInt(operation) => super::wasm_int::step(stage, frame, operation),
         _ => Step::Unresolved,

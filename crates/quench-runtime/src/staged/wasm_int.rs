@@ -1,140 +1,92 @@
-//! The Wasm i32 and i64 register and immediate operators as staged rows (`Decoder::WasmInt`).
-//! The semantics are the stage's (`Stage::wasm_i32_binary` and its siblings: the interpreter's
-//! `staged::wasm` rules on machine words); a trap or a stage that does not run the operator
-//! answers `None`, and the row leaves to its general step, which raises the trap.
+//! The Wasm i32 and i64 register and immediate operators as staged rows (`Decoder::WasmInt`). The
+//! operators are the staged Wasm rules every tier runs: the opcode's `WasmOperation` (its width,
+//! operator and operands), `staged::wasm::integer_binary`'s traps, and `ConcreteWasm`'s primitives.
+//! A trap, or an operand the frame does not hold as its word, leaves at the miss edge
+//! (`Step::Unresolved`), where the general step raises it.
 
-use super::{Frame, NumericFrame, Stage, Step};
-use crate::bytecode::{Op, Register, WideInstruction};
-use crate::wasm::integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
+use super::machine::MachineStage;
+use super::register_frame::{Frame, Step, WasmRep};
+use super::wasm::{Width, binary_result, integer_binary, unary_result};
+use super::wasm_concrete::ConcreteWasm;
+use super::wasm_operation::{Form, Operand, WasmOperation};
+use super::Concrete;
+use crate::bytecode::{Register, WideInstruction};
+use crate::wasm::integer::I64BinaryOperator as Binary;
 
-/// The right operand of an i32 binary operator: a register, or the record's immediate.
+/// An integer operation of the family: the rule its record's opcode and operator tag name, with
+/// the record the operands and destination come from.
 #[derive(Clone, Copy)]
-pub(crate) enum I32Right {
-    Register(Register),
-    Constant(i32),
+pub(crate) struct WasmIntOperation {
+    operation: WasmOperation,
+    instruction: WideInstruction,
 }
 
-/// An integer operation of the family, with the operands its record names.
-#[derive(Clone, Copy)]
-pub(crate) enum WasmIntOperation {
-    /// `destination = left op right` on i32 words.
-    I32Binary { operator: I32BinaryOperator, destination: Register, left: Register, right: I32Right },
-    /// `destination = op source` on an i32 word.
-    I32Unary { operator: I32UnaryOperator, destination: Register, source: Register },
-    /// `destination = left op right` on i64 words (`raw` false: boxed registers, read and written
-    /// as the i64 they hold; `raw` true: the machine words as they are).
-    I64Binary { operator: I64BinaryOperator, destination: Register, left: Register, right: Register, raw: bool },
-    /// `destination = op source` on an i64 word (`raw` as for `I64Binary`).
-    I64Unary { operator: I64UnaryOperator, destination: Register, source: Register, raw: bool },
-    /// `destination = (source >>> shift) & mask` on an i32 word: a bit-field extraction, whose
-    /// shift is the record's signed constant and whose mask is its immediate.
-    I32BitField { destination: Register, source: Register, shift: i32, mask: i32 },
-}
-
-/// Whether the i64 opcode `op` runs on raw words (its operands and result are the machine words,
-/// never boxed). The raw opcodes of the Wasm thread join here; none is in this catalog yet.
-const fn raw_i64(op: Op) -> bool {
-    let _ = op;
-    false
-}
-
-/// The operation `instruction` denotes, decoded from the record's operands: an i32 binary's register
-/// or immediate form, an i32 unary, or an i64 binary or unary. `None` for any other opcode.
+/// The operation `instruction` denotes: an i32 or i64 binary in its register or immediate form, an
+/// i32 or i64 unary, or a bit-field extraction. `None` for any other opcode.
 pub(crate) fn decode(instruction: WideInstruction) -> Option<WasmIntOperation> {
-    let op = instruction.op();
-    let (destination, b, c) = (instruction.a(), instruction.b(), instruction.c());
-    if let Some(operator) = I32BinaryOperator::from_register_op(op) {
-        return Some(WasmIntOperation::I32Binary { operator, destination, left: b, right: I32Right::Register(c) });
-    }
-    if let Some(operator) = I32BinaryOperator::from_immediate_op(op) {
-        let right = I32Right::Constant(instruction.imm() as i32);
-        return Some(WasmIntOperation::I32Binary { operator, destination, left: b, right });
-    }
-    match op {
-        Op::WasmI32Unary => Some(WasmIntOperation::I32Unary {
-            operator: I32UnaryOperator::from_tag(instruction.imm())?, destination, source: b }),
-        Op::WasmI32ShiftRightUnsignedAndImmediate => Some(WasmIntOperation::I32BitField {
-            destination, source: b, shift: i32::from(c as i16), mask: instruction.imm() as i32 }),
-        Op::WasmI64Binary => Some(WasmIntOperation::I64Binary {
-            operator: I64BinaryOperator::from_tag(instruction.imm())?, destination, left: b, right: c, raw: raw_i64(op) }),
-        Op::WasmI64Unary => Some(WasmIntOperation::I64Unary {
-            operator: I64UnaryOperator::from_tag(instruction.imm())?, destination, source: b, raw: raw_i64(op) }),
-        _ => None,
+    let operation = WasmOperation::of(instruction.op(), instruction.imm())?;
+    let integer_row = match operation {
+        WasmOperation::Binary { form, .. } => matches!(form, Form::Register | Form::Immediate),
+        WasmOperation::Unary { .. } | WasmOperation::BitField => true,
+        _ => false,
+    };
+    integer_row.then_some(WasmIntOperation { operation, instruction })
+}
+
+/// The representation a scalar of `width` takes in a register frame.
+const fn rep_of(width: Width) -> WasmRep {
+    match width {
+        Width::I32 => WasmRep::Int32,
+        Width::I64 => WasmRep::Bits64,
     }
 }
 
-/// Run `operation` on `frame`: its result word, or `Unresolved` where the stage leaves it.
-#[inline(always)]
-pub(crate) fn step<S: Stage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: WasmIntOperation) -> Step<S::Word, F::Control> {
-    match operation {
-        WasmIntOperation::I32Binary { operator, destination, left, right } => {
-            let left = frame.read(stage, left);
-            let right = match right {
-                I32Right::Register(register) => frame.read(stage, register),
-                I32Right::Constant(value) => stage.constant(u64::from(value as u32)),
-            };
-            match stage.wasm_i32_binary(operator, left, right) {
-                Some(word) => define_i32(stage, frame, destination, word),
-                None => Step::Unresolved,
-            }
-        }
-        WasmIntOperation::I32Unary { operator, destination, source } => {
-            let value = frame.read(stage, source);
-            match stage.wasm_i32_unary(operator, value) {
-                Some(word) => define_i32(stage, frame, destination, word),
-                None => Step::Unresolved,
-            }
-        }
-        WasmIntOperation::I64Binary { operator, destination, left, right, raw } => {
-            let (Some(left), Some(right)) = (frame.wide_read(stage, left, raw), frame.wide_read(stage, right, raw)) else {
-                return Step::Unresolved;
-            };
-            match stage.wasm_i64_binary(operator, left, right) {
-                Some((word, is_i32)) => define_wide(stage, frame, destination, word, is_i32, raw),
-                None => Step::Unresolved,
-            }
-        }
-        WasmIntOperation::I64Unary { operator, destination, source, raw } => {
-            let Some(value) = frame.wide_read(stage, source, raw) else { return Step::Unresolved };
-            match stage.wasm_i64_unary(operator, value) {
-                Some((word, is_i32)) => define_wide(stage, frame, destination, word, is_i32, raw),
-                None => Step::Unresolved,
-            }
-        }
-        WasmIntOperation::I32BitField { destination, source, shift, mask } => {
-            // The shift, then the mask, as the two i32 operators the extraction names.
-            let value = frame.read(stage, source);
-            let shift = stage.constant(u64::from(shift as u32));
-            let Some(shifted) = stage.wasm_i32_binary(I32BinaryOperator::ShiftRightUnsigned, value, shift) else {
-                return Step::Unresolved;
-            };
-            let mask = stage.constant(u64::from(mask as u32));
-            match stage.wasm_i32_binary(I32BinaryOperator::And, shifted, mask) {
-                Some(word) => define_i32(stage, frame, destination, word),
-                None => Step::Unresolved,
-            }
-        }
-    }
-}
+/// The result of an operation before it is written: its destination, word and representation.
+type Computed = (Register, u64, WasmRep);
 
-/// Define `destination` with the i32 `word`, boxed as the frame keeps an int32.
+/// Run `operation` on the interpreter's frame: the staged rules over machine words, read and
+/// written in each operand's `WasmRep`. An operand the frame does not hold so, and a trap, leave
+/// at the miss edge (`Step::Unresolved`).
 #[inline(always)]
-fn define_i32<S: Stage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register, word: S::Word) -> Step<S::Word, F::Control> {
-    let word = frame.int_result(stage, word);
-    let fact = frame.int_fact();
-    frame.write(stage, destination, word, fact);
-    Step::Value(word)
-}
-
-/// Define `destination` with an i64 `word`, or with an i32 flag where `is_i32`.
-#[inline(always)]
-fn define_wide<S: Stage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register, word: S::Word, is_i32: bool, raw: bool)
-    -> Step<S::Word, F::Control> {
-    if is_i32 {
-        return define_i32(stage, frame, destination, word);
-    }
-    match frame.wide_write(stage, destination, word, raw) {
-        Some(()) => Step::Value(word),
+pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmIntOperation) -> Step<u64, F::Control> {
+    let Some((destination, word, rep)) = computed(stage, frame, operation) else { return Step::Unresolved };
+    match frame.wasm_write(stage, destination, word, rep) {
+        Some(tagged) => Step::Value(tagged),
         None => Step::Unresolved,
+    }
+}
+
+/// The word `operation` computes, with its destination and representation; `None` where an operand
+/// is not held so or the operator traps.
+#[inline(always)]
+fn computed<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmIntOperation) -> Option<Computed> {
+    let WasmIntOperation { operation, instruction } = operation;
+    let destination = instruction.a();
+    match operation {
+        WasmOperation::Binary { operator, width, form } => {
+            let operand = rep_of(width);
+            let left = frame.wasm_read(stage, form.left(instruction), operand)?;
+            let right = match form.right(instruction) {
+                Operand::Register(register) => frame.wasm_read(stage, register, operand)?,
+                Operand::Constant(value) => ConcreteWasm.constant(width, value),
+            };
+            let word = integer_binary(&mut ConcreteWasm, operator, width, left, right).ok()?;
+            Some((destination, word, rep_of(binary_result(operator, width))))
+        }
+        WasmOperation::Unary { operator, width } => {
+            let value = frame.wasm_read(stage, instruction.b(), rep_of(width))?;
+            let word = ConcreteWasm.operate_unary(operator, width, value);
+            Some((destination, word, rep_of(unary_result(operator, width))))
+        }
+        WasmOperation::BitField => {
+            // The shift, then the mask, as the two i32 operators the extraction names.
+            let value = frame.wasm_read(stage, instruction.b(), WasmRep::Int32)?;
+            let shift = ConcreteWasm.constant(Width::I32, i64::from(instruction.c() as i16));
+            let shifted = integer_binary(&mut ConcreteWasm, Binary::ShiftRightUnsigned, Width::I32, value, shift).ok()?;
+            let mask = ConcreteWasm.constant(Width::I32, i64::from(instruction.imm() as i32));
+            let word = integer_binary(&mut ConcreteWasm, Binary::And, Width::I32, shifted, mask).ok()?;
+            Some((destination, word, WasmRep::Int32))
+        }
+        _ => None,
     }
 }
