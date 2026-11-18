@@ -130,3 +130,70 @@ impl<H: Host> Vm<H> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_host::TestHost;
+    use crate::vm::Vm;
+    use crate::Engine;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn run(source: &str) -> String {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+        vm.execute(&Engine::specialize(source, "array_patterns.js").unwrap()).unwrap();
+        output.borrow().join("\n")
+    }
+
+    #[test]
+    fn array_patterns_by_index_keep_iterator_semantics() {
+        // Patterns of local names read intact arrays by index; every case where the iterator
+        // form could observe more takes that form.
+        let source = r#"
+"use strict";
+function f() {
+  const out = [];
+  const m = new Map([["a", 1], ["b", 2]]);
+  for (const [k, v] of m) out.push(k + v);
+  let a = 1, b = 2; [a, b] = [b, a]; out.push(a, b);
+  const [x, , z] = [7, 8, 9]; out.push(x, z);
+  const [p, q] = [1]; out.push(String(q));
+  const [h1, h2] = [1, , 3]; out.push(String(h2));
+  const it = [5, 6]; it[Symbol.iterator] = function* () { yield 40; yield 41; };
+  const [i1, i2] = it; out.push(i1, i2);
+  const [c1, c2] = "xy"; out.push(c1, c2);
+  let closed = 0;
+  const ArrIt = Object.getPrototypeOf([][Symbol.iterator]());
+  ArrIt.return = function () { closed++; return {}; };
+  const [r1] = [1, 2]; out.push(r1, closed);
+  delete ArrIt.return;
+  const [r2] = [1, 2]; out.push(r2, closed);
+  Array.prototype[1] = "proto";
+  const [g1, g2] = [1, , 3]; out.push(g2);
+  delete Array.prototype[1];
+  try { const k1 = 0; [k1] = [5]; } catch (e) { out.push(e.constructor.name); }
+  return out;
+}
+print(JSON.stringify(f()));
+"#;
+        assert_eq!(run(source), r#"["a1","b2",2,1,7,9,"undefined","undefined",40,41,"x","y",1,1,1,1,"proto","TypeError"]"#);
+    }
+
+    #[test]
+    fn concat_and_slice_follow_spreadable_and_species() {
+        let source = r#"
+const a = [1, 2, 3, 4, 5], out = [];
+out.push(a.slice(1, 3), a.slice(-2), [1, , 3].slice(0, 3).length, a.concat([6, 7], 8, [[9]]));
+const b = [1, 2]; b[Symbol.isConcatSpreadable] = false; out.push([0].concat(b));
+Array.prototype[Symbol.isConcatSpreadable] = false; out.push([0].concat([1, 2]));
+delete Array.prototype[Symbol.isConcatSpreadable]; out.push([0].concat([1, 2]));
+Object.prototype[Symbol.isConcatSpreadable] = false; out.push([0].concat([1, 2]));
+delete Object.prototype[Symbol.isConcatSpreadable];
+class MyA extends Array {} const m = MyA.from([1, 2, 3]);
+out.push(m.slice(1) instanceof MyA, m.concat([4]) instanceof MyA);
+print(JSON.stringify(out));
+"#;
+        assert_eq!(run(source), r#"[[2,3],[4,5],3,[1,2,3,4,5,6,7,8,[9]],[0,[1,2]],[[0],[1,2]],[0,1,2],[[0],[1,2]],true,true]"#);
+    }
+}
