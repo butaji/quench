@@ -247,7 +247,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 82] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 83] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -285,6 +285,8 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 82] = [
     (Op::LoadConst as u16, Op::WasmI64Store32 as u16, FUSED_PLAIN),
     (Op::StoreLocalPlain as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::Move as u16, Op::Jump as u16, FUSED_PLAIN),
+    // An i32 add of a constant then the unconditional jump after it (a loop latch).
+    (Op::WasmI32AddImmediate as u16, Op::Jump as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpFalse as u16, FUSED_PLAIN),
     (Op::LoadLocalPlain as u16, Op::JumpTrue as u16, FUSED_PLAIN),
     (Op::ToNumeric as u16, Op::IncDec as u16, FUSED_PLAIN),
@@ -582,6 +584,7 @@ pub(crate) const fn wasm_memory_store(op: Op) -> bool {
 
 /// The opcodes of the Wasm i32 zero tests, which the lane names to give a zero test's row the
 /// handler of its direction (`jump_row`).
+pub(crate) const WASM_I32_ADD_IMMEDIATE_ROW: u16 = Op::WasmI32AddImmediate as u16;
 pub(crate) const WASM_JUMP_ZERO_ROW: u16 = Op::WasmJumpI32Zero as u16;
 pub(crate) const WASM_JUMP_NONZERO_ROW: u16 = Op::WasmJumpI32NonZero as u16;
 /// The opcodes of the by-name load rows, one per `NameLoad`, which a tier names to instantiate

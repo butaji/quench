@@ -9354,21 +9354,6 @@ fn lane_safepoint_writing<H: Host>(
 // general loop, which boxes, runs the instruction. The handlers then make
 // no calls.
 
-lane_handler! {
-    /// A move (`ADD` false) or an i32 add of a constant (`ADD` true) whose
-    /// next record is an unconditional jump, as at a loop latch: both
-    /// records run here, the result written as its own record writes it.
-    fn lane_then_jump<ADD: bool, BACKWARD: bool>(cx, r, ip, i, view) {
-        let value = if ADD {
-            view.integers.encode(r.i32(i.b).wrapping_add(i.imm() as i32))
-        } else {
-            r.get(i.b)
-        };
-        r.set(i.a, value);
-        resume!(cx, lane_jump::<H>(cx, r, following(ip), BACKWARD, Carried { acc: Slot::of(value), ..view }, None))
-    }
-}
-
 /// The head record of a move pair followed by a jump (`(Move, Move, Jump)`, a `FUSED_CHAINS`
 /// entry) in direction `backward`. The pair's two moves and the jump run as one record.
 fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
@@ -9379,24 +9364,6 @@ fn move_pair_jump_handler<H: Host>(backward: bool) -> Handler {
 /// an f64 load, arithmetic and store (`FloatPairs::UPDATES`) start two
 /// records ahead of the last they run.
 const FUSION_REACH: usize = 2;
-
-/// The handlers fusing a move or an add of a constant with a jump, indexed
-/// by whether the instruction adds and by the jump's direction.
-struct JumpFusions<H>(std::marker::PhantomData<H>);
-
-impl<H: Host> JumpFusions<H> {
-    /// The instruction followed by its next record's jump.
-    const THEN: [[Handler; 2]; 2] = [
-        [
-            lane_then_jump::<H, false, false>,
-            lane_then_jump::<H, false, true>,
-        ],
-        [
-            lane_then_jump::<H, true, false>,
-            lane_then_jump::<H, true, true>,
-        ],
-    ];
-}
 
 /// The scalar direct store `store` writes for slot value `value`: registers
 /// hold their static Wasm types, and a value whose bits need a box has none.
@@ -18170,26 +18137,14 @@ fn derive_lane_view<'live, H: Host>(
         })
     };
     let entry_jumps = branch_table_entry_records(&decoded);
-    // A plain move or add of a constant whose next record jumps runs with
-    // that jump as one record.
-    for pc in 0..records.len().saturating_sub(1) {
-        let plain = |op: u16| serves(records[pc].handler, op, ACC_NONE);
-        let add = if plain(opc::Move) {
-            false
-        } else if plain(opc::WasmI32AddImmediate) {
-            true
-        } else {
-            continue;
-        };
-        if let Some(backward) = jump_direction(records[pc + 1].handler) {
-            // Leave a hot OSR latch's jump record visible to `install_loop_sites`.
-            if loop_tier && backward {
-                continue;
-            }
-            records[pc].handler =
-                JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
-        }
-    }
+    // A plain move or add of a constant whose next record jumps fuses with that jump
+    // (`staged::FUSED_ROWS`, `fuse_rows`), except at a hot OSR latch: its jump record stays
+    // visible to `install_loop_sites`, which runs before the fusion pass.
+    let then_fuses = |records: &[LaneInstruction], pc: usize| {
+        pc + 1 < records.len()
+            && (serves(records[pc].handler, opc::Move, ACC_NONE) || serves(records[pc].handler, opc::WasmI32AddImmediate, ACC_NONE))
+            && jump_direction(records[pc + 1].handler).is_some_and(|backward| !(loop_tier && backward))
+    };
     if wasm {
         // An f64 arithmetic record whose result the next f64 operator takes
         // through the accumulator runs with it as one record; pairs tile a
@@ -18339,10 +18294,7 @@ fn derive_lane_view<'live, H: Host>(
                 if !instruction.op().is_jump() || entry_jumps.contains(pc) || entries.contains(pc) || pc == 0 {
                     return None;
                 }
-                let then = JumpFusions::<H>::THEN
-                    .iter()
-                    .flatten()
-                    .any(|&handler| records[pc - 1].handler == handler as *const ());
+                let then = then_fuses(&records, pc - 1);
                 let pair = pc >= 2
                     && [true, false].into_iter().any(|backward| {
                         records[pc - 2].handler == move_pair_jump_handler::<H>(backward) as *const ()
@@ -18401,7 +18353,7 @@ fn derive_lane_view<'live, H: Host>(
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     lane_frame::fuse_chains::<H>(&mut records);
-    lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks));
+    lane_frame::fuse_rows::<H>(&mut records, live().map(|masks| &**masks), loop_tier);
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -18534,22 +18486,18 @@ fn install_loop_sites<'live, H: Host>(
     let backward = jump_row::<H, JUMP>(true) as *const ();
     let table_entries = branch_table_entry_records(decoded);
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
-    // record (`JumpFusions::THEN`, a move pair with its jump): a site there would replace the
-    // offset those records read with the site (the eslint npm scenario under --jit jumped to
-    // a site address read as an offset).
+    // record: a site there would replace the offset those records read with the site (the eslint
+    // npm scenario under --jit jumped to a site address read as an offset). The sites are backward
+    // jumps, and a move or add never fuses into a hot OSR latch (`then_fuses`), so only a move
+    // chain can sit ahead of one.
     let fused_into = |pc: usize| {
-        let then = pc >= 1
-            && JumpFusions::<H>::THEN
-                .iter()
-                .flatten()
-                .any(|&handler| records[pc - 1].handler == handler as *const ());
         let pair = pc >= 2
             && [move_pair_jump_handler::<H>(false), move_pair_jump_handler::<H>(true)]
                 .iter()
                 .any(|&handler| records[pc - 2].handler == handler as *const ());
         // A branch table takes its entry's jump offset the same way (`row_jump`, `Edge::Entry`):
         // babel-minify-wtb's generator `switch` under --jit jumped to a site read as an offset.
-        then || pair || table_entries.contains(pc)
+        pair || table_entries.contains(pc)
     };
     // The masks are derived for the first loop site only: a body without a backward jump
     // needs none, and every view under a loop tier had derived them (npm scenarios under

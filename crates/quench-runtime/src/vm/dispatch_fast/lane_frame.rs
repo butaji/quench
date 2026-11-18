@@ -1578,7 +1578,7 @@ const fn fused_index(pair: usize) -> usize { if pair < crate::staged::FUSED_ROWS
 /// pair's fused record (`fused_rows`); the next record keeps its own row. A `FUSED_DEAD_FIRST`
 /// pair takes its fused record only where `liveness` proves `A`'s result register dead after
 /// the pair and `B` names that register in no operand; otherwise it takes the `FUSED_PLAIN` record.
-pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>) {
+pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstruction], live: Option<&crate::compile::liveness::RegisterMasks>, osr_loop: bool) {
     macro_rules! pairs {
         ($($pair:literal),*) => {
             [$((
@@ -1593,14 +1593,19 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             )),*]
         };
     }
-    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81);
-    const { assert!(crate::staged::FUSED_ROWS.len() <= 82, "`pairs!` covers 82 fused pairs; add indices") };
+    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82);
+    const { assert!(crate::staged::FUSED_ROWS.len() <= 83, "`pairs!` covers 83 fused pairs; add indices") };
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
         let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {
             continue;
         };
         let direction = usize::from(backward(second));
+        // A move or an add of a constant at a hot OSR latch stays its own record, which
+        // `install_loop_sites` read as the latch's (`derive_lane_view`'s `then_fuses`).
+        if osr_loop && direction == 1 && (plain_row::<H, { crate::staged::MOVE_ROW }>(first) || plain_row::<H, { crate::staged::WASM_I32_ADD_IMMEDIATE_ROW }>(first)) {
+            continue;
+        }
         // The dead-first form is only sound when `B` never reads `A`'s register, and nothing
         // after the pair reads it: the same liveness the hand pass used, plus `B`'s operands.
         let dead_first = {
