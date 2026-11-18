@@ -62,7 +62,8 @@ impl Lowering<'_, '_> {
         // Back from the jump to its block's leader: the copy is there or nowhere.
         let block = (span.0..pc).rev().take_while(|at| self.blocks.get(at + 1).is_none_or(Option::is_none));
         let copy = nest.instructions[block.into_iter().find(writes)?];
-        copy.op().is_move().then(|| copy.register_b()).filter(|source| nest.unwritten(span, &[*source]))
+        let Some(crate::staged::Operation::<(), ()>::Move { source, .. }) = crate::staged::Operation::decode(copy, crate::staged::DecodeContext::EMPTY) else { return None };
+        nest.unwritten(span, &[source]).then_some(source)
     }
 
     /// The operations whose loop is the one at `header`, evaluated on its entering edge from `state`.

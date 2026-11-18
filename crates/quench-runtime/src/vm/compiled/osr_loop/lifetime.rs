@@ -265,7 +265,8 @@ fn pinned_registers(instructions: &[WideInstruction], sites: &[FieldSite], objec
         if number_definition(*instruction).is_none() {
             pinned.extend(instruction.defined_register());
         }
-        if instruction.op().is_get_field() && let Some(FieldLookup::Site(index)) = instruction.field_lookup() {
+        if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::FieldLookup
+            && let Some(FieldLookup::Site(index)) = instruction.field_lookup() {
             pinned.extend(sites.get(index)?.base.register_index());
         }
     }

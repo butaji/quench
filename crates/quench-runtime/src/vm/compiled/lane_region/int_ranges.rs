@@ -184,12 +184,12 @@ impl Lowering<'_, '_> {
     /// holds no Number here (`Comparison::Decided`): a pure decision of values no loop changes
     /// where no instruction of it writes them, so its entry may decide it once.
     fn decidable(&self, instruction: WideInstruction, point: &Point) -> bool {
-        use super::super::operations::{equality_operator, NumberRelation};
-        let operator = instruction.binary_operator_field();
-        let registers = [instruction.operand_b(), instruction.operand_c()].map(Operand::register_index);
-        instruction.op().is_jump_binary_false() && !self.helpers.is_numeric()
-            && NumberRelation::from_operator(operator).is_some() && equality_operator(operator).is_none()
-            && registers.iter().all(Option::is_some) && registers.iter().flatten().any(|register| point.numberless(*register))
+        use crate::staged::{Comparison, Operation};
+        let Some(Operation::<(), ()>::CompareJump { comparison: Comparison::Relation { .. }, left, right, .. }) =
+            Operation::decode(instruction, crate::staged::DecodeContext::EMPTY) else { return false };
+        let registers = [left, right].map(Operand::register_index);
+        !self.helpers.is_numeric() && registers.iter().all(Option::is_some)
+            && registers.iter().flatten().any(|register| point.numberless(*register))
     }
 
     /// What the entries of `nest`'s loops prove of what `seen`: the operations each evaluates once, and
