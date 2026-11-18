@@ -196,4 +196,33 @@ print(JSON.stringify(out));
 "#;
         assert_eq!(run(source), r#"[[2,3],[4,5],3,[1,2,3,4,5,6,7,8,[9]],[0,[1,2]],[[0],[1,2]],[0,1,2],[[0],[1,2]],true,true]"#);
     }
+
+    #[test]
+    fn entry_loops_share_a_pair_only_a_pattern_reads() {
+        // A for-of whose value goes only to an array pattern may reuse one entry pair; any
+        // value that escapes, a manual next(), or a patched array iterator sees fresh pairs.
+        let source = r#"
+"use strict";
+function f() {
+  const out = [], kept = [];
+  const m = new Map([["a", 1], ["b", 2], ["c", 3]]);
+  for (const [k, v] of m) out.push(k + v);
+  for (const e of m) kept.push(e);
+  out.push(kept[0] !== kept[1], JSON.stringify(kept));
+  for (const [k, v] of m) for (const [k2, v2] of m) if (k === "a") out.push(k2 + v);
+  for (const [i, x] of ["p", "q"].entries()) out.push(i + x);
+  const it = m.entries(); for (const [k] of it) { const n = it.next(); if (!n.done) kept.push(n.value); }
+  out.push(JSON.stringify(kept.slice(3)));
+  const fns = []; for (let [k, v] of m) fns.push(() => k + v); out.push(fns.map(g => g()).join());
+  const values = Array.prototype[Symbol.iterator], seen = [];
+  Array.prototype[Symbol.iterator] = function () { seen.push(this); return values.call(this); };
+  for (const [k, v] of m) out.push(k);
+  Array.prototype[Symbol.iterator] = values;
+  out.push(seen.length, seen[0] !== seen[1], JSON.stringify(seen));
+  return out;
+}
+print(JSON.stringify(f()));
+"#;
+        assert_eq!(run(source), r#"["a1","b2","c3",true,"[[\"a\",1],[\"b\",2],[\"c\",3]]","a1","b1","c1","0p","1q","[[\"b\",2]]","a1,b2,c3","a","b","c",3,true,"[[\"a\",1],[\"b\",2],[\"c\",3]]"]"#);
+    }
 }

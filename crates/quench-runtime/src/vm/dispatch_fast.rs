@@ -14400,7 +14400,12 @@ script_handler! {
         let step = if kind == super::iterators::IterationStep::Array {
             vm.step_present_array_value(iterator)
         } else {
+            // The compiler marks the step's `RequireIteratorResult` when its value goes only
+            // to an array pattern: an entry pair may then be the shared one.
+            // SAFETY: the view checked the step's records (`lane_for_of_step`).
+            vm.share_entry_pair = unsafe { (*ip.add(FOR_OF_REQUIRE_RESULT)).a } != 0;
             let step = vm.step_collection(iterator);
+            vm.share_entry_pair = false;
             note_allocation(vm);
             step
         };
@@ -21381,6 +21386,9 @@ fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
 
 /// The records of a for-of step after its iteration `Call` (`lane_for_of_step`), by offset
 /// from it: the `done` read of the step's result, then its test.
+/// The for-of step's `RequireIteratorResult`, whose otherwise unused `a` the compiler sets
+/// when the step's value goes only to an array pattern (`FunctionCompiler::for_iterable`).
+const FOR_OF_REQUIRE_RESULT: usize = 1;
 const FOR_OF_DONE_READ: usize = 2;
 const FOR_OF_DONE_TEST: usize = 3;
 
@@ -21427,6 +21435,7 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     let reads_result = |offset: usize| {
         record(offset).is_some_and(|read| read.op().is_get_field() && read.result_flags() == 0 && read.b() == result)
     };
+    record(FOR_OF_REQUIRE_RESULT).filter(|require| require.op().class() == Class::RequireIteratorResult)?;
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
     let form = match test.op().class() {

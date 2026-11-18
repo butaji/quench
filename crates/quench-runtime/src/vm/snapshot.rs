@@ -174,6 +174,8 @@ impl<H: Host> Vm<H> {
             bound_function_shape: _,
             iterator_result_header: _,
             reused_iterator_result: _,
+            shared_entry_pair: _,
+            share_entry_pair: _,
             descriptor_shapes: _,
             descriptor_layout: _,
             regexp_object_shapes: _,

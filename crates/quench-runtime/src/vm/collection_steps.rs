@@ -48,13 +48,53 @@ impl<H: Host> Vm<H> {
         Some(((self.heap.alloc_string(run), None), after))
     }
 
-    /// The value of `item`: an entry pair is a new array of its two values.
+    /// The value of `item`: an entry pair is a new array of its two values, or, during a step
+    /// whose value only an array pattern reads (`share_entry_pair`), the one shared pair
+    /// rewritten (`shared_entry_pair_of`).
     pub(super) fn iterator_item_value(&mut self, (value, second): IteratorItem) -> Value {
         let Some(second) = second else {
             return value;
         };
+        if self.share_entry_pair
+            && let Some(pair) = self.shared_entry_pair_of(value, second)
+        {
+            return pair;
+        }
         let pair = [value, second];
         self.heap.alloc_literal_array(self.array_proto, 2, |index| pair[index])
+    }
+
+    /// `shared_entry_pair` holding `key` and `value`, for a for-of step whose value goes only to
+    /// an array pattern (`RequireIteratorResult` marked by the compiler,
+    /// `FunctionCompiler::for_iterable`). Nothing else ever holds the pair: the pattern reads it
+    /// by index, or, if that test fails, iterates it with the intrinsic array iterator, which
+    /// this checks is still the one a pattern would get, so no code can keep or see it, and the
+    /// next such step may rewrite it. `None` where iteration of the pair is not intact.
+    fn shared_entry_pair_of(&mut self, key: Value, value: Value) -> Option<Value> {
+        let pair = self.shared_entry_pair;
+        if pair.is_undefined() {
+            let values = [key, value];
+            let pair = self.heap.alloc_literal_array(self.array_proto, 2, |index| values[index]);
+            if !self.array_iteration_intact(pair) {
+                return None;
+            }
+            self.shared_entry_pair = pair;
+            return Some(pair);
+        }
+        // The pair keeps the shape, prototype and length it was made with, as nothing else
+        // holds it; only the iteration fuses or the realm can have changed since.
+        if !(self.heap.array(pair).is_some_and(|array| array.proto() == self.array_proto)
+            && self.fuse_intact(crate::code_dependencies::IntactFuse::ArrayIterator)
+            && self.fuse_intact(crate::code_dependencies::IntactFuse::ArrayIteratorNext))
+        {
+            return None;
+        }
+        for (index, element) in [key, value].into_iter().enumerate() {
+            // The store passes the write barrier for each value it writes.
+            let array = self.heap.array_store_mut(pair, element)?;
+            array.elements_mut().make_mut().set(index, element);
+        }
+        Some(pair)
     }
 
     /// One %ArrayIteratorPrototype%.next step of a keys or entries iterator over a plain

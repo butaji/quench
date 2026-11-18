@@ -1009,6 +1009,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
+        self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; _];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;
