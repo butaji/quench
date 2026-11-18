@@ -1578,7 +1578,9 @@ impl Heap {
     /// iterators; no legacy slot takes an object.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
-        self.charge_allocation(0, 0);
+        // An object owns no payload or external bytes: only the allocation count moves, as
+        // the record fast path always did (no `charge_allocation` on the hot path).
+        self.allocated += 1;
         #[cfg(feature = "profile-aggregate")]
         self.profile_record_allocation(CellKind::Object, "object", 0);
         let Ok(record_id) = self.object_records.try_insert(object) else {
