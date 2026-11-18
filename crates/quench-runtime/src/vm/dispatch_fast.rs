@@ -5447,16 +5447,6 @@ pub(super) unsafe fn lane_context_this<H: Host>(context: usize) -> Value {
     unsafe { lane_this(cx, (*cx).registers) }.unwrap_or(Value::DELETED)
 }
 
-script_handler! {
-    /// `CreateRegExpLiteral` (`Vm::regexp_literal`), which allocates and runs no guest code.
-    fn lane_regexp_literal<>(cx, r, ip, i, view) {
-        if !staged_allocate(cx, r, i.a, Allocation::RegExp { site: i.imm() }) {
-            return exit(ip);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
 /// The closure a `MakeClosure` record makes as the general loop does, in a frame's own lane
 /// run of a function with no binding sites outside a module's root: its environment is the
 /// frame's, promoted once, and making it allocates and runs no guest code. Any other
@@ -12599,7 +12589,7 @@ mod wasm_calls;
 mod capture_update_calls;
 use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
-use denoted::{denoted_handler, lane_unary};
+use denoted::lane_unary;
 use named_keys::{lane_named_key_element, lane_string_index_element};
 mod in_place_natives;
 mod root_bindings;
@@ -17978,7 +17968,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
-        _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
         Class::SetIndex => Some(lane_set_index::<H>),
         Class::StringCaseIndex => Some(lane_string_case_index::<H>),
@@ -17991,7 +17980,6 @@ const fn other_handler<H: Host>(opcode: Op) -> Option<Handler> {
         Class::CallSpread => Some(lane_call_spread::<H>),
         Class::Delete => Some(lane_delete::<H>),
         Class::Construct => Some(lane_script_construct::<H>),
-        Class::CreateRegExpLiteral => Some(lane_regexp_literal::<H>),
         Class::CallForwardingArguments => Some(lane_forward_call::<H>),
         Class::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Class::Return => Some(lane_return::<H, NOT_LEAF>),

@@ -185,6 +185,10 @@ pub(crate) enum Miss {
     /// A `Unary` the frame leaves (an operand its value declines): the lane's unary arm
     /// (`lane_unary`), which answers the pure operators and otherwise makes the operation in place.
     Unary,
+    /// A `StringConcat` whose parts the pure concatenation declines (a part that converts with guest
+    /// code, or a result past the string length limit): the lane's own concatenation of the parts
+    /// (`denoted::lane_string_concat_miss`), else the general step.
+    Concat,
 }
 
 /// The by-name loads a `LoadName` family row answers: a plain read, a call's read with its
@@ -226,6 +230,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::WasmMemoryStore => Miss::WasmMemoryStore,
         Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
         Op::Unary => Miss::Unary,
+        Op::StringConcat => Miss::Concat,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
             None => match truth_jump(op) {

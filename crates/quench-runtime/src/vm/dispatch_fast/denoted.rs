@@ -1,6 +1,5 @@
-//! Lane handlers an operation's JavaScript denotation (`JsDenotation`) selects: numeric
-//! binaries and unaries, and string concatenation answered where no part's conversion runs
-//! guest code.
+//! Lane handlers of the `Unary` row's general arm, and the miss arm of a `StringConcat` row
+//! (`Miss::Concat`): the parts the row's pure concatenation declines.
 use super::*;
 
 script_handler! {
@@ -33,26 +32,20 @@ script_handler! {
     }
 }
 
-/// `StringConcat` for the parts a string of parts does not take, out of the handler so its
-/// buffers and spills stay off the handler's hot path; `None` where the general path must run.
-#[cold]
-#[inline(never)]
-fn concat_apart<H: Host>(vm: &mut Vm<H>, cx: *mut LaneContext<H>, count: usize, part: impl Fn(&Vm<H>, usize) -> Value + Copy) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run.
-    vm.pure_string_concat_apart(unsafe { &*(*cx).code }, count, part)
-}
-
 script_handler! {
-    /// `StringConcat` of a window whose every part converts to a string purely
-    /// (`Vm::converts_to_string_purely`), made as the general loop makes it; a window holding
-    /// any other value, or a result past the string length limit, takes the general path.
-    fn lane_string_concat<>(cx, r, ip, i, view) {
+    /// `StringConcat` (`Miss::Concat`) of a window whose parts the row's pure concatenation declined
+    /// (`lane_concat_value`): a string of parts, or the parts that convert with no guest code
+    /// (`Vm::pure_string_concat_apart`), made as the general loop makes it. A window holding any
+    /// other value, or a result past the string length limit, takes the general path.
+    #[inline(never)]
+    pub(super) fn lane_string_concat_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (base, count) = (usize::from(i.b), usize::from(i.c));
         let part = |_: &Vm<H>, part: usize| r.get((base + part) as Register);
         let value = match vm.string_of_parts(count, part) {
             Some(value) => value,
-            None => match concat_apart(vm, cx, count, part) {
+            // SAFETY: the context's program outlives the lane run.
+            None => match vm.pure_string_concat_apart(unsafe { &*(*cx).code }, count, part) {
                 Some(value) => value,
                 None => return exit(ip),
             },
@@ -60,15 +53,5 @@ script_handler! {
         note_allocation(vm);
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script(cx))
-    }
-}
-
-/// The lane handler `op`'s denotation selects, if it selects one. A `Unary` is no denotation's
-/// case: its plain record runs its generated row (`ROW_HANDLER`), and `lane_unary` remains the
-/// general arm the views' specialized unary handlers fall back to.
-pub(super) const fn denoted_handler<H: Host>(op: Op) -> Option<Handler> {
-    match op.js_denotation() {
-        crate::bytecode::JsDenotation::StringConcatenation => Some(lane_string_concat::<H>),
-        _ => None,
     }
 }

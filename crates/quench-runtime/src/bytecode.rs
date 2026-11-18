@@ -861,7 +861,7 @@ opcodes!($;
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex; class SuperConstArrayObject2; step Body; traits RETURNING_LITERAL FRAME_RETURNABLE, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     GetIterator => READ_THROW; layout Scalar; meaning Unused; class GetIterator; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; step Body, @ Register, @ fields(ResultRegister, Register, Unused),
-    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; step Body, @ Register, @ fields(ResultRegister, Unused, Unused),
+    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; staged Literal; step Body; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Unused, Unused),
     IteratorClose => READ_THROW; layout Scalar; meaning Unused; class IteratorClose; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
     // value (iterated when the flag marks a spread), appended at the array's length.
@@ -899,7 +899,7 @@ opcodes!($;
     Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits ROW_HANDLER LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE, @ Returnable, @ fields(ResultRegister, Register, Unused),
     // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
     // order: a template literal's string (ECMA-262 13.15.5.1), made at once.
-    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation; step Body, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
+    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation; staged Literal; step Body; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag; class Delete; staged Property; step Body, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex; class CheckPrivate; step Lane, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex; class PrivateIn; step Lane, @ Register, @ fields(ResultRegister, Register, Unused),
