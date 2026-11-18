@@ -565,6 +565,8 @@ struct Lowering<'a, 'f> {
     /// on the loop's one entry edge; each read's PC names the value it made there and
     /// whether its int tag was tested.
     hoists: BTreeMap<usize, Vec<InvariantRead>>,
+    /// The unit's block leaders (`leaders`), made once for the first loop whose reads hoist.
+    unit_leaders: std::cell::OnceCell<std::rc::Rc<CompoundBitSet>>,
     /// The calls that run inline as Math operations (`native_calls::intrinsic_calls`).
     intrinsics: native_calls::Intrinsics,
     hoisted: BTreeMap<usize, LoopRead>,
@@ -1707,6 +1709,7 @@ pub(super) fn lower(
         completion,
         number_returns: smallvec::SmallVec::new(),
         hoists: BTreeMap::new(),
+        unit_leaders: std::cell::OnceCell::new(),
         intrinsics: Vec::new(),
         hoisted: BTreeMap::new(),
         loop_arrays: Vec::new(), loop_shapes: Vec::new(), arrays_fixed: false,
@@ -3571,7 +3574,7 @@ impl Lowering<'_, '_> {
     /// The loop's invariant captures and fields, read once on its entry edge.
     fn hoist_reads(&mut self, state: &mut State, header: usize) {
         let Some(reads) = self.hoists.get(&header).cloned() else { return };
-        let boundaries = leaders(&self.unit.instructions);
+        let boundaries = std::rc::Rc::clone(self.unit_leaders.get_or_init(|| std::rc::Rc::new(leaders(&self.unit.instructions))));
         for InvariantRead { pc, owner, rooted } in reads.iter().copied() {
             let instruction = self.unit.instructions[pc];
             if self.hoisted_by_enclosing_loop(pc, owner) { continue; }
