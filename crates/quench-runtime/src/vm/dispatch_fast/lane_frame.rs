@@ -1062,7 +1062,7 @@ impl<const OP: u16, const FLAG: u8> LaneFields<'_, OP, FLAG> {
     // names this constant, so it stands for `Nop` there.
     const OPCODE: Op = match Op::from_index(OP as usize) {
         Some(op) => op,
-        None if OP == crate::staged::NO_LINK => Op::Nop,
+        None if OP == crate::staged::NO_LINK => crate::staged::NO_LINK_OP,
         None => panic!("no such opcode"),
     };
     const FLAG_ROLE: bool = matches!(Self::OPCODE.immediate_role(), crate::bytecode::ImmediateRole::BooleanFlag);

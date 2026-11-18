@@ -326,12 +326,18 @@ impl<'a> Graph<'a> {
             Some(crate::staged::Operation::ElementWrite { value, base, key }) => {
                 return self.set_index(value, base, key, file).map(|()| None).ok_or(());
             }
-            _ => match instruction.op().class() {
-                Class::LoadConst => self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const),
-                Class::Binary | Class::NumericAdd | Class::NumericMultiply => self.binary(instruction, file),
-                Class::Nop => return Ok(None),
-                _ => None,
-            },
+            _ => {
+                let op = instruction.op();
+                if crate::staged::loads_constant(op) {
+                    self.constants.get(instruction.constant_index()).and_then(|v| v.as_number()).map(Sym::Const)
+                } else if crate::staged::computes_arithmetic(op) {
+                    self.binary(instruction, file)
+                } else if crate::staged::does_nothing(op) {
+                    return Ok(None);
+                } else {
+                    None
+                }
+            }
         };
         value.map(Some).ok_or(())
     }
@@ -377,7 +383,7 @@ fn staged_operation(instruction: WideInstruction) -> Option<crate::staged::Opera
 /// Whether `instruction` writes a numeric local besides its result, which no kernel models.
 fn writes_local(instruction: WideInstruction) -> bool {
     let stores = matches!(staged_operation(instruction), Some(crate::staged::Operation::ElementWrite { .. }));
-    !stores && !matches!(instruction.op().class(), Class::Nop) && instruction.numeric_local_target().is_some()
+    !stores && !crate::staged::does_nothing(instruction.op()) && instruction.numeric_local_target().is_some()
 }
 
 /// The registers `body` writes.
@@ -411,7 +417,7 @@ impl Shape {
         let test = header + decoded[header..backedge].iter().position(leaves)?;
         let (pre, body) = (&decoded[header..test], &decoded[test + 1..backedge]);
         let jump = decoded[test];
-        if jump.op().class() != Class::JumpBinaryFalse || jump.jump_target() as usize != backedge + 1 || body.iter().any(leaves) {
+        if !crate::staged::compare_jump(jump.op()) || jump.jump_target() as usize != backedge + 1 || body.iter().any(leaves) {
             return None;
         }
         let relation = NumberRelation::from_operator(jump.binary_operator_field())?;

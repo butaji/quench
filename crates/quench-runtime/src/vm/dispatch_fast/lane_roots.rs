@@ -262,7 +262,7 @@ impl<H: Host> Vm<H> {
             instruction,
             self.programs.source_name(unsafe { (*cx).program }).unwrap_or_default(),
             instruction
-                .filter(|instruction| instruction.op().is_get_field())
+                .filter(|instruction| crate::staged::reads_named_field(instruction.op()))
                 .and_then(|instruction| code.atoms.get(instruction.imm() as usize)),
             body.name.map_or("", |atom| &code.atoms[atom as usize]),
             body.source_span.map(|span| span.start),
