@@ -17,6 +17,48 @@ impl<H: Host> Vm<H> {
         if value.is_undefined() { self.is_array(p, item) } else { Ok(self.truthy(value)) }
     }
 
+    /// `Array.prototype.slice` in place: an array receiver whose species is this realm's
+    /// ArrayCreate, bounds that are undefined or immediate numbers (their ToNumber runs no
+    /// guest code), and a range of present own data elements. The result is one new array
+    /// of those values; `None` leaves every other call to `array_slice_native`.
+    pub(super) fn plain_array_slice(&mut self, receiver: Value, args: &[Value]) -> Option<Value> {
+        let length = self.own_array_length(receiver)?;
+        let (start, end) = (slice_bound(args.first().copied(), 0, length)?, slice_bound(args.get(1).copied(), length, length)?);
+        if !self.array_species_is_array_create(receiver) {
+            return None;
+        }
+        self.array_of_dense_range(receiver, start..end.max(start))
+    }
+
+    /// A new array of the elements `range` of the dense array `source`, copied from its
+    /// backing straight into the new array's: `None` where an index in `range` is not a present
+    /// own data element.
+    pub(super) fn array_of_dense_range(&mut self, source: Value, range: std::ops::Range<usize>) -> Option<Value> {
+        if range.is_empty() {
+            return Some(self.array_of(&[]));
+        }
+        let elements = self.array_search_elements(source).filter(|elements| range.end <= elements.len())?;
+        if let Some(values) = elements.wide_values() {
+            let values = &values[range];
+            if values.iter().any(|value| value.is_deleted()) {
+                return None;
+            }
+            let (base, len) = (values.as_ptr(), values.len());
+            // SAFETY: `source`'s backing is its own allocation or a nursery run behind the
+            // cursor; making the new array's run bumps the cursor past it and frees, moves and
+            // writes nothing of it, and no collection runs before the copy ends.
+            return Some(self.heap.alloc_literal_array(self.array_proto, len, |index| unsafe { *base.add(index) }));
+        }
+        if let Some(words) = elements.narrow_words() {
+            let words = &words[range];
+            let (base, len) = (words.as_ptr(), words.len());
+            // SAFETY: as for a wide backing.
+            return Some(self.heap.alloc_literal_array(self.array_proto, len, |index| Value::from_narrow(unsafe { *base.add(index) })));
+        }
+        let mut values = smallvec::SmallVec::<[Value; 16]>::new();
+        self.extend_present_dense(source, range, &mut values).then(|| self.array_of(&values))
+    }
+
     /// `concat` when no step of it can be observed: ArraySpeciesCreate is this realm's
     /// ArrayCreate, and each item is a primitive, appended as one value, or an Array no
     /// `@@isConcatSpreadable` reaches whose elements are present own data elements, spread.
@@ -27,6 +69,76 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let symbol = self.well_known_symbols.get(WellKnownSymbol::IsConcatSpreadable)?;
+        // Each item as one segment: a primitive is itself, an array its wide or narrow
+        // backing, read in place when the result is made (`ConcatSegment`).
+        let mut segments = smallvec::SmallVec::<[ConcatSegment; 4]>::new();
+        let mut total = 0usize;
+        for &item in std::slice::from_ref(&source).iter().chain(args) {
+            let segment = match self.concat_segment(item, symbol) {
+                Some(segment) => segment,
+                None if !self.is_object_like(item) => ConcatSegment::Value(item),
+                None => return self.array_concat_decoded(source, args, symbol),
+            };
+            total += segment.len();
+            segments.push(segment);
+        }
+        (total <= MAX_ARRAY_LENGTH).then(|| self.array_of_segments(&segments, total))
+    }
+
+    /// A new array of `segments`' `total` values, gathered by whole-segment copies into one
+    /// buffer (on the stack for a short result) and copied once into the result's run: no
+    /// per-element dispatch.
+    fn array_of_segments(&mut self, segments: &[ConcatSegment], total: usize) -> Value {
+        let mut stack = [Value::UNDEFINED; CONCAT_STACK_VALUES];
+        let mut heap = Vec::new();
+        let buffer: &mut [Value] = if total <= CONCAT_STACK_VALUES {
+            &mut stack[..total]
+        } else {
+            heap.resize(total, Value::UNDEFINED);
+            &mut heap
+        };
+        let mut at = 0;
+        for segment in segments {
+            let len = segment.len();
+            segment.write(&mut buffer[at..at + len]);
+            at += len;
+        }
+        self.array_of(buffer)
+    }
+
+    /// `item`'s segment of a `concat` result in one look at its record: an ordinary Array of
+    /// this realm with no extras (so neither sparse nor of another length), no indexed or side
+    /// descriptors, whose shape is proved free of `@@isConcatSpreadable`
+    /// (`concat_spreadable_absent`), and a wide backing without holes or a narrow one. `None`
+    /// for anything else, which the caller sorts out.
+    #[inline(always)]
+    fn concat_segment(&mut self, item: Value, symbol: Value) -> Option<ConcatSegment> {
+        let array = self.heap.array(item)?;
+        if array.has_extras() || array.is_arguments_object() || array.has_indexed_descriptors() || array.has_side_descriptors() || array.proto() != self.array_proto {
+            return None;
+        }
+        let (shape, epoch) = (array.shape(), crate::heap::prototype_layout_epoch());
+        let elements = array.elements();
+        let segment = if let Some(values) = elements.wide_values() {
+            if values.iter().any(|value| value.is_deleted()) {
+                return None;
+            }
+            ConcatSegment::Wide(values.as_ptr(), values.len())
+        } else {
+            let words = elements.narrow_words()?;
+            ConcatSegment::Narrow(words.as_ptr(), words.len())
+        };
+        if self.concat_spreadable_proof != Some((shape, epoch)) && !self.prove_concat_spreadable_absent(shape, symbol, epoch) {
+            return None;
+        }
+        Some(segment)
+    }
+
+    /// `array_concat_dense` where an item's backing is neither wide nor narrow (doubles):
+    /// every item decoded into one buffer, then copied into the result.
+    #[cold]
+    #[inline(never)]
+    fn array_concat_decoded(&mut self, source: Value, args: &[Value], symbol: Value) -> Option<Value> {
         let mut values = smallvec::SmallVec::<[Value; 16]>::new();
         for item in std::iter::once(source).chain(args.iter().copied()) {
             if !self.is_object_like(item) {
@@ -136,5 +248,58 @@ fn append_values<const N: usize>(out: &mut smallvec::SmallVec<[Value; N]>, len: 
             base.add(index).write(value(index));
         }
         out.set_len(start + len);
+    }
+}
+
+/// A `slice` bound in place: `default` for an absent or undefined argument, an int32 clamped
+/// as `relative_index` clamps it, any other immediate number through `relative_index`; `None`
+/// for a value whose ToNumber could run guest code.
+#[inline(always)]
+fn slice_bound(value: Option<Value>, default: usize, length: usize) -> Option<usize> {
+    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+        return Some(default);
+    };
+    match value.as_int() {
+        Some(index) if index < 0 => Some(length.saturating_sub(index.unsigned_abs() as usize)),
+        Some(index) => Some((index as usize).min(length)),
+        None => Some(crate::units::relative_index(value.immediate_number()?, length)),
+    }
+}
+
+/// The longest `concat` result gathered on the stack.
+const CONCAT_STACK_VALUES: usize = 16;
+
+/// One item of `array_concat_dense`'s result: a primitive, or a dense array's backing, wide
+/// or narrow, with its length.
+#[derive(Clone, Copy)]
+enum ConcatSegment {
+    Value(Value),
+    Wide(*const Value, usize),
+    Narrow(*const u32, usize),
+}
+
+impl ConcatSegment {
+    /// Writes this segment's values into `out`, which is as long as the segment.
+    #[inline(always)]
+    fn write(self, out: &mut [Value]) {
+        // SAFETY: each backing is still the array's: nothing ran since it was read.
+        match self {
+            Self::Value(value) => out[0] = value,
+            Self::Wide(base, len) => out.copy_from_slice(unsafe { std::slice::from_raw_parts(base, len) }),
+            Self::Narrow(base, len) => {
+                for (slot, word) in out.iter_mut().zip(unsafe { std::slice::from_raw_parts(base, len) }) {
+                    *slot = Value::from_narrow(*word);
+                }
+            }
+        }
+    }
+
+    /// The values this segment adds to the result.
+    #[inline(always)]
+    fn len(self) -> usize {
+        match self {
+            Self::Value(_) => 1,
+            Self::Wide(_, len) | Self::Narrow(_, len) => len,
+        }
     }
 }
