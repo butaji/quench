@@ -32,6 +32,7 @@ pub(crate) unsafe fn run<const K: u8, const OP: u32, const W: u8, const SHAPE: u
                 Out::Next(s)
             }
             LOAD => memory_load::<OP>(s),
+            CALL => call(s),
             STORE => memory_store::<OP>(s),
             CONSTANT => {
                 write::<0>(&s, hole64::<HOLE_B>());
@@ -238,5 +239,27 @@ unsafe fn memory_store<const OP: u32>(s: S) -> Out {
             Ok(()) => Out::Next(s),
             Err(error) => trap(s, error),
         }
+    }
+}
+
+/// The u-jit's compiled-function ABI, which every Wasm function's entry takes, stitched or not.
+type WasmEntry = unsafe extern "C" fn(usize, u64, u64, *const u64, *mut u64) -> u32;
+
+/// Calls the entry in the cell at hole B's address: the arguments are the registers from hole A
+/// on, the result goes to hole 0's register, and a trap's status leaves. The call clobbers the
+/// pins; the memory's base and length come back from the frame header (`FRAME_HEADER_WORDS`).
+#[inline(always)]
+unsafe fn call(mut s: S) -> Out {
+    unsafe {
+        let entry: WasmEntry = core::mem::transmute(*(hole64::<HOLE_B>() as *const usize));
+        let status = entry(s.ctx, s.p[1] as u64, s.p[2] as u64, slot::<HOLE_A>(&s) as *const u64, slot::<0>(&s) as *mut u64);
+        let header = s.frame as *const usize;
+        s.p[1] = *header.add(1);
+        s.p[2] = *header.add(2);
+        if status != 0 {
+            s.p[0] = status as usize;
+            return Out::Exit(s);
+        }
+        Out::Next(s)
     }
 }

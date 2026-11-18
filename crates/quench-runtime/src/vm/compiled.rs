@@ -2601,7 +2601,7 @@ fn stitched_entry<H: Host>(
     program: ProgramId,
     code: &crate::bytecode::ResidualProgram,
     index: usize,
-    plan: &Plan,
+    (plans, cells): (&[Option<Plan>], &[std::cell::Cell<usize>]),
     memory_slot: Option<u32>,
 ) -> Option<Vec<u8>> {
     if !crate::jit_mode::base_only() {
@@ -2612,11 +2612,14 @@ fn stitched_entry<H: Host>(
         let value = vm.programs.constant(program, at)?;
         Some(vm.decode_bits64(value).unwrap_or(u64::from(value.wasm_bits32())))
     };
-    wasm_stitch::stitch(function, usize::from(function.params), plan.result.is_some(), &constant, memory_slot)
+    // A callee has an entry where it has a plan; its cell holds the entry once placed.
+    let callee = |callee: usize| plans.get(callee)?.as_ref().map(|_| cells[callee].as_ptr() as u64);
+    let world = wasm_stitch::World { constant: &constant, memory_slot, callee: &callee };
+    wasm_stitch::stitch(function, usize::from(function.params), plans[index].as_ref()?.result.is_some(), &world)
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: &Plan, _: Option<u32>) -> Option<Vec<u8>> {
+fn stitched_entry<H: Host>(_: &Vm<H>, _: ProgramId, _: &crate::bytecode::ResidualProgram, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>]), _: Option<u32>) -> Option<Vec<u8>> {
     None
 }
 
@@ -2713,6 +2716,8 @@ fn compiled_reference_target<H: Host>(
 pub(super) struct CompiledProgram {
     _code: CodeMemory,
     table: Box<[usize]>,
+    /// Each function's entry address, which stitched rows call through (`wasm_stitch::World`).
+    _entry_cells: Box<[std::cell::Cell<usize>]>,
     /// The compiled functions in index order: a selective tier holds a few of a module's
     /// thousands, so only `positions` is as long as the module.
     functions: Box<[CompiledFunction]>,
@@ -8213,6 +8218,8 @@ impl<H: Host> Vm<H> {
         let mut offsets = vec![None; count];
         let mut spans = Vec::new();
         let mut entries = vec![None; count];
+        // Stitched rows call a function through its cell, filled once the code is placed.
+        let entry_cells: Box<[std::cell::Cell<usize>]> = (0..count).map(|_| std::cell::Cell::new(0)).collect();
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
             bytes.resize(bytes.len().next_multiple_of(FUNCTION_ALIGNMENT), 0);
@@ -8295,7 +8302,7 @@ impl<H: Host> Vm<H> {
             // `--b-jit` enters a function through its stitched rows where every instruction has
             // one (`wasm_stitch`): the interpreter's staged rules, copied and patched. Its
             // compiled body stays for the calls of the other functions until the rows take calls.
-            let entry = match stitched_entry(self, program, &code, index, plans[index].as_ref()?, memory_slot) {
+            let entry = match stitched_entry(self, program, &code, index, (&plans, &entry_cells), memory_slot) {
                 Some(stitched) => stitched,
                 None => entry,
             };
@@ -8308,6 +8315,9 @@ impl<H: Host> Vm<H> {
         let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
         write_perf_map("wasm-function", base, &bytes, &spans);
+        for (cell, entry) in entry_cells.iter().zip(&entries) {
+            cell.set(entry.map_or(0, |entry| base + entry));
+        }
         let table: Box<[usize]> = offsets
             .iter()
             .map(|offset| offset.map_or(0, |offset| base + offset))
@@ -8384,6 +8394,7 @@ impl<H: Host> Vm<H> {
         Some(CompiledProgram {
             _code: memory,
             table,
+            _entry_cells: entry_cells,
             functions,
             positions,
             memory_slot,
