@@ -1,5 +1,5 @@
 //! The registers and stack a search runs in, shared by every program on a thread.
-use super::{ascii_table, AssertionTest, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
+use super::{EXHAUSTED, MAXIMUM_STACK_FRAMES, ascii_table, AssertionTest, StartRanges, AsciiTable, Frame, Found, Inst, MatchSet, ASCII_UNITS, Program, Search, Text, UnitTest, UNBOUNDED, UNSET};
 use crate::Assertion;
 use std::cell::Cell;
 use std::ops::Range;
@@ -100,7 +100,14 @@ impl Program {
                 stack.clear();
                 stack.push(Frame::Barrier);
                 let (pc, position) = self.entry(text, start);
-                self.run(text, (pc, start, position), Some(search), registers, stack)
+                let ran = self.run(text, (pc, start, position), Some(search), registers, stack);
+                if stack.capacity() >= MAXIMUM_STACK_FRAMES && EXHAUSTED.get() {
+                    // No answer; the exhausted search's stack is not kept for the next.
+                    *stack = Vec::new();
+                    registers.fill(UNSET);
+                    return None;
+                }
+                ran
             }
         };
         let found = ran.map(|(start, end)| Found { start, end, captures: captures(registers, spare) });

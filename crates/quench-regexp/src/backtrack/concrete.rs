@@ -2,6 +2,7 @@
 //! `Program::run`.
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use crate::backtrack::exhaustion::reserve_frames;
 
 /// The interpreter's machine: the program, the subject and the run's registers and stack.
 pub(in crate::backtrack) struct Concrete<'a, T: Text + ?Sized> {
@@ -101,7 +102,17 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
 
     #[inline(always)]
     fn push(&mut self, frame: Frame) {
-        self.stack.push(frame);
+        let length = self.stack.len();
+        if length == self.stack.capacity() && !reserve_frames(self.stack) {
+            return;
+        }
+        // SAFETY: the check above leaves room for one more frame (`reserve_frames` cleared the
+        // stack where it made none), and a `Frame` is `Copy`.
+        unsafe {
+            let length = self.stack.len();
+            self.stack.as_mut_ptr().add(length).write(frame);
+            self.stack.set_len(length + 1);
+        }
     }
 
     #[inline(always)]
@@ -142,7 +153,7 @@ impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
 
     fn look(&mut self, body: Cursor, negative: bool) -> bool {
         let base = self.stack.len();
-        self.stack.push(Frame::Barrier);
+        self.push(Frame::Barrier);
         let found = self.program.run(self.text, (body.pc, body.position, body.position), None, self.registers, self.stack).is_some();
         if found && !negative {
             // A lookahead is atomic: its choices go, the restores of its captures stay for

@@ -41,7 +41,9 @@ use super::{
 
 /// A register holding no position: an unset capture bound.
 const UNSET: usize = usize::MAX;
-
+mod exhaustion;
+pub use exhaustion::take_backtrack_exhausted;
+use exhaustion::{EXHAUSTED, MAXIMUM_STACK_FRAMES};
 /// A quantifier bound without a maximum.
 const UNBOUNDED: u32 = u32::MAX;
 /// `Inst::LoopTail::start` of a loop whose body cannot match empty, which keeps no start.
@@ -306,20 +308,6 @@ impl Beyond {
         }
     }
 
-    /// Whether the test admits no unit past ASCII, by construction: the possessive pass
-    /// (`possessive::disjoint`) then decides a pair of sets by their ASCII tables alone.
-    fn ascii_only(&self) -> bool {
-        match self {
-            Self::Never => true,
-            Self::Either(either) => either.iter().all(Self::ascii_only),
-            Self::Ranges { ranges, negative: false } => ranges.last().is_none_or(|&(_, max)| max < ASCII_UNITS),
-            Self::Class { class, ignore_case, unicode } => !class.negative
-                && matches!(class.kind, ClassKind::Union)
-                && class.items.iter().all(|item| class_item_ascii_only(item, *ignore_case && *unicode)),
-            _ => false,
-        }
-    }
-
     /// Whether the test rejects every unit by construction.
     fn is_never(&self) -> bool {
         match self {
@@ -353,17 +341,6 @@ impl Beyond {
 }
 
 /// The ASCII units of `min..=max`, one bit per unit.
-/// Whether a class item admits no unit past ASCII: digits, and word units unless case-folded
-/// in Unicode mode (where U+017F and U+212A fold to `s` and `k`).
-fn class_item_ascii_only(item: &ClassItem, folded_unicode: bool) -> bool {
-    use oxc::regular_expression::ast::CharacterClassEscapeKind as Escape;
-    match item {
-        ClassItem::Escape(Escape::D) => true,
-        ClassItem::Escape(Escape::W) => !folded_unicode,
-        _ => false,
-    }
-}
-
 fn range_ascii_mask(min: u32, max: u32) -> u128 {
     if min >= ASCII_UNITS || min > max {
         return 0;
@@ -692,35 +669,8 @@ pub(crate) struct Program {
 /// The compiled form of a construct this matcher does not run.
 struct Unsupported;
 
-/// A class of strings with the flags that match it and its longest match (`class_max_width`).
-struct StringClass {
-    class: ClassExpr,
-    ignore_case: bool,
-    unicode: bool,
-    max_width: usize,
-}
-
-impl StringClass {
-    /// The units `from..to` of `text` as the lowered matcher's units.
-    fn window<T: Text + ?Sized>(text: &T, from: usize, to: usize) -> Vec<Unit> {
-        (from..to).map(|index| Unit { value: text.unit(index), offset_start: index, offset_end: index + 1 }).collect()
-    }
-
-    /// The positions a match of the class at `position` ends at, longest match first; read
-    /// backward, the positions its matches ending at `position` start at.
-    fn ends<T: Text + ?Sized>(&self, text: &T, position: usize, backward: bool) -> Vec<usize> {
-        let widths = |window: &[Unit]| class_match_widths(&self.class, window, 0, self.ignore_case, self.unicode);
-        if backward {
-            return (1..=self.max_width.min(position))
-                .rev()
-                .filter(|width| widths(&Self::window(text, position - width, position)).contains(width))
-                .map(|width| position - width)
-                .collect();
-        }
-        let window = Self::window(text, position, (position + self.max_width).min(text.len()));
-        widths(&window).into_iter().map(|width| position + width).collect()
-    }
-}
+mod string_class;
+use string_class::StringClass;
 
 #[derive(Default)]
 struct Compiler {
@@ -1771,6 +1721,9 @@ impl Program {
                 Replay::Undone => {}
                 Replay::Resume(at) => return Some(at),
                 Replay::Exhausted => {
+                    if stage.stack.capacity() >= MAXIMUM_STACK_FRAMES && EXHAUSTED.get() {
+                        return None;
+                    }
                     let next = search.and_then(|search| self.next_start(stage.text, *start + 1, search.last))?;
                     stage.stack.push(Frame::Barrier);
                     *start = next;

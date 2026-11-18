@@ -3726,12 +3726,13 @@ impl<'a> Compiler<'a> {
         index
     }
 
-    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32) -> u32 {
+    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32, receiver: bool) -> u32 {
         let index = self.regexp_literal_sites.len() as u32;
         self.regexp_literal_sites
             .push(crate::bytecode::RegExpLiteralSite {
                 pattern_constant,
                 flags_constant,
+                receiver,
             });
         index
     }

@@ -4,7 +4,7 @@
 //! on a stack of its own. A search the native code cannot finish (its stack is full) is run
 //! again by the interpreter from the same start.
 use super::matcher::{Admission, AssertionTest};
-use super::{Inst, MatchSet, Program, Search, Text, UnitTest, ASCII_UNITS};
+use super::{Inst, MatchSet, Program, Search, Text, UnitTest, ASCII_UNITS, MAXIMUM_STACK_FRAMES};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::task::Poll;
 use std::sync::OnceLock;
@@ -113,9 +113,8 @@ pub(super) struct NativeSlot {
     building: RefCell<Option<NativeBuild>>,
 }
 
-/// The frames a native search starts with room for, and the most a search may grow it to.
+/// The frames a native search starts with room for; it grows to `MAXIMUM_STACK_FRAMES`.
 const INITIAL_STACK_FRAMES: usize = 1024;
-const MAXIMUM_STACK_FRAMES: usize = 1 << 20;
 /// A full stack grows by this factor.
 const STACK_GROWTH: usize = 4;
 /// The next start of a search lies a unit past the one that failed.

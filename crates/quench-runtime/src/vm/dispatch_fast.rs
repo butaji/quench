@@ -16045,6 +16045,7 @@ fn lane_regexp_call<H: Host>(
     let Some(result) = steady else {
         return lane_string_or_native_call(cx, ip, native, callee, receiver, args);
     };
+    let result = vm.regexp_search_outcome(result);
     // The call's allocations may make a collection due, which the lane's safepoints take.
     note_allocation(vm);
     match result {

@@ -415,3 +415,15 @@ fn possessive_repeats_keep_their_answers() {
         assert_eq!(found, expected, "/{pattern}/ on {subject:?}");
     }
 }
+
+#[test]
+fn backtracking_past_the_stack_bound_is_exhausted() {
+    let regex = Regex::with_flags("(?:a|ab)*c", Flags::default()).unwrap();
+    let deep = "a".repeat(super::MAXIMUM_STACK_FRAMES + 1) + "c";
+    assert!(!super::take_backtrack_exhausted());
+    assert!(regex.find_from(&deep, 0).next().is_none(), "an exhausted search has no match");
+    assert!(super::take_backtrack_exhausted(), "the search reports its exhaustion");
+    let shallow = "a".repeat(1000) + "c";
+    assert_eq!(regex.find_from(&shallow, 0).next().map(|found| found.range.end), Some(1001));
+    assert!(!super::take_backtrack_exhausted(), "a search within the bound reports nothing");
+}

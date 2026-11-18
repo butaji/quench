@@ -7,6 +7,7 @@ mod steady;
 mod ascii;
 mod subject_cache; pub(super) use subject_cache::SubjectCache;
 mod literal_matches;
+mod literal;
 
 /// Recently matched strings whose prepared subjects are kept (`Vm::regexp_subject`): a
 /// scanner's input plus the few strings it tests between matches.
@@ -2341,72 +2342,14 @@ impl<H: Host> Vm<H> {
         self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
     }
 
-    pub(super) fn regexp_literal(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        site_index: usize,
-    ) -> Result<Value, JsError> {
-        self.regexp_literal_of(p, self.frames[frame].program, site_index)
-    }
-
-    /// The new RegExp object regular expression literal site `site_index` of `p`, the
-    /// residual of `program`, evaluates to.
-    pub(super) fn regexp_literal_of(
-        &mut self,
-        p: &ResidualProgram,
-        program: ProgramId,
-        site_index: usize,
-    ) -> Result<Value, JsError> {
-        if let Some(object) = self.regexp_from_cached_site(program, site_index) {
-            return Ok(object);
+    /// `result` of a call whose searches ran a matcher, or the stack RangeError V8 raises where
+    /// one of them ran out of backtracking stack (`take_backtrack_exhausted`).
+    #[inline(always)]
+    pub(in crate::vm) fn regexp_search_outcome(&mut self, result: Result<Value, JsError>) -> Result<Value, JsError> {
+        if quench_regexp::backtrack::take_backtrack_exhausted() {
+            return Err(self.stack_exhaustion_error());
         }
-        let site = p.regexp_literal_sites.get(site_index)
-            .ok_or_else(|| JsError::validation("RegExp literal site is outside program".into()))?;
-        let source = self.programs.constant(program, site.pattern_constant as usize)
-            .and_then(|value| self.heap.string(value).cloned())
-            .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
-        let flags_text = self.programs.constant(program, site.flags_constant as usize)
-            .filter(|value| self.heap.string(*value).is_some())
-            .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
-        let (prototype, constructor) = self
-            .realm
-            .intrinsics
-            .regexp_intrinsics
-            .get(&self.realm.globals)
-            .map(|intrinsics| (intrinsics.prototype, intrinsics.constructor))
-            .expect("RegExp intrinsics are installed for the active realm");
-        let owner = crate::heap::RegExpLegacyOwner::Enabled(constructor);
-        let meta = match self.programs.regexp_literal_meta(program, site_index) {
-            Some(meta) => meta,
-            None => {
-                let flags = self.heap.string(flags_text).expect("checked above").host_string();
-                // The compiler checked the literal's pattern and flags (early errors), so its
-                // matcher compiles on the first match (`Vm::regexp_matcher`), as a snapshot's
-                // patterns do: a module evaluates every literal it holds, and most never run
-                // (tr46's 34 Unicode classes were 3.3% of the whatwg-url npm scenario).
-                let meta = Rc::new(crate::heap::RegExpMeta {
-                    source,
-                    flags: RegExpFlags::validated(flags),
-                    legacy_constructor: owner,
-                    matcher: crate::heap::RegExpMatcher::default(),
-                });
-                if !self.programs.cache_regexp_literal_meta(program, site_index, Rc::clone(&meta)) {
-                    return Err(JsError::validation(
-                        "RegExp literal cache site is invalid".into(),
-                    ));
-                }
-                meta
-            }
-        };
-        // A site's record names the realm it was first evaluated in; another realm's
-        // evaluation owns a record of its own.
-        let meta = if meta.legacy_constructor.constructor() == constructor {
-            meta
-        } else {
-            Rc::new(crate::heap::RegExpMeta { legacy_constructor: owner, ..(*meta).clone() })
-        };
-        self.regexp_from_meta(prototype, meta)
+        result
     }
 
     pub(super) fn regexp_from_matcher(

@@ -2,7 +2,7 @@
 //! the repeat's test rejects can never use a unit it gives back, so it keeps no frame to give
 //! units back. A static fact of the program, so every tier that runs it gains: `[\w.]+@`,
 //! `(\w+)\s`, `\d{4}-`, `\w+(?=@)` backtrack nothing.
-use super::{Inst, MatchSet, UnitTest, ASCII_UNITS};
+use super::{Beyond, ClassItem, ClassKind, Inst, MatchSet, UnitTest, ASCII_UNITS};
 
 /// Marks each greedy `UnitRepeat` whose follower rejects every unit it takes `atomic`.
 pub(super) fn mark(instructions: &mut [Inst], sets: &[MatchSet]) {
@@ -37,5 +37,32 @@ fn disjoint(left: UnitTest, right: UnitTest, sets: &[MatchSet]) -> bool {
             let ascii = (0..ASCII_UNITS as u8).all(|unit| !(left.table.contains(unit) && right.table.contains(unit)));
             ascii && (left.beyond.ascii_only() || right.beyond.ascii_only())
         }
+    }
+}
+
+impl Beyond {
+    /// Whether the test admits no unit past ASCII, by construction: the possessive pass
+    /// (`possessive::disjoint`) then decides a pair of sets by their ASCII tables alone.
+    pub(super) fn ascii_only(&self) -> bool {
+        match self {
+            Self::Never => true,
+            Self::Either(either) => either.iter().all(Self::ascii_only),
+            Self::Ranges { ranges, negative: false } => ranges.last().is_none_or(|&(_, max)| max < ASCII_UNITS),
+            Self::Class { class, ignore_case, unicode } => !class.negative
+                && matches!(class.kind, ClassKind::Union)
+                && class.items.iter().all(|item| class_item_ascii_only(item, *ignore_case && *unicode)),
+            _ => false,
+        }
+    }
+}
+
+/// Whether a class item admits no unit past ASCII: digits, and word units unless case-folded
+/// in Unicode mode (where U+017F and U+212A fold to `s` and `k`).
+fn class_item_ascii_only(item: &ClassItem, folded_unicode: bool) -> bool {
+    use oxc::regular_expression::ast::CharacterClassEscapeKind as Escape;
+    match item {
+        ClassItem::Escape(Escape::D) => true,
+        ClassItem::Escape(Escape::W) => !folded_unicode,
+        _ => false,
     }
 }
