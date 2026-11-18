@@ -1352,6 +1352,7 @@ mod tests {
             module_requests: Vec::new(),
             module_imports: Vec::new(),
             module_link_plan: None,
+            declared_types: None,
             source_name: String::new(),
             source: None,
             atoms: AtomTable::default(),

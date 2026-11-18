@@ -2,6 +2,8 @@ use smallvec::SmallVec;
 
 mod internal_bindings;
 mod module_records;
+mod declared_types;
+pub(crate) use declared_types::{Declared, DeclaredKind, DeclaredTypes, EnumConstant};
 pub use module_records::{ModuleImportBinding, ModuleImportName, ModuleRequest, ModuleRequestPhase};
 pub(crate) use module_records::{ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind};
 pub(crate) use internal_bindings::*;
@@ -3841,6 +3843,8 @@ pub struct ResidualProgram {
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,
     pub(crate) module_link_plan: Option<ModuleLinkPlan>,
+    /// The TypeScript declared environment (`DeclaredTypes`); none for JavaScript.
+    pub(crate) declared_types: Option<Box<DeclaredTypes>>,
     pub(crate) source_name: String,
     pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,

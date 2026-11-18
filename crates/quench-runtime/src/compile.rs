@@ -518,7 +518,7 @@ impl Engine {
         let type_only_imports = typescript::type_only_imports(&parsed.program, semantic.semantic.scoping());
         drop(semantic);
         Self::admit_typescript(&allocator, &mut parsed.program);
-        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut typescript::Declarations::default());
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut crate::bytecode::DeclaredTypes::default());
         StaticModuleAnalysis {
             early_error: None,
             plan: Some(StaticModulePlan {
@@ -534,43 +534,23 @@ impl Engine {
     /// place. Every compile parse admits through `lazy_bodies::parse`; a host that reads
     /// module structure from its own parse admits here.
     pub fn admit_typescript<'a>(allocator: &'a Allocator, program: &mut Program<'a>) {
-        if program.source_type.is_typescript() { typescript::admit(allocator, program); }
+        if program.source_type.is_typescript() { typescript::admit(allocator, program, &mut crate::bytecode::DeclaredTypes::default()); }
     }
 
-    /// A host that wraps a typed body must erase type-only module declarations
-    /// before placing it in function grammar. Keep byte positions and line breaks;
-    /// the module-declaration verdict comes from the same AST projection as linking.
-    pub fn project_typescript_module_syntax(source: &str) -> Option<(std::borrow::Cow<'_, str>, bool)> {
+    /// Whether typed text keeps module syntax once admitted (type-only imports and exports
+    /// are declarations, not module syntax): a `.ts` file's goal when no package scope
+    /// declares one. None when it does not parse.
+    pub fn typescript_has_module_syntax(source: &str) -> Option<bool> {
         if !crate::DYNAMIC_EXECUTION_ENABLED { return None; }
-        let allocator = Allocator::default();
+        let allocator = Allocator::with_capacity(source.len().saturating_mul(4));
         let mut parsed = Parser::new(&allocator, source, SourceType::unambiguous().with_typescript(true))
             .with_options(oxc_parser::ParseOptions { allow_return_outside_function: true, ..Default::default() }).parse();
         if !parsed.diagnostics.is_empty() || stack::validate_parsed(&parsed).is_err() { return None; }
-        let spans: Vec<_> = parsed.program.body.iter().map(GetSpan::span).collect();
         Self::admit_typescript(&allocator, &mut parsed.program);
-        let runtime_spans: FxHashSet<_> = parsed.program.body.iter().map(|statement| {
-            let span = statement.span(); (span.start, span.end)
-        }).collect();
-        let has_module_declarations = parsed.program.body.iter().any(Statement::is_module_declaration);
-        let mut erased = spans.into_iter().filter(|span| !runtime_spans.contains(&(span.start, span.end))).peekable();
-        if erased.peek().is_none() { return Some((source.into(), has_module_declarations)); }
-        let mut projected = String::with_capacity(source.len());
-        let mut cursor = 0;
-        for span in erased {
-            let start = span.start as usize;
-            let end = span.end as usize;
-            projected.push_str(&source[cursor..start]);
-            for character in source[start..end].chars() {
-                if oxc_syntax::line_terminator::is_line_terminator(character) { projected.push(character); }
-                else { for _ in 0..character.len_utf8() { projected.push(' '); } }
-            }
-            cursor = end;
-        }
-        projected.push_str(&source[cursor..]);
-        Some((projected.into(), has_module_declarations))
+        Some(parsed.program.body.iter().any(Statement::is_module_declaration))
     }
 
-    /// Runtime requests after type-only module syntax has been erased.
+    /// Runtime requests of an admitted tree (type-only module syntax is declarations).
     pub fn module_requests(program: &Program<'_>) -> Vec<ModuleRequest> {
         module_requests(&program.body)
     }
@@ -1137,7 +1117,8 @@ impl Engine {
         let facts = std::cell::RefCell::new(lazy_bodies::BodyFacts::deferring(stubbing.functions, stubbing.arrows));
         #[cfg(feature = "aot")]
         { facts.borrow_mut().native_source_requests = atom_prefix.native_source_requests().map(|_| (atom_prefix.specialized(), Vec::new())); }
-        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
+        let mut declared_types = crate::bytecode::DeclaredTypes::default();
+        let mut parsed = lazy_bodies::parse_collecting(&allocator, parsed_text, source_type, &mut declared_types, lazy.then(|| expected_shape.lazy_from()), &facts, inherited_strict, recognize, #[cfg(feature = "aot")] atom_prefix.native_global_script_calls());
         lazy_bodies::release_parsed_free_pages(&allocator);
         let mut facts = facts.into_inner();
         let data_literal = match &located {
@@ -1314,7 +1295,7 @@ impl Engine {
         let type_only_imports = if module_goal { typescript::type_only_imports(&parsed.program, semantic.semantic.scoping()) } else { Vec::new() };
         drop(semantic);
         parsed.program.directives.drain(..usize::from(inherited_directive));
-        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut typescript::Declarations::default());
+        typescript::elide_type_only_imports(&mut parsed.program, &type_only_imports, &mut declared_types);
         #[cfg(feature = "aot")]
         let mut native_requests = native_requests;
         if lazy {
@@ -1365,6 +1346,7 @@ impl Engine {
             _ => Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids),
         };
         compiler.data_literal = data_literal;
+        compiler.declared_types = declared_types;
         compiler.prototype_unobservable = prototype_unobservable;
         #[cfg(feature = "verify-replay")]
         {
@@ -1862,6 +1844,8 @@ struct Compiler<'a> {
     /// line's start.
     last_utf16_excess: [std::cell::Cell<usize>; 2],
     source_comments: Vec<Span>,
+    /// The TypeScript declared environment its parse admitted (`typescript::admit`).
+    declared_types: crate::bytecode::DeclaredTypes,
     /// Byte offset of each non-ASCII character with the running excess of
     /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
     source_utf16_excess: std::borrow::Cow<'a, [(usize, usize)]>,
@@ -2453,6 +2437,7 @@ impl<'a> Compiler<'a> {
             last_source_line: std::cell::Cell::new(0),
             last_utf16_excess: Default::default(),
             source_comments: Vec::new(),
+            declared_types: crate::bytecode::DeclaredTypes::default(),
             source_utf16_excess,
             mode,
             root_strict: false,
@@ -3547,6 +3532,7 @@ impl<'a> Compiler<'a> {
             module_requests,
             module_imports,
             module_link_plan,
+            declared_types: (!self.declared_types.is_empty()).then(|| Box::new(std::mem::take(&mut self.declared_types))),
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
                 text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),

@@ -20,64 +20,18 @@ use oxc_ast_visit::{VisitMut, walk_mut};
 use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// What a declaration of the declared environment is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DeclaredKind {
-    Interface,
-    TypeAlias,
-    /// An overload signature or a `declare function`.
-    FunctionSignature,
-    Ambient,
-    /// A namespace with no run-time content.
-    Namespace,
-    /// A type-only import or export.
-    ModuleType,
-    /// An abstract or signature-only class member, a `declare` field or an index signature.
-    ClassMember,
-    /// A run-time enum, recorded with its folded members.
-    Enum,
-}
-
-/// A declared name of the typed program, by source range.
-#[derive(Clone, Debug)]
-#[allow(dead_code, reason = "read once the declared environment reaches bytecode (next commit)")]
-pub(crate) struct Declared {
-    pub(crate) kind: DeclaredKind,
-    pub(crate) name: Option<String>,
-    pub(crate) span: Span,
-}
-
-/// The declared environment of a typed tree: what it declares beyond its run-time code.
-#[derive(Default, Debug)]
-pub(crate) struct Declarations {
-    pub(crate) declared: Vec<Declared>,
-    /// Each enum's members that fold to constants, by enum name (`E.A` reads are constants).
-    pub(crate) enum_constants: FxHashMap<String, Vec<(String, EnumConstant)>>,
-}
-
-impl Declarations {
-    pub(super) fn declare(&mut self, kind: DeclaredKind, name: Option<&str>, span: Span) {
-        self.declared.push(Declared { kind, name: name.map(str::to_owned), span });
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum EnumConstant {
-    Number(f64),
-    String(String),
-}
+use crate::bytecode::{DeclaredKind, DeclaredTypes, EnumConstant};
 
 /// Admit a typed tree: the declared environment out, run-time meaning in.
-pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>) -> Declarations {
-    let mut admit = Admit { allocator, declarations: Declarations::default(), type_names: FxHashSet::default(), lexical: false };
+pub(in crate::compile) fn admit<'a>(allocator: &'a Allocator, program: &mut Program<'a>, declarations: &mut DeclaredTypes) {
+    let mut admit = Admit { allocator, declarations, type_names: FxHashSet::default(), lexical: false };
     admit.visit_program(program);
     admit.drop_type_exports(&mut program.body);
-    admit.declarations
 }
 
-struct Admit<'a> {
+struct Admit<'a, 'd> {
     allocator: &'a Allocator,
-    declarations: Declarations,
+    declarations: &'d mut DeclaredTypes,
     /// Top-level names that denote only types, so `export { T }` exports nothing at run time.
     type_names: FxHashSet<String>,
     /// The current statement list is a block's (or a namespace body's): its generated
@@ -96,13 +50,13 @@ enum Export<'n> {
 /// A statement the admission produced, and whether its children were admitted already.
 type Produced<'a> = (Statement<'a>, bool);
 
-impl<'a> Admit<'a> {
+impl<'a> Admit<'a, '_> {
     fn keyword(&self) -> &'static str {
         if self.lexical { "let" } else { "var" }
     }
 
     fn declare(&mut self, kind: DeclaredKind, name: Option<&str>, span: Span) {
-        self.declarations.declared.push(Declared { kind, name: name.map(str::to_owned), span });
+        self.declarations.declare(kind, name, span);
     }
 
     /// JavaScript statements of `text`, at `span` of the typed source.
@@ -234,10 +188,10 @@ impl<'a> Admit<'a> {
         }
         // An import whose names were all types keeps its evaluation edge.
         if let Some(specifiers) = &mut import.specifiers {
-            let declared = &mut self.declarations.declared;
+            let declared = &mut *self.declarations;
             specifiers.retain(|specifier| match specifier {
                 ImportDeclarationSpecifier::ImportSpecifier(named) if named.import_kind.is_type() => {
-                    declared.push(Declared { kind: DeclaredKind::ModuleType, name: Some(named.local.name.to_string()), span: named.span });
+                    declared.declare(DeclaredKind::ModuleType, Some(named.local.name.as_str()), named.span);
                     false
                 }
                 _ => true,
@@ -251,10 +205,10 @@ impl<'a> Admit<'a> {
             self.declare(DeclaredKind::ModuleType, None, export.span);
             return Vec::new();
         }
-        let declared = &mut self.declarations.declared;
+        let declared = &mut *self.declarations;
         export.specifiers.retain(|specifier| {
             if !specifier.export_kind.is_type() { return true; }
-            declared.push(Declared { kind: DeclaredKind::ModuleType, name: Some(specifier.exported.name().to_string()), span: specifier.span });
+            declared.declare(DeclaredKind::ModuleType, Some(&specifier.exported.name()), specifier.span);
             false
         });
         vec![(Statement::ExportNamedDeclaration(export), true)]
@@ -265,10 +219,10 @@ impl<'a> Admit<'a> {
             self.declare(DeclaredKind::ModuleType, None, export.span);
             return Vec::new();
         }
-        let declared = &mut self.declarations.declared;
+        let declared = &mut *self.declarations;
         export.specifiers.retain(|specifier| {
             if !specifier.export_kind.is_type() { return true; }
-            declared.push(Declared { kind: DeclaredKind::ModuleType, name: Some(specifier.exported.name().to_string()), span: specifier.span });
+            declared.declare(DeclaredKind::ModuleType, Some(&specifier.exported.name()), specifier.span);
             false
         });
         vec![(Statement::ExportFromDeclaration(export), true)]
@@ -293,11 +247,11 @@ impl<'a> Admit<'a> {
         for statement in body.iter_mut() {
             let Statement::ExportNamedDeclaration(export) = statement else { continue };
             let names = &self.type_names;
-            let declared = &mut self.declarations.declared;
+            let declared = &mut *self.declarations;
             export.specifiers.retain(|specifier| {
                 let local = specifier.local.name();
                 if !names.contains(local.as_ref()) { return true; }
-                declared.push(Declared { kind: DeclaredKind::ModuleType, name: Some(local.to_string()), span: specifier.span });
+                declared.declare(DeclaredKind::ModuleType, Some(&local), specifier.span);
                 false
             });
         }
@@ -368,7 +322,7 @@ impl<'a> VisitMut<'a> for SetSpans {
     }
 }
 
-impl<'a> Admit<'a> {
+impl<'a> Admit<'a, '_> {
     /// An enum: one object literal with fixed keys when every member folds (a stable
     /// shape, member reads are field reads), else tsc's member-by-member emit.
     fn enumeration(&mut self, mut enumeration: ArenaBox<'a, TSEnumDeclaration<'a>>, how: Export<'_>, seen: &mut FxHashSet<String>) -> Vec<Produced<'a>> {
@@ -377,10 +331,10 @@ impl<'a> Admit<'a> {
         let (members, values) = self.enum_members(&mut enumeration, &name);
         let constants: Vec<(String, EnumConstant)> = members.iter().filter_map(|(member, value)| match value {
             Member::Constant(Value::Number(number)) => Some((member.clone(), EnumConstant::Number(*number))),
-            Member::Constant(Value::String(text)) => Some((member.clone(), EnumConstant::String(text.clone()))),
+            Member::Constant(Value::String(text)) => Some((member.clone(), EnumConstant::String(text.as_str().into()))),
             Member::Computed(_) => None,
         }).collect();
-        self.declarations.enum_constants.entry(name.clone()).or_default().extend(constants);
+        self.declarations.enum_constants.extend(constants.into_iter().map(|(member, value)| (Box::from(name.as_str()), Box::from(member), value)));
         self.declare(DeclaredKind::Enum, Some(&name), enumeration.span);
         let keyword = self.keyword();
         let text = object_enum(&name, &members, first, how, keyword).unwrap_or_else(|| incremental_enum(&name, &members, first, how, keyword));
@@ -424,13 +378,13 @@ impl<'a> Admit<'a> {
 }
 
 /// Earlier members named bare inside an initializer read the enum object.
-struct Qualify<'s, 'a> {
-    admit: &'s Admit<'a>,
+struct Qualify<'s, 'a, 'd> {
+    admit: &'s Admit<'a, 'd>,
     enum_name: &'s str,
     names: &'s [String],
 }
 
-impl<'a> VisitMut<'a> for Qualify<'_, 'a> {
+impl<'a> VisitMut<'a> for Qualify<'_, 'a, '_> {
     fn visit_expression(&mut self, expression: &mut Expression<'a>) {
         if let Expression::Identifier(identifier) = expression
             && self.names.iter().any(|name| name == identifier.name.as_str())
@@ -502,7 +456,7 @@ fn namespace_object(name: &str, how: Export<'_>) -> String {
     }
 }
 
-impl<'a> Admit<'a> {
+impl<'a> Admit<'a, '_> {
     /// `namespace A.B { … }`: the namespace objects, then the body as a block in which
     /// each export is published on its object after its declaration.
     fn namespace(&mut self, namespace: ArenaBox<'a, TSNamespaceDeclaration<'a>>, span: Span, how: Export<'_>, seen: &mut FxHashSet<String>) -> Vec<Produced<'a>> {
@@ -574,16 +528,16 @@ fn declaration_instantiated(declaration: &Declaration<'_>) -> bool {
     }
 }
 
-impl<'a> Admit<'a> {
+impl<'a> Admit<'a, '_> {
     /// Class members: signature-only ones move to the declared environment; parameter
     /// properties become `this.x = x;` at the constructor's start (after its root
     /// `super(…)` call when derived), their annotations kept on their parameters.
     fn class_members(&mut self, class: &mut Class<'a>) {
-        let declared = &mut self.declarations.declared;
+        let declared = &mut *self.declarations;
         class.body.body.retain(|element| {
             if !signature_member(element) { return true; }
-            let name = element.property_key().and_then(PropertyKey::static_name).map(|name| name.to_string());
-            declared.push(Declared { kind: DeclaredKind::ClassMember, name, span: element.span() });
+            let name = element.property_key().and_then(PropertyKey::static_name);
+            declared.declare(DeclaredKind::ClassMember, name.as_deref(), element.span());
             false
         });
         let derived = class.heritage.is_some();
@@ -599,6 +553,22 @@ impl<'a> Admit<'a> {
                 body.statements.insert(at + offset, statement);
             }
         }
+    }
+}
+
+/// The assignment target an expression under type assertions denotes, if it denotes one.
+fn plain_target(expression: Expression<'_>) -> Result<SimpleAssignmentTarget<'_>, Expression<'_>> {
+    match expression {
+        Expression::Identifier(identifier) => Ok(SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier)),
+        Expression::ParenthesizedExpression(inner) => plain_target(inner.unbox().expression),
+        Expression::TSAsExpression(inner) => plain_target(inner.unbox().expression),
+        Expression::TSSatisfiesExpression(inner) => plain_target(inner.unbox().expression),
+        Expression::TSNonNullExpression(inner) => plain_target(inner.unbox().expression),
+        Expression::TSTypeAssertion(inner) => plain_target(inner.unbox().expression),
+        expression if expression.is_member_expression() => {
+            Ok(SimpleAssignmentTarget::from(MemberExpression::try_from(expression).unwrap_or_else(|_| unreachable!("a member expression"))))
+        }
+        expression => Err(expression),
     }
 }
 
@@ -634,7 +604,7 @@ fn root_super_call(body: &FunctionBody<'_>) -> Option<usize> {
             Expression::CallExpression(call) if matches!(call.callee, Expression::Super(_)))))
 }
 
-impl<'a> VisitMut<'a> for Admit<'a> {
+impl<'a> VisitMut<'a> for Admit<'a, '_> {
     fn visit_statements(&mut self, statements: &mut ArenaVec<'a, Statement<'a>>) {
         let input = std::mem::replace(statements, ArenaVec::new_in(&self.allocator));
         *statements = self.statements(input, None);
@@ -643,6 +613,17 @@ impl<'a> VisitMut<'a> for Admit<'a> {
     fn visit_class(&mut self, class: &mut Class<'a>) {
         self.class_members(class);
         walk_mut::walk_class(self, class);
+    }
+
+    /// `x! = v`, `(x as T) = v`: the target is the expression the assertion wraps.
+    fn visit_simple_assignment_target(&mut self, target: &mut SimpleAssignmentTarget<'a>) {
+        if let Some(inner) = target.get_expression_mut() {
+            match plain_target(inner.take_in(&self.allocator)) {
+                Ok(plain) => *target = plain,
+                Err(expression) => *inner = expression,
+            }
+        }
+        walk_mut::walk_simple_assignment_target(self, target);
     }
 
     fn visit_block_statement(&mut self, block: &mut BlockStatement<'a>) {

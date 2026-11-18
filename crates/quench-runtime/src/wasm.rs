@@ -931,6 +931,7 @@ impl Engine {
             module_requests: vec![],
             module_imports: vec![],
             module_link_plan: None,
+            declared_types: None,
             source_name: name.into(),
             source: None,
             atoms: AtomTable::default(),

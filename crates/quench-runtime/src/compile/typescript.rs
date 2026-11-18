@@ -9,7 +9,6 @@ use oxc_span::Span;
 mod admit;
 mod enums;
 mod imports;
-pub(super) use admit::{Declarations, DeclaredKind};
 pub(super) use imports::{elide as elide_type_only_imports, type_only_imports};
 pub(super) use admit::admit;
 
@@ -132,9 +131,12 @@ mod tests {
             }
             class Square extends Base { name = "sq"; constructor(private side: number) { super(); } area(): number; area() { return this.side ** 2; } }
             function local() { interface Inner { y: number } type T = number; const v: T = 2; return v; }
-            console.log([pick(1), pick("s"), new Square(3).describe(), local(), "tag" in new Square(1)].join(" "));
+            const box: { v?: number } = { v: 1 };
+            let count: number | undefined = 1;
+            (box as any).v = 2; box.v!++; count! += 4; (<number>count) *= 2;
+            console.log([pick(1), pick("s"), new Square(3).describe(), local(), "tag" in new Square(1), box.v, count].join(" "));
         "#);
-        assert_eq!(lines, ["1 s 9 2 false"]);
+        assert_eq!(lines, ["1 s 9 2 false 3 10"]);
     }
 
     #[test]
@@ -163,6 +165,29 @@ mod tests {
     }
 
     #[test]
+    fn the_declared_environment_is_kept_with_the_program() {
+        use crate::bytecode::{DeclaredKind, EnumConstant};
+        let source = "interface Point { x: number }\ntype Id = string;\nfunction f(a: string): void;\nfunction f(a: any) {}\nenum E { A = 2, B, C = \"c\" }\nabstract class K { abstract m(): void; }";
+        let program = Engine::specialize_typescript(source, "declared.cts").unwrap();
+        let bytes: crate::KeptBytes = std::rc::Rc::new(program.encode_trusted());
+        let program = crate::ResidualProgram::decode_trusted(bytes).unwrap();
+        let declared = program.declared_types.as_deref().expect("a typed program keeps its declarations");
+        let kinds: Vec<(DeclaredKind, Option<&str>)> = declared.declared.iter().map(|entry| (entry.kind, entry.name.as_deref())).collect();
+        assert_eq!(kinds, [
+            (DeclaredKind::Interface, Some("Point")),
+            (DeclaredKind::TypeAlias, Some("Id")),
+            (DeclaredKind::FunctionSignature, Some("f")),
+            (DeclaredKind::Enum, Some("E")),
+            (DeclaredKind::ClassMember, Some("m")),
+        ]);
+        let point = &declared.declared[0];
+        assert_eq!(&source[point.start as usize..point.end as usize], "interface Point { x: number }");
+        assert_eq!(declared.enum_constant("E", "B"), Some(&EnumConstant::Number(3.0)));
+        assert_eq!(declared.enum_constant("E", "C"), Some(&EnumConstant::String("c".into())));
+        assert!(Engine::specialize("const plain = 1;", "plain.cjs").unwrap().declared_types.is_none());
+    }
+
+    #[test]
     fn decorators_still_need_a_runtime_meaning() {
         for source in ["@sealed class Box {}", "class Box { @log method() {} }", "class Box { constructor(@inject() value: number) {} }"] {
             assert!(Engine::specialize_typescript(source, "decorated.cts").is_err(), "{source}");
@@ -188,19 +213,17 @@ mod module_tests {
     }
 
     #[test]
-    fn erased_module_projection_preserves_unicode_offsets_and_runtime_edges() {
-        let source = "export interface Café { value: '🙂' }\u{2028}export type Alias = string;\r\nconst value: number = 1;";
-        let (projected, has_module_declarations) = Engine::project_typescript_module_syntax(source).unwrap();
-        assert!(!has_module_declarations);
-        assert_eq!(projected.len(), source.len());
-        let suffix = "const value: number = 1;";
-        assert_eq!(projected.find(suffix), source.find(suffix));
-        assert_eq!(projected.chars().filter(|character| oxc_syntax::line_terminator::is_line_terminator(*character)).collect::<String>(), "\u{2028}\r\n");
-        for source in ["import { type Shape } from './side.mts';", "export { type Shape } from './side.mts';"] {
-            let (_, has_module_declarations) = Engine::project_typescript_module_syntax(source).unwrap();
-            assert!(has_module_declarations);
+    fn type_only_module_syntax_does_not_make_a_module() {
+        for (source, module) in [
+            ("export interface Café { value: '🙂' }\u{2028}export type Alias = string;\r\nconst value: number = 1;", false),
+            ("import type { Shape } from './side.mts'; import fs = require('fs'); export = fs;", false),
+            ("import { type Shape } from './side.mts';", true),
+            ("export { type Shape } from './side.mts';", true),
+            ("export const value: number = 1;", true),
+        ] {
+            assert_eq!(Engine::typescript_has_module_syntax(source), Some(module), "{source}");
         }
-        assert!(Engine::project_typescript_module_syntax("export interface {").is_none());
+        assert!(Engine::typescript_has_module_syntax("export interface {").is_none());
     }
 
     #[cfg(feature = "aot")]

@@ -36,19 +36,19 @@ fn value_read(scoping: &Scoping, symbol: Option<oxc_syntax::symbol::SymbolId>) -
 
 /// Move the type-only imports (`spans`, from `type_only_imports`) into the declared
 /// environment.
-pub(in crate::compile) fn elide(program: &mut Program<'_>, spans: &[Span], declarations: &mut super::Declarations) {
+pub(in crate::compile) fn elide(program: &mut Program<'_>, spans: &[Span], declarations: &mut crate::bytecode::DeclaredTypes) {
     if spans.is_empty() { return; }
     program.body.retain_mut(|statement| {
         let Statement::ImportDeclaration(import) = statement else { return true };
         if spans.contains(&import.span) {
-            declarations.declare(super::DeclaredKind::ModuleType, None, import.span);
+            declarations.declare(crate::bytecode::DeclaredKind::ModuleType, None, import.span);
             return false;
         }
         if let Some(specifiers) = &mut import.specifiers {
             specifiers.retain(|specifier| {
                 let span = specifier.span();
                 if !spans.contains(&span) { return true; }
-                declarations.declare(super::DeclaredKind::ModuleType, Some(specifier.local().name.as_str()), span);
+                declarations.declare(crate::bytecode::DeclaredKind::ModuleType, Some(specifier.local().name.as_str()), span);
                 false
             });
         }
