@@ -36,17 +36,19 @@ pub(crate) mod typed_ir {
         pub(crate) min: i64,
         pub(crate) max: i64,
     }
-    /// The fact a stage keeps of a word: a stencil keeps none.
+    /// The fact a stage keeps of a word: a stencil keeps only the one a row states, that its word
+    /// is a Number (`ic_rows::write`), which is immediate.
     #[derive(Clone, Copy)]
-    pub(crate) struct Type;
+    pub(crate) struct Type(bool);
     impl Type {
-        pub(crate) const ANY: Self = Self;
-        pub(crate) const IMMEDIATE: Self = Self;
-        pub(crate) const NUMBER: Self = Self;
-        pub(crate) const fn int(_range: IntRange) -> Self { Self }
+        pub(crate) const ANY: Self = Self(false);
+        pub(crate) const IMMEDIATE: Self = Self(false);
+        pub(crate) const NUMBER: Self = Self(true);
+        pub(crate) const fn int(_range: IntRange) -> Self { Self(false) }
         pub(crate) const fn is_int32(self) -> bool { false }
-        /// A stencil proves no subtype: every gate is the stage's.
-        pub(crate) const fn is_subtype(self, _of: Self) -> bool { false }
+        /// A stencil proves no subtype but a stated Number's of Number and immediate: every other
+        /// gate is the stage's.
+        pub(crate) const fn is_subtype(self, _of: Self) -> bool { self.0 }
     }
 }
 
@@ -118,6 +120,27 @@ pub(crate) mod heap {
     pub(crate) struct ArrayObject;
     pub(crate) struct EnvironmentSlots;
     pub(crate) struct Heap;
+    /// The object layout table (`heap::layouts`) at its fixed address (`LAYOUT_TABLE_BASE`).
+    pub(crate) mod layouts {
+        /// Distinct headers the table holds (`heap::layouts::LAYOUT_CAPACITY`).
+        const LAYOUT_CAPACITY: usize = 1 << 22;
+        /// `heap::layouts::word`: the header word of the interned layout `id`.
+        #[inline(always)]
+        pub(crate) fn word(id: u32) -> u64 {
+            // SAFETY: an interned id's entry, written before the id existed.
+            unsafe { *(crate::layout::LAYOUT_TABLE_BASE as *const u64).add(id as usize) }
+        }
+        /// `heap::layouts::auxiliary`: the low half of layout `id`'s header word, 0 past the table.
+        #[inline(always)]
+        pub(crate) fn auxiliary(id: u32) -> u32 {
+            if id as usize >= LAYOUT_CAPACITY {
+                return 0;
+            }
+            // SAFETY: the runtime maps the table before any stencil runs; an entry below the
+            // capacity is readable (zero until interned).
+            unsafe { *(crate::layout::LAYOUT_TABLE_BASE as *const u64).add(id as usize) as u32 }
+        }
+    }
 }
 
 /// The Number operation rows, the runtime's own file: `crate::vm::operations` to the shared

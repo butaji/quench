@@ -54,6 +54,7 @@ pub(crate) trait WasmStage: MachineStage {}
 impl<S: MachineStage> WasmStage for S {}
 
 /// Whether `operator` compares: its result is an `I32` flag at either width.
+#[inline(always)]
 pub(crate) const fn is_comparison(operator: Binary) -> bool {
     matches!(
         operator,
@@ -71,6 +72,7 @@ pub(crate) const fn is_comparison(operator: Binary) -> bool {
 }
 
 /// The width of `operator`'s result at `width` operands.
+#[inline(always)]
 pub(crate) const fn binary_result(operator: Binary, width: Width) -> Width {
     if is_comparison(operator) {
         Width::I32
@@ -80,6 +82,7 @@ pub(crate) const fn binary_result(operator: Binary, width: Width) -> Width {
 }
 
 /// The width of `operator`'s result at a `width` operand: a test of zero is a flag.
+#[inline(always)]
 pub(crate) const fn unary_result(operator: Unary, width: Width) -> Width {
     match operator {
         Unary::EqualZero => Width::I32,

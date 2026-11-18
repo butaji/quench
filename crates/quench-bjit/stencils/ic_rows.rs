@@ -43,6 +43,7 @@ use crate::staged::region::Region;
 use crate::staged::object::Rep;
 use crate::staged::slot_store::own_flat_store;
 use crate::staged::Stage;
+use crate::typed_ir::Type;
 use crate::words::hole;
 
 /// The hole the receiver's frame offset is in, for a get (operand 1) and a store (operand 0).
@@ -139,7 +140,9 @@ fn write<const INT: bool, const A: u8>(s: &S, payload: usize) -> Option<()> {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     store_admitted(&mut stage, payload as u64)?;
     let (id, record, _) = receiver::<SET_RECEIVER>(s, &mut stage, payload)?;
-    own_flat_store(&mut stage, record, id, 0, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }), ())
+    // The word is a Number, which the slot's observed type holds (the stitcher's proof), so it
+    // widens no observation and joins no barrier log: the gate does not apply.
+    own_flat_store(&mut stage, record, id, 0, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }, Type::NUMBER), ())
 }
 
 #[inline(always)]

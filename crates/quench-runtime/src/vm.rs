@@ -1,5 +1,6 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
+mod realm_table;
 mod register_file;
 mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
@@ -660,13 +661,13 @@ impl Realm {
 #[derive(Default)]
 struct RealmIntrinsics {
     arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
-    iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
+    iterator_prototypes: realm_table::RealmTable<IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     /// Original per-realm constructors for function factory allocations.
     function_constructors: FxHashMap<(Value, Native), Value>,
-    promise_constructors: FxHashMap<Value, Value>,
-    error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
-    regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
+    promise_constructors: realm_table::RealmTable<Value>,
+    error_intrinsics: realm_table::RealmTable<ErrorRealmIntrinsics>,
+    regexp_intrinsics: realm_table::RealmTable<regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
@@ -2277,7 +2278,7 @@ impl<H: Host> Vm<H> {
     fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.clear_call_targets();
         // SAFETY: native lane bodies invoke no guest callbacks/realm switches.
-        unsafe { self.programs.retire_native_calls(); }
+        unsafe { self.programs.retire_native_calls_across_realms(); }
         let leaving = ParkedRealm {
             global: previous,
             state: GlobalLexicalState {

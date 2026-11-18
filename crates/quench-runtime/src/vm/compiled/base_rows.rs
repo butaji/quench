@@ -55,6 +55,14 @@ pub(super) enum Heap {
     SiteStore,
     /// `SiteStore` into the activation's receiver: hole 0 is unused.
     ThisStore,
+    /// The inline-cache read (`ic_rows`) of the own flat slot of the object register (hole 1), whose
+    /// exact shape (hole 2) and slot byte offset (hole 3) the code holds from the site's one entry,
+    /// into the destination (hole 0): a shape compare and a load, no cache table read.
+    IcGet,
+    /// The inline-cache store of a Number (hole 1) into that slot of the object register (hole 0),
+    /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds
+    /// Number (`int`: only int32, which takes only int32 words), so no observation widens.
+    IcSet { int: bool },
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
     CaptureSet(u16),
@@ -137,6 +145,9 @@ pub(super) enum Heap {
     /// The tagged word of hole 1 into the destination: an immutable global, a folded `typeof` name, and
     /// the `undefined` receiver of a name call.
     Word,
+    /// An inlined callee's depth-0 capture: the ordinary value of the slot at the address in hole 1 (the
+    /// guarded closure's environment is fixed) into the destination, else the row leaves inside the callee.
+    CalleeCapture,
     /// The fast arm of `AppendArray` (`elements::append_in_room`): the Number operand at hole 1 is appended to
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
@@ -216,6 +227,9 @@ impl Heap {
             Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
             Heap::SiteStore => library::SITE_STORE_ROW,
             Heap::ThisStore => library::THIS_STORE_ROW,
+            Heap::IcGet => library::IC_GET_ROW,
+            Heap::IcSet { int: false } => library::IC_SET_ROW,
+            Heap::IcSet { int: true } => library::IC_SET_INT_ROW,
             Heap::This => library::THIS_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             _ => return None,
@@ -245,6 +259,7 @@ impl Heap {
             Heap::GlobalRead => library::GLOBAL_READ_ROW,
             Heap::GlobalStore => library::GLOBAL_STORE_ROW,
             Heap::LexicalRead => library::LEXICAL_READ_ROW,
+            Heap::CalleeCapture => library::CALLEE_CAPTURE_ROW,
             Heap::LexicalWrite => library::LEXICAL_WRITE_ROW,
             _ => return None,
         })

@@ -27,14 +27,29 @@ pub(super) fn lane_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16
     let vm = unsafe { vm(cx) };
     let mut env = unsafe { (*cx).registers }.env();
     if env.is_deleted() {
-        // A frame's closure environment, past any `with` layers, as its capture walk finds it.
-        return vm.owner_capture_env(VarOwner::Frame(unsafe { (*cx).frame() }), depth);
+        return frame_root_environment(cx, depth);
     }
     for _ in 0..depth {
-        let Some(crate::heap::EnvironmentRecord { parent, .. }) = vm.heap.environment(env) else { return None };
+        let Some(crate::heap::EnvironmentRecord { parent, .. }) = vm.heap.reachable_environment(env) else { return None };
         env = *parent;
     }
     Some(env)
+}
+
+/// `lane_root_environment` of a frame run: the frame's closure environment, past any `with`
+/// layers, as its capture walk finds it (`owner_capture_env` of the frame), read from the
+/// frame's fields without the caller view's dynamic calls.
+#[inline(always)]
+fn frame_root_environment<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    let frame = &vm.frames[unsafe { (*cx).frame() }];
+    // The closure environment itself, at depth 0 of a frame that made none of its own: every
+    // caller reads it only as a root environment (`ROOT_FUNCTION_ID`), which a function-less
+    // `with` layer never is, so no layer needs skipping to answer.
+    if depth == 0 && !frame.captured {
+        return Some(frame.env);
+    }
+    vm.environment_capture_env(frame.env, frame.captured, depth)
 }
 
 /// Whether the capture at `depth` and `slot` of the running activation is a root

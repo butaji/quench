@@ -152,6 +152,7 @@ impl WasmTableElements {
     }
 
     /// The row of each element, in element order.
+    #[inline]
     pub(crate) fn targets(&self) -> &[TableTarget] {
         &self.targets
     }

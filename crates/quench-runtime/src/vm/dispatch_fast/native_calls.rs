@@ -43,7 +43,7 @@ macro_rules! builtin_rows {
 builtin_rows!(
     0 => MapGet, 1 => MapHas, 2 => MapSet, 3 => SetHas, 4 => WeakMapGet, 5 => WeakMapHas,
     6 => WeakSetHas, 7 => StringCharAt, 8 => ArrayIsArray, 9 => StringCharCodeAt, 10 => ArrayPush, 11 => ArrayPop,
-    12 => JsonStringify, 13 => DateNow,
+    12 => JsonStringify, 13 => DateNow, 14 => RegExpTest, 15 => RegExpExec,
 );
 
 /// The Math functions whose call a site makes under its own handler, one instantiation of
@@ -189,7 +189,7 @@ pub(super) fn install_math_field_call<H: Host>(cx: *mut LaneContext<H>, call_ip:
         && ImmediateLayout::call_window_base(call.imm()) == copy.a;
     let copies = copy.handler == lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     let reads_callee = field.a == call.b
-        && (field.handler == lane_get_field_own::<H, false> as *const () || own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler));
+        && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if one_argument && copies && reads_callee && copy.a != field.a {
         requicken::<H>(field_ip, fused);
     }
@@ -207,7 +207,7 @@ fn install_math_field_call2<H: Host>(call_ip: Ip, native: Native) {
     let shaped = first.handler == copy && (second.handler == copy || constant_second)
         && first.a == window && second.a == window + 1;
     let reads_callee = field.a == call.b && field.a != window && field.a != window + 1
-        && (field.handler == lane_get_field_own::<H, false> as *const () || own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler));
+        && own_bound_handlers::<H>()[1..].iter().step_by(2).any(|&handler| handler == field.handler);
     if shaped && reads_callee && let Some(fused) = math_field_call2_handler::<H>(native, constant_second) {
         requicken::<H>(field_ip, fused);
     }
@@ -220,11 +220,28 @@ script_handler! {
     fn lane_call_builtin<ROW: u8>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let native = const { row_native(ROW) };
-        let value = if callee_is_native(vm, r.get(i.b), native) {
+        let value = if !callee_is_native(vm, r.get(i.b), native) {
+            None
+        } else if const { matches!(row_native(ROW), Native::RegExpTest | Native::RegExpExec) } {
+            // A RegExp method's steady call (`Vm::steady_regexp_call`), entered from the site
+            // without the general native protocol; an error it raises completes as
+            // `lane_native_call`'s does.
+            // SAFETY: the call's window is registers of the running function; the context's
+            // program outlives the lane run.
+            let (args, code) = unsafe { (lane_call_window(r, i), &*(*cx).code) };
+            let result_used = ImmediateLayout::lane_call_result_used(i.imm());
+            match args.first().and_then(|&subject| vm.steady_regexp_call(code, native, r.get(i.c), subject, result_used)) {
+                Some(Ok(value)) => Some(value),
+                Some(Err(error)) => {
+                    note_allocation(vm);
+                    vm.lane_completion.raise(error);
+                    resume!(cx, lane_native_complete(cx, ip, i, None))
+                }
+                None => None,
+            }
+        } else {
             // SAFETY: the call's window is registers of the running function.
             vm.steady_native_value(native, r.get(i.c), unsafe { lane_call_window(r, i) })
-        } else {
-            None
         };
         let Some(value) = value else {
             sibling!(lane_native_call::<H>, r, ip, Carried::script(cx))

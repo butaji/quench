@@ -153,12 +153,14 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::library::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::SiteStore => [base, a_hole, decoded.hole],
-        Heap::ThisStore => [0, a_hole, decoded.hole],
-        Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole],
-        Heap::Site | Heap::SiteChain => [object, upper, decoded.hole],
-        Heap::Held => [object, folded, decoded.hole],
-        Heap::ThisHeld => [dst_hole, folded, decoded.hole],
+        Heap::IcGet => { let ic = decoded.ic.unwrap_or_default(); [dst_hole, a_hole, ic & u64::from(u32::MAX), ic >> u32::BITS, 0] }
+        Heap::IcSet { .. } => { let ic = decoded.ic.unwrap_or_default(); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), ic & u64::from(u32::MAX), ic >> u32::BITS] }
+        Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
+        Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
+        Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
+        Heap::Site | Heap::SiteChain => [object, upper, decoded.hole, 0, 0],
+        Heap::Held => [object, folded, decoded.hole, 0, 0],
+        Heap::ThisHeld => [dst_hole, folded, decoded.hole, 0, 0],
         _ => return None,
     }))
 }
@@ -212,7 +214,24 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
     if let Some(receiver) = decoded.also {
         planned.post.push(receiver_row(homes, receiver, pc)?);
     }
-    Ok(planned)
+    ic_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole)], planned)
+}
+
+/// A site read's or store's run with its inline-cache row (`Decoded::ic`) ahead of it: the row's
+/// hit, the shape it holds, continues at the next instruction; a miss, or a destination that
+/// cannot hold the word, falls to the site row behind it, which the entry tables answer.
+fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole)]: [(Place, u64); 2], site: Planned) -> Result<Planned, String> {
+    let Some(_) = decoded.ic.filter(|_| decoded.also.is_none() && !decoded.completes && site.post.is_empty()) else { return Ok(site) };
+    let ic = match heap {
+        Heap::Site => Heap::IcGet,
+        Heap::SiteStore => Heap::IcSet { int: decoded.slot.is_some_and(|ty| ty.is_subtype(crate::typed_ir::Type::INT32)) },
+        _ => return Ok(site),
+    };
+    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
+    let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);
+    let mut fast = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
+    fast.exits = vec![Exit::Ahead(1)];
+    Ok(super::steps::behind(fast, site))
 }
 
 /// Whether a row of `variant` speculates int32 operands, given whether the representations make

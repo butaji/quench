@@ -346,6 +346,7 @@ pub enum WasmDataMode {
     Passive,
 }
 
+#[inline]
 pub(crate) fn checked_range(
     address: u64,
     length: usize,

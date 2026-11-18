@@ -1,0 +1,14 @@
+[package]
+name = "quench-tsrs-worker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tsrs_api = { git = "https://github.com/oxc-project/tsrs", rev = "e18fb617ee516917342dcda27063ab67acc79e49" }
+tsrs_checker = { git = "https://github.com/oxc-project/tsrs", rev = "e18fb617ee516917342dcda27063ab67acc79e49" }
+tsrs_vfs = { git = "https://github.com/oxc-project/tsrs", rev = "e18fb617ee516917342dcda27063ab67acc79e49" }
