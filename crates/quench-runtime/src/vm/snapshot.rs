@@ -48,6 +48,7 @@ impl<H: Host> Vm<H> {
         let Self {
             typed_views: _,
             native_microtask_running: _,
+            queue_resumed: _,
             unobserved_jobs_entered: _,
             host,
             specialized,
@@ -97,12 +98,9 @@ impl<H: Host> Vm<H> {
             program_cache_layouts: _,
             free_cache_layouts: _,
             active_registers: _,
-            lane_raised: _,
+            lane_completion: _,
             lane_raise_site: _,
-            lane_returned: _,
             lane_native: _,
-            lane_native_returned: _,
-            lane_suspended: _,
             active_context: _, program_contexts: _, idle_context: _, active_field_entries: _, field_entries_epoch: _,
             active_program: _,
             profile: _,
@@ -307,7 +305,7 @@ impl<H: Host> Vm<H> {
             ("a running frame", self.frames.is_empty() && self.native_stack_frames.is_empty() && self.active_call_roots.is_empty()),
             ("a with statement", self.with_stack.is_empty()),
             ("a pending job", self.realm.jobs.is_empty() && self.kept_alive.is_empty() && !self.native_microtask_running),
-            ("a lane completion", self.lane_raised.is_none() && self.lane_returned.is_none() && self.lane_native_returned.is_none() && self.lane_suspended.is_none()),
+            ("a lane completion", self.lane_completion.is_none()),
             ("a lane native call", self.lane_native.is_none()),
         ];
         running.into_iter().find(|(_, quiescent)| !quiescent).map(|(what, _)| what)

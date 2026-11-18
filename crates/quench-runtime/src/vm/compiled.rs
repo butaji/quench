@@ -3765,7 +3765,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
     let value = Value::from_bits(value);
     let message = vm.detail_string(value);
-    vm.lane_raised = Some(JsError::thrown(value, message));
+    vm.lane_completion.raise(JsError::thrown(value, message));
     vm.lane_raise_site = site;
     0
 }
@@ -3775,7 +3775,7 @@ unsafe extern "C" fn lane_raise<H: Host>(vm: u64, _residual: u64, value: u64, si
 unsafe extern "C" fn lane_take_raised<H: Host>(vm: u64, _residual: u64) -> u64 {
     // SAFETY: as `lane_field_get`.
     let vm = unsafe { &mut *(vm as *mut Vm<H>) };
-    let error = vm.lane_raised.take().expect("a raised call left its exception");
+    let error = vm.lane_completion.take_raised().expect("a raised call left its exception");
     error.thrown_value().expect("a body raises a thrown value").to_bits()
 }
 

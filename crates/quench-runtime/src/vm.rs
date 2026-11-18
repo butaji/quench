@@ -1,6 +1,7 @@
 #[cfg(feature = "native-execution")]
 mod native_operands;
 mod register_file;
+mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
@@ -1796,6 +1797,10 @@ pub(crate) struct Vm<H> {
     typed_views: typed_array_access::TypedViewCache,
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
+    /// The async function a microtask drain resumed whose activation the running lane run is
+    /// rooted in (`Vm::resume_job`), else undefined: its `await` of a settled value continues in
+    /// place when no other job is queued (`lane_await`).
+    queue_resumed: Value,
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
@@ -1880,8 +1885,8 @@ pub(crate) struct Vm<H> {
     js_native_contexts: Vec<Box<compiled::CallContext>>,
     /// The environments native Wasm code holds across its calls into other instances.
     native_roots: Box<compiled::NativeRoots>,
-    /// Activations a running lane holds without frames.
-    lane_stack: dispatch_fast::LaneStack,
+    /// Activations a running lane holds without frames, boxed so a nested run swaps pointers.
+    lane_stack: Box<dispatch_fast::LaneStack>,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
     lane_roots: Vec<dispatch_fast::ParkedLane>,
     /// Empty lane stacks a nested run returned, which the next one starts over
@@ -1916,9 +1921,8 @@ pub(crate) struct Vm<H> {
     free_cache_layouts: FxHashMap<crate::bytecode::CacheSiteCounts, Vec<ProgramCacheLayout>>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
-    /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
-    /// the general loop raises at that call's instruction once the lane exits there.
-    lane_raised: Option<JsError>,
+    /// How the last lane run left its activation, for the code it exits to to take (`LaneCompletion`).
+    lane_completion: LaneCompletion,
     /// Where a lane body's native `throw` raised the error in `lane_raised`
     /// (`compiled::raise_site`), which the lane gives it as its source location once it
     /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
@@ -1942,20 +1946,9 @@ pub(crate) struct Vm<H> {
     /// name, and resolving it again after a collection read its file anew. typescript.js
     /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
-    /// The completion a frame's own call record returns, made by a lane activation
-    /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
-    /// at that instruction once the lane exits there.
-    lane_returned: Option<Value>,
     /// The native a lane call is running from its caller's frame (`dispatch_fast::lane_call_native`),
     /// whose calls of JavaScript run frameless in that lane (`Vm::lane_native_callback`).
     lane_native: Option<dispatch_fast::LaneNativeCall>,
-    /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
-    /// its run hands to the native once the lane exits there.
-    lane_native_returned: Option<Value>,
-    /// The value the activation a lane job ran awaited or yielded (`dispatch_fast::lane_await`,
-    /// `dispatch_fast::lane_yield`), which its run hands to the await's reactions, or to the
-    /// native `next` that stepped a sync generator, once the lane exits there.
-    lane_suspended: Option<Value>,
     /// The active program's context (`program_contexts`), kept by `set_active_program`: its
     /// cache layout and constants are one load from it.
     active_context: *const ProgramContext,

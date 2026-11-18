@@ -1219,13 +1219,12 @@ impl<H: Host> Vm<H> {
             Ok(value) => value,
             Err(error) => return self.resume_generator(p, generator, &[], Some(error)),
         };
-        if let Some(record) = self.generator_record_mut(generator)
-            && let Some(continuation) = record.continuation_mut()
-        {
+        let epoch = self.heap.collection_epoch(); // after the reads, which may collect
+        if let Some(record) = self.generator_record_mut(generator) && let Some(continuation) = record.continuation_mut() {
             continuation.frame.pc += 1;
             continuation.resume_register = None;
             // The written register need not be live at the suspension the mask describes.
-            continuation.frame.live_registers = None;
+            continuation.frame.settle_registers(epoch);
             if let Some(register) = continuation.frame.registers.get_mut(usize::from(destination)) {
                 *register = value;
             }

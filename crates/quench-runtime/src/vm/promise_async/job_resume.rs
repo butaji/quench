@@ -93,7 +93,10 @@ impl<H: Host> Vm<H> {
         let roots = [Some(resume.promise), resume.role.generator(), resume.state, how.value()].into_iter().flatten();
         let settled = self.with_call_roots(roots, |vm| {
             vm.maybe_collect(&code);
+            let resumed = if vm.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
+            let outer = std::mem::replace(&mut vm.queue_resumed, resumed);
             let end = vm.run_job(&code, job, how);
+            vm.queue_resumed = outer;
             // An async generator's await state is spent once its reaction ran, as an async
             // function's was armed again or spent with its continuation.
             if job.kind == SuspendKind::AsyncGenerator
