@@ -14,7 +14,8 @@ impl<H: Host> Vm<H> {
                 Some(this) => (ThisBinding::Lexical, this),
                 None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
             },
-            binding => (binding, Value::UNDEFINED),
+            // A sloppy function's plain `this`, the global object, is its function's.
+            binding => (binding, known.lexical_this),
         };
         Some(ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known })
     }
