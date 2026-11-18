@@ -253,7 +253,7 @@ fn store_leaf(instruction: WideInstruction, private: &impl Fn(crate::bytecode::A
 }
 
 /// A field read of no private name through a base a leaf reads; a sink stores the value
-/// to a field of `this` (`lane_get_field_sink`).
+/// to a field of `this` (`row_get_field_sink`).
 fn field_leaf(instruction: WideInstruction, code: &ResidualProgram, private: &impl Fn(crate::bytecode::Atom) -> bool) -> Option<LeafForm> {
     match instruction.field_lookup()? {
         FieldLookup::Atom { atom, base, .. } => if private(atom) { None } else { field_base_leaf(base) },

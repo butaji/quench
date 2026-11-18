@@ -7446,48 +7446,6 @@ fn is_single_field_base(base: u16) -> bool {
 
 use crate::staged::HINTED_FORM;
 
-/// The value the bound own-field read of record `i` answers (the own-field read the math call fusions make, `own_formed_handler`), `None`
-/// where its hint misses.
-#[inline(always)]
-fn own_bound_value<H: Host, const THIS: bool, const FORM: u32>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    // No closure: an `and_then` over one stays a call where its caller is not a handler.
-    let object = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })?;
-    {
-        let record = object.direct_object_index()?;
-        // SAFETY: binding preceded handler installation; the rooted direct Value names
-        // a live record of this range. Resumption binds an initially empty outer context.
-        #[cfg(all(target_arch = "aarch64", target_pointer_width = "64"))]
-        let (base, machine) = {
-            const {
-                assert!(std::mem::offset_of!(LaneContext<H>, vm)
-                    == std::mem::offset_of!(LaneContext<H>, binding)
-                        + std::mem::offset_of!(LaneBinding, object_base)
-                        + std::mem::size_of::<*const Object>());
-            }
-            let base: *const Object;
-            let machine: *const Vm<H>;
-            // SAFETY: the asserted adjacent pointer fields belong to this live context.
-            // Loading both together starts the independent heap lookup before the shape
-            // branch, instead of delaying the VM load until after that branch.
-            unsafe {
-                std::arch::asm!(
-                    "ldp {base}, {machine}, [{source}, #{offset}]",
-                    base = out(reg) base,
-                    machine = out(reg) machine,
-                    source = in(reg) std::ptr::addr_of!((*cx).binding),
-                    offset = const std::mem::offset_of!(LaneBinding, object_base),
-                    options(pure, readonly, nostack, preserves_flags),
-                );
-            }
-            (base, machine)
-        };
-        #[cfg(not(all(target_arch = "aarch64", target_pointer_width = "64")))]
-        let (base, machine) = unsafe { ((*cx).binding.object_base, (*cx).vm.cast_const()) };
-        let receiver = unsafe { &*base.add(record as usize) };
-        unsafe { &*machine }.own_field_hint_hit::<FORM>(i.field_hint(), receiver)
-    }
-}
-
 script_handler! {
     /// the own-field row (`own_formed_handler`) past its record's hint: the site's primary own entry, whose hit
     /// becomes the hint; any other read goes through `row_get_field_miss`.
@@ -7732,7 +7690,9 @@ pub(super) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
 
 /// Whether site `site` reads `this` or a register as its record says at run time, not as a
 /// site fact: a cold row kept to one instantiation for both bases.
-pub(super) const fn runtime_base(site: u8) -> bool { site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS }
+pub(super) const fn runtime_base(site: u8) -> bool {
+    site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS || entry_site(site)
+}
 
 /// The site fact of an own read of a receiver outside the object records, as a function's static
 /// field (`Strength.REQUIRED`): the record's hint is the receiver's layout id and slot
@@ -7852,6 +7812,68 @@ pub(super) const POLY_SITE: u8 = own_site(false, OWN_FORMS.len() + 24);
 /// cached store or add inside the row, a private name's or a refusal's activation path after it
 /// (`row_set_field_miss_path`).
 pub(super) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
+/// The site facts of a field read whose value is the callee of a Math call the record after it
+/// makes (`native_calls::install_math_field_call`): one argument, a register second argument,
+/// and a constant second argument. The row runs the call past its read (`math_row_resume`), the
+/// function's identity read by the VM (`PropertyFrame::math_call`).
+pub(super) const MATH_CALL_SITE: u8 = own_site(false, OWN_FORMS.len() + 44);
+pub(super) const MATH_CALL2_SITE: u8 = own_site(false, OWN_FORMS.len() + 45);
+pub(super) const MATH_CALL2_CONST_SITE: u8 = own_site(false, OWN_FORMS.len() + 46);
+
+/// The site fact of a nested read that stores its value to `this` (`this.a = this.b.c`), the
+/// read's flag `SET_THIS_REGISTER` its row's store (`PropertyFrame::sink_store`).
+pub(super) const SINK_SITE: u8 = own_site(false, OWN_FORMS.len() + 47);
+
+/// Whether site `site` is a field read of a Math call's callee (`MATH_CALL_SITE`, `MATH_CALL2_SITE`,
+/// `MATH_CALL2_CONST_SITE`).
+pub(super) const fn math_site(site: u8) -> bool {
+    site == MATH_CALL_SITE || site == MATH_CALL2_SITE || site == MATH_CALL2_CONST_SITE
+}
+
+/// The number of arguments the Math call of math site `site` passes.
+pub(super) const fn math_arity(site: u8) -> usize {
+    if site == MATH_CALL_SITE { 1 } else { 2 }
+}
+
+/// Whether site `site` is a sinking read (`SINK_SITE`).
+pub(super) const fn sink_site(site: u8) -> bool { site == SINK_SITE }
+
+/// The store `(atom, cache)` of the sinking read `i` (`SINK_SITE`): its site's sink.
+#[inline(always)]
+pub(super) fn sink_operands<H: Host>(cx: *mut LaneContext<H>, i: &LaneInstruction) -> Option<(crate::bytecode::Atom, u16)> {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    code.field_sites.get(i.imm() as usize)?.sink
+}
+
+/// The site facts of the generated entry reads (`FieldPlan::Hinted`, `FieldPlan::Entry`): each
+/// one hit shape of the VM's entry lookups, whose host call the row makes (`field_entry_read`).
+/// Of `this` and of a register alike (`runtime_base`).
+/// The polymorphic read: the record's own hint, then the site's inline entries (`row_polymorphic_miss` past them).
+pub(super) const POLYMORPHIC_SITE: u8 = own_site(false, OWN_FORMS.len() + 38);
+/// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`), the polymorphic read's miss.
+pub(super) const HASHED_SITE: u8 = own_site(false, OWN_FORMS.len() + 39);
+/// The site's primary holder entry, of a direct object or of any receiver in a heap cell (`Vm::primary_holder_field_hit`,
+/// `Vm::cell_holder_field_hit`), which holds no hint.
+pub(super) const HOLDER_SITE: u8 = own_site(false, OWN_FORMS.len() + 40);
+/// The site's inherited entry walked past the immediate prototype (`Vm::inherited_field_entry_hit`), whose answer
+/// becomes the record's inherited hint.
+pub(super) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41);
+
+/// Whether site `site` reads through a VM entry lookup (`FieldPlan::Entry`, `FieldPlan::Hinted`).
+pub(super) const fn entry_site(site: u8) -> bool {
+    site == POLYMORPHIC_SITE || site == HASHED_SITE || site == HOLDER_SITE || site == INHERITED_WALK_SITE
+}
+
+/// The entry lookup a non-polymorphic entry site makes (`EntryKind`); the polymorphic site's own
+/// plan is `FieldPlan::Hinted`, whose entry is `EntryKind::Polymorphic` too.
+pub(super) const fn entry_kind(site: u8) -> crate::staged::property::EntryKind {
+    use crate::staged::property::EntryKind;
+    if site == POLYMORPHIC_SITE { EntryKind::Polymorphic }
+    else if site == HASHED_SITE { EntryKind::Hashed }
+    else if site == HOLDER_SITE { EntryKind::Holder }
+    else { EntryKind::Inherited }
+}
 
 pub(super) const fn cell_own_site(site: u8) -> bool {
     site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
@@ -7987,10 +8009,9 @@ fn holds_loop_site(ip: Ip) -> bool {
     (unsafe { i.operand.field.shape }) == super::NO_FIELD_RECEIVER && i.call_link.get() != NO_CALL_LINK
 }
 
-/// The polymorphic read of `object` by the `GetField` record at `ip` (`lane_get_field_polymorphic`,
-/// `RETURNING_FIELD_POLYMORPHIC`): its hint, the last own entry that answered it, first, then
-/// the site's inline entries, whose own hit becomes the hint; with whether a prototype's entry
-/// answered, which no hint holds.
+/// The polymorphic read of `object` by the `GetField` record at `ip` (`RETURNING_FIELD_POLYMORPHIC`):
+/// its hint, the last own entry that answered it, first, then the site's inline entries, whose own
+/// hit becomes the hint; with whether a prototype's entry answered, which no hint holds.
 #[inline(always)]
 fn polymorphic_read<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, ip: Ip, object: Value) -> Option<(Value, bool)> {
     use super::object::PolymorphicHit;
@@ -8003,79 +8024,113 @@ fn polymorphic_read<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, ip: Ip, obj
     Some((value, matches!(hit, PolymorphicHit::Holder)))
 }
 
-script_handler! {
-    /// `GetField` of a register or `this` at a site past one shape
-    /// (`Vm::field_site_polymorphic`): its inline megamorphic entries, after its hint where
-    /// `HINTED` (`polymorphic_read`), which a read a prototype's entry answers drops for good,
-    /// since its site's receivers keep no own hint: the record then hints the last read a
-    /// prototype answered instead, with its value (`Vm::holder_hint_hit`), as a parser whose
-    /// shape grows while it runs reads its methods. Any other read takes
-    /// `lane_get_field_hashed`, which a site whose entries moved to the hash runs from then on.
-    fn lane_get_field_polymorphic<THIS: bool, HINTED: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let value = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) }).and_then(|object| {
-            if !HINTED {
-                if let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
-                    return Some(value);
-                }
-                let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, super::EMPTY_CACHE)?;
-                // A live hint another receiver of this site answers stays: rewriting it at
-                // every receiver switch re-marked and re-watched the prototype each time
-                // (V8-v7 Richards: 0.71M rewrites, 5% of its run).
-                // SAFETY: `ip` is this live `GetField` record.
-                let kept = unsafe { (*ip).operand.field.shape == HOLDER_HINT && vm.holder_hint_live((*ip).call_link.get()) };
-                if matches!(hit, super::object::PolymorphicHit::Holder) && !kept {
-                    set_prototype_hint(ip, |owned| {
-                        if owned.is_some_and(|index| vm.holder_hint_live(index)) {
-                            return None;
-                        }
-                        vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK)
-                    });
-                }
-                return Some(value);
+/// The polymorphic read of `object` by the `GetField` record at `ip` (`FieldPlan::Hinted`,
+/// `POLYMORPHIC_SITE`), past the record's own hint: the site's inline entries, own or of the
+/// immediate prototype (`hinted_polymorphic_field_hit`). An own hit becomes the record's hint; a
+/// prototype's hit holds the prototype hint (`hold_holder_hint`), kept while its watch is live, and
+/// a record whose hint is a prototype's first tests that hint (`holder_hint_hit`).
+fn polymorphic_entry<H: Host>(cx: *mut LaneContext<H>, ip: Ip, object: Value) -> Option<Value> {
+    use super::object::PolymorphicHit;
+    // SAFETY: the context's program outlives the lane run; `ip` is a live `GetField` record.
+    let code = unsafe { &*(*cx).code };
+    let vm = unsafe { vm(cx) };
+    let i = unsafe { &*ip };
+    let holds_holder = unsafe { i.operand.field.shape } == HOLDER_HINT;
+    if holds_holder && let Some(value) = vm.holder_hint_hit(i.call_link.get(), i.imm(), object) {
+        return Some(value);
+    }
+    let (value, hit) = vm.hinted_polymorphic_field_hit(code, object, i.c, i.field_hint())?;
+    match hit {
+        PolymorphicHit::Own(entry) => {
+            if !holds_holder {
+                set_field_hint(ip, vm.form_hint(entry, object));
             }
-            let (value, holder) = polymorphic_read(vm, code, ip, object)?;
-            if holder {
-                requicken::<H>(ip, lane_get_field_polymorphic::<H, THIS, false>);
+        }
+        PolymorphicHit::Holder => {
+            // A live hint another receiver of this site answers stays: rewriting it at every
+            // receiver switch re-marked and re-watched the prototype each time (V8-v7 Richards:
+            // 0.71M rewrites, 5% of its run).
+            if !(holds_holder && vm.holder_hint_live(i.call_link.get())) {
+                set_prototype_hint(ip, |owned| {
+                    if owned.is_some_and(|index| vm.holder_hint_live(index)) {
+                        return None;
+                    }
+                    vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK)
+                });
             }
-            Some(value)
-        });
-        let Some(value) = value else {
-            if vm.field_site_hashed(i.c) {
-                requicken::<H>(ip, lane_get_field_hashed::<H, THIS>);
-            }
-            sibling!(lane_get_field_hashed::<H, THIS>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
+        PolymorphicHit::Hint => {}
+    }
+    Some(value)
+}
+
+/// The hashed entries of the `GetField` record at `ip` (`HASHED_SITE`): the site's hashed entries
+/// past the inline ones, own or of the immediate prototype (`Vm::polymorphic_field_hit`), as an AST
+/// walk reads `type` of a node of any of dozens of shapes. Any other read takes `lane_get_field`.
+fn hashed_entry<H: Host>(cx: *mut LaneContext<H>, ip: Ip, object: Value) -> Option<Value> {
+    // SAFETY: the context's program outlives the lane run; `ip` is a live `GetField` record.
+    let code = unsafe { &*(*cx).code };
+    let i = unsafe { &*ip };
+    unsafe { vm(cx) }.polymorphic_field_hit(code, object, i.c)
+}
+
+/// The site's primary holder entry of `object` (`HOLDER_SITE`): a direct object's record
+/// (`Vm::primary_holder_field_hit`), else a receiver any heap cell holds, such as a function whose
+/// prototype holds the method (`Vm::cell_holder_field_hit`), as `f.apply`. Holds no hint.
+fn holder_entry<H: Host>(cx: *mut LaneContext<H>, ip: Ip, object: Value) -> Option<Value> {
+    // SAFETY: as `hashed_entry`.
+    let code = unsafe { &*(*cx).code };
+    let i = unsafe { &*ip };
+    let vm = unsafe { vm(cx) };
+    if object.direct_object_index().is_some() {
+        vm.primary_holder_field_hit(code, object, i.c)
+    } else {
+        vm.cell_holder_field_hit(code, object, i.c)
+    }
+}
+
+/// The inherited entry of `object` walked past its immediate prototype (`INHERITED_WALK_SITE`):
+/// the site's entries and their chain walk, which proves one again (`Vm::inherited_field_entry_hit`);
+/// the entry that answered becomes the record's inherited hint.
+fn inherited_entry<H: Host>(cx: *mut LaneContext<H>, ip: Ip, object: Value) -> Option<Value> {
+    // SAFETY: as `hashed_entry`.
+    let code = unsafe { &*(*cx).code };
+    let i = unsafe { &*ip };
+    let (value, entry) = unsafe { vm(cx) }.inherited_field_entry_hit(code, object, i.c)?;
+    set_inherited_hint(ip, entry);
+    Some(value)
+}
+
+/// The VM's entry lookup `kind` answers for `object` at the row's record `ip` (`LaneFrame::field_entry`).
+pub(super) fn field_entry_read<H: Host>(context: *mut (), ip: Ip, object: Value,
+    kind: crate::staged::property::EntryKind) -> Option<Value> {
+    use crate::staged::property::EntryKind;
+    let cx = context.cast::<LaneContext<H>>();
+    match kind {
+        EntryKind::Polymorphic => polymorphic_entry::<H>(cx, ip, object),
+        EntryKind::Hashed => hashed_entry::<H>(cx, ip, object),
+        EntryKind::Holder => holder_entry::<H>(cx, ip, object),
+        EntryKind::Inherited => inherited_entry::<H>(cx, ip, object),
     }
 }
 
 script_handler! {
-    /// `lane_get_field_polymorphic` past its inline entries: the site's hashed entries, own or
-    /// of the immediate prototype (`Vm::polymorphic_field_hit`), as an AST walk reads `type`
-    /// of a node of any of dozens of shapes. Out of line, so the inline probe keeps no hash
-    /// temporaries across its dispatch; any other read takes `lane_get_field`.
+    /// The polymorphic row's miss (`POLYMORPHIC_SITE`): a site whose entries moved to the hash
+    /// takes the hashed row (`HASHED_SITE`) from now on; every other miss takes it as well, which
+    /// reads the hash and misses to `lane_get_field`.
     #[inline(never)]
-    fn lane_get_field_hashed<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).polymorphic_field_hit(code, object, i.c))
-        else {
-            sibling!(row_get_field_general::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    fn row_polymorphic_miss<>(cx, r, ip, i, view) {
+        if unsafe { vm(cx) }.field_site_hashed(i.c) {
+            requicken::<H>(ip, lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HASHED_SITE>);
+        }
+        sibling!(lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HASHED_SITE>, r, ip, Carried::script_in(cx, view))
     }
 }
 
 script_handler! {
     /// `lane_get_field_holder` past its hint: the site's primary holder entry
     /// (`Vm::primary_record_holder_field_hit`), whose answer becomes the hint. Any other read
-    /// takes `lane_get_field_holder_any`.
+    /// takes the holder row (`HOLDER_SITE`).
     #[inline(never)]
     fn row_get_field_holder_refresh<THIS: bool>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -8084,26 +8139,9 @@ script_handler! {
         let Some((object, value)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
             .and_then(|object| vm.primary_record_holder_field_hit(code, object, i.c).map(|value| (object, value)))
         else {
-            sibling!(lane_get_field_holder_any::<H, THIS>, r, ip, Carried::script_in(cx, view))
+            sibling!(lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE>, r, ip, Carried::script_in(cx, view))
         };
         set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_holder` past a record prototype (`Vm::primary_holder_field_hit`), out
-    /// of line so the record read makes no call: any other read takes `row_get_field_miss`.
-    #[inline(never)]
-    fn lane_get_field_holder_any<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).primary_holder_field_hit(code, object, i.c))
-        else {
-            sibling!(row_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -8168,23 +8206,6 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field_holder` for a receiver in a heap cell rather than the object records
-    /// (`Vm::cell_holder_field_hit`): a method read from a function, as `f.apply`. A miss
-    /// moves the record on as `row_get_field_miss` decides.
-    fn lane_get_field_holder_cell<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).cell_holder_field_hit(code, object, i.c))
-        else {
-            sibling!(row_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// The own-constant row's miss (`OWN_CONSTANT_REGISTER`): another object, or the object was
     /// written. The site never holds an own constant again and reads as its tier decides.
     /// Out of line, so the row's hit path makes no call and saves no register.
@@ -8200,7 +8221,7 @@ script_handler! {
 script_handler! {
     /// The generated held read at `HELD_CELL_REGISTER` past its hint: the site's holder entry
     /// (`Vm::cell_holder_field_hit`), whose answer becomes the hint. A miss takes
-    /// `lane_get_field_holder_cell`, which moves the record on.
+    /// the holder row (`HOLDER_SITE`), which moves the record on.
     #[inline(never)]
     fn row_get_field_holder_cell_refresh<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
@@ -8208,28 +8229,9 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let base = r.get(i.b);
         let Some(value) = vm.cell_holder_field_hit(code, base, i.c) else {
-            sibling!(lane_get_field_holder_cell::<H>, r, ip, Carried::script_in(cx, view))
+            sibling!(lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE>, r, ip, Carried::script_in(cx, view))
         };
         set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), base, value, NO_CALL_LINK));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// The generated inherited read (`INHERITED_OTHER_*`) past its hint: the site's entries and their chain walk,
-    /// which proves one again (`Vm::inherited_field_entry_hit`); the entry that answered
-    /// becomes the hint. Any other read takes `row_get_field_miss`.
-    #[inline(never)]
-    fn lane_get_field_inherited_walk<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some((value, entry)) = (unsafe { lane_known_field_base::<H, THIS>(cx, r, i.b) })
-            .and_then(|object| (unsafe { vm(cx) }).inherited_field_entry_hit(code, object, i.c))
-        else {
-            sibling!(row_get_field_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        set_inherited_hint(ip, entry);
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -8336,7 +8338,7 @@ script_handler! {
 
 script_handler! {
     /// A miss of a single-entry read (the own-field row, `lane_get_field_holder`, `_inherited`): a nested record moves to
-    /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
+    /// `lane_get_field`, one whose site went polymorphic to `POLYMORPHIC_SITE`,
     /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
     /// an inherited entry to the generated inherited read; the read itself takes
     /// `lane_get_field`.
@@ -8396,20 +8398,19 @@ script_handler! {
                 lane_row::<H, FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER>,
                 lane_get_field_getter::<H>,
             )),
-            FieldSiteTier::Polymorphic => Some(single_base_handler(
-                i.b,
-                lane_get_field_polymorphic::<H, true, true>,
-                lane_get_field_polymorphic::<H, false, true>,
-                general_handler::<H>(i.b),
-            )),
+            FieldSiteTier::Polymorphic if is_single_field_base(i.b) =>
+                Some(lane_row::<H, FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE> as Handler),
+            FieldSiteTier::Polymorphic => Some(general_handler::<H>(i.b)),
             // A receiver outside the object records, such as a function, takes the cell lookup.
             FieldSiteTier::Holder
                 if base.is_some_and(|object| object.direct_object_index().is_none()) =>
             {
                 Some(if crate::bytecode::FieldBase(i.b).register_index().is_some() {
-                    lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER>
+                    lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER> as Handler
+                } else if is_single_field_base(i.b) {
+                    lane_row::<H, FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE> as Handler
                 } else {
-                    lane_get_field_holder_cell::<H>
+                    general_handler::<H>(i.b)
                 })
             }
             FieldSiteTier::Holder => Some(single_base_handler(
@@ -8909,7 +8910,7 @@ const NESTED_STEPS: [usize; 2] = [1, 2];
 /// register or `this`, or a nested site's chain of two. `None` leaves the read to the
 /// general path.
 ///
-/// Out of line: the generic reads (`lane_get_field`, `lane_get_field_sink`, a returning
+/// Out of line: the generic reads (`lane_get_field`, `row_get_field_sink`, a returning
 /// `GetField`) run it on their slower paths, so one copy serves them all instead of each
 /// carrying its own probe (DeltaBlue, PGO build: ~40 instruction-cache lines of warm code).
 ///
@@ -9061,7 +9062,7 @@ fn lane_cached_field_miss<H: Host>(
         super::object::FieldCacheProbe::OrdinaryMiss => vm
             .array_length_field(object, atom)
             // The entries of a site past one shape, whose handler may be a nested site's or a
-            // local base's, as `lane_get_field_hashed` reads them.
+            // local base's, as the hashed row reads them.
             .or_else(|| vm.polymorphic_field_hit(code, object, site))
             .or_else(|| vm.cell_polymorphic_holder_hit(object, site))
             .or_else(|| vm.probed_field_miss_value(object, atom, site)),
@@ -9076,93 +9077,12 @@ fn lane_cached_field_miss<H: Host>(
 }
 
 script_handler! {
-    /// A sinking `GetField`'s first run: a site that reads `name` or `length`
-    /// (`Vm::reads_function_info`) keeps `lane_get_field_sink`, whose reads prepare them;
-    /// any other takes `lane_get_field_sink_own`.
-    #[inline(never)]
-    fn lane_get_field_sink_first<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let own = i.b == crate::bytecode::FieldBase::NESTED
-            && code.field_sites.get(i.imm() as usize).is_some_and(|site| {
-                !vm.reads_function_info(site.first.0)
-                    && site.second.is_none_or(|(atom, _)| !vm.reads_function_info(atom))
-            });
-        if own {
-            requicken::<H>(ip, lane_get_field_sink_own::<H>);
-            sibling!(lane_get_field_sink_own::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        requicken::<H>(ip, lane_get_field_sink::<H>);
-        sibling!(lane_get_field_sink::<H>, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-/// `lane_get_field_sink_own`'s first step past the record's hint: the site's primary own
-/// entry, whose hit becomes the hint. Out of line, so the hinted probe keeps its registers.
-///
-/// # Safety
-/// `cx` is the running lane's context and `ip` a nested sink record of it.
-#[inline(never)]
-unsafe fn lane_sink_first_refresh<H: Host>(cx: *mut LaneContext<H>, ip: Ip, base: Value) -> Option<Value> {
-    // SAFETY: the context's program outlives the lane run; a nested record names its site.
-    let code = unsafe { &*(*cx).code };
-    let site = unsafe { code.field_sites.get_unchecked((*ip).imm() as usize) };
-    let vm = unsafe { vm(cx) };
-    let value = vm.primary_own_field_hit(code, base, site.first.1)?;
-    set_field_hint(ip, vm.field_cache_entry(site.first.1));
-    Some(value)
-}
-
-script_handler! {
-    /// `lane_get_field_sink` where every step hits its site's primary own entry: the
-    /// nested read (`Vm::primary_own_field_hit`), then the store to `this`
-    /// (`Vm::primary_own_field_store_hit`) where the write barrier logs nothing. Any other
-    /// run takes `lane_get_field_sink`, which repeats the side-effect-free reads.
-    fn lane_get_field_sink_own<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        // SAFETY: `lane_get_field_sink_first` installs this handler only on a nested site.
-        let site = unsafe { code.field_sites.get_unchecked(i.imm() as usize) };
-        let base = match site.base.register_index() {
-            Some(register) => r.get(register),
-            None => unsafe { lane_held_this(cx, r) },
-        };
-        // Each step declines on its own branch: the `Option` chain kept a materialized
-        // `Some` flag tested between the reads (V8-v7 Richards, 0.85M runs).
-        macro_rules! or_general {
-            ($step:expr) => {
-                match $step {
-                    Some(value) => value,
-                    None => sibling!(lane_get_field_sink::<H>, r, ip, Carried::script_in(cx, view)),
-                }
-            };
-        }
-        let value = match vm.record_field_entry_hit(i.field_hint(), base) {
-            Some(value) => value,
-            None => or_general!(unsafe { lane_sink_first_refresh(cx, ip, base) }),
-        };
-        let value = match site.second {
-            Some((_, cache)) => or_general!(vm.primary_own_field_hit(code, value, cache)),
-            None => value,
-        };
-        let (atom, cache) = or_general!(site.sink);
-        let this = unsafe { lane_held_this(cx, r) };
-        if !vm.primary_own_field_store_hit::<false>(code, this, atom, value, cache, crate::heap::PropertyStoreLayout::Preserve) {
-            sibling!(lane_get_field_sink::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        r.set(i.a & crate::bytecode::REGISTER_MASK, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// A nested `GetField` that also stores its value to a field of `this` (`this.a =
     /// this.b.c`): the read as `lane_get_field` makes it, then the cached write of
     /// `SetThisField`. A read or write the caches do not answer takes the general path,
     /// which repeats the side-effect-free read.
-    fn lane_get_field_sink<>(cx, r, ip, i, view) {
+    #[inline(never)]
+    fn row_get_field_sink<>(cx, r, ip, i, view) {
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let (Some(value), Some(this), Some(sink)) = (
@@ -11172,7 +11092,7 @@ fn lane_region_field<H: Host>(
     match vm.cached_field_hit(code, receiver, field.cache_site) {
         super::object::FieldCacheProbe::Hit(value) => Some(value),
         // A site of several shapes answers from its polymorphic entries, own or of the
-        // immediate prototype, as the lane's polymorphic read does (`lane_get_field_polymorphic`).
+        // immediate prototype, as the lane's polymorphic read does (`POLYMORPHIC_SITE`).
         // A typed array's geometry is its intrinsic getter's answer, which only a call (a
         // detach, a resize, a redefinition) changes, and a call leaves the region.
         _ => vm.polymorphic_field_hit(code, receiver, field.cache_site)
@@ -22567,7 +22487,7 @@ fn decoded_local_plain_store(instruction: WideInstruction) -> bool {
 }
 
 /// A nested `GetField` whose only result flag stores its value to a field of `this` too
-/// (`lane_get_field_sink`).
+/// (`row_get_field_sink`).
 fn lane_sinks_field(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER
         && instruction.writes_current_this()
@@ -22796,7 +22716,7 @@ fn derive_lane_view<'live, H: Host>(
                 None
             } else if decoded_field_read(instruction) && lane_sinks_field(instruction) {
                 Some(LaneHandler {
-                    handler: lane_get_field_sink_first::<H> as Handler,
+                    handler: lane_row::<H, FIELD_LEAF_READ, ACC_NONE, SINK_SITE> as Handler,
                     produces: false,
                 })
             } else if let Some(kind) = returning_kind(instruction) {

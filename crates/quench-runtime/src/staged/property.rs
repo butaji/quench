@@ -48,12 +48,33 @@ pub(crate) struct Arm<'a> {
     pub(crate) holds: Option<u32>,
 }
 
+/// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
+/// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
+/// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EntryKind {
+    /// The site's inline megamorphic entries, own or of the immediate prototype.
+    Polymorphic,
+    /// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`).
+    Hashed,
+    /// The site's primary holder entry, for a direct object or any other receiver.
+    Holder,
+    /// The site's inherited entry, walked past the immediate prototype.
+    Inherited,
+}
+
 /// How a `GetField` site reads, as the proof its tier holds of the site.
 #[derive(Clone, Copy)]
 pub(crate) enum FieldPlan<'a> {
     /// The ops of `staged::ic` over the receiver's record: own slot, prototype slot, or a
     /// prototype constant.
     Ops(&'a [IcOp<'a>]),
+    /// The VM's entry lookup of `kind` for the receiver (`PropertyFrame::field_entry`), with no
+    /// op over its record.
+    Entry(EntryKind),
+    /// `ops` over the receiver's record (its hint) first; where they miss, the VM's entry lookup
+    /// of `entry` (`PropertyFrame::entried`).
+    Hinted { ops: &'a [IcOp<'a>], entry: EntryKind },
     /// The first arm whose shape set holds the receiver's exact shape reads; none leaves.
     Arms(&'a [Arm<'a>]),
     /// A receiver of exact `shape` whose prototype `holder` holds the values `constants` pair
@@ -319,6 +340,21 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     /// any other receiver leaves at `miss`.
     #[inline(always)]
     fn length_read(&mut self, _stage: &mut S, _object: S::Word, _miss: S::Miss) -> Option<S::Word> { None }
+    /// What `fast` reads, which leaves at the edge it is given; where it misses, the VM's entry
+    /// lookup of `kind` (`field_entry`) instead.
+    #[inline(always)]
+    fn entried(&mut self, stage: &mut S, owner: Owner, object: S::Word, kind: EntryKind, miss: S::Miss,
+        fast: impl FnOnce(&mut S, &mut Self, S::Miss) -> Option<S::Word>) -> Option<S::Word> {
+        match fast(stage, self, miss) {
+            Some(word) => Some(word),
+            None => self.field_entry(stage, owner, object, kind, miss),
+        }
+    }
+
+    /// The VM's entry lookup of `kind` for `owner`'s `object` (`EntryKind`), a host call whose
+    /// answer the frame's record keeps where the VM keeps a hint for it; a miss leaves at `miss`.
+    #[inline(always)]
+    fn field_entry(&mut self, _stage: &mut S, _owner: Owner, _object: S::Word, _kind: EntryKind, _miss: S::Miss) -> Option<S::Word> { None }
 
     /// The VM's cached read of `atom` of `object` through `site` (`LaneHelper::FieldGet`); a
     /// miss leaves at `miss`.
@@ -347,6 +383,18 @@ pub(crate) trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn field_store_polymorphic(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word,
         _hint: (u32, u16)) -> Option<()> { None }
+    /// The VM's Math call of `callee` on the first `count` of `arguments` (`CallOut`'s Math
+    /// function of Numbers, `number::math_inline_call`), which runs no guest code: the value, or
+    /// `None` where the call is not one the frame computes in place. The callee's identity is
+    /// the VM's, read from the function record, so no row names the native.
+    #[inline(always)]
+    fn math_call(&mut self, _stage: &mut S, _callee: S::Word, _arguments: [S::Word; 2], _count: usize) -> Option<S::Word> { None }
+
+    /// The VM's own-field store of `value` to `atom` on `this` through `site`, the store a read
+    /// that stores its value to `this` makes after the read (`primary_own_field_store_hit`
+    /// without widening); `None` leaves the store to the general path.
+    #[inline(always)]
+    fn sink_store(&mut self, _stage: &mut S, _atom: u32, _site: u16, _value: S::Word) -> Option<()> { None }
 
     /// The VM's own-field store hit of `value`, of type `fact`, through the slot the entry bound
     /// for `site`, which a frame that bound one stores into inline first (a value its writes
@@ -454,6 +502,12 @@ pub(super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
         FieldPlan::Host { atom, site } => frame.field_probe(stage, owner, object, atom, site, miss),
         FieldPlan::Geometry { atom } => frame.geometry_read(stage, object, atom, miss),
         FieldPlan::Length => frame.length_read(stage, object, miss),
+        FieldPlan::Entry(kind) => frame.field_entry(stage, owner, object, kind, miss),
+        FieldPlan::Hinted { ops, entry } => frame.entried(stage, owner, object, entry, miss, |stage, frame, miss| {
+            let at = frame.receiver_record(stage, owner, object, readable, miss)?;
+            let records = frame.object_records(stage);
+            run_owned(stage, frame, (owner, !readable), ops, (at, records), miss)
+        }),
     }
 }
 
