@@ -20,7 +20,7 @@ impl<H: Host> Vm<H> {
         match crate::staged::step(&mut Concrete::new(std::ptr::null()), &mut frame, row) {
             Step::Value(_) => Ok(StepResult::Continue),
             Step::Control(HostControl::Suspend(suspending)) => Ok(suspended_step(suspending, pc)),
-            Step::Control(HostControl::Edge(_)) => unreachable!("a suspension row takes no edge"),
+            Step::Control(HostControl::Edge) => unreachable!("a suspension row takes no edge"),
             Step::Unresolved => Err(frame.raised.expect("a suspension left to the VM raised")),
         }
     }

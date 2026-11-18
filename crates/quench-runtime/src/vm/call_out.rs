@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::bytecode::{Operand, Register, WideInstruction};
-use crate::staged::{CallOut, Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
+use crate::staged::{CallOut, Concrete, Constant, Frame, GlobalFrame, NoPlans, NumericFrame, OperandValues, Operation, PropertyFrame, Protocol, Step};
 
 /// What the global-name rows did in a test: the call-outs that ran, and the direct global stores
 /// and typeofs the lane specializer emitted instead of one.
@@ -245,10 +245,10 @@ pub(super) struct HostFrame<'a, H: Host> {
     pub(super) raised: Option<JsError>,
 }
 
-/// Where a row on the interpreter's frame sends control: an edge, or a suspension of the running
-/// activation (`Vm::staged_suspend`).
+/// Where a row on the interpreter's frame sends control: an edge, which no call-out row takes
+/// (its runner reads none), or a suspension of the running activation (`Vm::staged_suspend`).
 pub(super) enum HostControl {
-    Edge(Edge),
+    Edge,
     Suspend(crate::staged::Suspending<u64>),
 }
 
@@ -276,11 +276,9 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn truthiness(&mut self, _stage: &mut Concrete, _register: Register) -> Option<bool> { None }
 
-    fn branch(&mut self, _stage: &mut Concrete, condition: bool) -> HostControl {
-        HostControl::Edge(if condition { Edge::Target } else { Edge::Following })
-    }
+    fn branch(&mut self, _stage: &mut Concrete, _condition: bool) -> HostControl { HostControl::Edge }
 
-    fn jump(&mut self, _stage: &mut Concrete) -> HostControl { HostControl::Edge(Edge::Target) }
+    fn jump(&mut self, _stage: &mut Concrete) -> HostControl { HostControl::Edge }
 
     fn boolean(&mut self, _stage: &mut Concrete, condition: bool) -> (u64, ()) {
         (Value::boolean(condition).to_bits(), ())
