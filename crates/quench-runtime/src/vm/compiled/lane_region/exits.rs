@@ -111,7 +111,24 @@ impl Lowering<'_, '_> {
             for index in registers.iter() {
                 let bits = match representation {
                     Representation::Tagged => self.builder.use_var(self.registers.tagged[index]),
-                    _ => super::number_domains::box_unboxed(&mut self.builder, &mut self.registers, representation, index),
+                    Representation::Int32 => super::number_domains::box_unboxed(&mut self.builder, &mut self.registers, representation, index),
+                    // A double boxes out of line: the leave is cold, and the inline encoding
+                    // makes two blocks and fifteen instructions per register.
+                    _ => {
+                        let number = match representation {
+                            Representation::Int64 => {
+                                let variable = super::frame::register_long(&mut self.builder, &mut self.registers, index);
+                                let word = self.builder.use_var(variable);
+                                super::object_slots::emit(&mut self.builder).raw_unary(crate::staged::machine::Unary::FromSigned(crate::staged::machine::Lane::F64), word)
+                            }
+                            _ => {
+                                let variable = super::frame::register_float(&mut self.builder, &mut self.registers, index);
+                                self.builder.use_var(variable)
+                            }
+                        };
+                        let bits = super::object_slots::emit(&mut self.builder).raw_unary(crate::staged::machine::Unary::Bitcast(crate::staged::machine::Lane::I64), number);
+                        self.helper_call(LaneHelper::BoxNumber, &[bits])
+                    }
                 };
                 self.store_word(regions::frame(), bits, self.registers_base, register_offset(index as Register));
             }
