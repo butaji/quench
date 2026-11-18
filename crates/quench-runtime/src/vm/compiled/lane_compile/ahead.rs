@@ -75,6 +75,18 @@ mod tests {
         assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
     }
 
+    /// A top-level call by name (`print(1 + 2)`) is the first record of the program body; its
+    /// ahead body must select the same operation the interpreter steps there.
+    #[test]
+    fn a_global_call_at_the_first_record_matches_the_interpreter() {
+        let source = "print(1 + 2);";
+        let program = crate::Engine::specialize(source, "ahead-call.js").unwrap();
+        let images = AheadImages::compile(&program);
+        let expected = output_with(source, None);
+        assert_eq!(expected, ["3"]);
+        assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
+    }
+
     #[test]
     fn ahead_images_serve_only_the_program_they_were_compiled_from() {
         let program = crate::Engine::specialize("function add(a,b){return a+b;}", "ahead-a.js").unwrap();

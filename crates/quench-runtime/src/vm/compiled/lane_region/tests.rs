@@ -1,3 +1,4 @@
+use cranelift_codegen::ir::condcodes::FloatCC;
 #[test]
 fn call_effect_retires_nullable_shapes_without_losing_null_alternatives() {
     use super::*;

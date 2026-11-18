@@ -14,9 +14,9 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 mod select;
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 pub(super) mod relocatable_code;
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 pub(super) mod symbol_words;
 mod worker;
 pub(super) use worker::{Pending, run_in_background};
@@ -66,7 +66,7 @@ impl CodePublication {
 /// compiles a body at a fraction of the cost (no mid-end optimization, one-pass register
 /// allocation) for code that has not proven itself hot. A caller chooses per compile; every
 /// compile uses `Optimized` until a tier policy asks otherwise.
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(super) enum CompileLevel {
     Quick,
@@ -77,7 +77,7 @@ pub(super) enum CompileLevel {
     Optimized,
 }
 
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 impl CompileLevel {
     /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
     /// `quick-compile` experiment measures that level.
@@ -86,6 +86,7 @@ impl CompileLevel {
     }
 
     /// The Cranelift settings a level fixes, applied after the publication's.
+    #[cfg(any(feature = "jit", feature = "aot"))]
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
             Self::Quick => &[("opt_level", "none")],
@@ -104,11 +105,12 @@ impl CompileLevel {
 /// 2026-11-10: 91981 instructions against 69653 with the backtracking allocator; richards +34%,
 /// delta-blue +12% in lane mode, other six V8-v7 tests within noise; peak RSS +30% on the two
 /// largest bodies' tests). `unwind_info=false` measured nothing.
+#[cfg(feature = "jit")]
 const JS_JIT_OPT_LEVEL: &str = "speed";
 
 /// Declares the symbol `(namespace, key)` in `function`, a relocation the loader patches: the
 /// one form every position-independent constant takes (stencil holes, `lane_region::relocs`).
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, namespace: u32, key: u32) -> cranelift_codegen::ir::GlobalValue {
     use cranelift_codegen::ir;
     let name = function.declare_imported_user_function(ir::UserExternalName::new(namespace, key));
@@ -121,7 +123,7 @@ pub(super) fn declare_symbol(function: &mut cranelift_codegen::ir::Function, nam
 }
 
 /// The address of symbol `(namespace, key)`, as a 64-bit value built at `builder`.
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
     use crate::staged::machine::MachineAccess;
     let symbol = declare_symbol(builder.func, namespace, key);
@@ -129,7 +131,7 @@ pub(super) fn symbol_address(builder: &mut cranelift_frontend::FunctionBuilder<'
 }
 
 /// The address of symbol `(namespace, key)` as a 64-bit value built at `cursor`.
-#[cfg(any(feature = "jit", feature = "aot"))]
+#[cfg(any(feature = "jit", feature = "aot", feature = "native-execution"))]
 pub(super) fn symbol_in(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, namespace: u32, key: u32) -> cranelift_codegen::ir::Value {
     use cranelift_codegen::ir::{InstBuilder, types};
     let symbol = declare_symbol(cursor.func, namespace, key);
@@ -165,6 +167,11 @@ pub(super) fn target_isa_for(
 pub(super) fn target_isa_level(level: CompileLevel) -> Option<Arc<TargetIsa>> {
     target_isa_with(JS_JIT_OPT_LEVEL, CodePublication::ExecutableMemory, level)
 }
+
+/// No executable-memory code generator is linked without a JIT, so no ISA answers: an image
+/// compile in such a build is refused where it would publish.
+#[cfg(not(feature = "jit"))]
+pub(super) fn target_isa_level(_level: CompileLevel) -> Option<Arc<TargetIsa>> { None }
 
 #[cfg(any(feature = "jit", feature = "aot"))]
 fn target_isa_with(

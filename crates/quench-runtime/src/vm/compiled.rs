@@ -4694,7 +4694,10 @@ unsafe fn js_semantic_callout<H: Host, const SINGLE_OPERATION: bool, const OPCOD
                 packed.op()
             };
             if selected.opcode != source_opcode {
-                return Err(JsError::validation("native semantic opcode does not match instruction".into()));
+                let source = program.source_text().map(|text| text.chars().take(60).collect::<String>()).unwrap_or_default();
+                return Err(JsError::validation(format!(
+                    "native semantic opcode does not match instruction: pc {pc} selects opcode {} but the program writes opcode {} (program {} {:?})",
+                    selected.opcode as u16, source_opcode as u16, dispatch.program_id.raw(), source)));
             }
             if arguments.is_null() {
                 return Err(JsError::validation("native semantic operands are missing".into()));
@@ -10615,7 +10618,7 @@ mod tests {
     }
 
     #[cfg(feature = "aot")]
-    fn partitioned_native_graph(vm: &Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, crate::NativeJsFunctionEntry) {
+    fn partitioned_native_graph(vm: &mut Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, crate::NativeJsFunctionEntry) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
         let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap(), backend: crate::NativeJsBackend::Cranelift };
         let native = crate::NativeJsProgram::compile_eager_with_options((*program).clone(), options).unwrap();
@@ -10981,7 +10984,7 @@ mod tests {
     #[test]
     fn native_host_script_rejects_atom_remapping_before_effects() {
         let (native, counts, _) = linked_test_program("globalThis.nativeEffect = 42;", false);
-        let vm = semantic_vm("globalThis.differentNamespace = 0;");
+        let mut vm = semantic_vm("globalThis.differentNamespace = 0;");
         let error = match vm.prepare_native_script(native) {
             Ok(_) => panic!("incompatible native atoms were accepted"),
             Err(error) => error,
@@ -11375,7 +11378,7 @@ mod tests {
     fn native_semantic_graph_rejects_full_width_invalid_resume_pc_before_effects() {
         let mut vm = semantic_vm("globalThis.effect = 1;");
         let (_memory, entry, _operands) = live_native_graph(&vm);
-        let (_prepared, partitioned) = partitioned_native_graph(&vm);
+        let (_prepared, partitioned) = partitioned_native_graph(&mut vm);
         let invalid = (u64::from(u32::MAX) + 1) as usize;
         for entry in [entry, partitioned] {
             let (status, word, outcome) = with_semantic_context(&mut vm, invalid, |context, result| {
@@ -11399,7 +11402,7 @@ mod tests {
         ).unwrap();
         let mut vm = semantic_program(program);
         let (_memory, entry, _operands) = live_native_graph(&vm);
-        let (_prepared, partitioned) = partitioned_native_graph(&vm);
+        let (_prepared, partitioned) = partitioned_native_graph(&mut vm);
         for entry in [entry, partitioned] {
             let (status, _, outcome) = with_semantic_context(&mut vm, 0, |context, result| {
                 // SAFETY: the rooted frame, entries and operands live through the call.
@@ -11444,7 +11447,7 @@ mod tests {
             let (status, _, outcome) = invoke_semantic(&mut vm, pc, entry);
             assert_eq!(status, 1);
             assert!(outcome.unwrap().result.is_err());
-            assert_eq!(vm.frames[0].registers, before);
+            assert_eq!(&*vm.frames[0].registers, &*before);
         }
     }
 
