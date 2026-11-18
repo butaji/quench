@@ -341,8 +341,10 @@ pub(super) fn lane_step_array_iteration_in_place<H: Host>(cx: *mut LaneContext<H
         lane_apply_array_step(cx, mapped)
     };
     let depth = vm.lane_stack.activation_count() - 1;
+    // The re-entry's admission is the callback family's depth row
+    // (`staged::call_callback::admit_depth`); the window is the one its return left.
     if applied.is_none()
-        && depth < vm.lane_stack.activation_limit.get()
+        && crate::staged::call_callback::concrete_below(depth as u64, vm.lane_stack.activation_limit.get() as u64)
         && let Some(index) = step.iteration.advance()
     {
         let receiver = step.iteration.receiver;

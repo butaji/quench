@@ -77,7 +77,9 @@ pub(super) fn lane_store_setter<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
 #[inline(always)]
 pub(super) fn completed_value<H: Host>(vm: &Vm<H>, activation: &Activation, completion: Completion, this: Value, value: Value) -> Value {
     match completion {
-        completion if completion.constructs() && !vm.is_object_like(value) => this,
+        // The construct family's completion row (`staged::call_construct::construct_value`).
+        completion if completion.constructs() =>
+            Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), vm.is_object_like(value))),
         // SAFETY: the call record belongs to the caller's live view.
         Completion::Assigns | Completion::AssignsTrapped => activation.caller_registers().get(unsafe { (*activation.call()).a }),
         _ => value,
@@ -118,7 +120,9 @@ impl<H: Host> Vm<H> {
     /// receiver it allocated; a setter's store the value stored, which the register holds.
     pub(in crate::vm) fn completed_call_value(&self, completion: &CallCompletion, caller: usize, destination: crate::bytecode::Register, value: Value) -> Value {
         match completion {
-            CallCompletion::Constructor(this) if !self.is_object_like(value) => *this,
+            // The construct family's completion row (`staged::call_construct::construct_value`).
+            CallCompletion::Constructor(this) =>
+                Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), self.is_object_like(value))),
             CallCompletion::Assigned | CallCompletion::Trapped(TrapCheck { access: TrapAccess::Store | TrapAccess::StrictStore, .. }) => self.read(caller, destination),
             CallCompletion::WasmExport(result) => self.wasm_export_result(value, *result),
             _ => value,

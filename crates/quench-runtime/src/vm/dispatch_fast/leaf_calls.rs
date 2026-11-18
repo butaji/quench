@@ -65,24 +65,12 @@ script_handler! {
             copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), ARGC);
             Registers(registers)
         };
-        if leaf_binds_this(LEAF) {
-            registers.set_this(this);
-        }
         // SAFETY: the program store keeps a derived view alive with its program; the tier
         // claims no leaf's view, so its activation starts at its first record.
         let base = unsafe { (*target.view).records() };
+        // SAFETY: the running lane's context; the window is the callee's.
         unsafe {
-            let leaf = &mut (*cx).leaf;
-            leaf.call = ip;
-            (leaf.form, leaf.argc) = (LEAF, ARGC);
-            leaf.caller_registers = r;
-            leaf.caller_base = (*cx).base;
-            leaf.target = target;
-            leaf.caller_program = None;
-            if leaf_swaps_env(LEAF) {
-                registers.set_env(target.env);
-                registers.set_capture(target.capture);
-            }
+            lane_enter_leaf(cx, registers, ip, r, target, LEAF, ARGC, this, None);
             (*cx).registers = registers;
             (*cx).base = base;
         }
@@ -137,12 +125,57 @@ pub(super) fn leaf_call_handler<H: Host>(entry: CallEntry, i: &LaneInstruction) 
 /// Whether `lane_direct_call_this` binds `receiver` for `target`, without the binding: any
 /// binding but a sloppy function's, and its of an object in the direct record table, `null`
 /// or `undefined`, the commonest receiver of a plain call, tested first.
+/// The staged row (`call_leaf::guard_receiver_binds`) on machine words.
 #[inline(always)]
 fn lane_binds_directly(target: &ScriptCallTarget, receiver: Value) -> bool {
-    target.this_binding != ThisBinding::Sloppy
-        || receiver.is_undefined()
-        || receiver.is_direct_object_family()
-        || receiver.is_null()
+    crate::staged::call_leaf::guard_receiver_binds(
+        &mut crate::staged::Concrete::new(std::ptr::null()), receiver.to_bits(), target.this_binding == ThisBinding::Sloppy, (),
+    )
+    .is_some()
+}
+
+/// Make the call record `call` of `caller`'s registers the running leaf of `target` in `form`
+/// with `argc` values on `window` (`LaneContext::leaf`): the staged leaf row
+/// (`call_leaf::enter_leaf`) on machine words writes the leaf record and the window's context
+/// words its form makes the callee's (`this` where it binds its receiver, the target's
+/// environment and captures where it swaps them); `caller_program` is the program a crossing
+/// leaf's return enters again. The context's registers and records stay the caller's.
+///
+/// # Safety
+/// `cx` is the running lane's context, and `window` the callee's window with its context words
+/// below it.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(super) unsafe fn lane_enter_leaf<H: Host>(
+    cx: *mut LaneContext<H>,
+    window: Registers,
+    call: Ip,
+    caller: Registers,
+    target: &ScriptCallTarget,
+    form: LeafForm,
+    argc: u16,
+    this: Value,
+    caller_program: Option<ProgramId>,
+) {
+    use crate::staged::call_leaf::{enter_leaf, LeafContext, LeafEntry};
+    // SAFETY: the function's contract.
+    unsafe {
+        let entry = LeafEntry {
+            call: call.expose_provenance() as u64,
+            caller_registers: caller.0.expose_provenance() as u64,
+            caller_base: (*cx).base.expose_provenance() as u64,
+            target: std::ptr::from_ref(target).expose_provenance() as u64,
+            argc: u64::from(argc),
+            form,
+        };
+        let context = LeafContext { this: this.to_bits(), env: target.env.to_bits(), capture: target.capture.expose_provenance() as u64 };
+        let leaf = std::ptr::addr_of_mut!((*cx).leaf);
+        enter_leaf(
+            &mut crate::staged::Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, window.0.expose_provenance() as u64,
+            entry, context,
+        );
+        (*leaf).caller_program = caller_program;
+    }
 }
 
 /// The return of the running leaf with `value` (`LaneContext::leaf`): the caller's registers,
@@ -151,24 +184,27 @@ fn lane_binds_directly(target: &ScriptCallTarget, receiver: Value) -> bool {
 #[inline(always)]
 pub(super) fn lane_complete_leaf<H: Host>(cx: *mut LaneContext<H>, value: Value, form: LeafForm) -> Option<(Registers, Ip)> {
     // SAFETY: the running lane's context.
-    let leaf = unsafe { &mut (*cx).leaf };
-    if leaf.call.is_null() {
-        return None;
-    }
-    let call = std::mem::replace(&mut leaf.call, std::ptr::null());
-    let caller = leaf.caller_registers;
-    if let Some(program) = leaf.caller_program.take() {
+    let leaf = unsafe { std::ptr::addr_of_mut!((*cx).leaf) };
+    // The staged row (`call_leaf::complete_leaf`) on machine words: the caller, the call word
+    // cleared; `None` while no leaf runs.
+    let caller = crate::staged::call_leaf::complete_leaf(
+        &mut crate::staged::Concrete::new(std::ptr::null()), leaf.expose_provenance() as u64, (),
+    )?;
+    let call: Ip = std::ptr::with_exposed_provenance(caller.call as usize);
+    let registers = Registers(std::ptr::with_exposed_provenance_mut(caller.registers as usize));
+    let base: Ip = std::ptr::with_exposed_provenance(caller.base as usize);
+    if let Some(program) = unsafe { (*leaf).caller_program.take() } {
         std::hint::cold_path();
         lane_enter_program(cx, program);
     }
     // SAFETY: the call record belongs to the caller's live view; the target stays cached.
     unsafe {
-        debug_assert!(leaf.form == form);
-        (*cx).registers = caller;
-        (*cx).base = leaf.caller_base;
-        caller.set((*call).a & crate::bytecode::REGISTER_MASK, value);
+        debug_assert!((*leaf).form == form);
+        (*cx).registers = registers;
+        (*cx).base = base;
+        registers.set((*call).a & crate::bytecode::REGISTER_MASK, value);
     }
-    Some((caller, following(call)))
+    Some((registers, following(call)))
 }
 
 /// `lane_materialize_leaf` of the running leaf, if one runs: where a leaf's records reach
@@ -223,24 +259,12 @@ pub(super) fn lane_cross_leaf_call<H: Host>(
         copy_arguments(registers, r.0.add(usize::from(ImmediateLayout::call_window_base(i.imm()))), argc);
         Registers(registers)
     };
-    if leaf_binds_this(form) {
-        registers.set_this(this);
-    }
     // SAFETY: as `lane_script_call_leaf`'s first record.
     let base = unsafe { (*target.view).records() };
+    // SAFETY: as `lane_script_call_leaf`'s leaf.
     unsafe {
         let caller_program = (*cx).program;
-        let leaf = &mut (*cx).leaf;
-        leaf.call = ip;
-        (leaf.form, leaf.argc) = (form, argc);
-        leaf.caller_registers = r;
-        leaf.caller_base = (*cx).base;
-        leaf.target = target;
-        leaf.caller_program = Some(caller_program);
-        if leaf_swaps_env(form) {
-            registers.set_env(target.env);
-            registers.set_capture(target.capture);
-        }
+        lane_enter_leaf(cx, registers, ip, r, target, form, argc, this, Some(caller_program));
         lane_enter_program(cx, target.program());
         (*cx).registers = registers;
         (*cx).base = base;

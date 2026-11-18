@@ -265,8 +265,10 @@ fn body_construct<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, moved: &mut
 /// Whether the lane admits a body's construction: it activates script calls and constructs in
 /// place, no construction or `with` scope is open, and no collection is due.
 fn construct_admitted<H: Host>(cx: *mut LaneContext<H>, vm: &Vm<H>) -> Result<(), u64> {
-    if !unsafe { (*cx).script_calls && (*cx).script_constructs } { return Err(miss(vm, Miss::NoScriptCalls)); }
-    if vm.construct_target.is_some() { return Err(miss(vm, Miss::Busy)); }
+    if !crate::staged::call_construct::concrete_admits_construct_run(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }) {
+        return Err(miss(vm, Miss::NoScriptCalls));
+    }
+    if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) { return Err(miss(vm, Miss::Busy)); }
     if vm.with_scope_entered { return Err(miss(vm, Miss::WithScope)); }
     if vm.heap.should_collect() { return Err(miss(vm, Miss::Busy)); }
     Ok(())

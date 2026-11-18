@@ -16,7 +16,6 @@
 <catalog> unstaged:DefinePrivateField 1
 <catalog> unstaged:DefinePropertyRecord 1
 <catalog> unstaged:DeleteName 1
-<catalog> unstaged:GetAsyncIterator 1
 <catalog> unstaged:InitializeTdz 1
 <catalog> unstaged:InitializeThis 1
 <catalog> unstaged:IteratorCleanupPop 1

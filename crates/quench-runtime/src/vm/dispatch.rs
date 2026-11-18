@@ -907,7 +907,8 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_b()),
                 self.read(f, i.register_c()),
             )?,
-            Op::ToPropertyKey | Op::GetIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart | Op::Delete => {
+            Op::ToPropertyKey | Op::GetIterator | Op::GetAsyncIterator | Op::IteratorClose | Op::AppendArray | Op::ForInStart
+            | Op::Delete => {
                 self.staged_value_step(p, super::call_out::CallSite { owner: VarOwner::Frame(f), function: self.frames[f].function, resume: *pc }, i)?;
             }
             Op::RequireObjectCoercible => {
@@ -949,10 +950,6 @@ impl<H: Host> Vm<H> {
                 *self
                     .owner_binding_mut(p, VarOwner::Frame(f), slot)
                     .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
-            }
-            Op::GetAsyncIterator => {
-                let value = self.get_async_iterator(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), value);
             }
             Op::Await => {
                 // Promise conversion is part of this instruction, so abrupt

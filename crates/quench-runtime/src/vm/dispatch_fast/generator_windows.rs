@@ -84,7 +84,7 @@ pub(super) fn lane_resume_generator_step<H: Host>(
     method: Value,
     generator: Value,
 ) -> Option<(Registers, Ip)> {
-    if i.a & crate::bytecode::RETURN_REGISTER != 0 {
+    if !crate::staged::call_iteration::resumes_at_site(i.a) {
         return None;
     }
     lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, Completion::Generates)
@@ -179,7 +179,7 @@ fn lane_resume_generator<H: Host>(
     let code = unsafe { &*(*cx).code };
     let (frame, environment) = vm.generator_window_frame(generator, code)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
-    let depth = Some(vm.lane_stack.activation_count()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
+    let depth = crate::staged::call_iteration::concrete_admit_resume(vm.lane_stack.activation_count(), vm.lane_stack.activation_limit.get())?;
     // SAFETY: the record holds the frame, which nothing moves before the resume below.
     let plan = window_plan(vm, code, unsafe { &*std::ptr::from_ref(frame) }, environment)?;
     let WindowPlan { view, parent, locals, capture, .. } = plan;

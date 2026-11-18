@@ -978,6 +978,8 @@ impl<H: Host> Vm<H> {
         let generation_key = (self.heap.collection_epoch(), self.realm.globals);
         self.lane_stack.retire_after_collection(generation_key);
         super::dispatch_fast::retire_running_lane_context();
+        // Records keeping a root slot's value read the slot again (`lane_load_root_constant`).
+        self.retire_root_constants();
         self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
         self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));

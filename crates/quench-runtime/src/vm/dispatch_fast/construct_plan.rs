@@ -338,7 +338,7 @@ pub(super) fn planned_construction<H: Host>(vm: &mut Vm<H>, callee: Value, argum
 pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -> bool {
     if !crate::DYNAMIC_EXECUTION_ENABLED { return false; }
     let cx = context.cast::<LaneContext<H>>();
-    unsafe { (*cx).script_calls && (*cx).script_constructs }
+    crate::staged::call_construct::concrete_admits_construct_run(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs })
 }
 
 /// A lane body's `new callee(...)` of the `argc` arguments at `arguments`, in `code`, the
@@ -350,7 +350,7 @@ pub(in crate::vm) unsafe fn lane_context_constructs<H: Host>(context: *mut ()) -
 /// # Safety
 /// `arguments` are the body's `argc` registers.
 pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, callee: Value, arguments: *const Value, argc: u16) -> Option<Value> {
-    if vm.construct_target.is_some() || vm.heap.should_collect() {
+    if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() {
         return None;
     }
     // SAFETY: the caller passes the body's argument registers.
@@ -368,7 +368,7 @@ pub(in crate::vm) unsafe fn lane_body_construction<H: Host>(vm: &mut Vm<H>, code
 /// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
 /// the body to its helper path before any effect.
 pub(in crate::vm) fn lane_body_receiver<H: Host>(vm: &mut Vm<H>, callee: Value) -> Option<Value> {
-    if vm.construct_target.is_some() || vm.heap.should_collect() || vm.with_scope_entered {
+    if !crate::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.heap.should_collect() || vm.with_scope_entered {
         return None;
     }
     let index = holding_construct_plan_index(vm, callee)?;

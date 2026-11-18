@@ -7796,7 +7796,7 @@ impl<H: Host> Vm<H> {
         outcome: super::FrameOutcome) -> Result<super::StepResult, JsError> {
         let outcome = match outcome {
             super::FrameOutcome::ConstructComplete { value, this } =>
-                super::FrameOutcome::Complete(if self.is_object_like(value) { value } else { this }),
+                super::FrameOutcome::Complete(Value::from_bits(crate::staged::call_construct::concrete_construct_value(value.to_bits(), this.to_bits(), self.is_object_like(value)))),
             outcome => outcome,
         };
         match outcome {

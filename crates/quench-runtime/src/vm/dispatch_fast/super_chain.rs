@@ -172,7 +172,7 @@ pub(super) fn lane_super_construction<H: Host>(
     callee: Value,
 ) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.construct_target.is_some() {
+    if !crate::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
         return None;
     }
     if let Some(this) = holding_construct_plan(vm, callee)

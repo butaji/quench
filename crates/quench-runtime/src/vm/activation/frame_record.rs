@@ -10,7 +10,7 @@ use crate::compile::liveness::RegisterSet;
 use crate::snapshot::{Reader, Snap, SnapshotResult, Writer};
 use crate::heap::EnvironmentSlots;
 use crate::vm::compiled::ShadowFrame;
-use crate::vm::dispatch_fast::{WINDOW_CAPTURED, WINDOW_ENVIRONMENT, WINDOW_LOCALS, WINDOW_SLOTS, WINDOW_STORAGE};
+use crate::vm::dispatch_fast::{WINDOW_ENVIRONMENT, WINDOW_LOCALS};
 use crate::vm::program_store::ProgramId;
 use crate::vm::register_file::RegisterFile;
 use crate::vm::{ActiveIterator, CaptureCache, Frame};
@@ -121,16 +121,16 @@ impl FrameRecord {
         // nothing else reads or writes while a window runs the frame.
         unsafe {
             let entries = self.registers.as_mut_ptr().add(count);
-            let (environment, slots) = match own_slots {
-                Some(slots) => (self.env, slots),
-                None => (
-                    Value::DELETED,
-                    EnvironmentSlots::lay_out_in_place(entries.add(usize::from(WINDOW_STORAGE)), self.locals.len()),
+            match own_slots {
+                None => crate::staged::call_environment::lay_out_entries(
+                    &mut crate::staged::Concrete::new(std::ptr::null()),
+                    entries.expose_provenance() as u64, captured, self.locals.len() as u16,
                 ),
-            };
-            entries.add(usize::from(WINDOW_ENVIRONMENT)).write(environment);
-            entries.add(usize::from(WINDOW_SLOTS)).write(std::mem::transmute::<u64, Value>(slots as u64));
-            entries.add(usize::from(WINDOW_CAPTURED)).write(std::mem::transmute::<u64, Value>(captured));
+                Some(slots) => crate::staged::call_environment::write_entries(
+                    &mut crate::staged::Concrete::new(std::ptr::null()),
+                    entries.expose_provenance() as u64, self.env.to_bits(), slots.expose_provenance() as u64, captured,
+                ),
+            }
             entries.add(usize::from(WINDOW_LOCALS)).copy_from_nonoverlapping(self.locals.as_ptr(), self.locals.len());
         }
         self.environment_window = true;

@@ -223,8 +223,11 @@ pub(super) fn lane_end_body_callee<H: Host>(cx: *mut LaneContext<H>, value: Valu
 #[inline(always)]
 pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
-    let top: *const Activation = &vm.lane_stack.activations()[depth];
+    // One spill, then the records alone: no plain frame stays above them, so their length is
+    // the activation count.
+    let records = vm.lane_stack.activations_mut();
+    let depth = records.len().checked_sub(1)?;
+    let top: *const Activation = &records[depth];
     // SAFETY: `top` is the innermost activation, which nothing else accesses.
     if !matches!(unsafe { (*top).kind() }, ActivationKind::Script(script) if script.completion == Completion::ReturnsToNative) {
         return None;
@@ -232,7 +235,7 @@ pub(super) fn lane_complete_native_callback<H: Host>(cx: *mut LaneContext<H>, va
     // SAFETY: a script activation holds no drop glue and no Wasm storage
     // (`Activation::frame_storage_bytes`); its slot stays as it is, unread by the stack, until
     // the next push, so it is read in place, as `lane_return_from` reads a plain one.
-    unsafe { vm.lane_stack.activations_mut().set_len(depth) };
+    unsafe { records.set_len(depth) };
     vm.lane_stack.drop_owned_from(depth);
     let activation = unsafe { &*top };
     lane_restore_caller(cx, activation);
