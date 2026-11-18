@@ -204,6 +204,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
+        frame.reserve_suspension_window(function);
         frame.prepare_registers(function.registers, function.initial_register);
         frame.initialize_promoted_registers(function, args);
         if function.parameter_end_pc != 0 {
