@@ -15961,6 +15961,7 @@ impl<H: Host> Vm<H> {
             Native::MapSet if self.map_set(receiver, args) => Some(receiver),
             Native::ArrayIsArray => self.steady_is_array(first.unwrap_or(Value::UNDEFINED)).map(Value::boolean),
             Native::JsonStringify => self.json_stringify_plain_call(args),
+            Native::DateNow => Some(self.date_now()),
             _ => None,
         }
     }

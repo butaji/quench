@@ -995,11 +995,7 @@ impl<H: Host> Vm<H> {
             | Native::IntlDateTimeFormatResolvedOptions => {
                 self.intl_date_time_format_native(p, native, this, args)
             }
-            Native::DateNow => Ok(Value::number(
-                HostContext::new(&mut self.host)
-                    .invoke(CapabilityId::ClockMillis, None)
-                    .trunc(),
-            )),
+            Native::DateNow => Ok(self.date_now()),
             Native::DateGetTime
             | Native::DateValueOf
             | Native::DateGetTimezoneOffset
@@ -1934,6 +1930,12 @@ impl<H: Host> Vm<H> {
     pub(super) fn bigint_binary_value(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         let value = self.bigint_operation(op, left, right)?.ok()?;
         Some(self.heap.alloc_bigint(value))
+    }
+
+    /// `Date.now()`: the host clock's milliseconds, truncated. It runs no guest code, so the
+    /// lane answers it in place (`steady_native_value`) as the native call does.
+    pub(super) fn date_now(&mut self) -> Value {
+        Value::number(HostContext::new(&mut self.host).invoke(CapabilityId::ClockMillis, None).trunc())
     }
 
     /// A relational operator (`<`, `<=`, `>`, `>=`) of two strings: IsLessThan orders them by

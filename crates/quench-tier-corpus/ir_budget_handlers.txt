@@ -93,36 +93,17 @@ cmp_int 25.0 lane_inc_dec_loop<false, 4, true>
 cmp_int 12.0 lane_operator_integer_constant<19>
 cmp_int 9.5 lane_jump_binary_false_small<false, 6, false>
 cmp_int 7.5 lane_inc_dec<false>
-date_now 135.0 lane_call_native
-date_now 115.0 Vm::as_native_activation<quench_runtime::value::Value, <quench_runtime::vm::Vm>::call_native_guarded::{closure#0}>
-date_now 86.0 Vm::call_native
 date_now 63.0 lane_native_call
 date_now 59.0 lane_get_field_own_cell
-date_now 57.0 Vm::call_native_table
-date_now 55.0 lane_native_value
-date_now 36.0 Timespec::sub_timespec
+date_now 51.0 lane_native_value
+date_now 50.0 Vm::in_place_native_value
 date_now 35.0 lane_operator_integer_constant_numbers<19>
-date_now 34.0 unix_millis
-date_now 28.0 Vm::call_native_dispatch
+date_now 30.0 unix_millis
 date_now 28.0 lane_load_name_bound<0, 2>
-date_now 27.0 CallArguments::from_slice
 date_now 25.0 lane_inc_dec_loop<false, 4, true>
-date_now 23.0 Vm::in_place_native_value
-date_now 21.0 Vm::materialize_lane_activations
-date_now 19.0 SystemTime::duration_since
-date_now 16.0 Timespec::now
 date_now 15.0 lane_operator_int32<8, false>
 date_now 15.0 trunc
-date_now 13.0 Native::is_host_control_native
-date_now 13.0 Vm::string_method_receiver
-date_now 13.0 __memcpy_avx_unaligned_erms
-date_now 11.0 Native::runs_from_lane
 date_now 11.0 clock_gettime@@GLIBC_2.17
-date_now 7.0 Native::is_math_function
-date_now 7.0 StackGuard::drop
-date_now 5.0 CallArguments::as_slice
-date_now 5.0 LaneRoot::frame
-date_now 2.0 SystemTime::now
 date_now 1.0 SystemHost::clock_millis
 dbl_add 25.0 lane_inc_dec_loop<false, 4, true>
 dbl_add 21.2 lane_operator_double_constant<8>
@@ -884,7 +865,6 @@ str_concat 1.1 RecordSpace::load_free_word
 str_concat 0.9 RecordSpace::claim_slow
 str_concat 0.6 RecordSpace::prepare_minor
 str_concat -0.5 __rust_dealloc
-str_concat -0.6 Stealer::steal
 str_concat -0.6 ParallelShapeTrace::live_shapes
 str_concat -0.7 EnvironmentTrace::whole
 str_concat -1.0 Vec::from_iter
