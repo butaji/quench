@@ -1330,8 +1330,14 @@ pub(super) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
     isa: &dyn cranelift_codegen::isa::TargetIsa, (header, backedge): (u32, u32)) -> Result<usize, String> {
     use super::specializer::Specializer;
     let function = program.function_get(function_id as usize).ok_or("no such function")?;
-    let decoded: Vec<_> = function.code.iter().map(|&packed| super::dispatch_fast::decoded_instruction(function, packed)).collect();
-    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
+    // The analysis inputs the runtime's loop site builds (`lane_method_call_region`): the
+    // function's decoded records, the materialized constant pool, the program's field sites and
+    // the function's liveness, with calls left at their PCs.
+    let decoded: Vec<_> = function.instructions().collect();
+    let constants: Vec<Value> = program.constants.iter()
+        .map(|constant| super::compiled::facts::immediate(constant).unwrap_or(Value::UNDEFINED)).collect();
+    let region = osr_loop::region(function, &decoded, &constants, &program.field_sites,
+        program.shared_register_root_masks(function_id), header, backedge, osr_loop::MethodCalls::Exit)
         .map_err(|failure| format!("region rejected: {:?}", failure.reason))?;
     let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
         &|callee| program.function_get(callee as usize)).ok_or("no unit")?;
@@ -9125,10 +9131,6 @@ mod ahead_loop_tests {
     /// The loop a call-bearing top-level body runs is lowered ahead from static facts: the
     /// capability an ahead image needs to re-enter native code after a call.
     #[test]
-    #[ignore = "the synthetic analysis rejects the loop's `Binary` before admission; the runtime's \
-        `lane_method_call_region` feeds `analyze_osr_region_detailed` with `function.instructions()`, the \
-        materialized constant pool, `program.field_sites`, `shared_register_root_masks` and \
-        `MethodCalls::Exit`, which `lowered_ahead_loop` must derive from the program"]
     fn a_toplevel_loop_lowers_ahead_from_static_facts() {
         let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nfunction fib(n){return n<2?n:fib(n-1)+fib(n-2);}\nprint((loopfn(200000)+fib(20))|0);";
         let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
