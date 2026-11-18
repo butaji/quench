@@ -249,7 +249,7 @@ fn lane_array_complete<H: Host>(cx: *mut LaneContext<H>, ip: Ip, to_body: bool, 
     }
     let Some(value) = value else { return Resumed::Exit(exit(ip)) };
     unsafe { (*cx).registers }.set(i.a, value);
-    unsafe { vm(cx) }.lane_native_returned = Some(value);
+    unsafe { vm(cx) }.lane_completion.set(LaneCompletion::NativeReturned(value));
     Resumed::Exit(exit(ip))
 }
 

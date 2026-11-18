@@ -49,11 +49,47 @@ impl Lowering<'_, '_> {
     /// the wrapping int32 result: no overflow exit.
     fn int32_arithmetic(&mut self, state: &mut State, pc: usize, operands: Operands,
         (operation, exit): (NumberArithmetic, ir::Block)) {
-        let wrapping = self.ranges.overflow_free(pc)
-            || (operation.int32_projection_is_wrapping() && self.truncated(pc, operands.0));
+        let truncated = match operation {
+            NumberArithmetic::Add | NumberArithmetic::Subtract => self.truncated_through_sums(pc, operands.0),
+            NumberArithmetic::Multiply if self.truncated_through_sums(pc, operands.0) => {
+                if !self.small_int32_factor(operands.1) && !self.ranges.overflow_free(pc) {
+                    self.truncated_product(state, operands, exit);
+                    return;
+                }
+                true
+            }
+            _ => false,
+        };
+        let wrapping = self.ranges.overflow_free(pc) || truncated;
         let overflow = if wrapping { Overflow::Wrap } else { Overflow::Exit };
-        let zero = if self.ranges.ignores_negative_zero(pc) { NegativeZero::Ignore } else { NegativeZero::Exit };
+        // ToInt32 reads -0 as 0, the wrapping product's own zero.
+        let zero = if truncated || self.ranges.ignores_negative_zero(pc) { NegativeZero::Ignore } else { NegativeZero::Exit };
         self.arithmetic_step(state, (operands, operation), (Domain::Int32, overflow, zero), exit);
+    }
+
+    /// A product of int32 operands only whose ToInt32 is read (`truncated_through_sums`), neither
+    /// factor known small: the exact 64-bit product, whose low 32 bits are that ToInt32 while the
+    /// product's magnitude is under 2^52 (its double is then exact, and so are the chain's sums
+    /// of int32 constants). A larger product rounds as a double, and leaves.
+    fn truncated_product(&mut self, state: &mut State, (destination, [left, right]): Operands, exit: ir::Block) {
+        let left = self.operand_int(state, left, exit).expect("proved int32 operand");
+        let right = self.operand_int(state, right, exit).expect("proved int32 operand");
+        let builder = &mut self.builder;
+        let (left, right) = (builder.ins().sextend(types::I64, left), builder.ins().sextend(types::I64, right));
+        let product = builder.ins().imul(left, right);
+        let biased = builder.ins().iadd_imm_s(product, 1_i64 << 52);
+        let exact = builder.ins().icmp_imm_s(ir::condcodes::IntCC::UnsignedLessThan, biased, 1_i64 << 53);
+        emit_js_guard(builder, exact, exit);
+        let low = builder.ins().ireduce(types::I32, product);
+        self.set_int(state, destination, low);
+    }
+
+    /// Whether a product of int32 `operands` is exact in binary64: one is an int32 constant of
+    /// magnitude at most 2^21, so the product's magnitude is under 2^52 (`truncated_through_sums`).
+    fn small_int32_factor(&self, operands: [Operand; 2]) -> bool {
+        operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
+            && self.program.constants.get(usize::from(operand.payload())).and_then(super::super::facts::immediate)
+                .and_then(|value| value.as_int()).is_some_and(|factor| factor.unsigned_abs() <= 1 << 21))
     }
 
     /// The staged Number arithmetic of `operation` over `operands`, in a domain with its overflow

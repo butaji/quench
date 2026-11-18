@@ -117,7 +117,7 @@ fn direct_eval_in_window<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip,
     match result {
         Ok(value) => Some(value),
         Err(error) => {
-            vm.lane_raised = Some(error);
+            vm.lane_completion.raise(error);
             None
         }
     }

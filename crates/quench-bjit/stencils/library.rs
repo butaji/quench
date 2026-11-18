@@ -111,7 +111,7 @@ fn products(places: &Places, rows: &mut BTreeSet<Code>) {
     let bitwise: Vec<u8> = (AND..=USHR).collect();
     let compare: Vec<u8> = (LT..=NE).collect();
     let copy: Vec<u8> = (MOVE..=COPY).collect();
-    for kinds in [&arith, &bitwise, &compare, &copy] {
+    for kinds in [&arith, &bitwise, &compare, &copy, &vec![REM]] {
         product(rows, kinds, &places.ints_dst, &places.ints_src, &[true, false]);
     }
     let double_arith: Vec<u8> = (ADD..=DIV).collect();

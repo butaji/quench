@@ -65,6 +65,12 @@ impl Type {
         Self(TypeKind::Language(1 << kind as u16))
     }
 
+    /// The set of language types `bits` names (`language` bits, joined): a declared type
+    /// (`Function::declared_parameters`).
+    pub(crate) const fn languages(bits: u16) -> Self {
+        Self(TypeKind::Language(bits))
+    }
+
     // Inlined so a stage's constant fact (`Type::ANY` in the interpreter's own store,
     // `staged::store::own_store`) folds its gate tests away instead of calling here per store.
     #[inline(always)]

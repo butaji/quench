@@ -163,6 +163,7 @@ macro_rules! number_bitwise_operators {
                 }
             }
 
+            #[inline]
             pub(crate) fn from_operator(operator: u32) -> Option<Self> {
                 $(
                     if operator == BinaryOperator::$operator as u32 {
@@ -352,7 +353,7 @@ mod numeric_instruction_tests {
             (f64::NEG_INFINITY, false)] {
             let operation = NumberBitwise::ShiftRightUnsigned;
             assert_eq!(operation.result_is_int32(Some(right)), fits, "{right}");
-            let result = super::number_bitwise_f64_result(operation, -1, crate::value::number_to_u32(right) as i32);
+            let result = super::number_bitwise_f64_result(operation, -1, crate::value::number_to_i32(right));
             assert_eq!(result <= f64::from(i32::MAX), fits, "{right}");
         }
         assert!(!NumberBitwise::ShiftRightUnsigned.result_is_int32(None));
@@ -527,7 +528,7 @@ fn bitwise_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Va
 }
 
 /// ToInt32 of a Number from its own representation: an integer as it is, a double by
-/// `number_to_u32`. Branches, not `Option::or_else`: the closure's `Some` stayed a flag
+/// `number_to_i32`. Branches, not `Option::or_else`: the closure's `Some` stayed a flag
 /// register tested after the conversion (V8-v7 NavierStokes `x | 0`).
 #[inline(always)]
 fn value_to_int32(value: Value) -> Option<i32> {
@@ -535,7 +536,7 @@ fn value_to_int32(value: Value) -> Option<i32> {
         return Some(integer);
     }
     match value.as_number() {
-        Some(number) => Some(number_to_u32(number) as i32),
+        Some(number) => Some(crate::value::number_to_i32(number)),
         None => None,
     }
 }

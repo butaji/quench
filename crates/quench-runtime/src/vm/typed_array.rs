@@ -1116,22 +1116,6 @@ impl<H: Host> Vm<H> {
         crate::value::number_to_u32(number) as u8
     }
 
-    pub(super) fn uint8_clamped_from_value(number: f64) -> u8 {
-        if number.is_nan() || number <= 0.0 {
-            return 0;
-        }
-        if number >= 255.0 {
-            return 255;
-        }
-        let floor = number.floor();
-        let fraction = number - floor;
-        if fraction < 0.5 || (fraction == 0.5 && (floor as u64).is_multiple_of(2)) {
-            floor as u8
-        } else {
-            floor as u8 + 1
-        }
-    }
-
     /// ToUint16: the low bits of ToUint32, as 2^16 divides 2^32.
     pub(super) fn uint16_from_value(number: f64) -> u16 {
         crate::value::number_to_u32(number) as u16

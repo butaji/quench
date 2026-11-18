@@ -191,18 +191,18 @@ impl<H: Host> Vm<H> {
         // function slots, which end the resource layout; ref.func derives their base.
         values.push(Value::UNDEFINED);
         values.extend(functions);
-        let environment = self.heap.alloc(Cell::Environment {
-            parent: Value::NULL,
-            function: 0,
-            slots: values.into(),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        let environment = self.heap.alloc_environment(
+            Value::NULL,
+            0,
+            values.into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(id.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
                 with_objects: Box::default(),
             }),
-        });
+        ).0;
         let root = self.root(environment);
         let previous = self.replace_active_program(id);
         let missing = || JsError::validation("invalid Wasm instance environment".into());
@@ -5032,11 +5032,7 @@ mod tests {
             .code
             .iter()
             .map(|packed| {
-                if packed.is_wide() {
-                    invalid.function(0).wide[packed.wide_index()]
-                } else {
-                    packed.as_wide()
-                }
+                invalid.function(0).widened(*packed)
             })
             .find(|instruction| instruction.op().is_wasm_memory_address())
             .unwrap();
@@ -5638,7 +5634,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions.iter().any(|instruction| {
@@ -6039,7 +6035,7 @@ mod tests {
         let root_instructions = root_code
             .code
             .iter()
-            .map(|packed| super::super::dispatch_fast::decoded_instruction(root_code, *packed))
+            .map(|packed| root_code.widened(*packed))
             .collect::<Vec<_>>();
         assert!(
             root_instructions

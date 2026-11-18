@@ -13,7 +13,7 @@ fn atom_store_counts(program: &ResidualProgram, counted: impl Fn(WideInstruction
     for id in 0..program.function_count() {
         let function = program.function(id);
         for &packed in function.code.iter() {
-            let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+            let instruction = function.widened(packed);
             if counted(instruction) && let Some(count) = counts.get_mut(instruction.atom_index() as usize) {
                 *count += 1;
             }
@@ -29,7 +29,7 @@ fn root_immediate_stores(program: &ResidualProgram, stored: impl Fn(WideInstruct
     let mut values = FrozenValues::default();
     let mut immediates: Vec<Option<Value>> = vec![None; usize::from(root.registers)];
     for &packed in root.code.iter() {
-        let instruction = super::dispatch_fast::decoded_instruction(root, packed);
+        let instruction = root.widened(packed);
         for register in instruction.written_registers() {
             if let Some(slot) = immediates.get_mut(usize::from(register)) { *slot = None; }
         }
@@ -86,7 +86,7 @@ pub(in crate::vm) fn frozen_global_reads(program: &ResidualProgram, function: &F
     let frozen = |atom: Atom| globals.get(&atom).map(|&value|
         crate::vm::global_facts::GlobalRead::Frozen { value, ty: crate::typed_ir::Type::immediate(value) });
     function.code.iter().enumerate().filter_map(|(pc, &packed)| {
-        let instruction = super::dispatch_fast::decoded_instruction(function, packed);
+        let instruction = function.widened(packed);
         let read = if instruction.op().loads_name() {
             frozen(instruction.atom_index())
         } else if instruction.op().addresses_capture() {

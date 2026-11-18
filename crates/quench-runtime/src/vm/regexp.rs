@@ -529,24 +529,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(constructor, symbol, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
+        self.install_species(constructor, |vm| vm.native_with_realm(Native::RegExpSpecies, realm, realm))
     }
 
     pub(super) fn regexp_symbol_replace(
@@ -1146,7 +1129,7 @@ impl<H: Host> Vm<H> {
         if let FastReplacement::Template(template) = replacement
             && !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
-                    p, receiver, input, &subject, template, matcher, flags, result_used,
+                    p, receiver, input, input_value, &subject, template, matcher, flags, result_used,
                 );
             }
         let matches = if flags.contains(RegExpFlags::GLOBAL) {
@@ -1260,7 +1243,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
-        input: &JsString,
+        input: &JsString, input_value: Value,
         subject: &quench_regexp::Subject,
         template: &JsString,
         matcher: &Rc<quench_regexp::Regex>,
@@ -1282,17 +1265,17 @@ impl<H: Host> Vm<H> {
             let last = ranges.last().map(|range| Err(range.start));
             (ranges, last)
         } else {
-            let found = matcher.find_in_subject(subject, 0).next();
-            (
-                found.iter().map(|found| found.range.clone()).collect(),
-                found.map(Ok),
-            )
+            // A literal replacement reads no capture, and the legacy statics re-find the match
+            // only if a program reads them: the range searcher collects none.
+            let found = matcher.range_searcher(subject).find(0);
+            (found.iter().cloned().collect(), found.map(|found| Err(found.start)))
         };
         let Some(last) = last else {
             if !result_used {
                 return Ok(Value::UNDEFINED);
             }
-            return Ok(self.heap.alloc_string(input.clone()));
+            // No match leaves the subject as it is: the same string value answers.
+            return Ok(input_value);
         };
         match last {
             Ok(found) => self.record_regexp_legacy_match(receiver, input.clone(), found)?,

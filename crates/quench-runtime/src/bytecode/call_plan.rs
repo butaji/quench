@@ -16,6 +16,7 @@ macro_rules! call_plan_bits {
                 bits
             }
 
+            #[inline(always)]
             pub(super) fn from_bits(bits: u32) -> Self {
                 let mut index = 0;
                 $(let $field = bits & (1 << index) != 0; index += 1;)*

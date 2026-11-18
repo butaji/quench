@@ -7,7 +7,7 @@ use crate::wasm::conversion::{ScalarConversionOperator, saturate, truncation_bou
 use crate::wasm::float::{F64BinaryOperator as FloatBinary, F64UnaryOperator as FloatUnary};
 use crate::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use crate::wasm::numeric::{canonical_nan_bits, sign_mask};
-use crate::{WasmTrap, WasmValue};
+use crate::WasmTrap;
 
 pub(crate) struct ConcreteWasm;
 
@@ -24,6 +24,9 @@ macro_rules! sign_extend {
 /// `$signed` or `$unsigned` values. Division is plain: the staged traps have run.
 macro_rules! integer_width {
     ($binary:ident, $unary:ident, $signed:ty, $unsigned:ty, $wide:ty, $wide_unsigned:ty) => {
+        // Always inlined: a handler whose operator is a constant keeps only its arm (the match
+        // left out of line cost about 10 Ir per i32 operator in the interpreter).
+        #[inline(always)]
         fn $binary(operator: Binary, left: $signed, right: $signed) -> $signed {
             let (unsigned_left, unsigned_right) = (left as $unsigned, right as $unsigned);
             let amount = right as u32;
@@ -64,6 +67,7 @@ macro_rules! integer_width {
             }
         }
 
+        #[inline(always)]
         fn $unary(operator: Unary, value: $signed) -> $signed {
             match operator {
                 Unary::EqualZero => <$signed>::from(value == 0),
@@ -81,10 +85,25 @@ macro_rules! integer_width {
 integer_width!(operate_i32, operate_unary_i32, i32, u32, i64, u64);
 integer_width!(operate_i64, operate_unary_i64, i64, u64, i128, u128);
 
+/// A rounding or root of a `$float`: the standard library's method in the runtime, `core`'s float
+/// math in the stencil build, which has no standard library.
+#[cfg(not(stencil_build))]
+macro_rules! float_math {
+    ($float:ident, $operation:ident, $value:expr) => {
+        $value.$operation()
+    };
+}
+#[cfg(stencil_build)]
+macro_rules! float_math {
+    ($float:ident, $operation:ident, $value:expr) => {
+        core::$float::math::$operation($value)
+    };
+}
+
 /// The float operators at one width, on the IEEE bits `$bits` of a `$float`, zero-extended to a
 /// word; a comparison's word is its flag. The extrema are the machine's.
 macro_rules! float_width {
-    ($binary:ident, $unary:ident, $float:ty, $bits:ty) => {
+    ($binary:ident, $unary:ident, $float:ident, $bits:ty) => {
         fn $binary(operator: FloatBinary, left: $float, right: $float) -> u64 {
             let value: Result<$float, bool> = match operator {
                 FloatBinary::Add => Ok(left + right),
@@ -128,11 +147,11 @@ macro_rules! float_width {
             let bits = match operator {
                 FloatUnary::Absolute => value.to_bits() & !SIGN,
                 FloatUnary::Negate => value.to_bits() ^ SIGN,
-                FloatUnary::Ceiling => quieted(value.ceil()),
-                FloatUnary::Floor => quieted(value.floor()),
-                FloatUnary::Truncate => quieted(value.trunc()),
-                FloatUnary::Nearest => quieted(value.round_ties_even()),
-                FloatUnary::SquareRoot => quieted(value.sqrt()),
+                FloatUnary::Ceiling => quieted(float_math!($float, ceil, value)),
+                FloatUnary::Floor => quieted(float_math!($float, floor, value)),
+                FloatUnary::Truncate => quieted(float_math!($float, trunc, value)),
+                FloatUnary::Nearest => quieted(float_math!($float, round_ties_even, value)),
+                FloatUnary::SquareRoot => quieted(float_math!($float, sqrt, value)),
             };
             bits as u64
         }
@@ -143,6 +162,7 @@ float_width!(operate_f32, operate_unary_f32, f32, u32);
 float_width!(operate_f64, operate_unary_f64, f64, u64);
 
 /// The float a word holds, exactly, as an f64.
+#[inline]
 fn float_value(float: Float, word: u64) -> f64 {
     match float {
         Float::F32 => f64::from(f32::from_bits(word as u32)),
@@ -223,21 +243,40 @@ impl MachineStage for ConcreteWasm {
 
     #[inline(always)]
     fn truncation_overflows(&mut self, truncation: Truncation, value: u64) -> u64 {
-        let truncated = float_value(truncation.float, value).trunc();
+        let truncated = float_math!(f64, trunc, float_value(truncation.float, value));
         let (lower, limit) = truncation_bounds(truncation.width.bits(), truncation.signed);
         u64::from(truncated < lower || truncated >= limit)
     }
 
     #[inline(always)]
     fn convert(&mut self, operator: ScalarConversionOperator, value: u64) -> u64 {
-        if let Some(truncation) = operator.truncation() {
+        use ScalarConversionOperator as Conversion;
+        // A trapping truncation's operand is in range, where it truncates as it saturates.
+        if let Some((truncation, _)) = operator.float_to_integer() {
             let value = float_value(truncation.float, value);
             let width = truncation.width;
             return self.constant(width, saturate(value, width.bits(), truncation.signed));
         }
-        operator
-            .apply(WasmValue::from_bits(operator.source_type(), value))
-            .expect("only a truncation traps")
-            .word()
+        // A 32-bit word is its payload zero-extended, as `WasmValue::from_bits` reads it.
+        let low = value as u32;
+        let single = || f32::from_bits(low);
+        let double = || f64::from_bits(value);
+        match operator {
+            Conversion::WrapI64 | Conversion::ExtendI32Unsigned => u64::from(low),
+            Conversion::ExtendI32Signed => i64::from(low as i32) as u64,
+            Conversion::ConvertI32SignedF32 => u64::from((low as i32 as f32).to_bits()),
+            Conversion::ConvertI32UnsignedF32 => u64::from((low as f32).to_bits()),
+            Conversion::ConvertI64SignedF32 => u64::from((value as i64 as f32).to_bits()),
+            Conversion::ConvertI64UnsignedF32 => u64::from((value as f32).to_bits()),
+            Conversion::ConvertI32SignedF64 => f64::from(low as i32).to_bits(),
+            Conversion::ConvertI32UnsignedF64 => f64::from(low).to_bits(),
+            Conversion::ConvertI64SignedF64 => (value as i64 as f64).to_bits(),
+            Conversion::ConvertI64UnsignedF64 => (value as f64).to_bits(),
+            Conversion::PromoteF32 => f64::from(single()).to_bits(),
+            Conversion::DemoteF64 => u64::from((double() as f32).to_bits()),
+            Conversion::ReinterpretF32I32 | Conversion::ReinterpretI32F32 => u64::from(low),
+            Conversion::ReinterpretF64I64 | Conversion::ReinterpretI64F64 => value,
+            _ => unreachable!("float-to-integer conversions returned above"),
+        }
     }
 }

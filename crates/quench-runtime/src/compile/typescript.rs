@@ -1,4 +1,6 @@
-//! Admit typed syntax without assuming declarations are runtime proofs.
+//! Admit typed syntax and keep its declarations as facts. A declaration is no runtime proof
+//! (TypeScript is unsound: `any`, assertions), so a declared type is a seed the tiers check
+//! once where a value enters typed code, then trust (`Function::declared_parameters`).
 //! Runtime-changing TS constructs must have a lowering before admission.
 
 use oxc_ast::ast::*;
@@ -36,6 +38,58 @@ pub(super) fn erase_module_types(program: &mut Program<'_>) {
             ExportDefaultDeclarationKind::TSInterfaceDeclaration(_)),
         _ => true,
     });
+}
+
+/// The language types (`crate::typed_ir::Type::language` bits) each formal parameter of
+/// `formals` declares, by argument index; empty where none declares one. An undeclared or
+/// structural type (an interface, a type literal, a generic) is `DECLARED_ANY`, as a
+/// structural type admits primitives too. An optional parameter or one with a default may
+/// enter as `undefined`.
+pub(super) fn declared_parameters(formals: &FormalParameters<'_>) -> Vec<u16> {
+    if formals.items.iter().all(|item| item.type_annotation.is_none()) {
+        return Vec::new();
+    }
+    formals.items.iter().map(|item| match &item.type_annotation {
+        Some(annotation) if item.optional || item.initializer.is_some() =>
+            declared_language(&annotation.type_annotation) | language(crate::ValueType::Undefined),
+        Some(annotation) => declared_language(&annotation.type_annotation),
+        None => DECLARED_ANY,
+    }).collect()
+}
+
+/// No declared fact: every language type.
+pub(crate) const DECLARED_ANY: u16 = u16::MAX;
+
+const fn language(kind: crate::ValueType) -> u16 {
+    1 << kind as u16
+}
+
+/// The language types a TypeScript type admits at run time, `DECLARED_ANY` where it does not
+/// name a closed set.
+fn declared_language(ty: &TSType<'_>) -> u16 {
+    use crate::ValueType as V;
+    match ty {
+        TSType::TSNumberKeyword(_) => language(V::Number),
+        TSType::TSStringKeyword(_) | TSType::TSTemplateLiteralType(_) => language(V::String),
+        TSType::TSBooleanKeyword(_) => language(V::Boolean),
+        TSType::TSBigIntKeyword(_) => language(V::BigInt),
+        TSType::TSSymbolKeyword(_) => language(V::Symbol),
+        TSType::TSUndefinedKeyword(_) | TSType::TSVoidKeyword(_) => language(V::Undefined),
+        TSType::TSNullKeyword(_) => language(V::Null),
+        TSType::TSObjectKeyword(_) => language(V::Object) | language(V::Function),
+        TSType::TSArrayType(_) | TSType::TSTupleType(_) => language(V::Object),
+        TSType::TSFunctionType(_) | TSType::TSConstructorType(_) => language(V::Function),
+        TSType::TSLiteralType(literal) => match &literal.literal {
+            TSLiteral::NumericLiteral(_) => language(V::Number),
+            TSLiteral::StringLiteral(_) | TSLiteral::TemplateLiteral(_) => language(V::String),
+            TSLiteral::BooleanLiteral(_) => language(V::Boolean),
+            TSLiteral::BigIntLiteral(_) => language(V::BigInt),
+            TSLiteral::UnaryExpression(_) => language(V::Number) | language(V::BigInt),
+        },
+        TSType::TSParenthesizedType(inner) => declared_language(&inner.type_annotation),
+        TSType::TSUnionType(union) => union.types.iter().fold(0, |set, member| set | declared_language(member)),
+        _ => DECLARED_ANY,
+    }
 }
 
 pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span, &'static str)> {
@@ -147,6 +201,20 @@ mod tests {
             runtime.execute(&program).unwrap();
             assert_eq!(&*view.lines(), &["changed1", "text1", "typed", "6"]);
         }
+    }
+
+    #[test]
+    fn declared_parameter_types_are_kept_as_facts() {
+        let source = "function add(a: number, c: Shape, d: number | bigint, e, b?: string) { return a; }\nconst f = (x: boolean) => x;\nfunction g(p, q) { return p; }";
+        let program = Engine::specialize_typescript(source, "declared.cts").unwrap();
+        let declared = |name: &str| (0..program.functions.len()).filter_map(|index| program.function_get(index))
+            .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some(name)))
+            .map(|function| function.declared_parameters.to_vec());
+        use crate::ValueType as V;
+        let bit = |kind: V| 1_u16 << kind as u16;
+        assert_eq!(declared("add").unwrap(), vec![bit(V::Number), super::DECLARED_ANY,
+            bit(V::Number) | bit(V::BigInt), super::DECLARED_ANY, bit(V::String) | bit(V::Undefined)]);
+        assert_eq!(declared("g").unwrap(), Vec::<u16>::new());
     }
 
     #[test]

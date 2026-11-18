@@ -183,7 +183,24 @@ pub(in crate::vm) enum Event {
     Compiled,
     /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
     BodyCompile,
+    /// Of those, the ones its recurrence started (`LaneView::recurrent`), not a warm-up count.
+    BodyRecurrent,
+    /// A body plan built its IR (`Vm::plan_lane_method_sized`), whatever the attempt came to.
+    BodyPlanned,
+    /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
+    /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
+    /// or deferred.
+    BodyPublished,
+    BodyCompiling,
+    BodyUnpaid,
+    BodyShort,
+    BodyDeclined,
+    BodyStale,
+    BodyDeferred,
 }
+
+/// How many `Event`s there are.
+const EVENT_COUNT: usize = Event::BodyDeferred as usize + 1;
 
 #[cfg(test)]
 thread_local! {
@@ -217,7 +234,7 @@ pub(in crate::vm::compiled) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-static EVENTS: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+static EVENTS: [std::sync::atomic::AtomicU64; EVENT_COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; EVENT_COUNT];
 
 /// The most frequent leave sites a run reports.
 const TOP_LEAVES: usize = 40;
@@ -275,8 +292,10 @@ extern "C" fn report() {
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
-    let [entered, left, declined, compiled, bodies] = std::array::from_fn(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
+    let [entered, left, declined, compiled, bodies, recurrent, planned, published, compiling, unpaid, short, body_declined, stale, deferred] =
+        std::array::from_fn::<u64, EVENT_COUNT, _>(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
+    eprintln!("lane-body-attempts started={bodies} recurrent={recurrent} planned={planned} published={published} compiling={compiling} unpaid={unpaid} short={short} declined={body_declined} stale={stale} deferred={deferred}");
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));

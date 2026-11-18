@@ -332,7 +332,8 @@ pub struct ParseOptions {
     /// With `lazy_body_skim`, the body of a class's plain method, getter or setter that no
     /// lazily parsed body encloses, named by a key that is neither computed nor private, is
     /// skimmed as well: released when the skim decides it and takes it, else parsed whole.
-    /// The skim decides no `super`, so a method that names it stays whole.
+    /// A method that reads `super.x` says so (`SkimmedBody::names_super`); its consumer binds
+    /// the home object.
     ///
     /// Default: `false`
     pub lazy_class_methods: bool,
@@ -432,14 +433,14 @@ pub struct SkimmedBody<'s> {
     pub id: Option<&'s str>,
     /// The names the function reads from outside itself, sorted and without repeats.
     pub free_names: &'s [&'s str],
-    /// `free_names` is all the function reads from outside itself: not so where the defaults of
-    /// its parameters were read in its own scope.
-    pub names_exact: bool,
     /// The function lies in another function's body.
     pub in_function: bool,
     /// An arrow function, whose `this`, `arguments`, `new.target` and `super` the body leaves
     /// undecided: it uses none.
     pub arrow: bool,
+    /// A class method whose body, or an arrow inside it, reads `super.x`: its home object, which
+    /// the class around it binds.
+    pub names_super: bool,
 }
 
 impl LazyBodySkim {

@@ -321,3 +321,24 @@ fn the_concrete_words_of_a_narrow_width_stay_zero_extended() {
         .expect("subtraction does not trap");
     assert_eq!(word, u64::from(u32::MAX));
 }
+
+/// The b-jit's Wasm row codes (`quench-bjit/stencils/wasm_codes.rs`) name operators by these
+/// selector tags: the i32 operators first, the comparisons in one range.
+#[test]
+fn the_wasm_row_codes_match_the_selectors() {
+    use quench_bjit::wasm as codes;
+    assert_eq!(I32BinaryOperator::COUNT, codes::SHARED_BINARY as usize);
+    assert_eq!(Binary::COUNT, codes::BINARY_COUNT as usize);
+    assert_eq!(I32UnaryOperator::COUNT, codes::SHARED_UNARY as usize);
+    assert_eq!(Unary::COUNT, codes::UNARY_COUNT as usize);
+    for tag in 0..codes::SHARED_BINARY {
+        assert_eq!(I32BinaryOperator::from_tag(tag).unwrap().widen() as u32, tag);
+    }
+    for tag in 0..codes::SHARED_UNARY {
+        assert_eq!(I32UnaryOperator::from_tag(tag).unwrap().widen() as u32, tag);
+    }
+    for tag in 0..codes::BINARY_COUNT {
+        let comparison = (codes::FIRST_COMPARISON..=codes::LAST_COMPARISON).contains(&tag);
+        assert_eq!(is_comparison(Binary::from_tag(tag).unwrap()), comparison, "{tag}");
+    }
+}

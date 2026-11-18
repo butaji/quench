@@ -113,6 +113,9 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
 
     /// `{ statements }` of a function, whose labels, loops and `in` are its own.
     pub(super) fn function_body(&mut self, simple_params: bool) -> Seen {
+        if !simple_params {
+            self.scopes.settle_head();
+        }
         self.expect(Kind::LCurly)?;
         let strict = self.strict;
         let flow = std::mem::take(&mut self.flow);
@@ -221,7 +224,7 @@ impl<'a, C: Config> Skim<'_, 'a, C> {
     /// `name => body`, `name` having been read as a reference.
     pub(super) fn identifier_arrow(&mut self) -> Seen<Form> {
         let name = self.last_ident;
-        if is_restricted(name) || self.scopes.refs.pop() != Some(name) {
+        if is_restricted(name) || self.scopes.take_reference() != Some(name) {
             return None;
         }
         self.scopes.enter(true);

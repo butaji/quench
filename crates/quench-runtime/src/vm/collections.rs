@@ -62,18 +62,14 @@ impl<H: Host> Vm<H> {
     }
 
     fn keep_alive(&mut self, value: Value) {
-        if !self
-            .kept_alive
-            .iter()
-            .any(|root| self.heap.root_value(*root) == Some(value))
-        {
+        if !self.kept_alive.contains_key(&value.to_bits()) {
             let root = self.heap.root(value);
-            self.kept_alive.push(root);
+            self.kept_alive.insert(value.to_bits(), root);
         }
     }
 
     pub(crate) fn clear_kept_objects(&mut self) {
-        for root in self.kept_alive.drain(..) {
+        for (_, root) in self.kept_alive.drain() {
             self.heap.release_root(root);
         }
     }
@@ -641,53 +637,10 @@ impl<H: Host> Vm<H> {
         ] {
             self.install_builtin_to_string_tag(prototype, tag)?;
         }
-        self.install_map_species(map)?;
-        self.install_set_species(set)
+        self.install_species(map, |vm| vm.native_value(Native::ArraySpecies))?;
+        self.install_species(set, |vm| vm.native_value(Native::SetSpeciesGetter))
     }
 
-    fn install_map_species(&mut self, map: Value) -> Result<(), JsError> {
-        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
-            return Ok(());
-        };
-        let getter = self.native_value(Native::ArraySpecies);
-        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-        self.set_symbol_property(map, species, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            map,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
-        Ok(())
-    }
-
-    fn install_set_species(&mut self, set: Value) -> Result<(), JsError> {
-        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else {
-            return Ok(());
-        };
-        let getter = self.native_value(Native::SetSpeciesGetter);
-        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-        self.set_symbol_property(set, species, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            set,
-            PropertyKey::symbol(species),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(getter),
-                setter: None,
-            },
-        );
-        Ok(())
-    }
     pub(super) fn install_collection_iterators(
         &mut self,
         program: &ResidualProgram,

@@ -2,6 +2,7 @@
 mod native_operands;
 mod realm_table;
 mod register_file;
+mod lane_completion; pub(crate) use lane_completion::LaneCompletion;
 mod shape_lookup; mod string_wrapper; mod accessor_cache; mod holder_hints; use holder_hints::PrototypeHints;
 #[cfg(feature = "native-execution")]
 pub use native_operands::NativeJsOperands;
@@ -1797,6 +1798,10 @@ pub(crate) struct Vm<H> {
     typed_views: typed_array_access::TypedViewCache,
     /// VM-wide running-job admission for native microtask checkpoints.
     native_microtask_running: bool,
+    /// The async function a microtask drain resumed whose activation the running lane run is
+    /// rooted in (`Vm::resume_job`), else undefined: its `await` of a settled value continues in
+    /// place when no other job is queued (`lane_await`).
+    queue_resumed: Value,
     /// Whether the innermost running job queue has entered the host's context for unobserved
     /// Promise jobs (`Host::enter_unobserved_job`): its consecutive jobs share that entry.
     unobserved_jobs_entered: bool,
@@ -1839,7 +1844,9 @@ pub(crate) struct Vm<H> {
     weak_set_proto: Value,
     weak_ref_proto: Value,
     /// ECMAScript [[KeptAlive]] targets, held until the host ends a job turn.
-    kept_alive: Vec<RootId>,
+    /// The roots `keep_alive` holds until the job ends, by the kept value's bits: one lookup per
+    /// `new WeakRef`, where a scan of the list made N of them in one job cost O(N²).
+    kept_alive: rustc_hash::FxHashMap<u64, RootId>,
     finalization_registry_proto: Value,
     iterator_proto: Value,
     string_iterator_proto: Value,
@@ -1881,8 +1888,8 @@ pub(crate) struct Vm<H> {
     js_native_contexts: Vec<Box<compiled::CallContext>>,
     /// The environments native Wasm code holds across its calls into other instances.
     native_roots: Box<compiled::NativeRoots>,
-    /// Activations a running lane holds without frames.
-    lane_stack: dispatch_fast::LaneStack,
+    /// Activations a running lane holds without frames, boxed so a nested run swaps pointers.
+    lane_stack: Box<dispatch_fast::LaneStack>,
     /// The lane stacks of the runs a nested lane run parked, outermost first (`Vm::nested_lane_run`).
     lane_roots: Vec<dispatch_fast::ParkedLane>,
     /// Empty lane stacks a nested run returned, which the next one starts over
@@ -1917,9 +1924,8 @@ pub(crate) struct Vm<H> {
     free_cache_layouts: FxHashMap<crate::bytecode::CacheSiteCounts, Vec<ProgramCacheLayout>>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
-    /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
-    /// the general loop raises at that call's instruction once the lane exits there.
-    lane_raised: Option<JsError>,
+    /// How the last lane run left its activation, for the code it exits to to take (`LaneCompletion`).
+    lane_completion: LaneCompletion,
     /// Where a lane body's native `throw` raised the error in `lane_raised`
     /// (`compiled::raise_site`), which the lane gives it as its source location once it
     /// escapes the native frames (`dispatch_fast::lane_raised_exit`).
@@ -1943,20 +1949,9 @@ pub(crate) struct Vm<H> {
     /// name, and resolving it again after a collection read its file anew. typescript.js
     /// (9 MB) imported from an ES module was read and wrapped again at the run's peak.
     resolved_module_names: rustc_hash::FxHashMap<(String, String), String>,
-    /// The completion a frame's own call record returns, made by a lane activation
-    /// (`dispatch_fast::lane_frame_return`), which the general loop returns from the frame
-    /// at that instruction once the lane exits there.
-    lane_returned: Option<Value>,
     /// The native a lane call is running from its caller's frame (`dispatch_fast::lane_call_native`),
     /// whose calls of JavaScript run frameless in that lane (`Vm::lane_native_callback`).
     lane_native: Option<dispatch_fast::LaneNativeCall>,
-    /// The completion of a native's frameless callback (`Completion::ReturnsToNative`), which
-    /// its run hands to the native once the lane exits there.
-    lane_native_returned: Option<Value>,
-    /// The value the activation a lane job ran awaited or yielded (`dispatch_fast::lane_await`,
-    /// `dispatch_fast::lane_yield`), which its run hands to the await's reactions, or to the
-    /// native `next` that stepped a sync generator, once the lane exits there.
-    lane_suspended: Option<Value>,
     /// The active program's context (`program_contexts`), kept by `set_active_program`: its
     /// cache layout and constants are one load from it.
     active_context: *const ProgramContext,
@@ -1999,6 +1994,9 @@ pub(crate) struct Vm<H> {
     /// A Set or Map shape with no own `@@iterator` (`Vm::intact_iteration_kind`).
     collection_iteration_shape: Option<u32>,
     array_species_proof: Option<array::ArraySpeciesProof>,
+    /// An array shape no `@@isConcatSpreadable` reaches under a prototype layout epoch
+    /// (`Vm::concat_spreadable_absent`).
+    concat_spreadable_proof: Option<(u32, u64)>,
     for_in: object_static::ForInMemo,
     /// What `JSON.stringify`'s plain writer keeps between calls: its text buffer, which a
     /// payload's text would otherwise regrow from empty on each call, and its member plans
@@ -2131,6 +2129,13 @@ pub(crate) struct Vm<H> {
     /// The one `{ value, done }` result a lane iterator step reuses (`Vm::reused_iterator_result`),
     /// `undefined` until the first; cleared with `iterator_result_header`.
     reused_iterator_result: Value,
+    /// The one `[key, value]` pair a for-of step over entries reuses when the step's value goes
+    /// only to an array pattern (`Vm::iterator_item_value`), `undefined` until the first;
+    /// cleared with `reused_iterator_result`.
+    shared_entry_pair: Value,
+    /// Whether the entry step running now may yield `shared_entry_pair`
+    /// (`lane_iterator_step_reads`).
+    share_entry_pair: bool,
     /// The shapes of a complete data and accessor property descriptor object
     /// (`Vm::property_descriptor_object`), indexed by `accessor`; derived from shapes, so
     /// field-cache invalidation clears them.
@@ -2632,6 +2637,7 @@ impl<H: Host> Vm<H> {
 
     fn report_execution(&mut self, program: &ResidualProgram) {
         self.report_bytecode();
+        self.report_lane_plan();
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.report();
         #[cfg(feature = "profile-memory")]
@@ -3054,6 +3060,7 @@ impl<H: Host> Vm<H> {
         self.array_iteration_shape = None;
         self.collection_iteration_shape = None;
         self.array_species_proof = None;
+        self.concat_spreadable_proof = None;
         self.for_in.forget_snapshot();
         self.species_slot_proof.set(None);
         self.iterator_absence_proof.set(None);
@@ -3122,6 +3129,7 @@ impl<H: Host> Vm<H> {
         self.closure_templates.fill(None);
         self.iterator_result_header = None;
         self.reused_iterator_result = Value::UNDEFINED;
+        self.shared_entry_pair = Value::UNDEFINED;
         self.descriptor_shapes = [None; 2];
         self.descriptor_layout = None;
         self.regexp_object_shapes = None;

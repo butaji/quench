@@ -76,7 +76,7 @@ fn binary_lane(left: u64, right: u64, width: u32, op: Binary) -> u64 {
         right as i64
     };
     numeric(
-        op.apply(left, right)
+        op.evaluate(left, right)
             .expect("admitted nontrapping integer lane operation"),
         width,
     )
@@ -182,7 +182,7 @@ pub(super) fn absolute(value: u128, width: u32) -> WasmValue {
 #[inline(always)]
 pub(super) fn population_count(value: u128) -> WasmValue {
     map_lanes(value, None, u8::BITS, |bits, _| {
-        numeric(Unary::PopulationCount.apply(bits as i64), u8::BITS)
+        numeric(Unary::PopulationCount.evaluate(bits as i64), u8::BITS)
     })
 }
 #[inline(always)]

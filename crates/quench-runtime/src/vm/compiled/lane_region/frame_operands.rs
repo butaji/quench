@@ -203,7 +203,7 @@ pub(in crate::vm) fn register_number_value(builder: &mut FunctionBuilder<'_>, re
             } else {
                 emit_js_tagged_number(builder, bits, otherwise)
             };
-            if known.is_none() && state.proofs.numbers.len() < 4 * INLINE_NUMBER_PROJECTIONS { state.proofs.numbers.push((bits, number)); }
+            if known.is_none() { state.proofs.note_number(bits, number); }
             let variable = register_float(builder, registers, index);
             builder.def_var(variable, number);
             state.values[index] = RegisterFact { tagged: state.values[index].tagged,

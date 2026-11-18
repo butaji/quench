@@ -652,6 +652,7 @@ impl FunctionCompiler<'_, '_> {
         object: &Expression<'_>,
         key: &Expression<'_>,
     ) -> Register {
+        let object_expression = object;
         if let Some(slot) = self.arguments_binding_slot(object) {
             let key = self.last_operand(key);
             let dst = self.reg();
@@ -692,10 +693,27 @@ impl FunctionCompiler<'_, '_> {
             }
             None => {}
         }
+        if let Some(state) = self.enumerated_state(object_expression, key) {
+            let key = self.expression(key);
+            let state = self.load_atom(state);
+            let dst = self.reg();
+            let pair = crate::bytecode::ImmediateLayout::register_pair_immediate(state, state);
+            self.emit(Op::GetEnumerated, dst, object, key, pair);
+            return dst;
+        }
         let key = self.last_operand(key);
         let dst = self.reg();
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
+    }
+
+    /// The state's hidden local of the innermost for-in whose body this read `o[k]` is in, where
+    /// `o` and `k` are the identifiers it lists and binds; the row guards they still are.
+    fn enumerated_state(&self, object: &Expression<'_>, key: &Expression<'_>) -> Option<Atom> {
+        let (Expression::Identifier(object), Expression::Identifier(key)) = (object, key) else { return None };
+        self.enumerations.iter().rev()
+            .find(|enumeration| enumeration.object == object.name.as_str() && enumeration.key == key.name.as_str())
+            .map(|enumeration| enumeration.state)
     }
 
     pub(super) fn emit_set_field(

@@ -13,7 +13,7 @@ lane_handler! {
         ) else {
             return exit(ip);
         };
-        let Ok(value) = operator.apply(left as i64, right as i64) else {
+        let Ok(value) = operator.evaluate(left as i64, right as i64) else {
             return exit(ip);
         };
         let Some(value) = lane_encode(view, value) else {

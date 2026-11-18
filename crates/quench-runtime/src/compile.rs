@@ -74,7 +74,8 @@ mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
-pub(crate) mod regexp;
+mod rest_reads;
+pub(crate) mod regexp; mod regexp_memo; mod source_text;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
 mod register_profile;
@@ -2259,14 +2260,18 @@ pub(crate) fn lower_settled<'a>(
     // Renaming a plain slot's operations keeps it plain (validation re-derives the same
     // proof from the specialized code), so frame registers start from the same slots.
     frame_registers::drop_unread_self_binding(function, superinstructions, &atom_name);
-    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    // Specialization renames operations without moving control, so the TDZ analyses of both
+    // passes read one set of blocks.
+    let flow = crate::bytecode::initialization::FlowCell::new();
+    let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions, &flow);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name, &flow);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
         }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
+    rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     if function
         .code
         .iter()
@@ -2960,7 +2965,7 @@ impl<'a> Compiler<'a> {
         mut context: replay::ObjectMethodContext,
     ) -> u32 {
         // A class method's chunk compiles it as an object literal's (`ChunkText::of`).
-        self.take_outer(context.property_span.start, |scopes, strict| (context.scopes, context.inherited_strict, context.with_depth) = (scopes, strict, 0));
+        self.adopt_outer_method(&mut context);
         if self.replayable_source {
             context.scopes = context.scopes.recording();
         }
@@ -3540,7 +3545,7 @@ impl<'a> Compiler<'a> {
             module_link_plan,
             source_name: self.source.to_owned(),
             source: Some(self.first_call.kept_source.cloned().unwrap_or_else(|| crate::bytecode::ProgramSource {
-                text: crate::bytecode::SourceText::Shared(std::sync::Arc::from(self.text)),
+                text: source_text::kept(self.text, self.eval_context.is_some()),
                 typescript: self.source_type.is_typescript(),
                 base: 0,
                 line_offset: 0,
@@ -4282,6 +4287,7 @@ impl<'a> Compiler<'a> {
                 0
             },
             parameter_atoms: parameter_atoms.into(),
+            declared_parameters: options.defaults.map_or_else(Vec::new, typescript::declared_parameters).into(),
             rest: options.rest_override
                 || options.defaults.is_some_and(|value| value.rest.is_some()),
             is_async: options.async_function,
@@ -4319,7 +4325,7 @@ impl<'a> Compiler<'a> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),
@@ -4490,8 +4496,9 @@ impl<'a> Compiler<'a> {
     fn specialize_plain_local_operations(
         function: &mut BcFunction,
         superinstructions: &[crate::bytecode::Superinstruction],
+        flow: &crate::bytecode::initialization::FlowCell,
     ) -> crate::bitset::BitSet {
-        let plain_slots = function.plain_local_slots(superinstructions);
+        let plain_slots = function.plain_local_slots_in(superinstructions, flow);
         for instruction in &mut function.code {
             match instruction.op() {
                 Op::LoadLocal | Op::StoreLocal

@@ -8,7 +8,6 @@ use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 
 impl Heap {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        debug_assert!(!self.satb_active(), "a snapshot is written of a heap no cycle is marking (`finish_cycle_now`)");
         self.write_out_all_strings();
         if self.properties.float_slots() {
             return Err(SnapshotError::unsupported("a heap whose number slots hold raw doubles"));
@@ -37,6 +36,7 @@ impl Heap {
             return Err(SnapshotError::unsupported("a Wasm vector"));
         }
         write_records(writer, &self.iterator_records, |writer, record| record.write_snapshot(writer))?;
+        write_records(writer, &self.environment_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.string_records, |writer, record: &JsString| Ok(record.write_snapshot(writer)))?;
         // Every small string was written out above: each is kept as its text.
         write_records(writer, &self.small_strings, |writer, record| Ok(record.written_text().write_snapshot(writer)))?;
@@ -72,6 +72,9 @@ impl Heap {
         for index in 0..slots {
             let cell = if reader.bool()? { Some(Cell::read_snapshot(reader)?) } else { None };
             let live = cell.is_some();
+            if cell.as_ref().is_some_and(Cell::has_weak_entries) {
+                heap.weak_cells.push(index as u32);
+            }
             heap.slots.push(Slot { cell });
             let (word, bit) = slot_bit(index);
             if word == heap.marks.len() {
@@ -99,9 +102,11 @@ impl Heap {
         read_records(reader, &mut heap.function_records, FunctionRecord::read_snapshot)?;
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
         read_records(reader, &mut heap.iterator_records, IteratorRecord::read_snapshot)?;
+        read_records(reader, &mut heap.environment_records, EnvironmentRecord::read_snapshot)?;
         read_records(reader, &mut heap.string_records, JsString::read_snapshot)?;
         read_records(reader, &mut heap.small_strings, |reader| Ok(small_strings::SmallParts::written(JsString::read_snapshot(reader)?)))?;
         heap.properties = crate::value_vec::ValueArena::read_snapshot(reader)?;
+        heap.refresh_store_watch();
         heap.roots = root::RootTable::read_snapshot(reader)?;
         let sparse = read_list(reader, |reader| {
             let array = reader.value()?;

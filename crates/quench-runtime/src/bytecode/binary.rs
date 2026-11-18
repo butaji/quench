@@ -940,6 +940,10 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         for atom in &function.parameter_atoms {
             out.atom(*atom);
         }
+        out.u32(function.declared_parameters.len() as u32);
+        for declared in &function.declared_parameters {
+            out.u16(*declared);
+        }
         out.u8(u8::from(function.rest));
         out.u8(u8::from(function.is_async));
         out.u8(u8::from(function.is_generator));
@@ -1120,6 +1124,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
         let length = input.u16()?;
         let parameter_end_pc = input.u32()?;
         let parameter_atoms = input.list(|input| input.atom())?;
+        let declared_parameters = input.list(|input| input.u16())?;
         let rest = match input.u8()? {
             0 => false,
             1 => true,
@@ -1317,6 +1322,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             length,
             parameter_end_pc,
             parameter_atoms: parameter_atoms.into(),
+            declared_parameters: declared_parameters.into(),
             rest,
             is_async,
             is_generator,
@@ -1358,7 +1364,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             decoded: Default::default(),
             plain_locals: if packed { std::cell::OnceCell::new() } else { std::cell::OnceCell::from(plain_locals) },
             declared_atom_sets: Default::default(),
-            activation_bindings: Default::default(),
+            activation_bindings: Default::default(), maker_bindings: Default::default(), arrow_reads: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
             dynamic_scope_access: Default::default(),

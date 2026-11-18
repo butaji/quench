@@ -6,6 +6,7 @@ use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MINUTE;
 use crate::units::NANOSECONDS_PER_SECOND;
 use crate::units::NANOSECONDS_PER_MILLISECOND;
 use crate::vm::temporal_instant_difference::NANOSECONDS_PER_MICROSECOND;
+use crate::vm::temporal_instant_difference::{read_option, read_string_option};
 const UNITS: [(&str, i128); 7] = [
     ("day", NANOSECONDS_PER_DAY),
     ("hour", NANOSECONDS_PER_HOUR),
@@ -106,30 +107,6 @@ fn read_increment<H: Host>(
     } else {
         vm.to_number(p, value).map(Some)
     }
-}
-
-fn read_string_option<H: Host>(
-    vm: &mut Vm<H>,
-    p: &ResidualProgram,
-    options: Value,
-    name: &str,
-) -> Result<Option<String>, JsError> {
-    let value = read_option(vm, p, options, name)?;
-    if value.is_undefined() {
-        Ok(None)
-    } else {
-        vm.to_string(p, value).map(Some)
-    }
-}
-
-fn read_option<H: Host>(
-    vm: &mut Vm<H>,
-    p: &ResidualProgram,
-    options: Value,
-    name: &str,
-) -> Result<Value, JsError> {
-    let key = vm.intern_atom(name);
-    vm.get_property(p, options, key)
 }
 
 pub(super) fn parse_unit<H: Host>(

@@ -214,6 +214,7 @@ macro_rules! layout_accessors {
                 })
             }
 
+            #[inline(always)]
             pub(crate) fn result_flags(self) -> Register {
                 self.a() & !REGISTER_MASK
             }
@@ -232,6 +233,7 @@ macro_rules! layout_accessors {
             // Each result-flag predicate tests its bit first: the bit is clear on almost every
             // dispatch, and only a set bit needs the op's layout to tell the flag from other
             // field-A data.
+            #[inline]
             pub(crate) fn returns_from_frame(self) -> bool {
                 self.result_flags() & RETURN_REGISTER != 0
                     && self.op().result_layout().allows_return()
@@ -242,12 +244,13 @@ macro_rules! layout_accessors {
                     && self.op().result_layout().allows_this_write()
             }
 
+            #[inline(always)]
             pub(crate) fn writes_numeric_local(self) -> bool {
                 self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
                     && self.op().result_layout().allows_numeric_local()
             }
 
-            #[allow(dead_code)] #[inline]
+            #[allow(dead_code)] #[inline(always)]
             pub(crate) fn numeric_local_target(self) -> Option<Register> {
                 self.writes_numeric_local().then(|| self.result_register())
             }
@@ -675,6 +678,7 @@ macro_rules! layout_accessors {
                 self.imm() as usize
             }
 
+            #[inline]
             pub(crate) fn local_slot(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::LocalSlot);
                 self.imm() as usize

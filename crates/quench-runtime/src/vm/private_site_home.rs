@@ -145,7 +145,7 @@ impl PrivateSiteHomes {
 
     /// Drops every entry naming a value that `live` reports freed: its slot may name another
     /// cell from now on. Entries whose values all live stay valid across the collection.
-    /// Every value the entries name, which a concurrent cycle holds strongly.
+    /// Every value the entries name (rooted by a minor collection under counts).
     pub(super) fn for_each_value(&self, mut visit: impl FnMut(Value)) {
         for index in 0..PRIVATE_SITE_HOME_ENTRIES {
             let Some(entry) = self.entries.get(index) else { continue };

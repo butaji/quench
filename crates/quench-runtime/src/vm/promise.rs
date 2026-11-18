@@ -779,27 +779,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_realm_builtin_named(program, promise, name, native, method_realm)?;
         }
-        if let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.realm_native_value(
-                Native::PromiseSpeciesGetter,
-                global,
-                method_realm.is_none(),
-            );
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(promise, species, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                promise,
-                property_key::PropertyKey::symbol(species),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
+        self.install_species(promise, |vm| vm.realm_native_value(Native::PromiseSpeciesGetter, global, method_realm.is_none()))?;
         self.set_builtin_value_named(global, "Promise", promise)
     }
 
@@ -2264,18 +2244,18 @@ impl<H: Host> Vm<H> {
                 slots[slot] = Value::DELETED;
             }
         }
-        let environment = self.heap.alloc(Cell::Environment {
-            parent: Value::NULL,
-            function: super::ROOT_FUNCTION_ID,
-            slots: slots.into(),
-            scope: crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
+        let environment = self.heap.alloc_environment(
+            Value::NULL,
+            super::ROOT_FUNCTION_ID,
+            slots.into(),
+            crate::heap::EnvironmentScopeRef::new(crate::heap::EnvironmentScope {
                 program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: Vec::new().into(),
                 with_objects: Box::default(),
             }),
-        });
+        ).0;
         self.programs.set_module_environment(program, environment);
 
         // Each name's first function declared directly in the module body.

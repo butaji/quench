@@ -86,6 +86,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn safepoint(&mut self, _stage: &mut S, _proof: S::Proof) -> Option<()> { Some(()) }
 
+    /// The heap's array and object record tables and its collection epoch, where the frame reads
+    /// live records (the interpreter's lane); `None` where it does not, leaving a row that needs
+    /// them to its call-out.
+    #[inline(always)]
+    fn heap_records(&mut self, _stage: &mut S) -> Option<(S::Word, S::Word, S::Word)> { None }
+
     /// The element store's host helper; `None` where the frame has no helper table.
     #[inline(always)]
     fn index_set_helper(&mut self, _stage: &mut S, _base: S::Word, _key: S::Word, _value: S::Word, _proof: S::Proof) -> Option<()> { None }

@@ -30,6 +30,11 @@ pub(super) fn bind_stacks<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch,
 pub(super) unsafe fn lend<H: Host>(vm: &mut Vm<H>, payload: &mut JsStepDispatch, direct_calls: bool) -> *mut JsStepDispatch {
     bind_stacks(vm, payload, direct_calls);
     let lane = unsafe { &raw mut (*lane_frame()).dispatch };
+    // A callee's leave inside a frame it inlined writes that frame's registers to the lane frame's
+    // scratch window (`reserve_lane_scratch`), which the lane reads: a lending region inlines
+    // nothing, so its payload names the lane's window.
+    // SAFETY: as below.
+    unsafe { payload.inlined = (*lane).inlined };
     // SAFETY: the frame lives for the thread; no reference into it is held.
     unsafe { std::ptr::swap(payload, lane) };
     lane

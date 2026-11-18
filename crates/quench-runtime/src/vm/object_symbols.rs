@@ -402,6 +402,21 @@ impl<H: Host> Vm<H> {
                 .map(|(shape, _)| shape),
         };
         if memoizes && let Some(shape) = memoized {
+            // A shaped source's values are read straight into a fixed buffer: its shape lists
+            // each enumerable slot it holds (`shape_enumerable_slots`), which
+            // `property_get_shaped` reads with no bounds or deleted-marker test.
+            if slots.len() <= PLAIN_COPY_INLINE_PROPERTIES && !self.shape_is_dictionary(source_shape) {
+                let mut values = [Value::UNDEFINED; PLAIN_COPY_INLINE_PROPERTIES];
+                for (value, (_, slot)) in values.iter_mut().zip(slots.iter()) {
+                    // SAFETY: as above.
+                    let Some(read) = (unsafe { self.heap.property_get_shaped(data, *slot as usize) }) else {
+                        return false;
+                    };
+                    *value = read;
+                }
+                self.initialize_plain_copy(target, shape, &values[..slots.len()], slots.iter().map(|(atom, _)| *atom));
+                return true;
+            }
             let Some(values) = slots
                 .iter()
                 .map(|(_, slot)| self.heap.property_get(data, *slot as usize))

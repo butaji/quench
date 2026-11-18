@@ -23,6 +23,7 @@ impl CallArguments {
         }
     }
 
+    #[inline]
     pub(super) fn as_slice(&self) -> &[Value] {
         &self.values
     }

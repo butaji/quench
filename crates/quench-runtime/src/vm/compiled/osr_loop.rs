@@ -60,6 +60,8 @@ mod function;
 mod iteration;
 #[path = "osr_loop/receivers.rs"]
 mod receivers;
+#[path = "osr_loop/lifetime.rs"]
+mod lifetime;
 
 /// An array a region indexes, by its register; `written` when the region stores into it.
 /// The array is the register's value at entry, or, with `field`, the value of that cached
@@ -684,6 +686,18 @@ pub(crate) enum InlineGuard {
     AtRead,
     /// A depth-zero plain capture, checked by the VM at every native entry.
     Capture(u16),
+    /// A caller register the loop never writes, live at its header (`const f = …; for (…) f(…)`),
+    /// checked by the VM at every native entry.
+    Register(Register),
+}
+
+/// Where an inlined call's callee is read from: a cached field path, a depth-zero capture, or
+/// a caller register the loop never writes (`inline_region`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CalleeSource {
+    Path,
+    Capture(u16),
+    Register(Register),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -955,7 +969,7 @@ pub(super) fn inline_region<'a>(
     live: &crate::compile::liveness::RegisterMasks,
     header: u32,
     backedge: u32,
-    resolve: &mut dyn FnMut(&[FieldUse], Option<u16>) -> Option<InlineCallee<'a>>,
+    resolve: &mut dyn FnMut(&[FieldUse], CalleeSource) -> Option<InlineCallee<'a>>,
 ) -> Option<LoopRegion> {
     let (start, end) = (header as usize, backedge as usize);
     (start <= end && end < decoded.len()).then_some(())?;
@@ -987,6 +1001,34 @@ pub(super) fn inline_region<'a>(
         let argc = ImmediateLayout::argument_count(instruction.imm());
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let (function_register, mut receiver) = (instruction.register_b(), instruction.register_c());
+        if !defines(function_register) {
+            // A callee the loop never writes: the closure the register holds at entry, which the VM
+            // checks at every native entry. Leaving in the call's setup, the straight run of pure
+            // moves before it, resumes at the run's first instruction.
+            (function_register < caller_registers
+                && crate::compile::liveness::register_in(mask(header)?, usize::from(function_register))).then_some(())?;
+            let start = (0..offset).rev().take_while(|index| pure_setup(caller[*index].op())).last().unwrap_or(offset);
+            let resume = header + start as u32;
+            let run = &caller[start..offset];
+            setup_resumes(run, (resume, pc), mask(resume)?, &targets).then_some(())?;
+            let (callee, reached) = inlining::admitted_callee(resolve, None, CalleeSource::Register(function_register), argc, sites)?;
+            let bound = inlining::bound_parameters(run, resume, window, &callee, &reached, &defines, &mut dropped)?;
+            for setup_pc in resume..pc {
+                setup.insert(setup_pc, resume);
+            }
+            let base = Register::try_from(total).ok()?;
+            total += u32::from(callee.registers);
+            (total <= RegisterSet::BITS).then_some(())?;
+            calls.insert(pc, inlining::Site {
+                frame: InlineFrame {
+                    call: pc, callee: callee.callee, function: callee.function, callee_register: function_register,
+                    window, arguments: argc, result: instruction.result_register(),
+                    guard: InlineGuard::Register(function_register), receiver, base, registers: callee.registers, bound,
+                },
+                callee_path: None, resume, window, result: instruction.result_register(), reached, callee,
+            });
+            continue;
+        }
         // The callee's read: the last write of its register before the call, in a straight run.
         let read_offset = (0..offset).rev().find(|index| caller[*index].defined_register() == Some(function_register))?;
         let read = header + read_offset as u32;
@@ -1038,7 +1080,8 @@ pub(super) fn inline_region<'a>(
         let at_resume = mask(resume)?;
         let run = &caller[resume_offset + 1..offset];
         setup_resumes(run, (resume, pc), at_resume, &targets).then_some(())?;
-        let (callee, reached) = inlining::admitted_callee(resolve, callee_path.as_ref(), capture, argc, sites)?;
+        let source = capture.map_or(CalleeSource::Path, CalleeSource::Capture);
+        let (callee, reached) = inlining::admitted_callee(resolve, callee_path.as_ref(), source, argc, sites)?;
         let first = read + 1;
         let bound = inlining::bound_parameters(&caller[read_offset + 1..offset], first, window, &callee, &reached, &defines, &mut dropped)?;
         if !checked {
@@ -1131,6 +1174,11 @@ impl LoopRegion {
             .get(index)
             .or_else(|| self.tagged.get(index.saturating_sub(self.numbers.len())))
             .copied()
+    }
+
+    /// The cache sites of the stores whose receiver the region redefines.
+    pub(in crate::vm) fn dynamic_store_sites(&self) -> impl Iterator<Item = u16> + '_ {
+        self.dynamic_field_stores.values().map(|&(_, site)| site)
     }
 
     pub(in crate::vm) fn entry_registers(&self) -> impl Iterator<Item = Register> + '_ {
@@ -1535,190 +1583,14 @@ fn admit_region(
         instructions.clone(), registers, constants, sites, live.clone(), header_live, header, objects, method_calls,
     ) {
         Ok(region) => Ok(region),
-        Err(failure) => {
-            if objects.is_empty()
-                && let Some(region) = admit_lifetime_roles(instructions, registers, constants, live, header)
-            {
-                return Ok(region);
-            }
-            Err(failure)
-        }
+        // A loop the register analysis rejects is admitted on value identities where it can be; a
+        // call the renamed loop stops at is the inliner's (`is_call_boundary`).
+        Err(failure) => match lifetime::admit_lifetime_roles(instructions, registers, constants, sites, live, header, objects, method_calls) {
+            Some(Ok(region)) => Ok(region),
+            Some(Err(renamed)) if renamed.is_call_boundary() => Err(renamed),
+            _ => Err(failure),
+        },
     }
-}
-
-/// Whether a lifetime region admits `instruction`: number and element operations, jumps, a
-/// field store through a register, and a field read by name from a register or `this`, whose
-/// base renames as a register does. A site's lookup names its base in the site table, which
-/// keeps VM slots.
-fn lifetime_instruction(instruction: WideInstruction) -> bool {
-    instruction.op().traits().has(crate::bytecode::Traits::LIFETIME_SAFE)
-        || instruction.field_store_register().is_some()
-        || (instruction.op().is_get_field()
-            && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
-                if base == FieldBase::THIS || base.register_index().is_some()))
-}
-
-/// Retry scalar/array admission on value identities, using the same checks and emitter.
-/// This is analysis-only renaming: generated code and recovery still name VM slots.
-fn admit_lifetime_roles(
-    instructions: Vec<WideInstruction>,
-    registers: usize,
-    constants: &[Value],
-    live: Option<std::rc::Rc<crate::compile::liveness::RegisterMasks>>,
-    header: u32,
-) -> Option<LoopRegion> {
-    use std::collections::{BTreeMap, BTreeSet};
-    if live.is_none() || instructions.is_empty() || registers > MAX_REGION_REGISTERS
-        || !instructions.iter().all(|instruction| lifetime_instruction(*instruction))
-    {
-        return None;
-    }
-    let mut flow = LoopRegion {
-        header, backedge: header + instructions.len() as u32 - 1,
-        numbers: (0..registers).map(|register| register as Register).collect(),
-        tagged: Vec::new(), arrays: Vec::new(), captures: Vec::new(), stored_captures: Vec::new(),
-        fields: Vec::new(), field_reads: BTreeMap::new(), dynamic_field_reads: BTreeMap::new(),
-        dynamic_arrays: BTreeSet::new(),
-        field_stores: BTreeMap::new(), dynamic_field_stores: BTreeMap::new(), field_store_sites: Vec::new(), held: BTreeMap::new(),
-        identity_branches: BTreeMap::new(), instructions, constants: BTreeMap::new(),
-        live, inlining: None,
-    };
-    let values = webs(&flow);
-    // A temporary receiver may be copied from an entry array, but its backing view
-    // must never be captured from the unrelated value left in that slot at entry.
-    fn array_root(
-        flow: &LoopRegion, values: &Webs, pc: u32, register: Register,
-        visiting: &mut BTreeSet<(u32, Register)>,
-    ) -> Option<Register> {
-        if !visiting.insert((pc, register)) {
-            return None;
-        }
-        let definitions = values.reaching[(pc - flow.header) as usize].get(&register)?;
-        let mut root = None;
-        for definition in definitions {
-            let candidate = if let Some(entry) = flow.entry_register(*definition) {
-                if flow.instructions.iter().any(|instruction| instruction.defined_register() == Some(entry)) {
-                    return None;
-                }
-                entry
-            } else {
-                let offset = definition.checked_sub(flow.entry_count())?;
-                let instruction = *flow.instructions.get(offset)?;
-                if !instruction.op().is_move() || instruction.result_flags() != 0 {
-                    return None;
-                }
-                array_root(flow, values, flow.header + offset as u32, instruction.register_b(), visiting)?
-            };
-            if root.is_some_and(|root| root != candidate) {
-                return None;
-            }
-            root = Some(candidate);
-        }
-        visiting.remove(&(pc, register));
-        root
-    }
-    let mut canonical = flow.instructions.clone();
-    for (offset, instruction) in canonical.iter_mut().enumerate() {
-        // Field receivers rename as values do; only array accesses read through an entry
-        // array's root.
-        if !instruction.op().is_indexed_access() {
-            continue;
-        }
-        if let Some(receiver) = object_reads(*instruction) {
-            let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
-                Some(root) => root,
-                None if instruction.op().is_get_index()
-                    && values.reaching[offset].get(&receiver).is_some_and(|definitions| {
-                        !definitions.is_empty() && definitions.iter().all(|definition| {
-                            definition.checked_sub(flow.entry_count())
-                                .and_then(|index| flow.instructions.get(index))
-                                .is_some_and(|definition| definition.op().is_get_index())
-                        })
-                    }) => continue,
-                None => return None,
-            };
-            let base = if instruction.op().is_get_index() { Operand::register(root).0 } else { root };
-            *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
-        }
-    }
-    let roots: BTreeSet<Definition> = (0..values.parent.len()).map(|definition| values.find(definition)).collect();
-    // Unused instruction definitions have no register and need no analysis identity.
-    let roots: Vec<Definition> = roots.into_iter().filter(|definition| {
-        *definition < flow.entry_count()
-            || number_definition(flow.instructions[*definition - flow.entry_count()]).is_some()
-    }).collect();
-    if roots.len() > MAX_REGION_REGISTERS {
-        return None;
-    }
-    let identities: BTreeMap<Definition, Register> = roots.iter().enumerate()
-        .map(|(index, root)| (*root, index as Register)).collect();
-    let original: Vec<Register> = roots.iter().map(|root| values.register(&flow, *root)).collect();
-    let mut analysis = Vec::with_capacity(canonical.len());
-    for (offset, instruction) in canonical.iter().copied().enumerate() {
-        let pc = header + offset as u32;
-        let read = |register| identities.get(&values.read(&flow, pc, register)).copied();
-        let field = |field, raw| -> Option<u16> {
-            Some(match instruction.op().field_layout(field) {
-                FieldLayout::ResultRegister => {
-                    if instruction.result_flags() != 0 { return None; }
-                    *identities.get(&values.defined(&flow, pc))?
-                }
-                FieldLayout::Register => read(raw)?,
-                FieldLayout::Operand | FieldLayout::NumericIndexOperand => {
-                    let operand = Operand(raw);
-                    match operand.kind()? {
-                        OperandKind::Register => Operand::register(read(operand.payload())?).0,
-                        OperandKind::Constant => raw,
-                        _ => return None,
-                    }
-                }
-                FieldLayout::FieldBase => {
-                    let base = FieldBase(raw);
-                    if base == FieldBase::THIS { raw } else { FieldBase::register(read(base.register_index()?)?).0 }
-                }
-                FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister
-                | FieldLayout::RegisterWindowBase => return None,
-                _ => raw,
-            })
-        };
-        analysis.push(WideInstruction::new(instruction.op(),
-            field(InstructionField::A, instruction.a())?,
-            field(InstructionField::B, instruction.b())?,
-            field(InstructionField::C, instruction.c())?, instruction.imm()));
-    }
-    let mut region = admit_register_roles(analysis, roots.len(), constants, &[], None, None, header, &BTreeSet::new(), MethodCalls::Inliner)
-        .inspect_err(|&failure| {
-            if crate::trace::Channel::OsrReject.on() {
-                eprintln!("QUENCH_JS_JIT_OSR_LIFETIME_REJECT header={header} failure={failure:?}");
-            }
-        }).ok()?;
-    let tagged: BTreeSet<Register> = region.tagged.iter().map(|register| original[usize::from(*register)]).collect();
-    region.numbers = region.numbers.iter().map(|register| original[usize::from(*register)])
-        .filter(|register| !tagged.contains(register)).collect::<BTreeSet<_>>().into_iter().collect();
-    region.tagged = tagged.into_iter().collect();
-    for array in &mut region.arrays { array.register = original[usize::from(array.register)]; }
-    region.dynamic_arrays = region.dynamic_arrays.iter().map(|register| original[usize::from(*register)]).collect();
-    for branch in region.identity_branches.values_mut() { branch.register = original[usize::from(branch.register)]; }
-    // Field receivers name VM slots again: an entry receiver's identity is its slot at entry,
-    // and a redefined one's reads go through the canonical instructions' registers.
-    for field in &mut region.fields {
-        if let FieldReceiver::Register(register) = &mut field.receiver {
-            *register = original[usize::from(*register)];
-        }
-    }
-    for store in &mut region.field_store_sites {
-        if let FieldReceiver::Register(register) = &mut store.receiver { *register = original[usize::from(*register)]; }
-    }
-    region.held = std::mem::take(&mut region.held).into_iter()
-        .map(|(register, (mut path, index))| {
-            if let FieldReceiver::Register(root) = &mut path.root {
-                *root = original[usize::from(*root)];
-            }
-            (original[usize::from(register)], (path, index))
-        }).collect();
-    region.instructions = canonical;
-    region.live = flow.live.take();
-    Some(region)
 }
 
 /// The region offsets a jump lands on.
@@ -2357,6 +2229,9 @@ fn admit(
 /// the native OSR reader may load directly, by region field index.
 pub(crate) struct Observation<'a> {
     pub(crate) native_field_loads: &'a [Vec<NativeFieldLoad>],
+    /// The own entries of each store site whose receiver the region redefines
+    /// (`LoopRegion::dynamic_field_stores`), by cache site: the shapes its in-place arms take.
+    pub(crate) store_loads: &'a [(u16, Vec<NativeFieldLoad>)],
     /// The registers holding arrays whose sampled elements were all int32s, or all Numbers, at
     /// entry, with that type: reads through them have it, leaving where one does not.
     pub(crate) number_arrays: &'a [(Register, crate::typed_ir::Type)],
@@ -2381,6 +2256,10 @@ pub(crate) struct Observation<'a> {
     pub(crate) int_captures: &'a [u16],
     /// Whether loops may version their bounds on entry (`RegionPlan::entry_bounds`).
     pub(crate) entry_bounds: bool,
+    /// Per inlined frame of the region (`Inlining::frames`), the dense capture slots of its
+    /// callee's environment (`Vm::lane_callee_captures`): where the frame's own capture reads
+    /// load, its identity guard fixing the environment.
+    pub(crate) frame_captures: &'a [(usize, usize)],
 }
 
 

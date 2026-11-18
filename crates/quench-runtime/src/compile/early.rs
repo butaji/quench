@@ -209,10 +209,10 @@ pub(super) enum RegExpEarlyError {
 /// bodies' included.
 pub(super) fn regexp_early_error(parsed: &oxc_parser::ParserReturn<'_>) -> Option<RegExpEarlyError> {
     let text = parsed.program.source_text;
-    parsed.regexp_literals.iter().filter_map(|span| regexp_literal_error(text.get(span.start as usize..span.end as usize)?)).next_back()
+    parsed.regexp_literals.iter().filter_map(|span| super::regexp_memo::checked(text.get(span.start as usize..span.end as usize)?, regexp_literal_error_uncached)).next_back()
 }
 
-fn regexp_literal_error(text: &str) -> Option<RegExpEarlyError> {
+fn regexp_literal_error_uncached(text: &str) -> Option<RegExpEarlyError> {
     let separator = text.rfind('/')?;
     let pattern = text.get(1..separator)?;
     let flags = &text[separator + 1..];

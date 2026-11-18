@@ -1086,6 +1086,26 @@ impl<H: Host> Vm<H> {
         self.global(program, "Math", math)
     }
 
+    /// Installs `constructor[@@species]`, the accessor every species-reading constructor
+    /// carries (configurable, not enumerable, no setter), whose getter `getter` makes; nothing
+    /// where the realm has no @@species.
+    pub(super) fn install_species(&mut self, constructor: Value, getter: impl FnOnce(&mut Self) -> Value) -> Result<(), JsError> {
+        let Some(species) = self.well_known_symbols.get(WellKnownSymbol::Species) else { return Ok(()) };
+        let getter = getter(self);
+        self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+        self.set_symbol_property(constructor, species, Value::UNDEFINED)?;
+        let attributes = PropertyAttributes {
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            accessor: true,
+            getter: Some(getter),
+            setter: None,
+        };
+        self.set_property_attributes(constructor, PropertyKey::symbol(species), attributes);
+        Ok(())
+    }
+
     pub(super) fn install_builtin_to_string_tag(
         &mut self,
         object: Value,
@@ -1177,7 +1197,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc_empty_object(Self::empty_object(prototype))
+        self.heap.alloc_empty_object(prototype)
     }
     pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
         self.find_atom(Self::atom_hash_str(name), |atom| {
