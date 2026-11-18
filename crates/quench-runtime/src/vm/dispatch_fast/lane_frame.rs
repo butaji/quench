@@ -122,6 +122,28 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     reads: Reads,
     /// The plan of the named read the frame runs, as its record holds it (`RecordPlan`).
     plan: Option<RecordPlan>,
+    /// The VM's element steps an element row's host path runs at its site, where the row is one
+    /// that accesses an element (`ElementFrame::index_set_host`, `PropertyFrame::index_get_host`).
+    elements: Option<ElementSteps>,
+}
+
+/// The element steps of the running lane, erased of its host so the frame names no `H`: the
+/// read and the store an element row's host path makes at its site `ip` (`row_index_read`,
+/// `row_index_write`). Neither runs guest code; a refusal leaves to the row's miss.
+#[derive(Clone, Copy)]
+struct ElementSteps {
+    context: *mut (),
+    site: Ip,
+    read: fn(*mut (), Ip, Value, Value) -> Option<Value>,
+    write: fn(*mut (), Ip, Value, Value, Value) -> bool,
+}
+
+impl ElementSteps {
+    /// The element steps of the running lane's `cx` at the row's site `ip`.
+    #[inline(always)]
+    fn of<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> Self {
+        Self { context: cx.cast(), site: ip, read: row_index_read::<H>, write: row_index_write::<H> }
+    }
 }
 
 /// A named read's plan as a lane record holds it: the ops the record's own-field hint proves
@@ -245,7 +267,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -269,7 +291,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None }
+            capture_slots: None, heap: None, frame_this: None, reads: Reads::NONE, plan: None, elements: None }
     }
 }
 
@@ -487,6 +509,15 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
         Some(crate::staged::ic::Reached::bare(record as *const crate::heap::Object as u64))
     }
 
+    /// `base[key]` past the dense and any-backing reads: the VM's element read at the row's site
+    /// (`row_index_read`), which serves a hole, a symbol or string key, a typed or string element.
+    #[inline(always)]
+    fn index_get_host(&mut self, _stage: &mut Concrete, base: u64, key: u64, _miss: ()) -> Option<u64> {
+        let steps = self.elements?;
+        // SAFETY: the steps were made for the lane context this frame runs in.
+        (steps.read)(steps.context, steps.site, Value::from_bits(base), Value::from_bits(key)).map(Value::to_bits)
+    }
+
     #[inline(always)]
     fn delete_property(&mut self, _stage: &mut Concrete, base: u64, key: u64, _strict: bool, _miss: ()) -> Option<(u64, Boxing)> {
         let host = self.host?;
@@ -512,6 +543,16 @@ impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
         // The live table: a direct array receiver proves it reserved, and any other receiver
         // leaves at the access's family test before it is addressed.
         self.heap.map(|heap| unsafe { (*heap).live_array_records() } as u64)
+    }
+
+    /// The VM's element store at the row's site (`row_index_write`): an added element, a hole, a
+    /// typed or string-keyed store, a symbol or a plain index property. A refusal leaves to `miss`.
+    #[inline(always)]
+    fn index_set_host(&mut self, _stage: &mut Concrete, base: u64, key: u64, value: u64, _miss: ()) -> Option<()> {
+        let steps = self.elements?;
+        // SAFETY: as `index_get_host`.
+        (steps.write)(steps.context, steps.site, Value::from_bits(base), Value::from_bits(key), Value::from_bits(value))
+            .then_some(())
     }
 
     /// The lane keeps no views: a read takes the element of any backing in place.
@@ -655,12 +696,13 @@ pub(in crate::vm::dispatch_fast) const fn lane_runs_row(op: Op) -> bool {
 /// The frame `lane_row` steps opcode `OP`'s row over: the register file and the carried view, and
 /// the running frame's local slots where the row is a local one (`Decoder::Local`).
 #[inline(always)]
-fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried) -> LaneFrame<ACC> {
+fn row_frame<H: Host, const OP: u16, const ACC: u8>(cx: *mut LaneContext<H>, r: Registers, view: Carried, ip: Ip) -> LaneFrame<ACC> {
     let locals = const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Local)) };
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
         // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
-        let heap: *const crate::heap::Heap = &unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap;
-        return LaneFrame::<ACC> { heap: Some(heap), ..LaneFrame::<ACC>::new(r, view) };
+        let script = view.memory.bytes.cast::<LaneContext<H>>();
+        let heap: *const crate::heap::Heap = &unsafe { vm(script) }.heap;
+        return LaneFrame::<ACC> { heap: Some(heap), elements: Some(ElementSteps::of::<H>(script, ip)), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
         let heap: *const crate::heap::Heap = &unsafe { vm(cx) }.heap;
@@ -829,7 +871,7 @@ lane_handler! {
             // A store's gate reads the heap's barrier state (`Stage::store_gate`).
             Concrete::storing(&raw const unsafe { vm(view.memory.bytes.cast::<LaneContext<H>>()) }.heap)
         } else { Concrete::new(property_values) };
-        let mut frame = row_frame::<H, OP, ACC>(cx, r, view);
+        let mut frame = row_frame::<H, OP, ACC>(cx, r, view, ip);
         if store {
             let script: *mut LaneContext<H> = view.memory.bytes.cast();
             // The live record table: a direct object receiver proves it reserved, and any other
@@ -955,14 +997,14 @@ lane_handler! {
                 }
                 next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
             }
-            // An element read past its in-place arm: the record's keyed paths (a slot, a getter).
+            // An element access the host path refused: a read takes the getter, a write the
+            // activation resume (or the general path).
             Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } => {
                 let script: *mut LaneContext<H> = view.memory.bytes.cast();
                 if const { matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } {
-                    sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
+                    sibling!(super::lane_get_index_getter::<H>, r, ip, Carried::script_in(script, view))
                 }
-                // A keyed write past its in-place replacement: an append, a hole, a typed array, a key.
-                sibling!(super::lane_set_index_slot::<H>, r, ip, Carried::script_in(script, view))
+                sibling!(super::row_set_index_refused::<H>, r, ip, Carried::script_in(script, view))
             }
             Step::Control(_) | Step::Unresolved => sibling!(lane_general_step::<H>, r, ip, view),
         }

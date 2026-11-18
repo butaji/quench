@@ -79,7 +79,12 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
         // A frame that keeps no views reads the element of any backing in place.
         None if frame.reads_any_backing() => {
             let records = frame.array_records(stage)?;
-            let index = frame.index_offset(stage, key, miss)?;
+            // A key that is no offset into the backing (a string, a symbol, a negative int32) is
+            // the host's read, not a leave of the row: the host path serves every key.
+            let Some(index) = frame.index_offset(stage, key, miss) else {
+                let key = frame.key_word(stage, key)?;
+                return frame.index_get_host(stage, object, key, miss);
+            };
             return frame.element_probed(stage, miss,
                 #[inline(always)] |stage, _, absent| super::elements::any_backing_element(stage, records, object, index, absent),
                 #[inline(always)] |stage, frame, miss| {

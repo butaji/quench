@@ -5713,26 +5713,7 @@ lane_handler! {
 }
 
 script_handler! {
-    /// `element_read_row` past a record array.
-    #[inline(never)]
-    fn lane_get_index_slot<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (base, key) = (r.get(i.b), r.get(i.c));
-        // A symbol-keyed read this site made of the same shape and key reads its own slot.
-        if let Some(value) = vm.site_keyed_own_read(ip.addr(), base, key) {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        let Some(value) = lane_index_slot_element(vm, ip, base, key) else {
-            sibling!(lane_get_index_getter::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_index_slot` of an element no data read answers: an index getter's
+    /// The element row's refused read (`row_index_read` found nothing): an index getter's
     /// activation (`lane_index_getter_activation`), else the general path. Apart, since the
     /// activation's result is a stack temporary of the handler that makes it.
     #[inline(never)]
@@ -5776,11 +5757,16 @@ fn lane_get_index_beside_activations<H: Host>(
     Resumed::At(r, following(ip), Carried::script(cx))
 }
 
-/// `base[key]` of a data element `lane_get_index_slot` reads past a record array: a dense
-/// or absent array element, a keyed read this site recorded, a typed array's or a string's
-/// element. Out of line, as `lane_set_index_slot_store`.
+/// The element row's host read (`ElementFrame`'s `index_get_host`) at site `ip` of `base[key]`
+/// past the row's dense arm: a symbol-keyed read this site made of the same shape and key reads
+/// its own slot; else a dense or absent array element, a keyed read this site recorded, a typed
+/// array's or a string's element. Out of line, as `row_index_write`.
 #[inline(never)]
-fn lane_index_slot_element<H: Host>(vm: &mut Vm<H>, ip: Ip, base: Value, key: Value) -> Option<Value> {
+fn row_index_read<H: Host>(context: *mut (), ip: Ip, base: Value, key: Value) -> Option<Value> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    if let Some(value) = vm.site_keyed_own_read(ip.addr(), base, key) {
+        return Some(value);
+    }
     let key = vm.canonical_index_key(key);
     // A typed array answers every index read itself, never its prototype chain, and a string
     // every index inside its length, so their reads come before the ordinary array probes,
@@ -6115,25 +6101,20 @@ script_handler! {
 }
 
 script_handler! {
-    /// `element_write_row` past a record array, appending to a dense array at its length,
-    /// filling one of its holes, a Number stored into a typed array
-    /// (`Vm::typed_array_set_number`), or a plain symbol-, string- or integer-keyed write. A
-    /// symbol write repeats the step its site recorded for the receiver's shape first
-    /// (`Vm::site_symbol_set`).
+    /// The element row's refused store (`row_index_write` found no path): the general store
+    /// made in place within a frameless activation (`lane_set_index_beside_activations`), else
+    /// the general path.
     #[inline(never)]
-    fn lane_set_index_slot<>(cx, r, ip, i, view) {
+    fn row_set_index_refused<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        if !lane_set_index_slot_store(vm, ip, r.get(i.b), r.get(i.c), r.get(i.a)) {
-            if vm.lane_stack.activations.is_empty() {
-                return exit(ip);
-            }
-            resume!(cx, lane_set_index_beside_activations(cx, r, ip, i));
+        if vm.lane_stack.activations.is_empty() {
+            return exit(ip);
         }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        resume!(cx, lane_set_index_beside_activations(cx, r, ip, i));
     }
 }
 
-/// `lane_set_index_slot` past the lane's stores within a frameless activation: the general
+/// `row_set_index_refused` past the lane's stores within a frameless activation: the general
 /// store made in place (`lane_in_place`), strict as its record or function is.
 #[cold]
 #[inline(never)]
@@ -6160,11 +6141,14 @@ fn lane_set_index_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Regist
     Resumed::At(r, following(ip), Carried::script(cx))
 }
 
-/// `lane_set_index_slot`'s store of `value` at `object[key]` for the record at `ip`; `false`
-/// stores nothing. Out of line, as every store a lane handler makes through calls whose
-/// stack temporaries escape: the handler's frame then holds none.
+/// The element row's host store (`ElementFrame::index_set_host`) of `value` at `object[key]` for
+/// the record at `ip`: a hole, a symbol, a dense replacement or append, a typed array's number,
+/// a plain string key or an index property; `false` stores nothing, which the row's miss takes.
+/// Out of line, as every store a lane handler makes through calls whose stack temporaries
+/// escape: the handler's frame then holds none.
 #[inline(never)]
-fn lane_set_index_slot_store<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, key: Value, value: Value) -> bool {
+fn row_index_write<H: Host>(context: *mut (), ip: Ip, object: Value, key: Value, value: Value) -> bool {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
     if !vm.try_fill_record_hole(object, key, value)
         && !vm.site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_replace_dense_element(object, key, value)
@@ -6173,7 +6157,7 @@ fn lane_set_index_slot_store<H: Host>(vm: &mut Vm<H>, ip: Ip, object: Value, key
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_host_private_symbol_set(object, key, value)
         && !lane_typed_array_store(ip, vm, object, key, value)
-        && !lane_string_key_store(ip, vm, object, key, value)
+        && !vm.try_plain_string_key_set(object, key, value)
         && !key
             .as_int()
             .and_then(|index| usize::try_from(index).ok())
@@ -6198,35 +6182,8 @@ fn lane_typed_array_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: V
     stored
 }
 
-/// A plain string-keyed write (`Vm::try_plain_string_key_set`), which every array, symbol
-/// and typed-array path before it declines: the site then tries it first
-/// (`lane_set_index_string`).
-fn lane_string_key_store<H: Host>(ip: Ip, vm: &mut Vm<H>, object: Value, key: Value, value: Value) -> bool {
-    let stored = vm.try_plain_string_key_set(object, key, value);
-    if stored {
-        requicken::<H>(ip, lane_set_index_string::<H>);
-    }
-    stored
-}
-
 script_handler! {
-    /// `lane_set_index_slot` at a site that made a plain string-keyed write: that write is
-    /// the whole store, as the generic order reaches it once every array, symbol and typed
-    /// path declines a string key; any other store takes the generic order.
-    fn lane_set_index_string<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        let vm = unsafe { vm(cx) };
-        if !vm.try_plain_string_key_set(object, key, value) {
-            sibling!(lane_set_index_slot::<H>, r, ip, view)
-        }
-        // Adding a property can allocate.
-        note_allocation(vm);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index_slot` at a site that stored into a typed array: a number stored at an
+    /// `element_write_row` at a site that stored into a typed array: a number stored at an
     /// index of one is the whole store, as the generic order reaches it once every array and
     /// symbol path declines a typed array; any other store takes the generic order.
     fn lane_set_index_typed<>(cx, r, ip, i, view) {
@@ -6304,7 +6261,7 @@ script_handler! {
             .array_index_key(key)
             .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
         if !stored {
-            sibling!(lane_set_index_slot::<H>, r, ip, view)
+            sibling!(element_write_row::<H>(), r, ip, view)
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -7498,7 +7455,7 @@ const ELEMENT_WRITE: u16 = {
 };
 
 /// The generated keyed write (`lane_row` of `ELEMENT_WRITE`): a present dense element replaced in
-/// place, any other write `lane_set_index_slot`.
+/// place, any other write its host path (`row_index_write`).
 /// The write's boolean immediate (its strictness) is no operand of the in-place row, whose misses
 /// read it from the record: the row is installed at its cleared flag, so the passes that
 /// recognise the record's handler (`specialize_proved_arrays`) find it before a first run
@@ -7507,7 +7464,7 @@ const fn element_write_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, 
 
 /// The site fact of a keyed write whose stored value the next record, a register `Move`, copies
 /// (`specialize_store_moves`): the row's store, then the copy the row makes as a `Move` record
-/// does. A store the row leaves takes `lane_set_index_slot`, which continues at the `Move` record.
+/// does. A store the row leaves continues at the `Move` record (`row_set_index_refused`).
 pub(super) const ELEMENT_MOVE_SITE: u8 = own_site(false, OWN_FORMS.len() + 11);
 
 /// The generated keyed write whose stored value the next record copies (`ELEMENT_MOVE_SITE`).
@@ -9276,7 +9233,7 @@ script_handler! {
 
 /// `DefinePropertyRecord` of the record at `ip`, defined as the general step defines it: a
 /// class method or accessor, or an object literal accessor. An out-of-domain mode or a throw
-/// leaves the instruction to the general path. Out of line, as `lane_set_index_slot_store`:
+/// leaves the instruction to the general path. Out of line, as `row_index_write`:
 /// the handler's frame then holds none of the descriptor.
 #[inline(never)]
 fn lane_define_property_record_in_place<H: Host>(
