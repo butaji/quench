@@ -1113,6 +1113,13 @@ opcodes!($;
     // `GetIndex` read it.
     ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names, @ Register, @ fields(ResultRegister, Unused, Unused),
     ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentGet, @ Register, @ fields(ResultRegister, Register, Unused),
+    // `rest.length` and `rest[key]` of a rest parameter read nowhere else (`Function::rest_view`):
+    // the values its activation kept past its first `imm` parameters, with no array made.
+    // A key other than an index those values hold makes the rest array and reads it.
+    // The rest register (`b` of `RestLength`, `c` of `RestGet`) holds `undefined` where the
+    // entry kept the values, else the array an entry made, which they then read.
+    RestLength => Effect::READS_HEAP; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Register, Unused),
+    RestGet => READ_THROW; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Register, Register),
     // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
     CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );
@@ -1998,6 +2005,13 @@ impl Function {
 
     /// Whether the instruction at `pc` returns `register`. A call is in tail position only
     /// when the instruction after it returns that call's own result.
+    /// Whether its rest parameter is read only by `RestGet` and `RestLength`
+    /// (`compile::rest_reads`): an entry that keeps the values passed leaves the rest
+    /// register `undefined` and makes no array.
+    pub(crate) fn rest_view(&self) -> bool {
+        self.rest && self.instructions_of(|op| matches!(op, Op::RestGet | Op::RestLength)).next().is_some()
+    }
+
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
         self.strict || !self.constructible || self.is_class_constructor
     }

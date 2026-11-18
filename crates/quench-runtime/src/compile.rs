@@ -74,6 +74,7 @@ mod program_shape;
 pub(crate) use program_shape::EvalContext;
 use program_shape::ParsedProgramShape;
 mod object_registers;
+mod rest_reads;
 pub(crate) mod regexp;
 pub(crate) mod program_profile;
 #[cfg(feature = "profile-memory")]
@@ -2260,13 +2261,14 @@ pub(crate) fn lower_settled<'a>(
     // proof from the specialized code), so frame registers start from the same slots.
     frame_registers::drop_unread_self_binding(function, superinstructions, &atom_name);
     let plain_slots = Compiler::specialize_plain_local_operations(function, superinstructions);
-    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, atom_name);
+    frame_registers::promote(function, plain_slots, superinstructions, undefined_constant, &atom_name);
     if specialized {
         if coalescing_repays(function) {
             rewrite::coalesce_promoted_moves(function, methods, field_sites, superinstructions);
         }
         object_registers::promote(function, methods, field_sites, superinstructions, object_sites);
     }
+    rest_reads::rewrite(function, methods, field_sites, superinstructions, &|atom| atom_name(atom as usize) == Some("length"));
     if function
         .code
         .iter()

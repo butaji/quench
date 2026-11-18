@@ -1907,6 +1907,10 @@ const TARGET_INITIALIZES: u8 = 2;
 /// passed, for a kept `arguments` (`CallPlan::keeps_arguments`) or legacy reflection of a
 /// sloppy function's; any other's rest array holds every value past its parameters.
 const TARGET_GATHERS_KEEPING: u8 = 4;
+/// `ScriptCallTarget::forms`: a rest body whose rest parameter only `RestGet` and
+/// `RestLength` read (`Function::rest_view`): a plain call's activation keeps the values
+/// passed and makes no rest array (`lane_activate_gathering`).
+const TARGET_REST_VIEW: u8 = 8;
 
 impl ScriptCallTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -14051,7 +14055,8 @@ impl<H: Host> Vm<H> {
             // An environment activation's window has no record to hold the `new.target` an arrow reads.
             forms: u8::from(shape.constructs && !(environment && body.activation_bindings_observable(code)) && !settles && !body.rest && !(cross && plan.keeps_arguments)) * TARGET_CONSTRUCTS
                 | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES
-                | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING,
+                | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING
+                | u8::from(body.rest_view()) * TARGET_REST_VIEW,
             fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -16756,13 +16761,32 @@ fn lane_activate_gathering<H: Host>(
     if (returns && !lane_returning_call_admitted(cx)) || vm.with_scope_entered {
         return Err(exit(ip));
     }
-    if !lane_activation_room(vm, target) {
-        return Err(lane_script_call_frame::<H>(ip, usize::from(target.room)));
-    }
     let argc = ImmediateLayout::argument_count(i.imm());
+    let view = target.forms & TARGET_REST_VIEW != 0;
+    let room = usize::from(target.room) + if view { usize::from(argc) } else { 0 };
+    if !lane_activation_room(vm, target) || vm.lane_stack.values.room() < room {
+        return Err(lane_script_call_frame::<H>(ip, room));
+    }
     let fixed = target.params - 1;
     // SAFETY: the call's window of `r` holds its `argc` values.
     let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
+    if view {
+        // A rest view keeps every value passed after its registers, as a keeping activation
+        // does, and its rest register holds `undefined` (`lane_rest_view`).
+        let callee_registers = lane_fill_window(vm, target, passed, argc.min(fixed));
+        callee_registers.set(fixed, Value::UNDEFINED);
+        let count = usize::from(target.registers);
+        // SAFETY: the room checked above holds the kept values past the window.
+        unsafe {
+            copy_arguments(callee_registers.0.add(count), passed, argc);
+            vm.lane_stack.values.set_top(callee_registers.0.add(count + usize::from(argc) + lane_values::CONTEXT));
+        }
+        let entered = lane_enter_window::<H, false, false>(cx, r, ip, target, callee_registers, argc, this, false, None);
+        if let Some(ActivationKind::Script(script)) = vm.lane_stack.activations.last_mut().map(|activation| &mut activation.kind) {
+            script.forwards = true;
+        }
+        return Ok(entered);
+    }
     let rest = vm.rest_parameter_array(unsafe {
         std::slice::from_raw_parts(passed.add(usize::from(fixed.min(argc))), usize::from(argc.saturating_sub(fixed)))
     });
@@ -17403,6 +17427,31 @@ script_handler! {
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
+    }
+}
+
+script_handler! {
+    /// `RestLength` (`GET` false) or `RestGet` (`GET` true) of a rest view
+    /// (`Function::rest_view`) in a keeping activation: the values past its first `imm`
+    /// parameters among those it kept after its registers, where `RestGet`'s record carries
+    /// their first register (`derive_lane_view`). Read in place whatever its rest register
+    /// holds: only these reads see the rest array, which no write changes, so an array an
+    /// entry made holds the same values. A frame, and a key other than an index they hold,
+    /// take the general path (`Vm::read_rest_view`).
+    fn lane_rest_view<GET: bool>(cx, r, ip, i, view) {
+        if let Some((argc, _)) = unsafe { lane_keeping_activation(cx) } {
+            let length = argc.saturating_sub(i.imm() as u16);
+            if !GET {
+                r.set(i.a, Value::integer(i32::from(length)));
+                next!(cx, r, following(ip), view)
+            }
+            // A negative index wraps past every length, so one unsigned compare bounds it.
+            if let Some(index) = r.get(i.b).as_int().map(|index| index as u32).filter(|index| *index < u32::from(length)) {
+                r.set(i.a, r.get(i.c + index as u16));
+                next!(cx, r, following(ip), view)
+            }
+        }
+        exit(ip)
     }
 }
 
@@ -19029,7 +19078,8 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     let window_size = if keeps { count + argc } else { count };
     // The rest array, made before the window is: the values past the other parameters, read
     // in place from the caller's window or the kept values.
-    let rest = gathers.then(|| {
+    // A rest view that keeps the values reads them in place (`lane_rest_view`).
+    let rest = (gathers && !(keeps && target.forms & TARGET_REST_VIEW != 0)).then(|| {
         let fixed = usize::from(target.params) - 1;
         let passed: &[Value] = match arguments {
             // SAFETY: the window holds `argc` registers of the caller.
@@ -19078,8 +19128,9 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
         if keeps {
             lane_keep_arguments(registers.add(count), r, arguments, argc);
         }
-        if let Some(rest) = rest {
-            registers.add(usize::from(target.params) - 1).write(rest);
+        // A rest view's register holds `undefined`: its reads take the kept values.
+        if gathers {
+            registers.add(usize::from(target.params) - 1).write(rest.unwrap_or(Value::UNDEFINED));
         }
         stack.values.set_top(registers.add(window_size + lane_values::CONTEXT));
         Registers(registers)
@@ -21998,6 +22049,11 @@ fn derive_lane_view<'live, H: Host>(
                     },
                     produces: false,
                 })
+            } else if matches!(op, Op::RestGet | Op::RestLength) {
+                Some(LaneHandler {
+                    handler: if op == Op::RestGet { lane_rest_view::<H, true> as Handler } else { lane_rest_view::<H, false> as Handler },
+                    produces: false,
+                })
             } else if op.reads_arguments() {
                 Some(LaneHandler {
                     handler: if op.class().eq(Class::ArgumentsLength) {
@@ -22053,6 +22109,9 @@ fn derive_lane_view<'live, H: Host>(
                 // count its unused field carries (`lane_argument_get`).
                 c: if handler == lane_argument_get::<H> as Handler as *const () {
                     function.registers as u16
+                } else if handler == lane_rest_view::<H, true> as Handler as *const () {
+                    // The first kept value past the fixed parameters (`lane_rest_view`).
+                    function.registers as u16 + instruction.imm() as u16
                 } else {
                     instruction.c()
                 },

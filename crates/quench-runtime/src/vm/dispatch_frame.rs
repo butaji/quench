@@ -913,7 +913,11 @@ impl<H: Host> Vm<H> {
             .locals
             .resize(usize::from(function.locals), Value::UNDEFINED);
         if function.rest {
-            frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+            // A rest view's local stays `undefined`: its reads take the values past the fixed
+            // parameters from those the frame keeps (`Op::RestGet`), below.
+            if !function.rest_view() {
+                frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+            }
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
@@ -927,7 +931,7 @@ impl<H: Host> Vm<H> {
             };
         }
         self.initialize_frame_invocation(p, frame, function, context, args);
-        if forwards_arguments {
+        if forwards_arguments || function.rest && function.rest_view() {
             // The frame keeps every argument for the object it may still materialize; legacy
             // reflection reads the same values, since such a frame reflects no parameter.
             debug_assert_eq!(frame.reflected_parameters, 0);
@@ -990,6 +994,37 @@ impl<H: Host> Vm<H> {
         match key {
             None => self.get_property(p, binding, self.length_atom),
             Some(key) => self.get_index(p, binding, key),
+        }
+    }
+
+    /// `RestLength` or `RestGet` (`Function::rest_view`) in frame `f`: the rest register holds
+    /// the array an entry made, read as `GetField` of `length` and `GetIndex` read it, or
+    /// `undefined`, and the values past the first `imm` parameters are those the frame kept;
+    /// a key other than an index they hold makes the rest array, which the register keeps.
+    pub(super) fn read_rest_view(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<Value, JsError> {
+        let get = i.op() == Op::RestGet;
+        let rest = if get { i.c() } else { i.b() };
+        let fixed = i.imm() as usize;
+        let mut held = self.read(f, rest);
+        if held == Value::UNDEFINED {
+            let kept = &self.frames[f].original_arguments;
+            let passed = kept.get(fixed..).unwrap_or_default();
+            if !get {
+                return Ok(Value::length(passed.len()));
+            }
+            let key = self.read(f, i.b());
+            if let Some(value) = key.as_int().and_then(|index| usize::try_from(index).ok()).and_then(|index| passed.get(index)) {
+                return Ok(*value);
+            }
+            let passed = passed.to_vec();
+            held = self.rest_parameter_array(&passed);
+            self.write(f, rest, held);
+        }
+        if get {
+            let key = self.read(f, i.b());
+            self.get_index(p, held, key)
+        } else {
+            self.get_property(p, held, self.length_atom)
         }
     }
 

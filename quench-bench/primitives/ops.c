@@ -580,6 +580,8 @@ struct pair { int32_t x, y; };
 static int32_t NOINL add_one(int32_t x) { return (int32_t)((uint32_t)x + 1u); }
 struct env { int32_t k; };
 static int32_t NOINL add_k(const struct env *e, int32_t x) { return (int32_t)((uint32_t)x + (uint32_t)e->k); }
+/* A variadic function's rest values as C passes them: a count and the values in place. */
+static int32_t NOINL sum_rest(int32_t count, const int32_t *xs) { return count > 1 ? (int32_t)((uint32_t)xs[0] + (uint32_t)xs[1]) : 0; }
 
 static double NOINL op_field_read(long n) {
   int32_t N = (int32_t)n, a = 0;
@@ -600,6 +602,12 @@ static double NOINL op_field_store(long n) {
 static double NOINL op_call_direct(long n) {
   int32_t N = (int32_t)n, a = 0;
   for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); a = (int32_t)((uint32_t)a + (uint32_t)add_one(i)); }
+  return a;
+}
+
+static double NOINL op_call_rest(long n) {
+  int32_t N = (int32_t)n, a = 0;
+  for (int32_t i = 0; i < N; i++) { BODY_BARRIER(); int32_t xs[2] = {i, 1}; a = (int32_t)((uint32_t)a + (uint32_t)sum_rest(2, xs)); }
   return a;
 }
 
@@ -838,7 +846,7 @@ static double NOINL op_k_str_build(long n) {
 typedef double (*opfn)(long);
 static const struct { const char *name; opfn fn; } TABLE[] = {
   {"field_read", op_field_read}, {"field_name", op_field_read}, {"field_length", op_field_read}, {"field_store", op_field_store}, {"call_direct", op_call_direct},
-  {"call_closure", op_call_closure}, {"call_method", op_call_method},
+  {"call_closure", op_call_closure}, {"call_rest", op_call_rest}, {"call_method", op_call_method},
   {"empty", op_empty}, {"int_add", op_int_add}, {"int_add_noor", op_int_add_noor},
   {"int_sub", op_int_sub}, {"int_mul", op_int_mul}, {"int_mul_ovf", op_int_mul_ovf},
   {"int_div", op_int_div}, {"int_mod", op_int_mod}, {"int_mod_var", op_int_mod_var},
