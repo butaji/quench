@@ -64,7 +64,19 @@ impl CompiledSources {
         let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
         let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
             program.freeze_native_diagnostics();
-            let module = lower_native_js_module(program, &format!("quench_{name}"))?;
+            // The loader decodes the metadata's records with this same compiler
+            // (`NativeProgramNamespace::decode`), which compiles a deferred function's body
+            // again; lower the code from that program, not from the in-memory one, so the
+            // image's code names the records its loader will hold.
+            let records = match namespace {
+                Some(namespace) => {
+                    let decoded = std::rc::Rc::new(namespace.encode(program)?);
+                    namespace.decode(decoded)?
+                }
+                None => program.clone(),
+            };
+            records.freeze_native_diagnostics();
+            let module = lower_native_js_module(&records, &format!("quench_{name}"))?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
                 if let quench_runtime::NativeFunction::Import { name, .. } = function {
@@ -77,8 +89,8 @@ impl CompiledSources {
             objects.push(object_path);
             let metadata = directory.join(format!("{name}.bin"));
             match namespace {
-                Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(program)?).map_err(|error| error.to_string())?,
-                None => program.write_binary(&metadata)?,
+                Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(&records)?).map_err(|error| error.to_string())?,
+                None => records.write_binary(&metadata)?,
             }
             Ok((metadata, symbol))
         };

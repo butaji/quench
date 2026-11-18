@@ -163,6 +163,22 @@ mod tests {
         assert_eq!(decoded.encode_trusted(), first.encode_trusted());
     }
 
+    /// The encoded program decodes to the same records it was written with: the wrapper's
+    /// parameter initialization (a `LoadConst` at pc 0) must survive the image. Today's
+    /// round trip re-derives the deferred record and yields `LoadNameCall`, which is why a
+    /// linked image's first entry selects a record its program does not have.
+    #[test]
+    #[ignore = "the image round trip re-derives a function's records instead of copying them"]
+    fn encoded_records_decode_unchanged() {
+        let source = "(function (exports, require, module, __filename, __dirname) { print(1 + 2); });";
+        let program = crate::Engine::specialize(source, "wrapper.js").unwrap();
+        let namespace = NativeProgramNamespace::from_entry(&program).unwrap();
+        let decoded = namespace.decode(Rc::new(namespace.encode(&program).unwrap())).unwrap();
+        let first = |p: &crate::ResidualProgram| p.function(1).instructions().next().map(|instruction| instruction.op());
+        assert_eq!(decoded.function_count(), program.function_count());
+        assert_eq!(first(&decoded), first(&program), "records differ after the image round trip");
+    }
+
     #[test]
     fn shared_metadata_rejects_foreign_namespaces_and_corruption() {
         let first = crate::Engine::specialize("globalThis.first = 1;", "first.js").unwrap();
