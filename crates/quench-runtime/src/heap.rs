@@ -1704,23 +1704,30 @@ impl Heap {
     /// `alloc(Cell::Iterator(..))` without boxing the iterator first: an iterator record
     /// while one is free.
     pub(crate) fn alloc_iterator(&mut self, iterator: IteratorRecord) -> Value {
+        self.alloc_object_record(iterator, |iterator| &iterator.object, |heap, iterator| heap.iterator_records.try_insert(iterator),
+            Value::direct_iterator, |iterator| Cell::Iterator(Box::new(iterator)))
+    }
+
+    /// Allocates `record`, an object kind with its own record space: admitted and charged as one
+    /// allocation with no payload or external bytes, inserted by `insert` (its handle `direct`),
+    /// or as the legacy `cell` where the space is full or allocations are being profiled.
+    #[inline(always)]
+    fn alloc_object_record<T>(&mut self, record: T, object: impl Fn(&T) -> &Object,
+        insert: impl FnOnce(&mut Self, T) -> Result<u32, T>, direct: impl FnOnce(u32) -> Value, cell: impl FnOnce(T) -> Cell) -> Value {
         if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Iterator(Box::new(iterator)));
+            return self.alloc(cell(record));
         }
-        self.admit_object_contents(&iterator.object);
-        self.mark_prototype(iterator.object.proto());
-        // An iterator's weight is one allocation, and it holds no payload or external bytes.
+        self.admit_object_contents(object(&record));
+        self.mark_prototype(object(&record).proto());
         self.allocated += 1;
-        match self.iterator_records.try_insert(iterator) {
+        match insert(self, record) {
             Ok(record_id) => {
-                let value = Value::direct_iterator(record_id);
+                let value = direct(record_id);
                 #[cfg(feature = "profile-memory")]
                 self.profile_allocation(value);
                 value
             }
-            Err(iterator) => {
-                self.alloc_in_slot(Cell::Iterator(Box::new(iterator)), self.tracks_young_cells())
-            }
+            Err(record) => self.alloc_in_slot(cell(record), self.tracks_young_cells()),
         }
     }
 
@@ -1731,24 +1738,8 @@ impl Heap {
     }
 
     pub(crate) fn alloc_promise(&mut self, promise: PromiseCell) -> Value {
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Promise(Box::new(promise)));
-        }
-        self.admit_object_contents(&promise.object);
-        self.mark_prototype(promise.object.proto());
-        // A promise's weight is one allocation, and it holds no payload or external bytes.
-        self.allocated += 1;
-        match self.promise_records.try_insert(promise) {
-            Ok(record_id) => {
-                let value = Value::direct_promise(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                value
-            }
-            Err(promise) => {
-                self.alloc_in_slot(Cell::Promise(Box::new(promise)), self.tracks_young_cells())
-            }
-        }
+        self.alloc_object_record(promise, |promise| &promise.object, |heap, promise| heap.promise_records.try_insert(promise),
+            Value::direct_promise, |promise| Cell::Promise(Box::new(promise)))
     }
 
     /// The slot part of `alloc`, for a cell no record space takes.

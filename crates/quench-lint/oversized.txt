@@ -1093,7 +1093,7 @@ concept_twin string-order 0
 concept_twin to-int32 1
 concept_twin to-uint8-clamp 0
 concept_twin typeof-classifier 2
-concept_twin value-tag-test 26
+concept_twin value-tag-test 24
 dod-bool-array crates/quench-node/src/modules/util_comparisons_shared_vm.rs 1
 dod-bool-array crates/quench-runtime/src/bytecode/validate.rs 3
 dod-bool-array crates/quench-runtime/src/compile/ast.rs 2

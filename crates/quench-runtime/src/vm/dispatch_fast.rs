@@ -6241,11 +6241,30 @@ script_handler! {
 }
 
 script_handler! {
+    /// `lane_set_index_typed_kind` at a site that has stored a double into its integer kind:
+    /// any Number converts in place (`Vm::typed_cached_store_number`).
+    fn lane_set_index_typed_number_kind<KIND: usize>(cx, r, ip, i, view) {
+        if !(unsafe { vm(cx) }).typed_cached_store_number::<KIND>(r.get(i.b), r.get(i.c), r.get(i.a)) {
+            sibling!(lane_set_index_typed_fill::<H, KIND>, r, ip, view)
+        }
+        next!(cx, r, following(ip), Carried::script_in(cx, view))
+    }
+}
+
+script_handler! {
     /// A typed store whose view has no current cached entry (as `lane_get_index_typed_fill`).
     #[inline(never)]
     fn lane_set_index_typed_fill<KIND: usize>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let (base, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
+        // A double into an integer kind misses the hot store only: the entry is current, and a
+        // kind variant's site moves to the variant that converts doubles in place.
+        if vm.typed_cached_store_number::<KIND>(base, key, value) {
+            if KIND != super::typed_array_access::ANY_TYPED_KIND {
+                requicken::<H>(ip, lane_set_index_typed_number_kind::<H, KIND>);
+            }
+            next!(cx, r, following(ip), Carried::script_in(cx, view))
+        }
         vm.fill_typed_view(base);
         if !vm.typed_set_quick::<KIND>(base, key, value) {
             if KIND == super::typed_array_access::ANY_TYPED_KIND {
@@ -15900,7 +15919,7 @@ mod for_in_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
 mod vm_steps;
 mod value_steps;
-pub(in crate::vm) use vm_steps::{lane_body_step, lane_body_string_concat, lane_decide, lane_vm_step};
+pub(in crate::vm) use vm_steps::{lane_body_step, lane_decide, lane_vm_step};
 mod handler_edges;
 pub(in crate::vm) use handler_edges::lane_handler_edge;
 use array_steps::*;

@@ -529,24 +529,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(symbol) = self.well_known_symbols.get(WellKnownSymbol::Species) {
-            let getter = self.native_with_realm(Native::RegExpSpecies, realm, realm);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(constructor, symbol, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::symbol(symbol),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
+        self.install_species(constructor, |vm| vm.native_with_realm(Native::RegExpSpecies, realm, realm))
     }
 
     pub(super) fn regexp_symbol_replace(

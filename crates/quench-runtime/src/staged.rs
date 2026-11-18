@@ -68,7 +68,6 @@ pub(crate) mod holder;
 pub(crate) mod iteration;
 pub(crate) mod naming;
 pub(crate) mod call; pub(crate) mod frame;
-pub(crate) mod construct;
 pub(crate) mod forms;
 pub(crate) mod protocol;
 pub(crate) use forms::{Arguments, CallFacts, Callee, FunctionId, Invocation, Receiver, RegisterList};

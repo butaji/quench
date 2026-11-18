@@ -989,10 +989,6 @@ lane_helper_inventory! { H;
     FieldAdd => lane_field_add::<H>,
     /// The slow arm of a loop's hoisted typed array view proof (`lane_typed_array_view`).
     TypedArrayView => lane_typed_array_view::<H>,
-    /// `+` of strings (`dispatch_fast::lane_body_string_concat`), named by the b-jit call planner
-    /// (`base_region::call_plan`), which the whole-function planner will consume.
-    #[allow(dead_code)]
-    StringConcat => super::dispatch_fast::lane_body_string_concat::<H>,
     /// A VM operation a staged row calls out for (`dispatch_fast::lane_vm_step`).
     VmStep => super::dispatch_fast::lane_vm_step::<H>,
     /// An instruction whose general step runs in place (`dispatch_fast::lane_body_step`), which the b-jit's

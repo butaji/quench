@@ -260,15 +260,6 @@ pub(crate) trait Stage {
         word
     }
 
-    /// Runs `cold` on the path where `cond` holds and nothing is produced (a counter bump, a
-    /// poll): out of line for a specializer, run only when the interpreter's `cond` holds.
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn cold_when(&mut self, cond: Self::Cond, cold: impl FnOnce(&mut Self)) {
-        if self.known(cond) == Some(true) {
-            cold(self);
-        }
-    }
 }
 
 /// The process tables an operation addresses from a base.

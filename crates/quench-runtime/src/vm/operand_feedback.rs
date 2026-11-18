@@ -29,7 +29,6 @@ pub(crate) enum OperandClass {
     Any,
 }
 
-#[allow(dead_code)]
 impl OperandKinds {
     /// A site that never declined its int32 handler.
     pub(crate) const NONE: Self = Self(0);
@@ -78,18 +77,8 @@ impl OperandKinds {
         }
     }
 
-    /// Whether an int32 speculation at the site has failed: it met a double, an int32 result
-    /// out of range, or an operand other than a Number.
-    pub(crate) const fn declined_int32(self) -> bool {
-        matches!(self.class(), OperandClass::Number | OperandClass::Any)
-    }
-
     pub(crate) const fn has_string(self) -> bool {
         self.contains(Self::STRING)
-    }
-
-    pub(crate) const fn has_bigint(self) -> bool {
-        self.contains(Self::BIGINT)
     }
 
     /// The kind of one operand: int32 and double by their tags, a string or record by its handle's
