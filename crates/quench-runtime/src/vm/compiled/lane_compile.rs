@@ -194,8 +194,10 @@ impl<H: Host> Vm<H> {
         let instanceofs = |constructor: Value| self.instanceof_fact(constructor);
         let names = |site: u16, atom| self.native_function_name(site, atom);
         let shape_stable = |shape: u32| self.shape_is_stable(shape);
+        let construct_plans = |function: u32, pc: u32| targets(function, pc).first().and_then(|target| target.identity())
+            .and_then(|callee| super::dispatch_fast::scalar_construct_plan(self, callee));
         let facts = VmFacts { online: Some(OnlineFacts { method_cache_atoms: &method_cache_atoms,
-            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), ..self.vm_facts() };
+            invalidation: invalidation.address(), constants, instanceofs: &instanceofs, shape_stable: &shape_stable, names: Some(&names) }), construct_plans: Some(&construct_plans), ..self.vm_facts() };
         let leaves: Vec<usize> = left_at.iter().copied().chain(entry_left.then(|| lane_region::entry_leave(&unit))).chain(self.adding_stores(&unit)).collect();
         let number_reads = super::osr_compile::observed_reads(program, &unit, arrays, &[], &left_at);
         let mut lowered = lane_region::lower_body(program, function, &unit, helpers, &fields, &global_reads, facts,
