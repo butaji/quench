@@ -381,7 +381,7 @@ fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), re
 }
 
 /// What a body is built for: its function and registers, the rows whose int32 speculation failed
-/// (`widened`, by caller PC), the types its entry held by register (`seen`: `observed_types`), and what
+/// (`widened`, by caller PC), the types its entry held by register (`seen`: the observation's `entry_types`), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
 /// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
 pub(in crate::vm::compiled) struct BodySpec<'a> {

@@ -325,21 +325,6 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
     }
 }
 
-/// The types a compile observed of its entry registers, by register, from the registers it saw as int32s
-/// (`ints`) and as other Numbers (`doubles`): every other register is `Type::ANY`. Sized to hold every
-/// register named, and at least `registers` of them.
-pub(in crate::vm::compiled) fn observed_types(registers: u16, ints: &[Register], doubles: &[Register]) -> Vec<Type> {
-    let len = ints.iter().chain(doubles).map(|register| usize::from(*register) + 1).fold(usize::from(registers), usize::max);
-    let mut types = vec![Type::ANY; len];
-    for register in doubles {
-        types[usize::from(*register)] = Type::NUMBER;
-    }
-    for register in ints {
-        types[usize::from(*register)] = Type::INT32;
-    }
-    types
-}
-
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
 fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
