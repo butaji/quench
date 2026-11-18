@@ -1031,8 +1031,9 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         let value = match fact {
             Boxing::Value => Value::from_bits(value),
             // A raw result stores its double bits as they are: the next Number row of its raw pair
-            // reads them as a double, and nothing else reads the register.
-            Boxing::Double if self.raw_result => Value::from_bits(value),
+            // reads them as a double, and nothing else reads the register. A NaN keeps its canonical
+            // form: its raw bits could fall in the boxed values' tag space.
+            Boxing::Double if self.raw_result && !f64::from_bits(value).is_nan() => Value::from_bits(value),
             Boxing::Double => Value::number(f64::from_bits(value)),
         };
         self.registers.set(register, value);
