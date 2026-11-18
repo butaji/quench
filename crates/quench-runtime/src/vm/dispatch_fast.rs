@@ -6053,22 +6053,6 @@ fn lane_index_getter_activation<H: Host>(
     lane_activate_getter(cx, r, ip, getter, base, None)
 }
 
-script_handler! {
-    /// `element_write_row` whose stored value the next record, a register `Move`, copies, the
-    /// `t = a[i] = v` of compiled code (`specialize_store_moves`): the store and the copy as
-    /// one record, the copy carried as `lane_row` carries a `Move`. A store the fast path leaves
-    /// runs the store's own slow path, which continues at the `Move` record.
-    fn lane_set_index_move<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        if !(unsafe { vm(cx) }).try_replace_record_element(object, key, value) {
-            sibling!(lane_set_index_slot::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        // SAFETY: the pair is two records, the second never the view's last.
-        let copy = unsafe { &*following(ip) };
-        produce!(cx, r, following(ip), copy.a, value, Carried::script_in(cx, view))
-    }
-}
-
 /// The value the proved store of `SetIndex` record `i` (`ArrayStorageProofs::replace`) of a
 /// base its loop does not redefine (`specialize_proved_arrays`) wrote; `None` stores
 /// nothing.
@@ -6129,7 +6113,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_set_index_move` of a base its loop does not redefine: the replacement through
+    /// `element_move_row` of a base its loop does not redefine: the replacement through
     /// the run's proof of the array's storage (`lane_proved_store`) and the copy, else
     /// `lane_proof_miss`.
     fn lane_set_index_move_proved<>(cx, r, ip, i, view) {
@@ -7532,6 +7516,14 @@ const ELEMENT_WRITE: u16 = {
 /// recognise the record's handler (`specialize_proved_arrays`) find it before a first run
 /// would requicken it.
 const fn element_write_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_CLEAR> }
+
+/// The site fact of a keyed write whose stored value the next record, a register `Move`, copies
+/// (`specialize_store_moves`): the row's store, then the copy the row makes as a `Move` record
+/// does. A store the row leaves takes `lane_set_index_slot`, which continues at the `Move` record.
+pub(super) const ELEMENT_MOVE_SITE: u8 = own_site(false, OWN_FORMS.len() + 11);
+
+/// The generated keyed write whose stored value the next record copies (`ELEMENT_MOVE_SITE`).
+const fn element_move_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_WRITE, ACC_NONE, ELEMENT_MOVE_SITE> }
 
 /// The generated keyed read (`lane_row` of `ELEMENT_READ`) of a register base and key.
 const fn element_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
@@ -24315,7 +24307,7 @@ fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> 
         (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
         (element_write_row::<H>(), lane_set_index_proved::<H> as Handler, 0),
         (element_write_row::<H>(), lane_set_index_proved_heap::<H> as Handler, 0),
-        (lane_set_index_move::<H> as Handler, lane_set_index_move_proved::<H> as Handler, 0),
+        (element_move_row::<H>(), lane_set_index_move_proved::<H> as Handler, 0),
     ]
     .into_iter()
     .chain(fused_arithmetic!(updated_operators))
@@ -24611,14 +24603,14 @@ fn update_jump<H: Host>(decrement: bool, backward: bool) -> Handler {
 }
 
 /// Gives each `SetIndex` whose stored value the next record, a register `Move`, copies the
-/// fused store and copy (`lane_set_index_move`). The `Move` record stays, for a jump that
+/// fused store and copy (`element_move_row`). The `Move` record stays, for a jump that
 /// enters it and for the store's own slow path.
 fn specialize_store_moves<H: Host>(records: &mut [LaneInstruction]) {
     let store = element_write_row::<H>() as *const ();
     let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
     for pc in 0..records.len().saturating_sub(1) {
         if records[pc].handler == store && records[pc + 1].handler == copy && records[pc + 1].b == records[pc].a {
-            records[pc].handler = lane_set_index_move::<H> as Handler as *const ();
+            records[pc].handler = element_move_row::<H>() as *const ();
         }
     }
 }

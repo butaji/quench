@@ -937,6 +937,14 @@ lane_handler! {
                         && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister)) } {
                     r.set(i.a, Value::from_bits(value));
                 }
+                if const { FLAG == super::ELEMENT_MOVE_SITE } {
+                    // The `Move` record after the store copies the stored value, and the pair
+                    // continues past it (`produce!` at the copy's successor).
+                    // SAFETY: the pair is two records, the second never the view's last.
+                    let copy = unsafe { &*following(ip) };
+                    let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                    produce!(script, r, following(ip), copy.a, Value::from_bits(value), Carried::script_in(script, view));
+                }
                 next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
             }
             // An element read past its in-place arm: the record's keyed paths (a slot, a getter).
