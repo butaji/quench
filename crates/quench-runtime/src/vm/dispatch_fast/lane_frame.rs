@@ -760,9 +760,11 @@ const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
 }
 
 /// Whether opcode `op` runs its generated jump row (`row_jump`): a jump the flow decoder
-/// stages (`Decoder::Flow`).
+/// stages (`Decoder::Flow`), or a loop's exit (`LANE_LOOP_EXIT`), whose names row makes its
+/// step and its edge.
 pub(in crate::vm::dispatch_fast) const fn jumps_by_row(op: Op) -> bool {
-    op.control_flow_layout().jumps() && matches!(op.staged(), Some(crate::bytecode::Decoder::Flow))
+    op.control_flow_layout().jumps()
+        && (matches!(op.staged(), Some(crate::bytecode::Decoder::Flow)) || op.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT))
 }
 
 /// Opcode `OP`'s jump row in direction `backward`.
@@ -777,14 +779,21 @@ lane_handler! {
     /// whose backward edge (`BACKWARD`, which the view fixes per record) is a safepoint.
     pub(super) fn row_jump<OP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
         let fields = LaneFields::<OP>(i);
-        let Some(operation) = Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY) else {
+        // A loop's exit decodes by its names row (`ForInNext`), any other jump by the flow decoder.
+        let decoded = match const { LaneFields::<OP>::OPCODE.staged() } {
+            Some(crate::bytecode::Decoder::Names) => Operation::decode_names(crate::staged::Fields::wide(fields)),
+            _ => Operation::decode_flow(fields, crate::staged::DecodeContext::EMPTY),
+        };
+        let Some(operation) = decoded else {
             sibling!(lane_general_step::<H>, r, ip, view)
         };
         let mut stage = Concrete::new(std::ptr::null());
-        let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-        match crate::staged::step_flow(&mut stage, &mut frame, operation) {
-            Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, view, None)),
-            Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), view),
+        // A loop's exit writes its result register, so no producer's accumulator carries past it.
+        let carried = if const { LaneFields::<OP>::RESULT_A } { Carried::script_in(cx, view) } else { view };
+        let mut frame = row_frame::<H, OP, ACC_NONE, FLAG_UNREAD>(cx, r, view);
+        match row_step!(LaneFields::<OP>::OPCODE, &mut stage, &mut frame, operation) {
+            Step::Control(Edge::Target) => resume!(cx, super::lane_jump::<H>(r, ip, BACKWARD, carried, None)),
+            Step::Control(Edge::Following) | Step::Value(_) => next!(cx, r, following(ip), carried),
             Step::Unresolved => sibling!(const { jump_row_miss::<H, BACKWARD>(LaneFields::<OP>::OPCODE) }, r, ip, view),
         }
     }
@@ -938,6 +947,8 @@ unsafe fn fast_names_step<H: Host>(cx: *mut (), call: CallOut, [first, second]: 
             note_allocation(vm);
             Some(state)
         }
+        // The next key of a listed snapshot, `Value::DELETED` once none is left (which takes the exit).
+        CallOut::ForInNext { .. } => vm.for_in_step_listed(second?).map(|key| key.unwrap_or(Value::DELETED)),
         // A spread onto the literal's array with no elisions before it, from a source whose
         // iteration runs no guest code: the append defines no register, so its value is unused.
         CallOut::Protocol { step: Protocol::AppendArray { length: 0, spread: true }, .. } => {

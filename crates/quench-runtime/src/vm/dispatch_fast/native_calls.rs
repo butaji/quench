@@ -1,5 +1,5 @@
 //! Calls the lane answers in place for their common case (else `lane_native_call`), and
-//! for-in's step (`lane_for_in_next`).
+//! for-in's step (`fast_names_step`, the loop exit's row).
 use super::*;
 use crate::vm::object_get::ordinary_chain::ChainRead;
 

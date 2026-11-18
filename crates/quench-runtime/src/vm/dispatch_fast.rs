@@ -15763,7 +15763,6 @@ pub(in crate::vm) use lane_roots::{JobEnd, ParkedLane};
 mod generator_windows; use generator_windows::{lane_generator_returned, lane_resume_generator_step};
 mod raised_windows;
 mod array_steps;
-mod for_in_steps;
 mod name_probe; use name_probe::probe_handler; pub(super) use name_probe::settle_name_record;
 mod vm_steps;
 mod value_steps;
@@ -21059,7 +21058,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
     };
     // Past the first 256 opcodes only generated rows run in the lane; the rest leave it, as
     // before the table covered them, and instantiate nothing.
-    if OP >= 256 && !lane_runs_row(op) {
+    if OP >= 256 && !lane_runs_row(op) && !jumps_by_row(op) {
         return None;
     }
     if I32BinaryOperator::from_register_op(op).is_some()
@@ -21138,8 +21137,8 @@ const fn private_element_handler<H: Host>(opcode: Op) -> Option<Handler> {
     }
 }
 
-/// The handlers of the iterator protocol's steps: an array's intrinsic iterator, a close
-/// that ends without a call, and the bookkeeping of the iterators a frame must close.
+/// The handlers of the iterator protocol's bookkeeping: the iterators a frame must close. The
+/// protocol's steps (`GetIterator`, `IteratorClose`, `AppendArray`) are their staged rows.
 const fn iterator_handler<H: Host>(opcode: Op) -> Option<Handler> {
     match opcode.class() {
         Class::IteratorCleanupPush => Some(lane_iterator_cleanup_push::<H>),
@@ -21167,9 +21166,6 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(opcode: Op)
         _ if private_element_handler::<H>(opcode).is_some() => private_element_handler::<H>(opcode),
         Class::CopyDataProperties => Some(lane_copy_data_properties::<H>),
         _ if iterator_handler::<H>(opcode).is_some() => iterator_handler::<H>(opcode),
-        // A loop exit's own step before the general one its catalog row also names: an
-        // earlier arm here shadowed it, so every `ForInNext` key took the general step.
-        _ if opcode.traits().has(crate::bytecode::Traits::LANE_LOOP_EXIT) => Some(for_in_steps::for_in_next_handler::<H, BACKWARD>()),
         _ if opcode.steps_in_lane() => Some(lane_general_step::<H>),
         _ if denoted_handler::<H>(opcode).is_some() => denoted_handler::<H>(opcode),
         Class::GetIndex => Some(lane_get_index::<H>),
