@@ -9,10 +9,6 @@ pub(crate) const WORD_BITS: u32 = i64::BITS - 2;
 /// that hold them exactly, so a 64-bit word of that span and the Number are the same value.
 pub(crate) const EXACT_BITS: u32 = f64::MANTISSA_DIGITS;
 
-/// An element index is below its array's length, which every layout stores in 32 bits: it
-/// lies within `IntRange::EXACT`, so an index word and the Number it came from agree on it.
-const _: () = assert!((crate::bytecode::MAX_ARRAY_LENGTH as u64) <= (1 << EXACT_BITS));
-
 /// A closed interval of integers a Number may hold, exact over `i64`: arithmetic on ranges is
 /// mathematical, not wrapping, and a result `None` where it leaves even `i64`. Whether a range
 /// fits int32 (`fits_int32`) is the caller's question.

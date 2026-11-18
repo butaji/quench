@@ -4675,6 +4675,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         site: u16,
+        function: u32,
     ) -> Result<(), JsError> {
         let key = PropertyKey::string(atom);
         let cacheable = self.specialized && p.specialized && self.field_cache_atom_eligible(atom);
@@ -4704,6 +4705,11 @@ impl<H: Host> Vm<H> {
             && slot == self.shapes[shape as usize].storage_len()
             && let Ok(slot) = u16::try_from(slot)
         {
+            // Once per transition: the add that creates `target_shape` seeds its slot from the
+            // class's declared type; later adds of the shape reuse this entry and its seed.
+            if declared_number_field(p, function, atom) {
+                self.heap.seed_declared_slot(target_shape, usize::from(slot), crate::typed_ir::Type::NUMBER);
+            }
             self.record_field_add_cache(
                 site,
                 FieldAddCache {
@@ -5233,4 +5239,15 @@ impl<H> Vm<H> {
             self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
         )
     }
+}
+
+/// Whether `atom`, added to an instance of the class whose constructor is `function` of `p`, is a
+/// field declared `number` (`DeclaredTypes::declared_field`): the class's constructor carries the
+/// class's source span, whose start names the class.
+fn declared_number_field(p: &ResidualProgram, function: u32, atom: Atom) -> bool {
+    let Some(declared) = p.declared_types.as_deref() else { return false };
+    let Some(class_start) = p.function_get(function as usize).and_then(|body| body.source_span).map(|span| span.start) else {
+        return false;
+    };
+    declared.declared_field(class_start, &p.atoms[atom as usize]) == Some(1u16 << crate::ValueType::Number as u16)
 }

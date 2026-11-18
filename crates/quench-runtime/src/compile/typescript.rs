@@ -9,6 +9,7 @@ use oxc_span::Span;
 
 mod admit;
 mod checked;
+mod enum_folding;
 mod enums;
 mod fields;
 mod imports;
@@ -128,7 +129,7 @@ pub(super) fn unsupported_runtime_syntax(program: &Program<'_>) -> Option<(Span,
 
 #[cfg(test)]
 mod tests {
-    use crate::{Engine, ExecutionMode, Runtime, test_host::TestHost};
+    use crate::{Engine, ExecutionMode, Runtime, bytecode::Op, test_host::TestHost};
 
     #[test]
     fn typescript_annotations_and_assertions_do_not_override_runtime_values() {
@@ -306,6 +307,56 @@ mod tests {
     fn const_enum_reads_are_their_constants() {
         let lines = run_typescript("const enum Dir { Up = 1, Down = Up * 2, Name = \"dir\" }\nconst read = () => Dir.Down + Dir[\"Up\"];\nconsole.log(read() + Dir.Name + read.toString().includes(\"Dir\"));");
         assert_eq!(lines, ["3dirtrue"]);
+    }
+
+    /// The opcodes of the function named `name` in a compiled program.
+    fn function_ops(program: &crate::ResidualProgram, name: &str) -> Vec<Op> {
+        let function = (0..program.functions.len()).filter_map(|index| program.function_get(index))
+            .find(|function| function.name.is_some_and(|atom| program.atoms.get(atom as usize) == Some(name)))
+            .unwrap();
+        function.instructions().map(|instruction| instruction.op()).collect()
+    }
+
+    #[test]
+    fn plain_enum_reads_fold_to_their_constants() {
+        let source = "function run() { enum Color { Red, Green = 5, Name = \"n\" } let total = 0; for (let i = 0; i < 3; i++) total += Color.Green; return total + Color.Name; }\nconsole.log(run());";
+        let program = Engine::specialize_typescript(source, "plain-enum.cts").unwrap();
+        assert!(!function_ops(&program, "run").contains(&Op::GetField));
+        assert_eq!(run_typescript(source), ["15n"]);
+    }
+
+    #[test]
+    fn plain_enum_reads_stay_live_when_something_can_change_them() {
+        let source = r#"
+            function written() {
+                enum Color { Red, Green = 5 }
+                for (let i = 0; i < 2; i++) (Color as any).Green = i + 7;
+                return Color.Green;
+            }
+            function passed() {
+                enum Color { Green = 5 }
+                const show = (value: any) => value.Green;
+                let total = 0;
+                for (let i = 0; i < 2; i++) total += show(Color) + Color.Green;
+                return total;
+            }
+            console.log([written(), passed()].join(" "));
+        "#;
+        let control = "function w() { enum Color { Green = 5 } (Color as any).Green = 7; return Color.Green; }";
+        let program = Engine::specialize_typescript(control, "written.cts").unwrap();
+        assert!(function_ops(&program, "w").contains(&Op::GetField));
+        assert_eq!(run_typescript(source), ["8 20"]);
+    }
+
+    #[test]
+    fn exported_plain_enums_stay_live() {
+        let source = "export enum Color { Green = 5 }\n(Color as any).Green = 9;\nconsole.log(Color.Green);";
+        let program = Engine::specialize_typescript_module(source, "exported-enum.mts").unwrap();
+        let host = TestHost::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime.execute(&program).unwrap();
+        assert_eq!(&*view.lines(), &["9"]);
     }
 
     #[test]

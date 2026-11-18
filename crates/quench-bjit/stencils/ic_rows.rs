@@ -41,7 +41,7 @@ use crate::stage::StencilStage;
 use crate::staged::ic::{self, IcOp, Reached};
 use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::region::Region;
-use crate::typed_ir::Representation as Rep;
+use crate::typed_ir::Representation;
 use crate::staged::slot_store::{own_flat_known, own_flat_store, proved_flat_store};
 use crate::staged::Stage;
 use crate::typed_ir::Type;
@@ -133,7 +133,7 @@ fn write<const INT: bool, const A: u8>(s: &S, payload: usize) -> Option<()> {
     let (id, record, _) = receiver::<SET_RECEIVER>(s, &mut stage, payload)?;
     // The word is a Number, which the slot's observed type holds (the stitcher's proof), so it
     // widens no observation and joins no barrier log: the gate does not apply.
-    own_flat_store(&mut stage, record, id, 0, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }, Type::NUMBER), ())
+    own_flat_store(&mut stage, record, id, 0, 0, (word, if INT { Representation::Int32 } else { Representation::Tagged }, Type::NUMBER), ())
 }
 
 #[inline(always)]
@@ -182,7 +182,7 @@ fn known_set<const INT: bool, const A: u8>(s: S, payload: usize) -> Out {
     if own_flat_known(&mut stage, record, 0, ()).is_none() {
         return miss::<true>(s);
     }
-    proved_flat_store(&mut stage, record, 0, (word, if INT { Rep::Int32 } else { Rep::Tagged }));
+    proved_flat_store(&mut stage, record, 0, (word, if INT { Representation::Int32 } else { Representation::Tagged }));
     hit::<true>(Out::Next(s))
 }
 

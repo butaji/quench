@@ -33,10 +33,12 @@ use crate::bytecode::{
     OperandKind, Register, WideInstruction,
 };
 use crate::compile::liveness::RegisterSet;
+use crate::dataflow::{solve, Dataflow};
 use crate::value::Value;
 use super::super::operations::{NumberArithmetic, NumberBitwise, NumberUnary};
 
 use super::typed_ir::Type;
+use crate::typed_ir::Representation;
 use super::NativeFieldLoad;
 use oxc_ast::ast::UnaryOperator;
 
@@ -1430,13 +1432,12 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
         .then_some(Unary::BitwiseNot)
 }
 
-/// What each register of a region holds.
+/// What each register of a region holds: a scalar in a representation, or an indexed array whose
+/// elements are held in `elements`, and whether the region stores into it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Role {
-    Number,
-    Tagged,
-    Array { written: bool },
-    TaggedArray { written: bool },
+    Scalar(Representation),
+    Array { elements: Representation, written: bool },
 }
 
 struct Admission<'a> {
@@ -1461,31 +1462,32 @@ impl Admission<'_> {
                 *stored |= written;
                 Some(())
             }
-            None => self.note(register, Role::Array { written }),
+            None => self.note(register, Role::Array { elements: Representation::Float64, written }),
         }
     }
 
     fn note(&mut self, register: Register, role: Role) -> Option<()> {
+        use Representation::{Float64, Tagged};
         match (self.roles.get(&register).copied(), role) {
             (None, role) => {
                 self.roles.insert(register, role);
             }
-            (Some(Role::Number), Role::Number) => {}
-            (Some(Role::Tagged), Role::Tagged) => {}
-            (Some(Role::Array { written }), Role::Array { written: more }) => {
-                self.roles.insert(register, Role::Array { written: written || more });
+            (Some(Role::Scalar(Float64)), Role::Scalar(Float64)) => {}
+            (Some(Role::Scalar(Tagged)), Role::Scalar(Tagged)) => {}
+            (Some(Role::Array { elements: Float64, written }), Role::Array { elements: Float64, written: more }) => {
+                self.roles.insert(register, Role::Array { elements: Float64, written: written || more });
             }
-            (Some(Role::Array { written }), Role::Tagged)
-            | (Some(Role::TaggedArray { written }), Role::Tagged) => {
-                self.roles.insert(register, Role::TaggedArray { written });
+            (Some(Role::Array { elements: Float64, written }), Role::Scalar(Tagged))
+            | (Some(Role::Array { elements: Tagged, written }), Role::Scalar(Tagged)) => {
+                self.roles.insert(register, Role::Array { elements: Tagged, written });
             }
-            (Some(Role::Tagged), Role::Array { written }) | (Some(Role::Tagged), Role::TaggedArray { written }) => {
-                self.roles.insert(register, Role::TaggedArray { written });
+            (Some(Role::Scalar(Tagged)), Role::Array { written, .. }) => {
+                self.roles.insert(register, Role::Array { elements: Tagged, written });
             }
-            (Some(Role::Array { written }), Role::TaggedArray { written: more })
-            | (Some(Role::TaggedArray { written }), Role::Array { written: more })
-            | (Some(Role::TaggedArray { written }), Role::TaggedArray { written: more }) => {
-                self.roles.insert(register, Role::TaggedArray { written: written || more });
+            (Some(Role::Array { elements: Float64, written }), Role::Array { elements: Tagged, written: more })
+            | (Some(Role::Array { elements: Tagged, written }), Role::Array { elements: Float64, written: more })
+            | (Some(Role::Array { elements: Tagged, written }), Role::Array { elements: Tagged, written: more }) => {
+                self.roles.insert(register, Role::Array { elements: Tagged, written: written || more });
             }
             _ => return None,
         }
@@ -1496,11 +1498,11 @@ impl Admission<'_> {
     /// its values its own representation.
     fn number(&mut self, register: Register) -> Option<()> {
         if self.boxed.contains(&register) { return self.tagged(register); }
-        self.note(register, Role::Number)
+        self.note(register, Role::Scalar(Representation::Float64))
     }
 
     fn tagged(&mut self, register: Register) -> Option<()> {
-        self.note(register, Role::Tagged)
+        self.note(register, Role::Scalar(Representation::Tagged))
     }
 
     fn any_constant(&mut self, index: usize) -> Option<Value> {
@@ -1907,7 +1909,7 @@ fn admit_register_roles(
         let reads = admission.fields.iter().filter(|field| field.atom == store.atom);
         for field in reads {
             if !store.matches(field) || field.tagged
-                || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Number)
+                || admission.roles.get(&instructions[*offset as usize].register_a()) != Some(&Role::Scalar(Representation::Float64))
             {
                 return Err(RegionAnalysisFailure::at(RegionRejection::FieldMutation, header, *offset as usize));
             }
@@ -1961,27 +1963,26 @@ fn admit_register_roles(
     let numbers = admission
         .roles
         .iter()
-        .filter(|(_, role)| **role == Role::Number)
+        .filter(|(_, role)| **role == Role::Scalar(Representation::Float64))
         .map(|(register, _)| *register)
         .collect();
     let tagged: Vec<Register> = admission
         .roles
         .iter()
-        .filter(|(_, role)| matches!(role, Role::Tagged | Role::TaggedArray { .. }))
+        .filter(|(_, role)| matches!(role, Role::Scalar(Representation::Tagged) | Role::Array { elements: Representation::Tagged, .. }))
         .map(|(register, _)| *register)
         .collect();
     let mut arrays: Vec<ArrayUse> = admission
         .roles
         .iter()
         .filter_map(|(register, role)| match role {
-            Role::Array { written } | Role::TaggedArray { written }
+            Role::Array { written, .. }
                 if !dynamic_arrays.contains(register)
                     && instructions.iter().any(|instruction| {
                     instruction.op().is_indexed_access()
                         && object_reads(*instruction) == Some(*register)
                 }) => Some(ArrayUse { register: *register, written: *written, field: None }),
-            Role::Number | Role::Tagged => None,
-            Role::Array { .. } | Role::TaggedArray { .. } => None,
+            Role::Scalar(_) | Role::Array { .. } => None,
         })
         .collect();
     for (register, written) in &admission.field_arrays {
@@ -2213,12 +2214,12 @@ fn admit(
                 (instruction.operand_b().register_index(), instruction.operand_c().register_index())
                 && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some()
                 && [left, right].iter().any(|register| {
-                    tagged.contains(register) || matches!(admission.roles.get(register), Some(Role::Tagged))
+                    tagged.contains(register) || matches!(admission.roles.get(register), Some(Role::Scalar(Representation::Tagged)))
                 })
             {
                 // An (in)equality of tagged values, which boxes a Number operand.
                 for register in [left, right] {
-                    if !matches!(admission.roles.get(&register), Some(Role::Number)) {
+                    if !matches!(admission.roles.get(&register), Some(Role::Scalar(Representation::Float64))) {
                         admission.tagged(register)?;
                     }
                 }
@@ -2444,50 +2445,74 @@ fn successors(region: &LoopRegion, pc: u32) -> Vec<u32> {
     successors
 }
 
+/// Forward reaching definitions over a region's instructions: a block's input is the definitions
+/// reaching it, and its output replaces the register its instruction writes with that write.
+struct Reaching<'a> {
+    region: &'a LoopRegion,
+    /// Each definition of an entry register or a write is its index, `entries` plus the offset.
+    entries: usize,
+    /// The offsets reachable from the header inside the region.
+    reachable: Vec<bool>,
+    /// The offsets each instruction's control flows to inside the region.
+    edges: Vec<Vec<usize>>,
+}
+
+impl Dataflow for Reaching<'_> {
+    type State = std::collections::BTreeMap<Register, std::collections::BTreeSet<Definition>>;
+    fn blocks(&self) -> usize { self.edges.len() }
+    fn edges(&self, block: usize) -> &[usize] { &self.edges[block] }
+    fn entry_state(&self, block: usize) -> Option<Self::State> {
+        if !self.reachable[block] {
+            return None;
+        }
+        let mut state = std::collections::BTreeMap::new();
+        if block == 0 {
+            for (index, register) in self.region.entry_registers().enumerate() {
+                state.entry(register).or_insert_with(std::collections::BTreeSet::new).insert(index);
+            }
+        }
+        Some(state)
+    }
+    fn join(&self, into: &mut Self::State, incoming: &Self::State) -> bool {
+        let mut changed = false;
+        for (register, definitions) in incoming {
+            let set = into.entry(*register).or_default();
+            let before = set.len();
+            set.extend(definitions.iter().copied());
+            changed |= set.len() != before;
+        }
+        changed
+    }
+    fn transfer(&mut self, block: usize, state: &Self::State) -> Self::State {
+        let mut out = state.clone();
+        if let Some(register) = number_definition(self.region.instructions[block]) {
+            out.insert(register, std::collections::BTreeSet::from([self.entries + block]));
+        }
+        out
+    }
+}
+
 fn webs(region: &LoopRegion) -> Webs {
     use std::collections::{BTreeMap, BTreeSet};
     let count = region.instructions.len();
     let entries = region.entry_count();
     let inside = |pc: u32| (region.header..=region.backedge).contains(&pc);
+    let edges: Vec<Vec<usize>> = (0..count).map(|offset| {
+        let pc = region.header + offset as u32;
+        successors(region, pc).into_iter().filter(|pc| inside(*pc)).map(|pc| (pc - region.header) as usize).collect()
+    }).collect();
     let mut reachable = vec![false; count];
-    let mut pending = vec![region.header];
-    while let Some(pc) = pending.pop() {
-        let offset = (pc - region.header) as usize;
+    let mut pending = vec![0usize];
+    while let Some(offset) = pending.pop() {
         if std::mem::replace(&mut reachable[offset], true) {
             continue;
         }
-        pending.extend(successors(region, pc).into_iter().filter(|pc| inside(*pc)));
-    }
-    let mut reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = vec![BTreeMap::new(); count];
-    for (index, register) in region.entry_registers().enumerate() {
-        reaching[0].entry(register).or_default().insert(index);
+        pending.extend(edges[offset].iter().copied());
     }
     // Forward reaching definitions to a fixpoint; regions are small.
-    loop {
-        let mut changed = false;
-        for offset in 0..count {
-            if !reachable[offset] {
-                continue;
-            }
-            let pc = region.header + offset as u32;
-            let mut out = reaching[offset].clone();
-            if let Some(register) = number_definition(region.instructions[offset]) {
-                out.insert(register, BTreeSet::from([entries + offset]));
-            }
-            for successor in successors(region, pc).into_iter().filter(|pc| inside(*pc)) {
-                let target = &mut reaching[(successor - region.header) as usize];
-                for (register, definitions) in &out {
-                    let set = target.entry(*register).or_default();
-                    let before = set.len();
-                    set.extend(definitions.iter().copied());
-                    changed |= set.len() != before;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let mut analysis = Reaching { region, entries, reachable, edges };
+    let reaching: Vec<BTreeMap<Register, BTreeSet<Definition>>> = solve(&mut analysis).into_iter().map(Option::unwrap_or_default).collect();
+    let Reaching { reachable, .. } = analysis;
     let mut webs = Webs {
         reachable,
         parent: (0..entries + count).collect(),

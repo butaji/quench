@@ -42,22 +42,24 @@ pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     Some(read_slot_value(stage, layout, slot, rep))
 }
 
-/// The value at `slot` of `owner`'s object whose layout id is `word`: through the layout the
-/// frame kept for its shape, else one compare of the id proves the shape and the storage form,
-/// whose layout the read keeps, testing no form bit.
+/// The value at `slot` of `owner`'s object whose layout id is `word`, read as `rep` says (a raw
+/// double's slot boxes its double, as `formed_slot` does): through the layout the frame kept for
+/// its shape, else one compare of the id proves the shape and the storage form, whose layout the
+/// read keeps, testing no form bit. The layout id proves the exact shape, and the slot's type is
+/// the dependency the compiled code holds on it (`NativeFieldLoad::slot_dependency`).
 #[inline(always)]
 pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
-    at: &Reached<S::Word, S::Cond>, word: u32, (slot, storage_len): (u16, usize), miss: S::Miss) -> Option<S::Word> {
+    at: &Reached<S::Word, S::Cond>, word: u32, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     let shape = ic::layout_shape(word);
     if frame.proven_shape(stage, owner) == Some(shape)
         && let Some(layout) = frame.kept_layout(owner, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
-        return Some(read_slot_value(stage, layout, slot, Representation::Tagged));
+        return Some(read_slot_value(stage, layout, slot, rep));
     }
     ic::guard_layout(stage, at, word, miss)?;
     let bits = ic::layout_form(word);
     frame.prove_shape(stage, owner, shape, direct);
     let formed = Reached { formed: Some(bits), ..*at };
-    let layout = ic::slot_layout(stage, &formed, Form::Either, storage_len, miss)?;
+    let layout = ic::slot_layout(stage, &formed, ic::form_of_layout(word), storage_len, miss)?;
     frame.keep_layout(owner, shape, layout);
-    Some(read_slot_value(stage, layout, slot, Representation::Tagged))
+    Some(read_slot_value(stage, layout, slot, rep))
 }
