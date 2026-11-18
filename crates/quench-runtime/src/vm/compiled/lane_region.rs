@@ -3155,11 +3155,12 @@ impl Lowering<'_, '_> {
     fn guard_inlined_receiver(&mut self, state: &mut State, frame: usize, exit: ir::Block) {
         let inlined = self.unit.frames[frame];
         let receiver = self.tagged(state, inlined.receiver);
-        let entry = self.entry.as_ref().expect("entry facts");
-        let admitted = entry.call_receivers.contains(frame)
+        // A numeric body has no entry facts: only a dominating proof admits its receiver.
+        let entry = self.entry.as_ref();
+        let admitted = entry.is_some_and(|entry| entry.call_receivers.contains(frame))
             || state.proofs.headers[usize::from(inlined.receiver)].is_some()
-            || entry.records[usize::from(inlined.receiver)].is_some()
-            || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some());
+            || entry.is_some_and(|entry| entry.records[usize::from(inlined.receiver)].is_some()
+                || (state.proofs.receivers.contains(&inlined.receiver) && entry.records[state.values.len()].is_some()));
         let callee = self.program.function(inlined.target.function as usize);
         let numeric = inlined.recovery == super::lane_unit::CallRecovery::RestartCall
             && restartable_numeric_function(self.program, callee, &callee.instructions().collect::<Vec<_>>());
@@ -3189,15 +3190,15 @@ impl Lowering<'_, '_> {
         let (same, proved) = match inlined.target.callee {
             // A dominating proof of the identity needs no compare.
             CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } if state.values[callee_index].value.ty.function_identity() == Some(identity)
-                || self.entry.as_ref().expect("entry facts").calls.contains(frame) =>
-                    (None, Some(Type::function(identity).expect("admitted callee locator"))),
+                || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame)) =>
+                    (None, Type::function(identity)),
             CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => (
                 Some(self.is_identity(callee, identity)),
-                Some(Type::function(identity).expect("admitted callee locator")),
+                Type::function(identity),
             ),
             CalleeBinding::Function => (
                 if state.values[callee_index].value.ty.body_index() == Some(inlined.target.function)
-                    || self.entry.as_ref().expect("entry facts").calls.contains(frame) { None }
+                    || self.entry.as_ref().is_some_and(|entry| entry.calls.contains(frame)) { None }
                     else { Some(self.function_binding(callee, inlined.target.function)) },
                 Some(Type::function_body(inlined.target.function)),
             ),
