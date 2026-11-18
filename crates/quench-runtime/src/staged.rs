@@ -302,14 +302,12 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 44] = [
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 4] = [
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 18] = [
     // A local or capture read, then a register comparison, then its branch (`specialize_load_branch_pairs`).
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
     [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 1] = [
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 14] = [
     // An i32 load, an i32 operator on the loaded value, then the i32 store of its result.
     [Op::WasmI32Load as u16, Op::WasmI32Add as u16, Op::WasmI32Store as u16, NO_LINK],
     [Op::WasmI32Load as u16, Op::WasmI32Subtract as u16, Op::WasmI32Store as u16, NO_LINK],
