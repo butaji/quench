@@ -3914,6 +3914,16 @@ impl Lowering<'_, '_> {
         if let (Some(register), [], None, None) = (register, rest, sink, completes)
             && super::names_length(self.program, first.0)
         {
+            // A typed array its loop's entry proved (`hoist_arrays`) has the view's element count:
+            // no store in the loop resizes it, so the read is that word, as C's length is.
+            if let Some(array) = self.loop_array(pc, Some(register)).filter(|array| matches!(array.views, ElementViews::Typed(_))) {
+                let (_, count) = self.hoisted_view(array);
+                let fits = self.raw_compare_imm(Relation::UnsignedLessEqual, count, i64::from(i32::MAX));
+                emit_js_guard(&mut self.builder, fits, exit);
+                let length = self.raw_unary(Unary::Narrow(Lane::I32), count);
+                self.set_int(state, destination, length);
+                return Some(true);
+            }
             let length = self.array_length(state, register, *first, exit);
             self.set_int(state, destination, length);
             return Some(true);
