@@ -404,18 +404,24 @@ pub(super) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         // A comparison jump (`JumpBinaryFalse`): a Number relation, or `==`/`===` (`!=`/`!==`)
         // of Numbers, which the loop's entry guards and its rows prove its operands are.
         Some(Operation::CompareJump { comparison, left, right, negate: true }) => return Some(relation_jump(numbers, instruction, comparison, (left, right)).ok()),
+        // `!x`: the boolean of its truthiness.
+        Some(Operation::LogicalNot { destination, source }) =>
+            return Some(plain.then(|| Decoded::number(Kind::Not, Some(destination), Some(Source::Register(source)), None, None))),
         // `++`/`--`: the int32 update by one (the row's overflow leaves, as the staged one does).
         Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
             if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
             Some(Source::Constant(Value::integer(1).to_bits())), None))),
         _ => {}
     }
+    // `-x` and `+x`: the Number unary the interpreter's operations name (`NumberUnary`).
+    if let Some(operation) = crate::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.unary_operator()) {
+        return Some(unary_row(instruction, operation).filter(|_| plain));
+    }
     if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
     }
     Some(match instruction.op().class() {
         Class::Binary | Class::NumericAdd | Class::NumericMultiply => binary(numbers, instruction).ok().filter(|_| plain),
-        Class::Unary => unary_row(instruction).filter(|_| plain),
         _ => return None,
     })
 }
@@ -426,18 +432,16 @@ fn truthiness_jump(instruction: WideInstruction, register: crate::bytecode::Regi
     Decoded::number(kind, None, Some(Source::Register(register)), None, Some(instruction.jump_target()))
 }
 
-/// The row of a unary operator over a register: `!` is the boolean of its truthiness, `-` the
-/// negation of a Number, `+` a Number as it is (proved, as `ToNumeric` is); any other operator is
-/// the interpreter's.
-fn unary_row(instruction: WideInstruction) -> Option<Decoded> {
+/// The row of a Number unary over a register: `-` the negation of a Number, `+` a Number as it
+/// is (proved, as `ToNumeric` is).
+fn unary_row(instruction: WideInstruction, operation: crate::vm::operations::NumberUnary) -> Option<Decoded> {
+    use crate::vm::operations::NumberUnary;
     let (result, operand) = (instruction.result_register(), Some(Source::Register(instruction.register_b())));
-    let operator = instruction.unary_operator();
     let row = |kind| Decoded::number(kind, Some(result), operand, None, None);
-    [
-        (UnaryOperator::LogicalNot, row(Kind::Not)),
-        (UnaryOperator::UnaryNegation, row(Kind::Neg)),
-        (UnaryOperator::UnaryPlus, Decoded { checked: true, ..row(Kind::Move) }),
-    ].into_iter().find(|(candidate, _)| *candidate as u32 == operator).map(|(_, decoded)| decoded)
+    Some(match operation {
+        NumberUnary::Negate => row(Kind::Neg),
+        NumberUnary::Plus => Decoded { checked: true, ..row(Kind::Move) },
+    })
 }
 
 /// Bits in a word's high half.
