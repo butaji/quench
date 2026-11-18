@@ -4,7 +4,7 @@ use crate::staged::property::StoreArm;
 use crate::staged::{NumberOperation, Operation};
 mod fields;
 use fields::{field_row, field_store_row};
-pub(super) use fields::stores_field;
+pub(super) use fields::{site_read_row, stores_field};
 
 /// The row kind of a binary operator: the shared operation rows decide which Number operation an
 /// operator is (`vm::operations::number_rows`, the table every tier consumes), and the row

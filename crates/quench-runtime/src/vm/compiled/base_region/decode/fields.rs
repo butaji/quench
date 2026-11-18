@@ -87,6 +87,13 @@ pub(super) fn field_row(region: &LoopRegion, facts: Facts, known: Known, pc: u32
     }
 }
 
+/// The row of a plain named field read of the object in register `object` through cache site `site`, with no
+/// facts about the site: what `cached_read` decodes for an unknown site (`Heap::Site`, no `ic`). The entry answers
+/// where the object is a direct object the site names; any other read leaves to the interpreter.
+pub(in crate::vm::compiled::base_region) fn site_read_row(object: Register, site: u16, dst: Register) -> Decoded {
+    Decoded { hole: entry_offset(site), ..Decoded::heap(Heap::Site, Some(dst), Some(Source::Register(object)), None) }
+}
+
 /// The row of a named field store to a register's object, or to `this`, through the site's cache
 /// entry (`entry::site_store`), where the store may run in place (`Known::stores_in_place`).
 pub(super) fn field_store_row(known: Known, instruction: WideInstruction) -> Option<Decoded> {
