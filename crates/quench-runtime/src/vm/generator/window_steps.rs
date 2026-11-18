@@ -72,11 +72,26 @@ impl<H: Host> Vm<H> {
     ) {
         self.realm.promise.active_native.pop();
         let record = self.windowed_generator_record(generator);
+        self.park_windowed_record(record, (pc, destination, depth), Completion::Yield(value), false);
+    }
+
+    /// Parks the frame of the windowed run `record` holds, in place, at `pc`, with what it
+    /// receives next going to `destination` and the iterators the activation at `depth`
+    /// pushed taken back: suspended at `completion`, or busy (`busy`) where an async
+    /// generator awaits.
+    pub(in crate::vm) fn park_windowed_record(
+        &mut self,
+        record: *mut GeneratorRecord,
+        (pc, destination, depth): (usize, crate::bytecode::Register, usize),
+        completion: Completion,
+        busy: bool,
+    ) {
         // SAFETY: the generator's cell keeps its record boxed, and parking the frame frees no cell.
-        let mut frame = unsafe { &mut *record }.take_windowed().expect("a windowed yield belongs to a windowed generator");
-        self.park_frame(&mut frame, pc, depth);
-        let continuation = Continuation { frame, completion: Completion::Yield(value), resume_register: Some(destination), promise: Value::UNDEFINED };
-        unsafe { &mut *record }.suspend(continuation);
+        let record = unsafe { &mut *record };
+        let frame = record.windowed_frame_mut().expect("a windowed stop belongs to a windowed generator");
+        // SAFETY: the record keeps the frame boxed; parking reads the lane stack, not the record.
+        self.park_frame(unsafe { &mut *std::ptr::from_mut(frame) }, pc, depth);
+        record.park_windowed(completion, Some(destination), busy);
     }
 
     /// The generator record of `generator`. A record is boxed once at creation and freed only by

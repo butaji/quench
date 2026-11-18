@@ -334,8 +334,8 @@ impl<H: Host> Vm<H> {
     /// handler of its function catches or which ends it in its owner (`JobEnd::Threw`). `code`
     /// is the program of its function, the active one, and the realm is the one that resumed
     /// it, starting over an empty lane stack (`Vm::nested_lane_run`). `resume` back, changing nothing, where the lane does not admit it (`admit_job`).
-    pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, resume: JobResume) -> Result<JobEnd, JobResume> {
-        let Some(window) = self.admit_job(code, job, resume.sent()) else {
+    pub(in crate::vm) fn run_lane_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume> {
+        let Some(window) = self.admit_job(code, job, frame, resume.sent()) else {
             return Err(resume);
         };
         let mut pending = self.pending_call_stacks.pop().unwrap_or_default();
@@ -357,15 +357,17 @@ impl<H: Host> Vm<H> {
 
     /// The window `job`'s activation runs over, once the lane admits the run, and the frame's
     /// owner has started it: the function lays out as a window (`window_layout`) and has a
-    /// view, and the stack has room. `None` changes nothing.
-    fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, sent: Value) -> Option<JobWindow> {
+    /// view, and the stack has room. `frame` is the suspended frame of `job`'s owner
+    /// (`Vm::job_frame`), looked up by the caller. `None` changes nothing.
+    fn admit_job(&mut self, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, sent: Value) -> Option<JobWindow> {
         if !self.lane_admits(code) || code.kind == crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let frame = self.job_frame(job)?;
+        // SAFETY: the owner holds the frame boxed, which nothing moves or drops before the resume
+        // below: the caller looked it up with the job rooted and ran no collection since.
+        let frame = unsafe { &*frame };
         let (program, function, this, pc) = (frame.program, frame.function, frame.this(), frame.pc);
-        // SAFETY: the owner holds the frame, which nothing moves before the resume below.
-        let cached = cached_window_plan(self, code, unsafe { &*std::ptr::from_ref(frame) })?;
+        let cached = cached_window_plan(self, code, frame)?;
         let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
         let this = self.window_this(code.function(function as usize), this, parent)?;
         let stack = crate::stack::StackGuard::enter().ok()?;

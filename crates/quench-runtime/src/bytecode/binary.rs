@@ -1,6 +1,7 @@
 mod abi;
 mod closure_tables;
 use closure_tables::{read_closure_tables, write_closure_tables};
+use super::rest_alias::{REST_ALIAS_BIT, UNALIASED_ARGUMENTS_BIT};
 use super::{
     AtomTable, BindingSite, Constant, DerivedFact, DispatchClass, FactTables, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, FunctionSlot, Handler, InitialRegister, Instr,
@@ -992,7 +993,7 @@ fn write_function(out: &mut BinaryWriter, function: &Function, superinstructions
         out.u8(u8::from(function.class_initializer));
         out.u8(u8::from(function.prototype_unobservable));
         out.u8(u8::from(function.parameter_eval_arguments_error));
-        out.u8(u8::from(function.unaliased_arguments));
+        out.u8(u8::from(function.unaliased_arguments) * UNALIASED_ARGUMENTS_BIT | u8::from(function.rest_alias) * REST_ALIAS_BIT);
         out.u8(u8::from(function.simple_parameters));
         out.u8(u8::from(function.strict));
         out.u16(function.arguments_slot.unwrap_or(u16::MAX));
@@ -1209,10 +1210,9 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             1 => true,
             _ => return Err("invalid parameter eval flag".into()),
         };
-        let unaliased_arguments = match input.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err("invalid unaliased arguments flag".into()),
+        let (unaliased_arguments, rest_alias) = match input.u8()? {
+            flags if flags & !(UNALIASED_ARGUMENTS_BIT | REST_ALIAS_BIT) == 0 => (flags & UNALIASED_ARGUMENTS_BIT != 0, flags & REST_ALIAS_BIT != 0),
+            _ => return Err("invalid unaliased arguments flags".into()),
         };
         let simple_parameters = match input.u8()? {
             0 => false,
@@ -1371,7 +1371,7 @@ fn read_function(input: &mut BinaryReader<'_>) -> Result<Function, String> {
             prototype_unobservable,
             class_initializer,
             parameter_eval_arguments_error,
-            unaliased_arguments,
+            unaliased_arguments, rest_alias,
             arguments_slot,
             simple_parameters,
             strict,

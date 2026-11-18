@@ -102,8 +102,8 @@ fn a_closure_made_in_a_with_statement_keeps_its_scope_after_the_generator_resume
 
 #[test]
 fn a_var_eval_introduced_reads_after_a_yield_through_the_activation() {
-    // The eval makes a frame, once, in each generator's first step; the dynamic binding it
-    // introduces lives in the record, which the later windows read by name.
+    // The eval runs in the window; the dynamic binding it introduces lives in the record, which
+    // the later windows read by name.
     let source = |rounds: u32| {
         format!(
             r#"
@@ -116,7 +116,7 @@ fn a_var_eval_introduced_reads_after_a_yield_through_the_activation() {
     };
     assert_eq!(agree(&source(30)), ["3690"]);
     let (_, frames) = run(&source(30));
-    assert_eq!(frames, 30, "only each first step, which evaluates, made a frame");
+    assert_eq!(frames, 0, "an eval step made a frame");
 }
 
 #[test]

@@ -31,7 +31,7 @@ mod instruction;
 mod register_list;
 mod name_bindings;
 pub(crate) use name_bindings::{CapturedNames, NameBindings};
-mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators;
+mod numeric_ops; mod op_classes; mod op_scan; mod typeof_names; mod unary_operators; mod rest_alias;
 pub(crate) use unary_operators::*;
 mod source_positions;
 pub(crate) use source_positions::SourcePositions;
@@ -881,9 +881,9 @@ opcodes!($;
     SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; class SetFunctionName; step Lane, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix; step Lane, @ Register, @ fields(Register, Register, Unused),
     InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot; class InitializeTdz; step Body, @ Register, @ fields(Unused, Unused, Unused),
-    Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Await, @ Register, @ fields(ResultRegister, Register, Unused),
-    Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Yield, @ Register, @ fields(ResultRegister, Register, Unused),
-    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair; class YieldStar, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
+    Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Await; staged Flow, @ Register, @ fields(ResultRegister, Register, Unused),
+    Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Yield; staged Flow, @ Register, @ fields(ResultRegister, Register, Unused),
+    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair; class YieldStar; staged Flow, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
     GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField; class GetField; staged Property; step Body; traits BOXED_RESULT FIELD_LEAF RETURNING_FIELD INLINABLE PURE_SETUP FRAME_RETURNABLE, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
     GetIndex => READ_THROW; layout Scalar; meaning Unused; class GetIndex; staged Element; step Body; traits BOXED_RESULT INLINABLE PURE_SETUP ELEMENT_ACCESS LIFETIME_SAFE, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; class ToPropertyKey; staged Generic; step LaneResult, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -1401,6 +1401,9 @@ pub struct Function {
     /// parameter is written, and none is read after an element could be, so the object
     /// keeps the mapped layout without parameter links (`arguments_alias_parameters`).
     pub unaliased_arguments: bool,
+    /// `function f(...rest)` compiled with no parameters, `rest` naming its `arguments` binding
+    /// (`compile::rest_alias`): the binding materializes as the rest array, not an arguments object.
+    pub rest_alias: bool,
     pub arguments_slot: Option<u16>,
     pub simple_parameters: bool,
     pub strict: bool,

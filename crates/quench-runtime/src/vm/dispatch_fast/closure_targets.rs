@@ -3,6 +3,26 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    /// Whether plain calls of `body` (`plan`) may settle in the caller's lane: of the running
+    /// program, unless `framed` (across programs, or numeric), under a host that observes no
+    /// promise lifecycle; and whether they would settle from an environment activation
+    /// (`settles_in_environment`).
+    pub(super) fn settling_calls(&self, body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan, framed: bool) -> (bool, bool) {
+        let may_settle = !framed && !self.host.observes_promise_lifecycle();
+        (may_settle, may_settle && settles_in_environment(body, plan))
+    }
+
+    /// `same_realm_user_target` of a callee the lane may resolve a target for: not a function of
+    /// eval code once a `with` statement was entered, whose frame takes the chain its environment
+    /// captured (`Vm::captured_with_objects_for_function`), which a lane activation does not
+    /// push; its calls take the general path's frame (`lane_frame_call`).
+    pub(super) fn lane_user_target(&self, callee: Value) -> Option<(ProgramId, u32, Value)> {
+        let target = self.same_realm_user_target(callee)?;
+        let takes_with_chain = self.with_scope_entered
+            && self.programs.residual(target.0).is_some_and(|code| code.kind == crate::bytecode::ProgramKind::Eval);
+        (!takes_with_chain).then_some(target)
+    }
+
     /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
     pub(super) fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
         known: ScriptCallTarget) -> Option<ScriptCallTarget> {
@@ -165,4 +185,21 @@ pub(super) fn target_entry(body: &crate::bytecode::Function, plan: &crate::bytec
         // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
         shape.leaf.map_or(shape.entry, CallEntry::leaf)
     }
+}
+
+/// Whether async `body`, whose plan is `plan`, settles its call's promise from an environment
+/// activation (`TARGET_SETTLES_IN_ENVIRONMENT`): a plain async function whose suspension keeps
+/// its environment and locals (`CallPlan::suspended_environment`), laid out as an environment
+/// activation lays out an ordinary body (`CallPlan::environment_activation`): each parameter a
+/// frame local, every register starting `undefined`. Its `await` suspends it in place, its frame
+/// taking the window's environment (`generator_yields::lane_await_settling`).
+pub(super) fn settles_in_environment(body: &crate::bytecode::Function, plan: &crate::bytecode::CallPlan) -> bool {
+    body.is_async
+        && !body.is_generator
+        && !body.is_class_constructor
+        && !body.derived_constructor
+        && plan.suspended_environment
+        && body.parent.is_some()
+        && body.local_registers.is_empty()
+        && body.initial_register == crate::bytecode::InitialRegister::Undefined
 }

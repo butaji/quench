@@ -183,7 +183,7 @@ impl Compiler<'_> {
             constructible: false,
             class_initializer,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             // A call-only arrow (`call_only`) closes as a `Value::known_closure`, with no function object.
             prototype_unobservable: call_only,
             arguments_slot: None,

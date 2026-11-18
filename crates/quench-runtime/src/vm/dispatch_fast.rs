@@ -654,6 +654,7 @@ use closure_targets::target_entry;
 mod window_records;
 use window_records::{plain_window_handlers, window_local_handler, window_record, WindowRecord};
 mod lane_stack_growth;
+mod lane_generations;
 mod native_frames;
 use super::lane_values::{self, LaneValues, HEAP_WINDOW};
 use super::lane_activations::LaneActivations;
@@ -2029,6 +2030,10 @@ const TARGET_REST_VIEW: u8 = 8;
 /// (`Function::arrow_reads_implicit_bindings`), whose sibling closures read their own
 /// lexical `this` (`sibling_closure_target`).
 const TARGET_READS_IMPLICIT: u8 = 16;
+/// `ScriptCallTarget::forms`: a settling target (`CallEntry::Settles`) whose body activates
+/// over an environment window (`lane_activate_environment`): an async body whose locals and
+/// closures ride the window (`CallPlan::suspended_environment`).
+const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
 impl ScriptCallTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -2069,6 +2074,12 @@ impl ScriptCallTarget {
     #[inline(always)]
     fn settles(&self) -> bool {
         self.entry == CallEntry::Settles
+    }
+
+    /// Its settling activation holds an environment window (`TARGET_SETTLES_IN_ENVIRONMENT`).
+    #[inline(always)]
+    fn settles_in_environment(&self) -> bool {
+        self.forms & TARGET_SETTLES_IN_ENVIRONMENT != 0
     }
 }
 
@@ -2752,8 +2763,6 @@ impl LaneStack {
         drop_owned_entries(&mut self.trap_checks, depth);
     }
 
-    /// The generation of a lane run under `key`: the current one while the key holds, else
-    /// a new one, which retires every target resolved before.
     /// Derive `activation_limit` from the activations' capacity, the guest calls the
     /// thread admits beyond the frames and activations already counted, and a due
     /// collection.
@@ -2834,10 +2843,9 @@ impl LaneStack {
         self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
     }
 
-    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a `with`
-    /// scope was entered (`Vm::with_scope_entered`) or a construction's callee is pending
-    /// (`Vm::construct_target`), under which a lane call leaves the lane, so the cached paths
-    /// need not test either (`Vm::refresh_call_refusal`).
+    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a
+    /// construction's callee is pending (`Vm::construct_target`), under which a lane call leaves
+    /// the lane, so the cached paths need not test it (`Vm::refresh_call_refusal`).
     pub(super) fn set_refused(&mut self, refused: bool) {
         self.set_condition(Admission::REFUSED, refused);
     }
@@ -13994,6 +14002,14 @@ impl<H: Host> Vm<H> {
             })
     }
 
+    /// Whether the innermost lane activation runs over a suspended frame's record (a generator's
+    /// or an async function's window, or one a direct eval gave a record): leaving the lane boxes
+    /// that record's state as a frame, which a call waiting for its callee's view would do. The
+    /// innermost is the caller deciding; a window further out only tunes when a callee lowers.
+    pub(in crate::vm) fn lane_runs_windows(&self) -> bool {
+        self.lane_stack.activations.last().and_then(Activation::script).is_some_and(|script| !script.record.is_null())
+    }
+
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.
@@ -14518,7 +14534,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     pub(in crate::vm) fn resolve_script_call_target(&mut self, code: &ResidualProgram, callee: Value) -> Option<ScriptCallTarget> {
         callee.heap_index()?;
-        let (program, function, env) = self.same_realm_user_target(callee)?;
+        let (program, function, env) = self.lane_user_target(callee)?;
         // Only plain closures' functions are known (`remember_target`): a hit needs no class or admission.
         if program == self.active_program && let Some(known) = self.lane_stack.function_target(program, function, false) {
             let target = self.closure_target(code, program, callee, env, known)?;
@@ -14577,16 +14593,21 @@ impl<H: Host> Vm<H> {
         // the lane's, with or without a frame.
         // An environment body runs in an environment activation where every local and
         // closure record of its view reads one (`LaneView::environment_window`).
+        // A settling call is a plain call of the running program, under a host that observes no
+        // promise lifecycle; an async body whose locals and closures ride a window settles from
+        // an environment activation (`settles_in_environment`).
+        let (may_settle, settles_in_environment) = self.settling_calls(body, &plan, cross || numeric);
         let environment = !plan.registers_only
-            && plan.environment_activation
+            && (plan.environment_activation || settles_in_environment)
             && !numeric
             && self
                 .lane_view_any(program, function)
                 .is_some_and(|view| unsafe { &*view }.environment_window.is_some());
+        let settles_in_environment = settles_in_environment && environment;
         // A non-suspending async body of the running program activates for its plain calls,
         // whose promise its return settles (`CallEntry::Settles`); across programs, or under a
         // host that observes promise lifecycles, its calls take a frame.
-        let settles = plan.settles_in_loop && !cross && !numeric && !self.host.observes_promise_lifecycle();
+        let settles = (plan.settles_in_loop || settles_in_environment) && may_settle;
         // A non-suspending async body runs in registers only as a settling activation.
         let registers_only = plan.registers_only && (settles || !plan.settles_in_loop);
         // Across programs a construction leaves its calls a frame.
@@ -14706,7 +14727,8 @@ impl<H: Host> Vm<H> {
                 | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES
                 | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING
                 | u8::from(body.rest_view()) * TARGET_REST_VIEW
-                | u8::from(lexical_this.is_some() && body.arrow_reads_implicit_bindings(code, function)) * TARGET_READS_IMPLICIT,
+                | u8::from(lexical_this.is_some() && body.arrow_reads_implicit_bindings(code, function)) * TARGET_READS_IMPLICIT
+                | u8::from(settles_in_environment) * TARGET_SETTLES_IN_ENVIRONMENT,
             fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
@@ -15402,8 +15424,17 @@ script_handler! {
             Some(vm.heap.root(promise))
         };
         vm.lane_stack.settling.push(root);
-        let arguments = ImmediateLayout::call_window_base(i.imm());
-        let (registers, base) = lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false);
+        let (registers, base) = if target.settles_in_environment() {
+            // SAFETY: the call's window is registers of the running function.
+            let passed = unsafe { lane_call_window(r, i) };
+            match generator_yields::activate_settling_environment(cx, r, ip, &target, passed, this) {
+                Ok(entered) => entered,
+                Err(next) => return next,
+            }
+        } else {
+            let arguments = ImmediateLayout::call_window_base(i.imm());
+            lane_push_activation::<H, false, true>(cx, r, ip, &target, arguments, this, false)
+        };
         next!(cx, registers, base, Carried::script_in(cx, view))
     }
 }
@@ -15703,8 +15734,8 @@ script_handler! {
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
             if target.program() == vm.active_program {
-                // Under a `with` scope or a pending construction no cached target admits a
-                // call (`LaneStack::set_refused`): the call leaves the lane, as it would.
+                // Under a pending construction no cached target admits a call
+                // (`LaneStack::set_refused`): the call leaves the lane, as it would.
                 if vm.lane_stack.refuses() {
                     return exit(ip);
                 }
@@ -16517,6 +16548,11 @@ script_handler! {
         }
         if native == Native::AsyncGeneratorNext
             && let Some(resumed) = async_requests::lane_async_generator_next(cx, r, ip, i)
+        {
+            resume!(cx, resumed)
+        }
+        if native == Native::AsyncGeneratorThrow
+            && let Some(resumed) = async_requests::lane_async_generator_throw(cx, r, ip, i)
         {
             resume!(cx, resumed)
         }
@@ -17353,8 +17389,8 @@ script_handler! {
     fn lane_script_construct<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let callee = r.get(i.b);
-        // Under a `with` scope or a pending construction no cached target admits the
-        // construction (`LaneStack::set_refused`), so the resolve-and-retry below would
+        // Under a pending construction no cached target admits the construction
+        // (`LaneStack::set_refused`), so the resolve-and-retry below would
         // never find one: it leaves the lane, as a refused call does.
         if !unsafe { (*cx).script_calls && (*cx).script_constructs } || vm.lane_stack.refuses() {
             return exit(ip);

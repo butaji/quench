@@ -80,6 +80,8 @@ pub(crate) use plan::{plan_entry, CalleeKind, CallEntry, DirectPlan, Identity, R
 #[cfg(test)]
 pub(crate) use plan::Bound;
 pub(crate) use invoke::{CallFrame, Entered, Room};
+mod suspend;
+pub(crate) use suspend::Suspension;
 mod allocation;
 pub(crate) use allocation::Allocation;
 pub(crate) mod plan_fields;
@@ -261,6 +263,9 @@ pub(crate) enum Operation<W, P> {
     SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
     /// Complete the activation with the value of `source` (`invoke::ret`).
     Return { source: Register },
+    /// Suspend the activation (`Suspension`) with the value of `value`, resuming with what it
+    /// receives next in `destination` (`suspend::suspend`).
+    Suspend { kind: Suspension, destination: Register, value: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
@@ -320,6 +325,7 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Await | Op::Yield | Op::YieldStar => return Self::decode_suspend(instruction),
             _ => Self::Return { source: instruction.register_a() },
         })
     }

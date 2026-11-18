@@ -534,7 +534,7 @@ impl<H: Host> Vm<H> {
         if !lane_runs
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || !self.lane_admits(p)
-            || !self.programs.lane_call_may_derive(program, id, false)
+            || !self.programs.lane_call_may_derive(program, id, false, false)
         {
             return std::ptr::null();
         }
@@ -1016,7 +1016,7 @@ impl<H: Host> Vm<H> {
     }
 
     /// A new activation's `arguments` object, mapped onto the parameters when the function's
-    /// parameter list allows it.
+    /// parameter list allows it; the rest array a rest alias names (`Function::rest_alias`).
     #[inline(never)]
     pub(super) fn activation_arguments_object(
         &mut self,
@@ -1024,6 +1024,7 @@ impl<H: Host> Vm<H> {
         context: CallContext,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if function.rest_alias { return Ok(self.rest_parameter_array(args)); }
         let mapped = function.arguments_are_mapped();
         let mut array = crate::heap::ArrayObject::new(
             Self::empty_object(self.object_proto),

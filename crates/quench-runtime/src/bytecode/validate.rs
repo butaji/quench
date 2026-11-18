@@ -737,7 +737,7 @@ function.plain_local_slots(&self.superinstructions)
             if function
                 .arguments_slot
                 .is_some_and(|slot| slot >= function.locals)
-                || function.rest && function.simple_parameters
+                || !function.parameter_flags_agree()
             {
                 return Err(format!("function {index} has invalid argument metadata"));
             }
@@ -1332,7 +1332,7 @@ mod tests {
             constructible: true,
             class_initializer: false,
             parameter_eval_arguments_error: false,
-            unaliased_arguments: false,
+            unaliased_arguments: false, rest_alias: false,
             prototype_unobservable: false,
             arguments_slot: None,
             simple_parameters: true,

@@ -52,6 +52,10 @@ fn plan_op(instructions: &[WideInstruction], pc: usize, context: DecodeContext<'
     if op.js_denotation() == JsDenotation::Noop {
         return PlanOp::Continue;
     }
+    // A suspension resumes only in a frame that continues it, whatever row it has.
+    if suspends(op) {
+        return PlanOp::Exit(Exit::Suspend);
+    }
     let staged = Operation::decode(instruction, context).or_else(|| {
         let (destination, allocation) = Allocation::decode(instruction, &instructions[pc + 1..])?;
         Some(Operation::Allocate { destination, allocation, proof: () })
@@ -59,7 +63,6 @@ fn plan_op(instructions: &[WideInstruction], pc: usize, context: DecodeContext<'
     match (staged, op.generic_step()) {
         (Some(operation), _) => PlanOp::Staged(operation),
         (None, Some(step)) => PlanOp::Generic(step),
-        (None, None) if suspends(op) => PlanOp::Exit(Exit::Suspend),
         (None, None) => PlanOp::Exit(Exit::Miss),
     }
 }

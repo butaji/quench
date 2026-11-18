@@ -5,7 +5,7 @@
 //! sent or the error `throw` threw. The run's end settles a promise or a request, or the
 //! activation awaits again.
 use super::*;
-use super::super::activation::{JobResume, JobRoot, SuspendKind};
+use super::super::activation::{FrameRecord, JobResume, JobRoot, SuspendKind};
 use super::super::dispatch_fast::JobEnd;
 
 impl<H: Host> Vm<H> {
@@ -24,8 +24,10 @@ impl<H: Host> Vm<H> {
         };
         let resume = AwaitResume { state: Some(state), promise, role, rejected };
         let previous_global = self.switch_realm_global(realm);
-        let settled = // A fixed list, `undefined` for an absent root, extends the roots in one copy.
-        self.with_call_roots([promise, role.generator().unwrap_or(Value::UNDEFINED), value], |vm| {
+        // The caller roots `state` and `value` (the queue its job's values, `start_root_job` the
+        // state) and has run any due collection; the run may detach the promise and the
+        // generator from the state it spends or arms again.
+        let settled = self.with_call_roots([promise, role.generator().unwrap_or(Value::UNDEFINED)], |vm| {
             vm.resume_awaited(p, state, resume, value)?;
             match role.generator() {
                 Some(generator) => vm.resume_async_generator_queue(p, generator),
@@ -43,7 +45,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("stale async continuation".into()));
         };
         let resume = AwaitResume { state: Some(state), promise, role, rejected: false };
-        let end = self.run_job(p, role.job(state), JobResume::Sends(Value::UNDEFINED));
+        let job = role.job(state);
+        let frame = self.job_frame(job).map(std::ptr::from_ref).ok_or_else(|| JsError("stale async continuation".into()))?;
+        let end = self.run_job(p, job, frame, JobResume::Sends(Value::UNDEFINED));
         self.settle_job_end(p, resume, end)
     }
 
@@ -66,15 +70,19 @@ impl<H: Host> Vm<H> {
         } else {
             JobResume::Sends(value)
         };
-        self.resume_job(resume, resume.role.job(state), how)
+        self.resume_job(p, resume, resume.role.job(state), how)
     }
 
     /// An async generator's request `promise` resumes its suspended `generator` with `how`, as
-    /// `next` or `throw` sent it: in the realm the caller switched to.
-    pub(in crate::vm) fn resume_request(&mut self, generator: Value, promise: Value, how: JobResume) -> Result<(), JsError> {
+    /// `next` or `throw` sent it: in the realm the caller switched to, after any due collection,
+    /// which none of the activation is on the stack for.
+    pub(in crate::vm) fn resume_request(&mut self, p: &ResidualProgram, generator: Value, promise: Value, how: JobResume) -> Result<(), JsError> {
         let job = JobRoot { object: generator, kind: SuspendKind::AsyncGenerator };
         let resume = AwaitResume { state: None, promise, role: AwaitRole::AsyncGeneratorAwait(generator), rejected: matches!(how, JobResume::Throws(_)) };
-        self.resume_job(resume, job, how)
+        self.with_call_roots([promise, generator, how.value().unwrap_or(Value::UNDEFINED)], |vm| {
+            vm.maybe_collect(p);
+            vm.resume_job(p, resume, job, how)
+        })
     }
 
     /// An await state whose reaction ran: it is spent.
@@ -84,29 +92,42 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// The activation of `resume`, which `job` names, resumes with `how`, in the program of its
-    /// function, and its run settles. A due collection runs first, where none of the activation
-    /// is on the stack.
-    fn resume_job(&mut self, resume: AwaitResume, job: JobRoot, how: JobResume) -> Result<(), JsError> {
-        let program = self.job_frame(job).ok_or_else(|| JsError("stale async continuation".into()))?.program;
+    /// The activation of `resume`, which `job` names, resumes with `how` in the program of its
+    /// function, and its run settles. The caller roots the job's values and has run any due
+    /// collection. `p`, the caller's program, serves where it is the function's own, so the
+    /// common run takes no reference on the program store's.
+    fn resume_job(&mut self, p: &ResidualProgram, resume: AwaitResume, job: JobRoot, how: JobResume) -> Result<(), JsError> {
+        let frame = self.job_frame(job).ok_or_else(|| JsError("stale async continuation".into()))?;
+        let (program, frame) = (frame.program, std::ptr::from_ref(frame));
+        if self.programs.residual(program).is_some_and(|code| std::ptr::eq(code, p)) {
+            return self.resume_job_in(p, program, (resume, job, frame), how);
+        }
         let code = self.programs.get(program).ok_or_else(|| JsError("async continuation program is unavailable".into()))?;
+        self.resume_job_in(&code, program, (resume, job, frame), how)
+    }
+
+    /// `resume_job` in `code`, the program `program` of the function whose suspended `frame`
+    /// the job resumes.
+    fn resume_job_in(
+        &mut self,
+        code: &ResidualProgram,
+        program: ProgramId,
+        (resume, job, frame): (AwaitResume, JobRoot, *const FrameRecord),
+        how: JobResume,
+    ) -> Result<(), JsError> {
         let previous_program = self.replace_active_program(program);
-        let roots = [resume.promise, resume.role.generator().unwrap_or(Value::UNDEFINED), resume.state.unwrap_or(Value::UNDEFINED), how.value().unwrap_or(Value::UNDEFINED)];
-        let settled = self.with_call_roots(roots, |vm| {
-            vm.maybe_collect(&code);
-            let resumed = if vm.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
-            let outer = std::mem::replace(&mut vm.queue_resumed, resumed);
-            let end = vm.run_job(&code, job, how);
-            vm.queue_resumed = outer;
-            // An async generator's await state is spent once its reaction ran, as an async
-            // function's was armed again or spent with its continuation.
-            if job.kind == SuspendKind::AsyncGenerator
-                && let Some(state) = resume.state
-            {
-                vm.spend_await(state);
-            }
-            vm.settle_job_end(&code, resume, end)
-        });
+        let resumed = if self.native_microtask_running && job.kind == SuspendKind::AsyncFunction { job.object } else { Value::UNDEFINED };
+        let outer = std::mem::replace(&mut self.queue_resumed, resumed);
+        let end = self.run_job(code, job, frame, how);
+        self.queue_resumed = outer;
+        // An async generator's await state is spent once its reaction ran, as an async
+        // function's was armed again or spent with its continuation.
+        if job.kind == SuspendKind::AsyncGenerator
+            && let Some(state) = resume.state
+        {
+            self.spend_await(state);
+        }
+        let settled = self.settle_job_end(code, resume, end);
         self.restore_active_program(previous_program);
         settled
     }

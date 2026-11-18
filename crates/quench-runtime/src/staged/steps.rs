@@ -14,7 +14,7 @@ pub(crate) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         keyed @ (Operation::Delete { .. } | Operation::ElementRead { .. } | Operation::ElementWrite { .. }) => keyed_step(stage, frame, keyed),
         Operation::Void { .. } | Operation::PropertyKey { .. } | Operation::Equality { .. } | Operation::Binary { .. }
             | Operation::CompareJump { .. } => super::generic::step(stage, frame, operation),
-        call @ (Operation::Call(_) | Operation::Return { .. }) => call_step(stage, frame, call),
+        call @ (Operation::Call(_) | Operation::Return { .. } | Operation::Suspend { .. }) => call_step(stage, frame, call),
         Operation::Move { .. } | Operation::LoadConst { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
             | Operation::LogicalNot { .. } | Operation::Safepoint { .. } | Operation::Nop => register_step(stage, frame, operation),
         Operation::LoadEnvLocal { .. } | Operation::StoreEnvLocal { .. } | Operation::ArgumentsLength { .. }
@@ -34,14 +34,16 @@ fn keyed_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     }
 }
 
-/// A call, a construction or a return: the call protocol's operations (`step`).
+/// A call, a construction, a return or a suspension: the operations that leave or enter an
+/// activation (`step`).
 #[inline(always)]
 fn call_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Call(CallOperation::Site(site)) => super::invoke::invoke(stage, frame, frame.miss(), site),
         Operation::Return { source } => super::invoke::ret(stage, frame, source),
         Operation::Call(operation) => super::protocol::step(stage, frame.miss(), operation),
-        _ => unreachable!("`step` sends only calls and returns"),
+        Operation::Suspend { kind, destination, value } => super::suspend::suspend(stage, frame, kind, destination, value),
+        _ => unreachable!("`step` sends only calls, returns and suspensions"),
     }
 }
 

@@ -3439,10 +3439,10 @@ impl<H: Host> Vm<H> {
     }
 
     /// Whether cached lane calls are refused (`dispatch_fast::LaneStack::set_refused`): under a
-    /// `with` scope or a pending construction, whose calls the lane does not make from a cache.
+    /// pending construction, whose calls the lane does not make from a cache.
     #[inline]
     pub(super) fn refresh_call_refusal(&mut self) {
-        let refused = self.with_scope_entered || self.construct_target.is_some();
+        let refused = self.construct_target.is_some();
         self.lane_stack.set_refused(refused);
     }
 
