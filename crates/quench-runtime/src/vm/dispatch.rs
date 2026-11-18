@@ -568,12 +568,21 @@ impl<H: Host> Vm<H> {
         pc: &mut usize,
         allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
-        if let Some(operation) = crate::staged::Operation::<u64, ()>::decode(i, crate::staged::DecodeContext::EMPTY)
-            && self.step_flow_row(p, f, i, operation, pc)
-        {
-            return Ok(StepResult::Continue);
-        }
         match i.op() {
+            // The register moves, local slot accesses and jumps run as their staged rows on the
+            // running frame (`InterpreterFrame`).
+            Op::Move | Op::LoadLocalPlain | Op::StoreLocalPlain => {
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    unreachable!("validated bytecode bounds the registers and slots of a register row");
+                }
+            }
+            Op::Jump => {
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    unreachable!("a jump row always takes its edge");
+                }
+            }
+            Op::JumpFalse => self.step_jump_if(p, f, i, pc, false),
+            Op::JumpTrue => self.step_jump_if(p, f, i, pc, true),
             Op::Nop => {}
             Op::CloneEnv => {
                 let clones = &p.function(self.frames[f].function as usize).environment_clones;
@@ -1560,17 +1569,14 @@ impl<H: Host> Vm<H> {
         Ok(StepResult::Continue)
     }
 
-    /// The register moves, local slot accesses and jumps `step` runs first, each as its staged row
-    /// on the running frame (`InterpreterFrame`). `false` for any other operation, which `step` runs.
+    /// Runs `operation` as its staged row on the running frame `f` (`InterpreterFrame::step_row`),
+    /// taking the edge the row answers: a taken jump sets `pc`, and a back-edge jump publishes its
+    /// PC and checks for a due collection. `false` where the row leaves, so the arm's own body runs.
     #[inline(always)]
-    fn step_flow_row(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, operation: crate::staged::Operation<u64, ()>, pc: &mut usize) -> bool {
+    fn step_staged(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+        operation: crate::staged::Operation<u64, ()>) -> bool {
         use crate::staged::{Edge, Operation, Step};
-        let outcome = match operation {
-            Operation::Move { .. } | Operation::LoadLocalPlain { .. } | Operation::StoreLocalPlain { .. }
-                | Operation::Jump | Operation::JumpIf { .. } => super::dispatch_frame::InterpreterFrame::step_row(&mut self.frames[f], operation),
-            _ => return false,
-        };
-        match outcome {
+        match super::dispatch_frame::InterpreterFrame::step_row(&mut self.frames[f], operation) {
             Step::Control(Edge::Target) => {
                 *pc = i.jump_target() as usize;
                 if matches!(operation, Operation::Jump) {
@@ -1578,19 +1584,35 @@ impl<H: Host> Vm<H> {
                     self.frames[f].pc_is_resume = true;
                     self.maybe_collect(p);
                 }
+                true
             }
-            Step::Value(_) | Step::Control(Edge::Following) => {}
-            Step::Unresolved => match operation {
-                // A heap value's truthiness is the VM's, which runs no guest code.
-                Operation::JumpIf { register, taken } => {
-                    if self.truthy(self.read(f, register)) == taken {
-                        *pc = i.jump_target() as usize;
-                    }
-                }
-                _ => unreachable!("validated bytecode bounds the registers and slots of a register row"),
-            },
+            Step::Value(_) | Step::Control(Edge::Following) => true,
+            Step::Unresolved => false,
         }
-        true
+    }
+
+    /// `i` decoded under `context` (a name load under no context: its proof is the frame's, so it
+    /// takes `decode_load_name`), run as its staged row by `step_staged`. `false` where the row
+    /// does not decide `i` on this frame.
+    #[inline(always)]
+    fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
+        context: crate::staged::DecodeContext<'_>) -> bool {
+        let decoded = crate::staged::Operation::<u64, ()>::decode(i, context)
+            .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()));
+        match decoded {
+            Some(operation) => self.step_staged(p, f, i, pc, operation),
+            None => false,
+        }
+    }
+
+    /// `JumpFalse` or `JumpTrue` of register `a`: its staged row, else the VM's truthiness of a
+    /// heap value, which runs no guest code.
+    #[inline(always)]
+    fn step_jump_if(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, taken: bool) {
+        let operation = crate::staged::Operation::<u64, ()>::JumpIf { register: i.register_a(), taken };
+        if !self.step_staged(p, f, i, pc, operation) && self.truthy(self.read(f, i.register_a())) == taken {
+            *pc = i.jump_target() as usize;
+        }
     }
 
     /// An opcode with no arm of its own in `step`: a row the catalog stages among the names and
