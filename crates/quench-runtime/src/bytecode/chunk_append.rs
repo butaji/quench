@@ -97,32 +97,65 @@ impl ResidualProgram {
         }
     }
 
-    /// Takes the chunk room of `compiled`, the compilation this program was decoded from (its
-    /// kept form): the replay, the pending rewrites and every table's headroom, so its
-    /// first-call chunks append to it as they do to the compiled program. `false`, leaving the
-    /// program as it was, where the tables do not match.
-    pub(crate) fn adopt_chunk_room(&mut self, compiled: &mut ResidualProgram) -> bool {
-        if self.replay.is_some() || compiled.replay.is_none() || self.table_lengths() != compiled.table_lengths() {
-            return false;
+    /// The room this program's first-call chunks append in, as its kept form records it: the
+    /// headroom of each table, the cache sites it may grow to, and what its chunks read of
+    /// its replay. `None` for a program without stubs or replay.
+    pub(crate) fn kept_chunk_room(&self) -> Option<KeptChunkRoom> {
+        let replay = self.replay.as_deref().filter(|_| !self.first_call_scopes.is_empty())?;
+        let (direct_stubs, next_site) = replay.chunk_state();
+        let spare = |spare: usize| u32::try_from(spare).unwrap_or(u32::MAX);
+        let lengths = self.table_lengths();
+        let len = |len: usize| u32::try_from(len).unwrap_or(u32::MAX);
+        Some(KeptChunkRoom {
+            lengths: [
+                len(lengths.functions), len(lengths.constants), len(lengths.method_sites), len(lengths.method_arguments),
+                len(lengths.field_sites), len(lengths.object_sites), len(lengths.regexp_literal_sites),
+                len(lengths.literal_templates), len(lengths.superinstructions),
+            ],
+            spares: [
+                spare(self.functions.spare()), spare(self.constants.spare()), spare(self.method_sites.spare()),
+                spare(self.method_arguments.spare()), spare(self.field_sites.spare()), spare(self.object_sites.spare()),
+                spare(self.regexp_literal_sites.spare()), spare(self.literal_templates.spare()),
+                spare(self.superinstructions.spare()),
+            ],
+            site_capacity: self.cache_sites.capacity(),
+            direct_stubs,
+            next_site,
+            name_shared: replay.name_shared_entries(),
+        })
+    }
+
+    /// Restores `room` to this program, decoded from its kept form, so its first-call chunks
+    /// append to it as they would to the program its load compiled: without it each chunk was
+    /// a program of its own, and every call into one crossed programs (acorn-wtb with every
+    /// script function stubbed: +32% per iteration). The load ran every decoded record's
+    /// rewrites; only appended records wait for theirs, on their first read.
+    pub(crate) fn restore_chunk_room(&mut self, room: &KeptChunkRoom) {
+        let lengths = self.table_lengths();
+        let decoded = [
+            lengths.functions, lengths.constants, lengths.method_sites, lengths.method_arguments, lengths.field_sites,
+            lengths.object_sites, lengths.regexp_literal_sites, lengths.literal_templates, lengths.superinstructions,
+        ];
+        if decoded.iter().zip(room.lengths).any(|(&decoded, kept)| decoded != kept as usize) {
+            return;
         }
-        let fits = self.functions.reserve_unshared(compiled.functions.spare())
-            & self.constants.reserve_unshared(compiled.constants.spare())
-            & self.method_sites.reserve_unshared(compiled.method_sites.spare())
-            & self.method_arguments.reserve_unshared(compiled.method_arguments.spare())
-            & self.field_sites.reserve_unshared(compiled.field_sites.spare())
-            & self.object_sites.reserve_unshared(compiled.object_sites.spare())
-            & self.regexp_literal_sites.reserve_unshared(compiled.regexp_literal_sites.spare())
-            & self.literal_templates.reserve_unshared(compiled.literal_templates.spare())
-            & self.superinstructions.reserve_unshared(compiled.superinstructions.spare());
-        self.cache_sites = SiteCount::with_capacity(self.cache_sites.get(), compiled.cache_sites.capacity());
-        self.rewrite_ranges = std::mem::take(&mut compiled.rewrite_ranges);
-        if !self.rewrite_ranges.kept_pending {
-            // The load ran every kept record's rewrites; only appended chunks' records wait for theirs.
-            *self.rewrite_ranges.settled.borrow_mut() = vec![Some(None); self.functions.len()];
-            self.rewrite_ranges.kept_pending = true;
-        }
-        self.replay = compiled.replay.take();
-        fits
+        let [functions, constants, method_sites, method_arguments, field_sites, object_sites, regexp_literal_sites, literal_templates, superinstructions] =
+            room.spares.map(|spare| spare as usize);
+        self.functions.reserve_unshared(functions);
+        self.constants.reserve_unshared(constants);
+        self.method_sites.reserve_unshared(method_sites);
+        self.method_arguments.reserve_unshared(method_arguments);
+        self.field_sites.reserve_unshared(field_sites);
+        self.object_sites.reserve_unshared(object_sites);
+        self.regexp_literal_sites.reserve_unshared(regexp_literal_sites);
+        self.literal_templates.reserve_unshared(literal_templates);
+        self.superinstructions.reserve_unshared(superinstructions);
+        self.cache_sites = SiteCount::with_capacity(self.cache_sites.get(), room.site_capacity);
+        *self.rewrite_ranges.settled.borrow_mut() = vec![Some(None); self.functions.len()];
+        self.rewrite_ranges.kept_pending = true;
+        self.replay = Some(std::rc::Rc::new(crate::compile::replay::ProgramReplay::for_chunks(
+            self.specialized, room.direct_stubs, room.next_site, &room.name_shared,
+        )));
     }
 
     /// Whether `delta` can be appended: the program follows the chunk's rewrites as they come
@@ -171,4 +204,20 @@ impl ResidualProgram {
         self.functions.append(delta.functions.into_iter());
         target
     }
+}
+
+/// The chunk room of a program with first-call stubs, as its kept form records it
+/// (`ResidualProgram::kept_chunk_room`).
+pub(crate) struct KeptChunkRoom {
+    /// Headroom of the functions, constants, method sites, method arguments, field sites,
+    /// object sites, regexp literal sites, literal templates and superinstructions tables.
+    pub(crate) spares: [u32; 9],
+    /// The tables' lengths the room follows, in the same order: a decoded program whose tables
+    /// differ keeps no room.
+    pub(crate) lengths: [u32; 9],
+    pub(crate) site_capacity: u16,
+    pub(crate) direct_stubs: bool,
+    pub(crate) next_site: u16,
+    /// The load's name-shared sites, as (store, atom, site).
+    pub(crate) name_shared: Vec<(bool, u32, u16)>,
 }
