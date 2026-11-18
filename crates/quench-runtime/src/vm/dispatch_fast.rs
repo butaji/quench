@@ -13961,7 +13961,9 @@ impl<H: Host> Vm<H> {
         self.resolve_script_call_target(code, callee).is_some_and(|target| target.program() == self.active_program
             && target.function == function
             && target.entry.activates_registers_only()
-            && target.this_binding.binds_receiver())
+            // An arrow that reads none of its maker's bindings has no receiver to bind.
+            && (target.this_binding.binds_receiver() || (target.this_binding == ThisBinding::Lexical
+                && !crate::bytecode::arrow_chain_reads_implicit_bindings(code, function))))
     }
 
     /// Resolve and cache `callee` as a lane call target: frameless when its activation is its

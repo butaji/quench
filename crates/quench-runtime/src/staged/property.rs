@@ -406,7 +406,7 @@ fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner
         return word_formed_slot(stage, frame, (owner, direct), &at, *word, (*slot, *storage_len), miss);
     }
     let [IcOp::GuardShape(shape), rest @ ..] = ops else { return ic::run(stage, ops, at, records, miss) };
-    if let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
+    if direct && let [IcOp::LoadSlot { slot, form: Form::Arena, rep, storage_len }] = rest
         && frame.proven_shape(stage, owner) != Some(*shape)
         && frame.kept_layout(owner, *shape).is_none() {
         return formed_slot(stage, frame, (owner, direct, *shape), &at, (*slot, *rep, *storage_len), miss);
