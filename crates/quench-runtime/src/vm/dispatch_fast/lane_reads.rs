@@ -78,11 +78,11 @@ impl Reads {
 /// The capture `slot` past the running function's own scope, by the lane's own lookups, which run
 /// no guest code: a frame run's remembered walk, an activation's walk memo (`LaneContext::outer`)
 /// or a new walk it then remembers; with `root`, the root environment's projected binding
-/// (`lane_projected_capture`). A read at the function's own scope is the walk handler's, which
+/// (`projected_capture`). A read at the function's own scope is the walk handler's, which
 /// also finds the function's dense slots (`LaneContext::capture`).
 fn lane_capture_read<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16, root: bool) -> Option<Value> {
     if root {
-        return lane_projected_capture(cx, depth, slot);
+        return projected_capture(cx, depth, slot);
     }
     if depth == 0 {
         return None;

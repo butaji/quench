@@ -110,7 +110,7 @@ impl CaptureStores {
     }
 
     /// The running function's own initialized slot written directly through its dense slots
-    /// (`lane_store_own_capture`), over the register file `r`; any other store is the row's miss
+    /// (`store_own_capture`), over the register file `r`; any other store is the row's miss
     /// (`row_miss`: the lane's walking store).
     #[inline(always)]
     fn own(r: Registers) -> Self {
@@ -1158,7 +1158,7 @@ pub(in crate::vm::dispatch_fast) const FLAG_PROBE: u8 = 13;
 /// `FLAG` of a loop site's backward jump (`dispatch_fast::loop_jump_row`): the jump row takes the jump while the
 /// site warms up; past that, or out of fuel, the site's body (`loop_jump_miss`) runs.
 pub(in crate::vm::dispatch_fast) const FLAG_LOOP: u8 = 14;
-/// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`lane_load_capture_walk`): its row decodes
+/// `FLAG` of a `LoadCapture` whose walk settled on a root binding (`load_capture_walk_miss`): its row decodes
 /// the read as a root read (`Operation::rooted`), which the row's reads answer as the walk does.
 pub(in crate::vm::dispatch_fast) const FLAG_ROOT: u8 = 15;
 
@@ -1391,11 +1391,11 @@ pub(in crate::vm::dispatch_fast) fn checked_local_hand<H: Host>(op: Op) -> Handl
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
 /// a capture access the lane's own slow arm, which walks the scopes and requickens the record to
-/// the root binding it finds (`lane_load_capture_walk`, `store_outer_capture_miss`), or for a
+/// the root binding it finds (`load_capture_walk_miss`, `store_outer_capture_miss`), or for a
 /// `ToPropertyKey` the lane's integer and symbol answers (`lane_to_property_key`).
 pub(in crate::vm::dispatch_fast) const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
     match crate::staged::miss(op) {
-        crate::staged::Miss::WalkScopes => super::lane_load_capture_walk::<H>,
+        crate::staged::Miss::WalkScopes => super::load_capture_walk_miss::<H>,
         crate::staged::Miss::StoreThroughScopes => super::store_outer_capture_miss::<H>,
         crate::staged::Miss::ArgumentsBinding => super::lane_frame_arguments::<H, false>,
         crate::staged::Miss::ArgumentsElement => super::lane_frame_arguments::<H, true>,

@@ -244,7 +244,7 @@ impl LoopKernel {
                 Scalar::Register(register) => r.get(register).as_number()?,
                 Scalar::Capture(imm) => {
                     let (depth, slot) = (ImmediateLayout::capture_depth(imm), ImmediateLayout::capture_slot(imm));
-                    super::super::lane_capture_value::<H>(cx, depth, slot)?.as_number()?
+                    super::super::capture_read_value::<H>(cx, depth, slot)?.as_number()?
                 }
                 Scalar::Length { register, atom } => {
                     // SAFETY: the running VM.

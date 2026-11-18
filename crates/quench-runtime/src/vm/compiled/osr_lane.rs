@@ -46,7 +46,7 @@ pub(super) unsafe fn bind_captures<H: Host>(
 ) -> Vec<crate::Value> {
     let live = (!region.stored_captures.is_empty())
         // SAFETY: the caller's contract.
-        .then(|| unsafe { super::dispatch_fast::lane_context_captures::<H>(lane_context) }).flatten();
+        .then(|| unsafe { super::dispatch_fast::context_captures::<H>(lane_context) }).flatten();
     let none = region.captures.is_empty() && region.stored_captures.is_empty();
     let captures = if live.is_some() || none { Vec::new() } else { dense_captures(region, entry) };
     if let Some(((values, len), stores)) = live {

@@ -4449,7 +4449,7 @@ script_handler! {
 /// `var`s, and in an eval script's context its `let`s and `const`s: the capture's environment
 /// as the general path finds it, from the frame or from the activation's environment.
 #[inline(never)]
-fn lane_projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+fn projected_capture<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
     let env = if env.is_deleted() {
@@ -4487,22 +4487,22 @@ fn lane_frame_capture<H: Host>(cx: *mut LaneContext<H>) -> Option<*const usize> 
 /// Resolve an owned or shared lane capture without guest code, refreshing the dense cache.
 /// OSR entry and the LoadCapture slow lane use the same binding and TDZ guards.
 #[inline(never)]
-fn lane_capture_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
-    lane_read_capture_value::<H, false>(cx, depth, slot)
+fn capture_read_value<H: Host>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+    read_capture_value::<H, false>(cx, depth, slot)
 }
 
-/// `lane_capture_value`, with `PLAIN` also a root projection's plain read
+/// `capture_read_value`, with `PLAIN` also a root projection's plain read
 /// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held.
 #[inline(always)]
 /// Whether a capture of `depth` in the running activation's environment settles on a root binding
 /// (the root `walked_capture_slots` reports), which a record's root row answers (`FLAG_ROOT`).
-fn lane_capture_settles_on_root<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> bool {
+fn capture_settles_on_root<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> bool {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
     !env.is_deleted() && vm.walked_capture_slots(env, false, depth).is_some_and(|(_, root)| root.is_some())
 }
 
-fn lane_read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
+fn read_capture_value<H: Host, const PLAIN: bool>(cx: *mut LaneContext<H>, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
 
@@ -4536,14 +4536,14 @@ script_handler! {
     /// `lane_load_capture` before the running function's slots are known: the walk from
     /// the frame's cache, or from the activation's environment, which keeps them.
     #[inline(never)]
-    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
+    fn load_capture_walk_miss<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let depth = ImmediateLayout::capture_depth(imm);
         let slot = ImmediateLayout::capture_slot(imm);
         // The root reads' fast paths (a global var's hint, a global lexical's index, a root
         // binding slot read in place) are gone: every read takes the walk, which answers the same
-        // value through `lane_read_capture_value`. Their record requickening went with them.
-        let value = lane_read_capture_value::<H, true>(cx, depth, slot);
+        // value through `read_capture_value`. Their record requickening went with them.
+        let value = read_capture_value::<H, true>(cx, depth, slot);
         #[cfg(feature = "profile-lane-exits")]
         {
             let vm = unsafe { vm(cx) };
@@ -4566,7 +4566,7 @@ script_handler! {
             r.set(i.a, value);
             // A walk that settled on a root binding requickens the record to its root row (`FLAG_ROOT`),
             // which reads the binding through the same reads this walk takes.
-            if lane_capture_settles_on_root::<H>(cx, depth) {
+            if capture_settles_on_root::<H>(cx, depth) {
                 requicken::<H>(ip, generated_row::<H, { crate::staged::LOAD_CAPTURE_ROW }, ACC_NONE, FLAG_ROOT> as Handler);
             }
             next!(cx, r, following(ip), view)
@@ -4585,7 +4585,7 @@ script_handler! {
 /// slots, where they admit every store (`CAPTURE_STORES`) and the slot holds an initialized
 /// binding: whether it wrote.
 #[inline(always)]
-fn lane_store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Value) -> bool {
+fn store_own_capture<H: Host>(cx: *mut LaneContext<H>, slot: u16, value: Value) -> bool {
     capture_stores(unsafe { (*cx).registers }.capture())
         // SAFETY: the running function's dense capture slots, which admit this write
         // (`CAPTURE_STORES`); no collection runs in the lane.
@@ -4614,7 +4614,7 @@ script_handler! {
 ///
 /// # Safety
 /// `context` is the running lane's context.
-pub(super) unsafe fn lane_context_captures<H: Host>(context: usize) -> Option<((*const Value, usize), bool)> {
+pub(super) unsafe fn context_captures<H: Host>(context: usize) -> Option<((*const Value, usize), bool)> {
     let cx = context as *mut LaneContext<H>;
     unsafe {
         if capture_reads((*cx).registers.capture()).is_null() && (*cx).registers.env().is_deleted() {
@@ -7796,7 +7796,7 @@ fn lane_inlined_continuation<H: Host>(cx: *mut LaneContext<H>, r: Registers, sit
 /// The entry record of `site`'s native code from the running activation, and the element
 /// views of its arrays (`loop_tier::lane_loop_arrays`), when its arrays and captures pass the
 /// region's guards: each capture an initialized binding resolved without guest code by the
-/// same lookup as LoadCapture (`lane_capture_value`).
+/// same lookup as LoadCapture (`capture_read_value`).
 #[inline(never)]
 fn lane_loop_entry<H: Host>(
     cx: *mut LaneContext<H>,
@@ -7834,12 +7834,12 @@ fn lane_loop_entry<H: Host>(
             // SAFETY: the context's dense slots remain live until the next collection.
             // A cache miss follows the same non-effectful lookup as LoadCapture.
             let value = unsafe { crate::heap::EnvironmentSlots::read_storage(slots, *slot) }
-                .or_else(|| lane_capture_value(cx, 0, *slot))
+                .or_else(|| capture_read_value(cx, 0, *slot))
                 .or_else(|| {
                     // A projected global var aliases its global object's property. Native
                     // field stores could change it after entry, invalidating this snapshot.
                     (!region.writes_fields())
-                        .then(|| lane_projected_capture(cx, 0, *slot))
+                        .then(|| projected_capture(cx, 0, *slot))
                         .flatten()
                 })?;
             entry.push_capture(value);
@@ -7902,7 +7902,7 @@ fn lane_region_field<H: Host>(
     let receiver = match field.receiver {
         super::compiled::FieldReceiver::This => unsafe { lane_held_this(cx, r) },
         super::compiled::FieldReceiver::Register(register) => r.get(register),
-        super::compiled::FieldReceiver::Capture(slot) => lane_capture_value(cx, 0, slot)?,
+        super::compiled::FieldReceiver::Capture(slot) => capture_read_value(cx, 0, slot)?,
         super::compiled::FieldReceiver::Field(index) => earlier(index),
     };
     // The site's primary entry first, as the lane's own reads take it (`lane_get_field_own`).
@@ -7930,7 +7930,7 @@ fn lane_inlined_target<H: Host>(
     frame: &super::compiled::InlineFrame,
 ) -> Option<*const ScriptCallTarget> {
     if let super::compiled::InlineGuard::Capture(slot) = frame.guard {
-        (lane_capture_value(cx, 0, slot)? == frame.callee).then_some(())?;
+        (capture_read_value(cx, 0, slot)? == frame.callee).then_some(())?;
     }
     let vm = unsafe { vm(cx) };
     let target_pointer = vm.script_call_entry(frame.callee)?;
@@ -7985,7 +7985,7 @@ fn lane_inlining_region<H: Host>(
             values.push(value);
         }
         let callee = match capture {
-            Some(slot) => lane_capture_value(cx, 0, slot)?,
+            Some(slot) => capture_read_value(cx, 0, slot)?,
             None => *values.last()?,
         };
         let vm = unsafe { vm(cx) };
@@ -13213,7 +13213,7 @@ fn lane_carried_at<H: Host>(cx: *mut LaneContext<H>, view: *const LaneView, regi
 /// `context` is the running lane's context, whose activation's registers hold the caller's
 /// state; nothing the call runs allocates or collects.
 /// A lane body's read of a capture `packed` names (depth in its high half, slot in its low),
-/// by the lane's own `LoadCapture` lookup (`lane_read_capture_value`): its value, or
+/// by the lane's own `LoadCapture` lookup (`read_capture_value`): its value, or
 /// `Value::DELETED` for none or an uninitialized binding, which leaves the body at the read.
 /// `ArgumentsLength` of a lane body's entry function (`lane_arguments_length`): the count a
 /// keeping activation kept, else the count an unmaterialized binding answers. `DELETED` where
@@ -13269,7 +13269,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
             // SAFETY: as `Vm::walked_capture_slots`; no collection runs in the lane.
             vm.walked_capture_slots(env, false, depth).and_then(|(slots, root)| vm.plain_capture(unsafe { &*slots }, root, slot))
         }
-        None => lane_read_capture_value::<H, true>(cx, depth, slot),
+        None => read_capture_value::<H, true>(cx, depth, slot),
     };
     value
         .filter(|value| value.to_bits() & crate::value::ValueLayout::TAG_MASK != crate::value::ValueLayout::INTERNAL_TAG)
@@ -13278,7 +13278,7 @@ pub(super) unsafe extern "C" fn lane_body_capture<H: Host>(_vm: u64, _residual: 
 }
 
 /// A lane body's store of `value` to the capture `packed` names (depth in its high half,
-/// slot in its low), by the lane's own stores (`lane_store_own_capture`, else
+/// slot in its low), by the lane's own stores (`store_own_capture`, else
 /// `lane_capture_store`): 1 where it stored, else 0, which leaves the body at the store,
 /// before it.
 ///
@@ -13294,7 +13294,7 @@ pub(super) unsafe extern "C" fn lane_body_capture_store<H: Host>(_vm: u64, _resi
             let (code, program) = unsafe { (&*(*cx).code, (*cx).program) };
             lane_environment_store(unsafe { vm(cx) }, code, program, env, depth, slot, value)
         }
-        None => (depth == 0 && lane_store_own_capture(cx, slot, value)) || lane_capture_store(cx, depth, slot, value),
+        None => (depth == 0 && store_own_capture(cx, slot, value)) || lane_capture_store(cx, depth, slot, value),
     };
     u64::from(stored)
 }
@@ -14728,7 +14728,7 @@ unsafe fn lane_call_read<H: Host>(
 }
 
 /// The capture a `CallEntry::ReadsCapture` target's closure environment holds, read as its
-/// frameless activation's `LoadCapture` would (`lane_load_capture_walk`); an uninitialized
+/// frameless activation's `LoadCapture` would (`load_capture_walk_miss`); an uninitialized
 /// binding misses.
 ///
 /// # Safety

@@ -7576,7 +7576,7 @@ impl<H: Host> Vm<H> {
     /// The callee's depth-0 capture under the same environment binding as the lane.
     pub(super) fn environment_capture(&mut self, env: Value, slot: u16) -> Option<Value> {
         // A frameless activation's function has no environment of its own
-        // (`lane_load_capture_walk`).
+        // (`load_capture_walk_miss`).
         let (slots, root) = self.walked_capture_slots(env, false, 0)?;
         // SAFETY: as `Vm::walked_capture_slots`; nothing collects before the read.
         self.owned_capture(unsafe { &*slots }, root, slot)
