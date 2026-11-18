@@ -3315,7 +3315,7 @@ mod lane_reads;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, plain_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
 
 
 lane_handler! {
@@ -3898,96 +3898,6 @@ fn lane_after_nested_collection<H: Host>(cx: *mut LaneContext<H>) {
 
 
 
-script_handler! {
-    /// `IncDec` of a Number whose result the next record, a register `GetIndex`
-    /// (`lane_get_index_registers`), reads as its index, the `a[++i]` of compiled loops
-    /// (`specialize_updated_index_reads`): the update, then that read of a record array's
-    /// dense element, as one record. A read the pair's fast path leaves runs the `GetIndex`
-    /// record itself; another value takes the general path at the update.
-    fn lane_update_get_index<DECREMENT: bool>(cx, r, ip, i, view) {
-        let Some(index) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            return exit(ip);
-        };
-        r.set(i.a, index);
-        // SAFETY: the pair is two records, the second never the view's last.
-        let read = unsafe { &*following(ip) };
-        let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(read.b), index) else {
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        };
-        r.set(read.a, value);
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_update_get_index` whose read element the next record, an arithmetic operator
-    /// (`lane_operator` or `lane_operator_numbers` of `OP`), takes as an operand, the
-    /// `t + a[++i]` of compiled loops (`specialize_updated_index_operators`): the update, the
-    /// read and that Number operation as one record. A step the fast path leaves runs its
-    /// own record, which stays in place.
-    fn lane_update_get_index_operator<DECREMENT: bool, OP: u32>(cx, r, ip, i, view) {
-        let Some(index) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
-            return exit(ip);
-        };
-        r.set(i.a, index);
-        // SAFETY: the triple is three records, the third never the view's last.
-        let read = unsafe { &*following(ip) };
-        let Some(element) = (unsafe { vm(cx) }).direct_dense_element(r.get(read.b), index) else {
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        };
-        r.set(read.a, element);
-        resume!(cx, lane_read_operator::<H, OP, false>(cx, r, ip, element));
-    }
-}
-
-/// The operation of `lane_update_get_index_operator`'s triple at `ip`, whose read the triple
-/// made: the Number operation, else the operator's own record.
-#[inline(always)]
-fn lane_read_operator<H: Host, const OP: u32, const RAW: bool>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, element: Value) -> Resumed {
-    // SAFETY: the triple is three records, the third never the view's last.
-    let operator = unsafe { &*following(following(ip)) };
-    // Arithmetic on two Numbers first, the register operands read in memory
-    // (`Registers::number`); bitwise operators and other values take the shared operation.
-    if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
-        let numbers = if super::operations::number_result_is_commutative(OP) {
-            // SAFETY: specialization stores the other register in the fused update's unused c.
-            match element.as_number() { Some(left) => r.number(unsafe { (*ip).c }).map(|right| (left, right)), None => None }
-        } else {
-            match r.number(operator.b) { Some(left) => r.number(operator.c).map(|right| (left, right)), None => None }
-        };
-        if let Some((left, right)) = numbers
-            && let Some(number) = super::operations::number_operator::<OP>(left, right)
-        {
-            let value = if RAW { raw_results::raw_number(number) } else { Value::number(number) };
-            r.set(operator.a, value);
-            return Resumed::At(r, following(following(following(ip))), Carried::script(cx));
-        }
-    }
-    // SAFETY: specialization stores the other register in the fused update's unused c.
-    let (left, right) = read_number_operands::<OP>(r, operator, unsafe { (*ip).c }, element);
-    let value = if RAW {
-        raw_results::raw_number_value_operator::<OP>(left, right)
-    } else {
-        super::operations::number_value_operator::<OP>(left, right)
-    };
-    let Some(value) = value else {
-        return Resumed::At(r, following(following(ip)), Carried::script(cx));
-    };
-    r.set(operator.a, value);
-    Resumed::At(r, following(following(following(ip))), Carried::script(cx))
-}
-
-/// A read's value may occupy either side of canonical commutative Number arithmetic.
-/// Its register was already written, so reading the other register preserves aliases.
-/// Ordered operations retain both original operands. A non-Number still declines through
-/// the shared Number operation; its original record owns evaluation/coercion order.
-#[inline(always)]
-fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction, other: u16, element: Value) -> (Value, Value) {
-    if super::operations::number_result_is_commutative(OP) {
-        (element, r.get(other))
-    } else {
-        (r.get(operator.b), r.get(operator.c))
-    }
 }
 
 /// The index a proved element record (`specialize_proved_arrays`) reads at: a non-negative
@@ -3996,24 +3906,6 @@ fn read_number_operands<const OP: u32>(r: Registers, operator: &LaneInstruction,
 #[inline(always)]
 pub(super) fn proof_index(key: Value) -> Option<usize> {
     usize::try_from(key.as_int()?).ok()
-}
-
-/// The index a proved element record reads or replaces at for an int32 key, as its u32
-/// bits: a negative key becomes an index at or above 2^31, which every proof's bound
-/// (`ArrayStorageProofs::prove`, below 2^31) declines, so the proof's bounds test is the
-/// key's sign test too.
-#[inline(always)]
-fn proof_int_index(key: i32) -> usize {
-    key as u32 as usize
-}
-
-/// The index a proved element record reads or replaces at for a key in a register, without
-/// unboxing it first (`Value::int_key_offset`): an int32 key's index, and an index at or
-/// above 2^31 for any other key, which every proof's bound declines as `proof_int_index`'s
-/// negative keys. The key's tag test, its zero extension and the bounds test are one compare.
-#[inline(always)]
-fn proof_key(key: Value) -> usize {
-    key.int_key_offset()
 }
 
 /// The integer `IncDec` of `value`, the update `dispatch::number_increment` makes of an
@@ -4029,155 +3921,6 @@ pub(super) fn integer_increment<const DECREMENT: bool>(value: Value) -> Option<i
     }
     let integer = value.as_int()?;
     if DECREMENT { integer.checked_sub(1) } else { integer.checked_add(1) }
-}
-
-/// After the proved record at `ip` missed the run's proofs through base register `register`
-/// (`ArrayStorageProofs`): proves the record array `base` names unless its slot already
-/// holds it. Any other base gives the record its generic handler for good: the record's
-/// base is loop-invariant, so it would decline every proved access.
-fn lane_prove_array<H: Host>(cx: *mut LaneContext<H>, ip: Ip, register: u16, base: Value) {
-    // SAFETY: the context's proofs and its VM are distinct, both live for the run.
-    let (proofs, vm) = unsafe { (&mut (*cx).proofs, vm(cx)) };
-    if !proofs.holds(register, base)
-        && !vm.heap.prove_array_storage(proofs, register, base)
-        && let Some(generic) = generic_handler::<H>(lane_own_handler::<H>(ip))
-    {
-        requicken::<H>(ip, generic);
-    }
-}
-
-/// The handler the record at `ip` runs as its own: a header record a loop site holds
-/// (`lane_loop_hold_header`) keeps it in the site.
-fn lane_own_handler<H: Host>(ip: Ip) -> *const () {
-    // SAFETY: a record of the running view; a held header names its site.
-    unsafe {
-        let handler = (*ip).handler;
-        if handler == lane_loop_header::<H> as Handler as *const () {
-            return (*lane_header_site(ip)).header_handler.get();
-        }
-        handler
-    }
-}
-
-script_handler! {
-    /// A proved element read or store (`lane_get_index_proved`, `lane_set_index_proved`,
-    /// `lane_set_index_move_proved`) its proofs declined: proves its base
-    /// (`lane_prove_array`), then runs the generic record. Apart, so the proved records' fast
-    /// paths make no call.
-    #[inline(never)]
-    fn lane_proof_miss<>(cx, r, ip, i, view) {
-        let generic = generic_handler::<H>(lane_own_handler::<H>(ip));
-        lane_prove_array(cx, ip, i.b, r.get(i.b));
-        let Some(generic) = generic else {
-            return exit(ip);
-        };
-        sibling!(generic, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A proved update and read (`lane_update_get_index_proved` and its operator form) whose
-    /// read its proofs declined after the update: proves the read's base
-    /// (`lane_prove_array`), then runs the read's own record, as the generic pair leaves it.
-    #[inline(never)]
-    fn lane_updated_proof_miss<>(cx, r, ip, i, view) {
-        // SAFETY: the pair is two records, the second never the view's last.
-        let read = unsafe { &*following(ip) };
-        lane_prove_array(cx, ip, read.b, r.get(read.b));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_index_registers` of a base its loop does not redefine
-    /// (`specialize_proved_arrays`): the element through the run's proof of the array's
-    /// storage (`ArrayStorageProofs`), with no decoding of the array; any other read takes
-    /// `lane_proof_miss`.
-    fn lane_get_index_proved<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { (*cx).proofs.element(i.b, r.get(i.b), proof_key(r.get(i.c))) }) else {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-/// The fast case of `proved_updated_read`: the key `i.b ± 1` as a word-range index
-/// (`Value::int_key_offset`, then the step), which an int32 whose step stays in `[0, bound)`
-/// alone passes, so no tag test, overflow test or retagging runs: the update written is the
-/// key word stepped by one, with no carry into the tag below 2^31. `None` writes nothing and
-/// leaves the pair to its checked form (an index past the proof, any other key, a hole).
-/// The pair's base is one its loop does not redefine (`specialize_proved_arrays`), so it is
-/// never the updated register.
-macro_rules! proved_stepped_read {
-    ($cx:expr, $r:expr, $ip:expr, $update:expr, $decrement:expr) => {{
-        // SAFETY: the pair is two records, the second never the view's last.
-        let read = unsafe { &*following($ip) };
-        debug_assert_ne!(read.b, $update.a);
-        let word = $r.get($update.b);
-        let key = if $decrement { word.int_key_offset().wrapping_sub(1) } else { word.int_key_offset().wrapping_add(1) };
-        match unsafe { (*$cx).proofs.element(read.b, $r.get(read.b), key) } {
-            Some(element) => {
-                let stepped = if $decrement { word.to_bits() - 1 } else { word.to_bits() + 1 };
-                $r.set($update.a, Value::from_bits(stepped));
-                Some(element)
-            }
-            None => None,
-        }
-    }};
-}
-
-/// The proved read (`lane_get_index_proved`) of `lane_update_get_index`'s pair at `ip`, of
-/// the integer update `index` of record `update`, which it writes first; a read the proofs
-/// decline takes `lane_updated_proof_miss`, as the pair's own fast path leaves it.
-macro_rules! proved_updated_read {
-    ($cx:expr, $r:expr, $ip:expr, $update:expr, $index:expr) => {{
-        $r.set($update.a, Value::integer($index));
-        // SAFETY: the pair is two records, the second never the view's last.
-        let read = unsafe { &*following($ip) };
-        let Some(element) = (unsafe { (*$cx).proofs.element(read.b, $r.get(read.b), proof_int_index($index)) })
-        else {
-            sibling!(lane_updated_proof_miss::<H>, $r, $ip, Carried::script($cx))
-        };
-        $r.set(read.a, element);
-        element
-    }};
-}
-
-script_handler! {
-    /// `lane_update_get_index` of a base its loop does not redefine: an integer update and
-    /// the proved read of its element (`proved_updated_read`); any other update takes
-    /// `lane_update_get_index`.
-    fn lane_update_get_index_proved<DECREMENT: bool>(cx, r, ip, i, view) {
-        if let Some(element) = proved_stepped_read!(cx, r, ip, i, DECREMENT) {
-            r.set(unsafe { &*following(ip) }.a, element);
-            next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
-        }
-        let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
-            sibling!(lane_update_get_index::<H, DECREMENT>, r, ip, Carried::script_in(cx, view))
-        };
-        proved_updated_read!(cx, r, ip, i, index);
-        next!(cx, r, following(following(ip)), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_update_get_index_operator` of a base its loop does not redefine: an integer
-    /// update, the proved read of its element (`proved_updated_read`) and the operation;
-    /// any other update takes `lane_update_get_index_operator`.
-    ///
-    /// With `RAW` the operation's result keeps its double form (`raw_results`).
-    fn lane_update_get_index_operator_proved<DECREMENT: bool, OP: u32, RAW: bool>(cx, r, ip, i, view) {
-        if let Some(element) = proved_stepped_read!(cx, r, ip, i, DECREMENT) {
-            r.set(unsafe { &*following(ip) }.a, element);
-            resume!(cx, lane_read_operator::<H, OP, RAW>(cx, r, ip, element));
-        }
-        let Some(index) = integer_increment::<DECREMENT>(r.get(i.b)) else {
-            sibling!(lane_update_get_index_operator::<H, DECREMENT, OP>, r, ip, Carried::script_in(cx, view))
-        };
-        let element = proved_updated_read!(cx, r, ip, i, index);
-        resume!(cx, lane_read_operator::<H, OP, RAW>(cx, r, ip, element));
-    }
 }
 
 script_handler! {
@@ -4667,21 +4410,7 @@ lane_handler! {
 }
 
 script_handler! {
-    /// `lane_get_index` with register base and key, decoded when the view was derived
-    /// (`specialize_register_operands`).
-    /// An array whose object is a record runs here, saving no registers; any other base takes
-    /// `lane_get_index_slot`.
-    fn lane_get_index_registers<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_slot::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_index_registers` past a record array.
+    /// `element_read_row` past a record array.
     #[inline(never)]
     fn lane_get_index_slot<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -4791,9 +4520,9 @@ fn typed_kind_handler<H: Host>(kind: Option<TypedArrayKind>, read: bool) -> Hand
 }
 
 script_handler! {
-    /// `lane_get_index_registers` at a site that read a typed array: a non-BigInt typed
+    /// `element_read_row` at a site that read a typed array: a non-BigInt typed
     /// array's element at an integer index, or `undefined` past its end, is the whole read;
-    /// any other read takes the generic order (`lane_get_index_registers`).
+    /// any other read takes the generic order (`element_read_row`).
     fn lane_get_index_typed<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).typed_cached_element::<{ super::typed_array_access::ANY_TYPED_KIND }>(r.get(i.b), r.get(i.c)) else {
             sibling!(lane_get_index_typed_fill::<H, { super::typed_array_access::ANY_TYPED_KIND }>, r, ip, view)
@@ -4851,7 +4580,7 @@ script_handler! {
     #[inline(never)]
     fn lane_get_index_typed_full<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).plain_typed_element(r.get(i.b), r.get(i.c)) else {
-            sibling!(lane_get_index_registers::<H>, r, ip, view)
+            sibling!(element_read_row::<H>(), r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -4902,95 +4631,6 @@ script_handler! {
             sibling!(lane_set_index_slot::<H>, r, ip, Carried::script_in(cx, view))
         }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index` whose stored value the next record, a register `Move`, copies, the
-    /// `t = a[i] = v` of compiled code (`specialize_store_moves`): the store and the copy as
-    /// one record, the copy carried as `lane_row` carries a `Move`. A store the fast path leaves
-    /// runs the store's own slow path, which continues at the `Move` record.
-    fn lane_set_index_move<>(cx, r, ip, i, view) {
-        let (object, key, value) = (r.get(i.b), r.get(i.c), r.get(i.a));
-        if !(unsafe { vm(cx) }).try_replace_record_element(object, key, value) {
-            sibling!(lane_set_index_slot::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        // SAFETY: the pair is two records, the second never the view's last.
-        let copy = unsafe { &*following(ip) };
-        produce!(cx, r, following(ip), copy.a, value, Carried::script_in(cx, view))
-    }
-}
-
-/// The value the proved store of `SetIndex` record `i` (`ArrayStorageProofs::replace`) of a
-/// base its loop does not redefine (`specialize_proved_arrays`) wrote; `None` stores
-/// nothing.
-#[inline(always)]
-fn lane_proved_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Option<Value> {
-    let value = r.get(i.a);
-    let index = proof_key(r.get(i.c));
-    unsafe { (*cx).proofs.replace(i.b, r.get(i.b), index, value) }.then_some(value)
-}
-
-/// `lane_proved_store` of a heap value (`arr[i] = o`): through the proof where the write
-/// barrier admits the store unlogged (`Heap::array_store_unlogged`). Out of line, so the
-/// immediate store keeps its few registers.
-#[inline(always)]
-fn lane_proved_heap_store<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> bool {
-    let (base, value) = (r.get(i.b), r.get(i.a));
-    value.heap_index().is_some()
-        && unsafe { vm(cx) }.heap.array_store_unlogged(base, value)
-        && unsafe { (*cx).proofs.replace_admitted(i.b, base, proof_key(r.get(i.c)), value) }
-}
-
-script_handler! {
-    /// `lane_set_index_proved` whose immediate store its proof declined: a heap value the
-    /// barrier admits unlogged through the proof (`lane_proved_heap_store`), else
-    /// `lane_proof_miss`. Apart, so the immediate store keeps its code.
-    #[inline(never)]
-    fn lane_set_index_proved_miss<>(cx, r, ip, i, view) {
-        if !lane_proved_heap_store(cx, r, i) {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        // A site that stores a heap value stores heap values: it tries that store first from now.
-        requicken::<H>(ip, lane_set_index_proved_heap::<H>);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index_proved` of a site whose stores are heap values (`arr[i] = o`), as
-    /// `lane_set_index_proved_miss` found: the admitted heap store first, then the immediate
-    /// one, else `lane_proof_miss`. One record, not the immediate store's miss and this.
-    fn lane_set_index_proved_heap<>(cx, r, ip, i, view) {
-        if !lane_proved_heap_store(cx, r, i) && lane_proved_store(cx, r, i).is_none() {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index` of a base its loop does not redefine: the replacement through the
-    /// run's proof of the array's storage (`lane_proved_store`), else `lane_proof_miss`.
-    fn lane_set_index_proved<>(cx, r, ip, i, view) {
-        if lane_proved_store(cx, r, i).is_none() {
-            sibling!(lane_set_index_proved_miss::<H>, r, ip, Carried::script_in(cx, view))
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_set_index_move` of a base its loop does not redefine: the replacement through
-    /// the run's proof of the array's storage (`lane_proved_store`) and the copy, else
-    /// `lane_proof_miss`.
-    fn lane_set_index_move_proved<>(cx, r, ip, i, view) {
-        let Some(value) = lane_proved_store(cx, r, i) else {
-            sibling!(lane_proof_miss::<H>, r, ip, Carried::script_in(cx, view))
-        };
-        // SAFETY: the pair is two records, the second never the view's last.
-        let copy = unsafe { &*following(ip) };
-        produce!(cx, r, following(ip), copy.a, value, Carried::script_in(cx, view))
     }
 }
 
@@ -17309,6 +16949,45 @@ impl LaneHandler {
     }
 }
 
+/// The opcode of the catalog's keyed read: the element row whose record defines a result
+/// register (`Decoder::Element`), whose generated row (`lane_row`) a register-keyed read runs.
+pub(in crate::vm) const ELEMENT_READ: u16 = {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) if matches!(op.staged(), Some(crate::bytecode::Decoder::Element))
+                && matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister) => break index as u16,
+            Some(_) => index += 1,
+            None => panic!("the catalog names a keyed read"),
+        }
+    }
+};
+
+/// The generated keyed read (`lane_row` of `ELEMENT_READ`) of a register base and key.
+const fn element_read_row<H: Host>() -> Handler { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_UNREAD> }
+
+/// The opcode of the catalog's keyed store: the element row whose record defines no result register
+/// (`Decoder::Element`), whose generated row (`lane_row`) a register-keyed store runs.
+pub(in crate::vm) const ELEMENT_WRITE: u16 = {
+    let mut index = 0;
+    loop {
+        match Op::from_index(index) {
+            Some(op) if matches!(op.staged(), Some(crate::bytecode::Decoder::Element))
+                && !matches!(op.field_layout(InstructionField::A), FieldLayout::ResultRegister) => break index as u16,
+            Some(_) => index += 1,
+            None => panic!("the catalog names a keyed store"),
+        }
+    }
+};
+
+/// The handlers the primitive benches check a lane view derives: a proved element read and store
+/// (`proved_row`'s rows), and the fused update, read and addition (`chain_row`).
+pub(in crate::vm) fn proved_read_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET> as Handler as *const () }
+pub(in crate::vm) fn proved_store_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET> as Handler as *const () }
+pub(in crate::vm) fn updated_read_add_handler<H: Host>() -> *const () {
+    chain_row::<H, { opc::IncDec }, { opc::GetIndex }, { opc::Binary }, { crate::staged::NO_LINK }>(false) as *const ()
+}
+
 /// The handler serving opcode `OP` whose accumulator field is `ACC`, derived
 /// from the opcode's semantic family; `None` when the general path executes
 /// the opcode.
@@ -18317,7 +17996,6 @@ fn derive_lane_view<'live, H: Host>(
             carried
         };
     specialize_returning_binaries::<H>(&decoded, constants, &mut records);
-    specialize_updated_index_reads::<H>(&mut records);
     specialize_frame_locals::<H>(function, &mut records);
     specialize_captures::<H>(&mut records);
     // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
@@ -18339,10 +18017,9 @@ fn derive_lane_view<'live, H: Host>(
     };
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
-        specialize_store_moves::<H>(&mut records);
         specialize_constant_returns::<H>(&mut records);
         specialize_script_calls::<H>(&mut records, function.undefined_register);
-        specialize_proved_arrays::<H>(&decoded, &mut records, &raw_results::raw_result_triples(&decoded, &function.handlers, || live().map(|masks| &**masks)));
+        specialize_proved_arrays::<H>(&decoded, &mut records);
     }
     // Loop kernels take their test records last, keeping each record's final handler.
     let loop_kernels = if !wasm && (!loop_tier || crate::jit_mode::base_only()) {
@@ -18637,85 +18314,50 @@ fn specialize_constant_returns<H: Host>(records: &mut [LaneInstruction]) {
     }
 }
 
-/// Gives each `IncDec` whose result the next record, a register `GetIndex`, reads as its
-/// index the fused update and read (`lane_update_get_index`). The `GetIndex` record stays as
-/// it is, for a jump that enters it and for a read the fused record leaves to it.
-fn specialize_updated_index_reads<H: Host>(records: &mut [LaneInstruction]) {
-    let read = lane_get_index_registers::<H> as Handler as *const ();
-    for pc in 0..records.len().saturating_sub(1) {
-        let (update, next) = (&records[pc], &records[pc + 1]);
-        let Some(decrement) = update_direction::<H>(update) else { continue };
-        if next.handler != read || next.c != update.a {
-            continue;
-        }
-        let handler: Handler = if decrement {
-            lane_update_get_index::<H, true>
-        } else {
-            lane_update_get_index::<H, false>
-        };
-        records[pc].handler = handler as *const ();
+mod loop_kernel;
+
+/// The proved row of the element record running `handler` (`specialize_proved_arrays`): the row of
+/// the same opcode with `FLAG_SET`, which reads or replaces its base's element through the proof of
+/// the array's storage (`proof_span`) and runs its own full check where that declines.
+fn proved_row<H: Host>(handler: *const ()) -> Option<Handler> {
+    if plain_row::<H, ELEMENT_READ>(handler) {
+        return Some(lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET>);
     }
+    // A store keeps its generic record (`lane_set_index`) until a proof names it: the keyed store
+    // has no row of its own in the lane, so this is the one place a store's row is installed.
+    if handler == lane_set_index::<H> as Handler as *const () {
+        return Some(lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET>);
+    }
+    None
+}
+
+/// The span of the array a proved element row (`proved_row`) reads or stores through the proof of its
+/// base register's slot (`ArrayStorageProofs::read_span`, `write_span`), proving the array first where
+/// the slot holds another. `None` where the array takes the row's own check instead.
+///
+/// # Safety
+/// `context` is the running lane context of `H`, live for the row.
+unsafe fn proof_span<H: Host>(context: *mut u8, register: u16, base: Value, writable: bool)
+    -> Option<(std::ptr::NonNull<Value>, usize)> {
+    let cx = context.cast::<LaneContext<H>>();
+    // SAFETY: the context's proofs and its VM are distinct, both live for the run.
+    let (proofs, vm) = unsafe { (&mut (*cx).proofs, vm(cx)) };
+    if !proofs.holds(register, base) && !vm.heap.prove_array_storage(proofs, register, base) {
+        return None;
+    }
+    if writable { proofs.write_span(register, base) } else { proofs.read_span(register, base) }
 }
 
 /// Applies `$apply!` to the arithmetic operators the lane fuses with a neighbouring record
-/// (`arithmetic_operator`), as a comma-separated list of `operations` constants.
+/// (`operator_handler`), as a comma-separated list of `operations` constants.
 macro_rules! fused_arithmetic {
     ($apply:ident) => {
         $apply!(ADDITION, SUBTRACTION, MULTIPLICATION, DIVISION)
     };
 }
-mod raw_results;
-mod loop_kernel;
-
-/// The proved records (`specialize_proved_arrays`), each with the generic record it proves
-/// the array of and the offset from the record to the one whose `b` names the base (the
-/// read's, after a fused update): the one table both directions read (`proved_handler`,
-/// The proved records (`specialize_proved_arrays`), each with the generic record it proves
-/// the array of and the offset from the record to the one whose `b` names the base (the
-/// read's, after a fused update): the one table both directions read (`proved_handler`,
-/// `generic_handler`).
-fn proved_records<H: Host>() -> impl Iterator<Item = (Handler, Handler, usize)> {
-    macro_rules! updated_operators {
-        ($($operator:ident),*) => {
-            [$((lane_update_get_index_operator::<H, false, $operator> as Handler,
-                lane_update_get_index_operator_proved::<H, false, $operator, false> as Handler, 1),
-               (lane_update_get_index_operator::<H, true, $operator> as Handler,
-                lane_update_get_index_operator_proved::<H, true, $operator, false> as Handler, 1)),*]
-        };
-    }
-    [
-        (lane_get_index_registers::<H> as Handler, lane_get_index_proved::<H> as Handler, 0),
-        (lane_update_get_index::<H, false> as Handler, lane_update_get_index_proved::<H, false> as Handler, 1),
-        (lane_update_get_index::<H, true> as Handler, lane_update_get_index_proved::<H, true> as Handler, 1),
-        (lane_set_index::<H> as Handler, lane_set_index_proved::<H> as Handler, 0),
-        (lane_set_index::<H> as Handler, lane_set_index_proved_heap::<H> as Handler, 0),
-        (lane_set_index_move::<H> as Handler, lane_set_index_move_proved::<H> as Handler, 0),
-    ]
-    .into_iter()
-    .chain(fused_arithmetic!(updated_operators))
-}
-
-/// The proved record of generic `handler`, with its base offset (`proved_records`): its raw
-/// form (`raw_results::raw_proved_records`) where `raw` and it has one.
-fn proved_handler<H: Host>(handler: *const (), raw: bool) -> Option<(Handler, usize)> {
-    raw.then(raw_results::raw_proved_records::<H>)
-        .into_iter()
-        .flatten()
-        .chain(proved_records::<H>())
-        .find(|&(generic, _, _)| generic as *const () == handler)
-        .map(|(_, proved, access)| (proved, access))
-}
-
-/// The generic record of proved `handler`, canonical or raw (`proved_records`).
-fn generic_handler<H: Host>(handler: *const ()) -> Option<Handler> {
-    proved_records::<H>()
-        .chain(raw_results::raw_proved_records::<H>())
-        .find(|&(_, proved, _)| proved as *const () == handler)
-        .map(|(generic, _, _)| generic)
-}
 
 /// Gives each element read and store whose register base its innermost loop does not
-/// redefine the proved record (`proved_handler`), which reaches the element through the
+/// redefine the proved row (`proved_row`), which reaches the element through the
 /// run's proof of the array's storage (`ArrayStorageProofs`) instead of decoding the array:
 /// the loop proves the array once, at its first access, and each access after checks only
 /// that its slot still proves the base. A base whose proof slot another such base of the
@@ -18729,7 +18371,7 @@ fn generic_handler<H: Host>(handler: *const ()) -> Option<Handler> {
 /// redefines through a definition `defined_register` does not report only misses its
 /// proof, and its record takes the generic one. Aggregate profiles count each generic
 /// store, so they keep the generic records.
-fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction], raw: &crate::bitset::BitSet) {
+fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
     if cfg!(feature = "profile-aggregate") {
         return;
     }
@@ -18741,15 +18383,15 @@ fn specialize_proved_arrays<H: Host>(decoded: &[WideInstruction], records: &mut 
         })
         .map(|(pc, instruction)| instruction.imm() as usize..=pc)
         .collect();
-    // Each candidate: its record, proved handler, base register and innermost loop.
+    // Each candidate: its record, proved row, base register and innermost loop.
     let candidates: Vec<(usize, Handler, u16, usize)> = (0..records.len())
         .filter_map(|pc| {
-            let (proved, access) = proved_handler::<H>(records[pc].handler, raw.contains(pc))?;
-            let base = records.get(pc + access)?.b;
+            let proved = proved_row::<H>(records[pc].handler)?;
+            let base = records[pc].b;
             let (index, _) = loops
                 .iter()
                 .enumerate()
-                .filter(|(_, body)| body.contains(&pc) && body.contains(&(pc + access)))
+                .filter(|(_, body)| body.contains(&pc))
                 .min_by_key(|(_, body)| body.end() - body.start())?;
             decoded[loops[index].clone()]
                 .iter()
@@ -18794,19 +18436,6 @@ fn update_direction<H: Host>(record: &LaneInstruction) -> Option<bool> {
 #[inline(always)]
 fn inc_dec_row<H: Host, const DECREMENT: bool>() -> Handler {
     if DECREMENT { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_SET> } else { lane_row::<H, { opc::IncDec }, ACC_NONE, FLAG_CLEAR> }
-}
-
-/// Gives each `SetIndex` whose stored value the next record, a register `Move`, copies the
-/// fused store and copy (`lane_set_index_move`). The `Move` record stays, for a jump that
-/// enters it and for the store's own slow path.
-fn specialize_store_moves<H: Host>(records: &mut [LaneInstruction]) {
-    let store = lane_set_index::<H> as Handler as *const ();
-    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    for pc in 0..records.len().saturating_sub(1) {
-        if records[pc].handler == store && records[pc + 1].handler == copy && records[pc + 1].b == records[pc].a {
-            records[pc].handler = lane_set_index_move::<H> as Handler as *const ();
-        }
-    }
 }
 
 /// An environment-window record's immediate: its own (a local slot or closure function, at

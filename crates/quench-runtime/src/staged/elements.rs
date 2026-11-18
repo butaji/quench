@@ -419,6 +419,38 @@ pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject
     array_length(&mut stage, record_base as u64, base.to_bits(), ()).map(crate::Value::from_bits)
 }
 
+/// Element `index` of the direct array `base` among the array records at `record_base`, of any
+/// backing: a wide one's value or a narrow backing's value decoded (`object::decode_narrow`);
+/// `None` (leaving at `miss`) for any other base, past the elements or at a hole. A double
+/// backing's Number needs a boxing primitive `Stage` does not have yet, so it leaves to the
+/// slot read (`lane_get_index_slot`), which answers it.
+#[inline(always)]
+pub(crate) fn any_backing_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
+    let Backing { values, length, .. } = flagged_backing(stage, record_base, base, miss)?;
+    // A narrow or double backing flags one of its length's top two bits (`ArrayElements::is_encoded`).
+    let encoded = stage.ugt_imm(length, u64::from(!ENCODED_LEN));
+    stage.choose_leaving(encoded, #[inline(always)] |stage| {
+        let count = stage.and_imm(length, u64::from(!ENCODED_LEN));
+        let in_bounds = stage.ult(index, count);
+        stage.guard(in_bounds, miss)?;
+        let flag = stage.and_imm(length, u64::from(DOUBLE_LEN));
+        let double = stage.ne_imm(flag, 0u32);
+        let offset = stage.uextend32(index);
+        stage.choose_leaving(double, #[inline(always)] |_| None, #[inline(always)] |stage| {
+            // A narrow backing (`ArrayElements::is_narrow`): the element decoded from its narrow form.
+            let offset = stage.mul_imm(offset, std::mem::size_of::<u32>() as u64);
+            let address = stage.add(values, offset);
+            let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
+            let value = super::object::decode_narrow(stage, narrow);
+            let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
+            stage.guard(present, miss)?;
+            Some(value)
+        })
+    }, #[inline(always)] |stage| dense_element(stage, values, length, index, miss).map(|(_, value)| value))
+}
+
 /// The interpreter's reading of `array_backing` then `dense_element`: element `index` of the
 /// direct array `base` among the array records at `record_base`, a narrow or double backing's
 /// element decoded in place.

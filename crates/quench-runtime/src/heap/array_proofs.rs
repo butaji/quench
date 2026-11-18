@@ -136,6 +136,26 @@ impl ArrayStorageProofs {
         true
     }
 
+    /// The first element and the elements a read through the proof in `register`'s slot may reach,
+    /// for a staged element row (`ElementFrame::proved_view`); `None` where the slot does not prove `base`.
+    #[inline(always)]
+    pub(crate) fn read_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
+        let slot = Self::slot(register);
+        let bound = self.readable[slot];
+        // SAFETY: a proved slot's values were written by `prove` with its bound.
+        self.proves(slot, bound, base).then(|| (unsafe { self.values[slot].assume_init() }, bound))
+    }
+
+    /// `read_span` for a store: the elements the proof in `register`'s slot lets a store replace in
+    /// place; `None` where the slot proves no in-place replacement of `base`.
+    #[inline(always)]
+    pub(crate) fn write_span(&self, register: u16, base: Value) -> Option<(NonNull<Value>, usize)> {
+        let slot = Self::slot(register);
+        let bound = self.writable[slot];
+        // SAFETY: as in `read_span`.
+        self.proves(slot, bound, base).then(|| (unsafe { self.values[slot].assume_init() }, bound))
+    }
+
     /// Whether `register`'s slot proves `base`, whether or not an access through it hit.
     #[inline(always)]
     pub(crate) fn holds(&self, register: u16, base: Value) -> bool {
@@ -149,7 +169,7 @@ impl ArrayStorageProofs {
         let replaces = !array.has_indexed_descriptors() && !array.is_frozen() && array.arguments_map().is_none()
             && !array.was_used_as_prototype();
         // A bound below 2^31 lets an int32 key reach `element` and `replace` as its u32 bits
-        // (`dispatch_fast::proof_int_index`): a negative key lands at or above 2^31, past
+        // (`ElementFrame::index_offset`): a negative key lands at or above 2^31, past
         // every bound, so the bounds test is also the sign test. No dense backing is that long.
         // A narrow backing proves no index (`ArrayElements::is_narrow`): reads take the long way.
         let length = if array.elements().is_encoded() { 0 } else { array.elements().len().min(i32::MAX as usize) };

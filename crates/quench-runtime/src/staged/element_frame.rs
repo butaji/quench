@@ -5,7 +5,7 @@
 use super::element_rows::ElementView;
 use super::elements::DenseView;
 use super::{value, PropertyFrame, Stage};
-use crate::bytecode::Operand;
+use crate::bytecode::{Operand, Register};
 
 pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     /// The VM's store of `value` to `base[key]` where no in-place replacement answers it: an
@@ -33,10 +33,34 @@ pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
         Some(stage.and_imm(bits, u64::from(u32::MAX)))
     }
 
+    /// `index_key` as one unsigned compare of the word past the int32 tag
+    /// (`Value::int_key_offset`): the tag, sign and range test at once, the offset the index. A
+    /// negative int32, which no backing holds, leaves here rather than at the bounds test.
+    #[inline(always)]
+    fn index_offset(&mut self, stage: &mut S, key: Operand, miss: S::Miss) -> Option<S::Word> {
+        let bits = self.key_word(stage, key)?;
+        let offset = stage.add_imm(bits, crate::value::ValueLayout::INT_TAG.wrapping_neg());
+        let over = stage.ugt_imm(offset, u64::from(i32::MAX as u32));
+        let index = stage.not(over);
+        stage.guard(index, miss)?;
+        Some(offset)
+    }
+
+    /// Whether a read with no kept view reads every backing of a direct array in place
+    /// (`elements::any_backing_element`: wide, narrow and double), as the interpreter's frame
+    /// does; a frame that keeps views proves the wide one alone (`prove_view`).
+    #[inline(always)]
+    fn reads_any_backing(&self) -> bool { false }
+
     /// The view of the array `base` an earlier access proved, or its loop's entering edge did for
     /// a typed array, which no storage change has retired; a view proved writable answers a read too.
     #[inline(always)]
     fn kept_view(&mut self, _stage: &mut S, _base: S::Word, _writable: bool) -> Option<ElementView<S::Word>> { None }
+
+    /// The dense view of the array in register `base` that a proof the frame holds gives, for a read
+    /// or (`writable`) a store; `None` leaves the access to prove the array itself.
+    #[inline(always)]
+    fn proved_view(&mut self, _stage: &mut S, _base: Register, _writable: bool) -> Option<DenseView<S::Word>> { None }
 
     /// Records the dense view an element access proved of the array `base`.
     #[inline(always)]

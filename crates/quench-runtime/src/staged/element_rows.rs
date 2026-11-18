@@ -31,7 +31,8 @@ impl<W, P> Operation<W, P> {
     /// The element rows of `decode`: `GetIndex` of a register base and a register or immediate
     /// key (the tier defines the result register), and `SetIndex`; `None` where the instruction
     /// completes a frame or an operand names a local or a field.
-    pub(super) fn decode_element(instruction: WideInstruction) -> Option<Self> {
+    #[inline(always)]
+    pub(crate) fn decode_element(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         Some(match instruction.op() {
             Op::GetIndex => Self::ElementRead { base: instruction.operand_b().register_index()?, key: instruction.operand_c() },
@@ -71,7 +72,21 @@ fn read<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, base:
     let object = frame.tagged(stage, base);
     let view = match frame.kept_view(stage, object, false) {
         Some(view) => view,
-        None => ElementView::Dense(prove_and_keep(stage, frame, object, false, miss)?),
+        None => match frame.proved_view(stage, base, false) {
+            Some(view) => ElementView::Dense(view),
+            // A frame that keeps no views reads the element of any backing in place.
+            None if frame.reads_any_backing() => {
+                let records = frame.array_records(stage)?;
+                let index = frame.index_offset(stage, key, miss)?;
+                return frame.element_probed(stage, miss,
+                    #[inline(always)] |stage, _, absent| super::elements::any_backing_element(stage, records, object, index, absent),
+                    #[inline(always)] |stage, frame, miss| {
+                        let key = frame.key_word(stage, key)?;
+                        frame.index_get_host(stage, object, key, miss)
+                    });
+            }
+            None => ElementView::Dense(prove_and_keep(stage, frame, object, false, miss)?),
+        },
     };
     let index = frame.index_key(stage, key, miss)?;
     let index = stage.uextend32(index);
@@ -119,7 +134,10 @@ fn write<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, (val
     frame.stored(stage, Owner::Register(base), miss,
         |stage, frame, general| {
             if !fact.is_subtype(Type::IMMEDIATE) { frame.array_store_gate(stage, object, word, general)?; }
-            let view = dense_view(stage, frame, object, true, general)?;
+            let view = match frame.proved_view(stage, base, true) {
+                Some(view) => view,
+                None => dense_view(stage, frame, object, true, general)?,
+            };
             let index = frame.index_key(stage, key, general)?;
             let index = stage.uextend32(index);
             replace_present(stage, view, index, word, general)

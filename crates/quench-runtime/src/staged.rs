@@ -247,7 +247,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
 /// read then the test on it. No flagged row (`LaneFields::FLAG_ROLE`) is a member.
 ///
 /// Each entry is `(A, B, MODE)`. `MODE` is one of the `FUSED_*` constants below.
-pub(crate) const FUSED_ROWS: [(u16, u16, u8); 83] = [
+pub(crate) const FUSED_ROWS: [(u16, u16, u8); 88] = [
     // An i32 add of a constant then the direct load at its sum (the load reads the register).
     (Op::WasmI32AddImmediate as u16, Op::WasmI32Load as u16, FUSED_PLAIN),
     (Op::WasmI32AddImmediate as u16, Op::WasmI64Load as u16, FUSED_PLAIN),
@@ -353,12 +353,21 @@ pub(crate) const FUSED_ROWS: [(u16, u16, u8); 83] = [
     (Op::WasmI32Load16S as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
     (Op::WasmI32Load16U as u16, Op::WasmJumpI32Zero as u16, FUSED_PLAIN),
     (Op::WasmI32Load16U as u16, Op::WasmJumpI32NonZero as u16, FUSED_PLAIN),
+    // `a[++i]`: an update then the keyed read it indexes.
+    (Op::IncDec as u16, Op::GetIndex as u16, FUSED_PLAIN),
+    // `x[t = i]`: a register copy then the keyed read of the copy's element.
+    (Op::Move as u16, Op::GetIndex as u16, FUSED_PLAIN),
+    // `t + K` then the element read or store its result addresses.
+    (Op::Binary as u16, Op::GetIndex as u16, FUSED_PLAIN),
+    (Op::Binary as u16, Op::SetIndex as u16, FUSED_PLAIN),
+    // `a[i] = v; t = v` of a register copy of the stored value.
+    (Op::SetIndex as u16, Op::Move as u16, FUSED_PLAIN),
 ];
 
 /// Runs of three or four generated rows the lane runs as one record (`chain_rows`): each
 /// entry's links in record order, `NO_LINK` padding a three-link chain. Only the last link may
 /// be a jump. A chain at a record wins over a `FUSED_ROWS` pair there.
-pub(crate) const FUSED_CHAINS: [[u16; 4]; 37] = [
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 40] = [
     // A local or capture read, then a register comparison, then its branch.
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadLocalPlain as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
@@ -403,6 +412,13 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 37] = [
     [Op::WasmI32Load16S as u16, Op::WasmI32Load16S as u16, Op::WasmI32Multiply as u16, NO_LINK],
     [Op::WasmI32Load16U as u16, Op::WasmI32Load16U as u16, Op::WasmI32Multiply as u16, NO_LINK],
     [Op::WasmI32Load8U as u16, Op::WasmI32Load8U as u16, Op::WasmI32Add as u16, NO_LINK],
+    // `a[++i + K]`: the update, the keyed read it indexes, then the Number operation on the read
+    //.
+    [Op::IncDec as u16, Op::GetIndex as u16, Op::Binary as u16, NO_LINK],
+    // `heap[(p + K) >> S]` and `heap[p + K]`: the address sum, its shift, then the element read or
+    // store it addresses.
+    [Op::Binary as u16, Op::Binary as u16, Op::GetIndex as u16, NO_LINK],
+    [Op::Binary as u16, Op::Binary as u16, Op::SetIndex as u16, NO_LINK],
 ];
 
 /// The absent fourth link of a three-link `FUSED_CHAINS` entry.
@@ -608,16 +624,9 @@ pub(crate) const fn checked_local(op: Op) -> bool {
     matches!(op, Op::LoadLocal | Op::StoreLocal | Op::InitializeTdz)
 }
 
-/// Whether `op` is an increment or decrement (`IncDec`), the update a fused index triple starts with
-/// (`dispatch_fast::raw_results`).
+/// Whether `op` is an increment or decrement (`IncDec`), the update a fused index triple starts with.
 pub(crate) const fn increments(op: Op) -> bool {
     matches!(op, Op::IncDec)
-}
-
-/// Whether `op`'s result is a word a following arithmetic reads without boxing it: an element or
-/// field read, a Binary, an increment, a copy, a constant or a capture read (`dispatch_fast::raw_results`).
-pub(crate) const fn yields_raw_word(op: Op) -> bool {
-    matches!(op, Op::GetIndex | Op::IncDec | Op::Binary | Op::LoadConst | Op::Move | Op::GetField | Op::LoadCapture)
 }
 
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
@@ -630,7 +639,9 @@ pub(crate) const fn row_writes_result(op: Op) -> bool {
     if matches!(op.staged(), Some(Decoder::WasmState | Decoder::WasmMemory)) {
         return matches!(op.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister);
     }
-    !matches!(op, Op::GetEnumerated | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement
+    // A keyed read's answer is written by the lane (its record's result register, as every
+    // producer writes it beside the carried value).
+    !matches!(op, Op::GetEnumerated | Op::GetIndex | Op::StoreName | Op::StoreLocal | Op::InitializeTdz | Op::DefineArrayElement
         | Op::IteratorCleanupPush | Op::IteratorCleanupPop)
 }
 

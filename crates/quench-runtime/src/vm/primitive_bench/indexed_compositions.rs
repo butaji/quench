@@ -55,7 +55,7 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
         }).unwrap();
         let views = vm.programs.lane_views(ProgramId::MAIN).unwrap();
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
-        let proved = lane_update_get_index_operator_proved::<TestHost, false, ADDITION> as Handler as *const ();
+        let proved = super::super::dispatch_fast::updated_read_add_handler::<TestHost>();
         let sites = view.records.iter().filter(|record| {
             let ip = record.get();
             // SAFETY: the untimed call ended; live records and their held headers belong
@@ -248,13 +248,11 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
         }).unwrap();
         let views = vm.programs.lane_views(ProgramId::MAIN).unwrap();
         let view = super::super::program_store::derived_lane_view(&views[function]).unwrap();
-        let fused_read = lane_update_get_index_operator_proved::<TestHost, false, ADDITION> as Handler as *const ();
+        let fused_read = super::super::dispatch_fast::updated_read_add_handler::<TestHost>();
         let kinds = [
-            ("read", lane_get_index_proved::<TestHost> as Handler as *const (), false),
-            ("update_read", lane_update_get_index_proved::<TestHost, false> as Handler as *const (), false),
+            ("read", super::super::dispatch_fast::proved_read_handler::<TestHost>(), false),
             ("update_read_add", fused_read, false),
-            ("store", lane_set_index_proved::<TestHost> as Handler as *const (), true),
-            ("store_move", lane_set_index_move_proved::<TestHost> as Handler as *const (), true),
+            ("store", super::super::dispatch_fast::proved_store_handler::<TestHost>(), true),
         ];
         let mut counts = vec![0; kinds.len()];
         for record in view.records.iter() {

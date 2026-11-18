@@ -194,9 +194,16 @@ struct Suspension {
     /// The lane context's resolver of a Wasm memory value, for a generic memory row that names its
     /// memory by register (`Frame::wasm_memory`), where the row is one (`Decoder::WasmMemory`).
     memories: Option<WasmMemories>,
+    /// The proof span of the array a proved element row (`FLAG_SET`) reads or stores through, with the
+    /// lane context it proves in (`proof_span`).
+    element_span: Option<(*mut u8, ElementSpan)>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
 }
+
+/// The proof span of an array a proved element row names (`dispatch_fast::proof_span`): the lane
+/// context's bytes, the base register, its value, and whether a store writes it.
+type ElementSpan = unsafe fn(*mut u8, u16, Value, bool) -> Option<(std::ptr::NonNull<Value>, usize)>;
 
 /// The lane context's resolver of a Wasm memory value for a generic memory row: the bytes of the
 /// memory the value names, and whether its index is an i64 (`wasm_memory_of`).
@@ -259,7 +266,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -283,7 +290,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, cleanups: None, string_cases: None, suspension: None, callee: None, globals: None, memory: None, memories: None, element_span: None, reads: Reads::NONE }
     }
 }
 
@@ -744,7 +751,38 @@ impl<const ACC: u8> crate::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
     }
 }
 
-impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {}
+impl<const ACC: u8> crate::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
+    /// The array records of the heap an element row reads (`row_frame` binds it).
+    #[inline(always)]
+    fn array_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
+        // SAFETY: the heap is the lane's, live for the row.
+        self.heap.and_then(|heap| unsafe { (*heap).array_record_base() }).map(|base| base as u64)
+    }
+
+    /// The lane keeps no views: a read takes the element of any backing in place.
+    #[inline(always)]
+    fn reads_any_backing(&self) -> bool { true }
+
+    /// The array a proof of the lane's span gives (`proof_span`), where the row is one a proof names;
+    /// `None` where the slot does not prove the array, which proves it on the access's own check.
+    #[inline(always)]
+    fn proved_view(&mut self, stage: &mut Concrete, base: Register, writable: bool) -> Option<crate::staged::elements::DenseView<u64>> {
+        let (context, span) = self.element_span?;
+        let object = Value::from_bits(self.read(stage, base));
+        // SAFETY: the context and its proofs are the running lane's, live for the row.
+        let (values, length) = unsafe { span(context, base, object, writable) }?;
+        Some(crate::staged::elements::DenseView { values: values.as_ptr() as u64, length: length as u64, packed: false, within: false })
+    }
+
+    /// A store of `value` into the array needs no barrier log where `value` is no heap reference
+    /// and no hole (`concrete_append_in_room`'s test): the in-place replacement of the row answers
+    /// it; any other value leaves to the VM's store.
+    #[inline(always)]
+    fn array_store_gate(&mut self, _stage: &mut Concrete, _base: u64, value: u64, _miss: ()) -> Option<()> {
+        let value = Value::from_bits(value);
+        (value.heap_index().is_none() && !value.is_deleted()).then_some(())
+    }
+}
 
 impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     /// A register's word, or the constant or local the record names.
@@ -983,6 +1021,14 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         };
         return LaneFrame::<ACC> { heap, string_cases, suspension, ..LaneFrame::<ACC>::new(r, view) };
     }
+    if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
+        // A JavaScript view carries its context (`script_handler!`), so no thread-local load.
+        let context = view.memory.bytes;
+        let heap: *const crate::heap::Heap = &unsafe { vm(context.cast::<LaneContext<H>>()) }.heap;
+        // A row a proof names (`FLAG_SET`) reads and stores its array through the proof's span.
+        let element_span = if const { FLAG == FLAG_SET } { Some((context, proof_span::<H> as ElementSpan)) } else { None };
+        return LaneFrame::<ACC> { heap: Some(heap), element_span, ..LaneFrame::<ACC>::new(r, view) };
+    }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::Value)) } {
         // A value row may read `this`: the context word, else the frame's (`lane_this`), read lazily.
         let read: unsafe fn(*mut ()) -> Option<Value> = |context| {
@@ -1214,6 +1260,8 @@ macro_rules! row_decode {
             Operation::decode_wasm_int(crate::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Names)) } {
             Operation::decode_names(crate::staged::Fields::wide($fields))
+        } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
+            Operation::decode_element(crate::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmFloat)) } {
             Operation::decode_wasm_float(crate::staged::Fields::wide($fields))
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
@@ -1285,6 +1333,15 @@ lane_handler! {
         }
         // The row family's decoder, a constant of the instantiation, so only its arm is compiled.
         let fields = LaneFields::<OP, FLAG>(i);
+        if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element)) } {
+            // A keyed read's row is installed for a register base and key without result flags
+            // (`element_read_row`): stated so the decode's operand tests fold.
+            unsafe {
+                std::hint::assert_unchecked(i.a <= crate::bytecode::REGISTER_MASK);
+                std::hint::assert_unchecked(i.b <= crate::bytecode::REGISTER_MASK);
+                std::hint::assert_unchecked(i.c <= crate::bytecode::REGISTER_MASK);
+            }
+        }
         // `if const`, not `match const`: rustc compiles only a taken `if const` branch, so each
         // instantiation holds its one decoder (a `match` on a constant compiles every arm).
         let decoded = row_decode!(OP, FLAG, fields);
@@ -1310,6 +1367,12 @@ lane_handler! {
             }
             // A row that suspended its activation (`Frame::suspend_await`) ends the run, as its hand handler did.
             Step::Control(Edge::Leave) => return exit(ip),
+            // A keyed read past its in-place arm: the record's keyed paths (a slot, a getter).
+            Step::Unresolved if const { matches!(LaneFields::<OP, FLAG>::OPCODE.staged(), Some(crate::bytecode::Decoder::Element))
+                && matches!(LaneFields::<OP, FLAG>::OPCODE.field_layout(crate::bytecode::InstructionField::A), crate::bytecode::FieldLayout::ResultRegister) } => {
+                let script: *mut LaneContext<H> = view.memory.bytes.cast();
+                sibling!(super::lane_get_index_slot::<H>, r, ip, Carried::script_in(script, view))
+            }
             Step::Control(_) | Step::Unresolved => sibling!(const { row_miss::<H, FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view),
         }
     }
@@ -1540,8 +1603,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
             )),*]
         };
     }
-    let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36);
-    const { assert!(crate::staged::FUSED_CHAINS.len() <= 37, "`chains!` covers 37 chains; add indices") };
+    let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39);
+    const { assert!(crate::staged::FUSED_CHAINS.len() <= 40, "`chains!` covers 40 chains; add indices") };
     for pc in 0..records.len() {
         let Some((_, length, backward, row)) = chains.iter().find(|(links, length, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))
