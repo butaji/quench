@@ -148,3 +148,23 @@ fn a_returning_call_that_misses_prints_what_the_interpreter_prints() {
     assert_eq!(interpreted, compiled);
     assert!(runs > 100, "the bodies ran {runs} times");
 }
+
+/// A returning call (`return g(a, b)`) whose callee inlines completes the caller with the result its
+/// site moved to the call's result register: where that register is pinned (an int the callee's
+/// constants make), the completion spills it to its frame slot first, as every completion does. The
+/// comparator shape of test262 `TypedArray/sort_modifications.js`, whose sort read `undefined` back.
+#[test]
+fn a_returning_call_completes_with_the_inlined_callees_pinned_result() {
+    let (interpreted, compiled, [runs, _]) = run_both(
+        "function lt(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+         function lt1(a, b) { let x; if (a < b) x = 1; else x = 0; return x; }
+         var f = (function (g) { return function (a, b) { return g(a, b); }; })(lt);
+         var h = (function (g) { return function (a, b) { return g(a, b); }; })(lt1);
+         var t = 0; for (var i = 0; i < 400; i++) t = (t * 3 + f((i * 7) % 13, (i * 5) % 11) + h(i % 5, i % 3)) | 0;
+         print(t); print(f(1, 2)); print(f(2, 1)); print(f(2, 2)); print(h(0, 1)); print(h(1, 0));
+         var ta = new Int8Array(64); for (var k = 0; k < 64; k++) ta[k] = 64 - k;
+         ta.sort(f); print(ta.join(','));",
+    );
+    assert_eq!(interpreted, compiled);
+    assert!(runs > 100, "the bodies ran {runs} times");
+}
