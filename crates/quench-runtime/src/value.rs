@@ -64,7 +64,7 @@ const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
 /// Both direct-handle bits: the function record family's code.
 const DIRECT_FUNCTION_HANDLE_BITS: u64 = DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
 /// The promise record family's code, below the other direct-handle bits. Legacy slot and
-/// record indices stay below it (`MAX_HEAP_CELLS`, `RECORD_SPACE_CAPACITY`).
+/// record indices stay below it (`LEGACY_SLOT_CAPACITY`, the record space capacities).
 const DIRECT_PROMISE_HANDLE_BIT: u64 = 1 << 45;
 /// The await-state record family's code.
 const DIRECT_AWAIT_HANDLE_BITS: u64 = DIRECT_PROMISE_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
@@ -81,7 +81,7 @@ const DIRECT_STRING_HANDLE_BITS: u64 =
 pub(crate) const HEAP_FAMILY_BITS: u64 = DIRECT_FUNCTION_HANDLE_BITS | DIRECT_PROMISE_HANDLE_BIT;
 /// The Wasm vector record family's code: a bit below `HEAP_FAMILY_BITS`, every combination
 /// of which another family names. Record and legacy slot indices stay below it
-/// (`RECORD_SPACE_CAPACITY`, `MAX_HEAP_CELLS`). No narrow upper word sets it, so a vector is
+/// (the record space capacities, `MAX_HEAP_CELLS`). No narrow upper word sets it, so a vector is
 /// never narrow.
 const DIRECT_V128_HANDLE_BIT: u64 = 1 << 44;
 /// The environment record family's code: the vector bit with the promise bit. Like a

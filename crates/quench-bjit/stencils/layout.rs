@@ -39,7 +39,7 @@ pub(crate) struct NativeObjectLayout {
 }
 
 pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
-    record_capacity: 16777216,
+    record_capacity: 67108864,
     record_size: 12,
     record_align: 4,
     layout_offset: 8,
@@ -61,8 +61,8 @@ pub(crate) const NATIVE_OBJECT_LAYOUT: NativeObjectLayout = NativeObjectLayout {
     extras_tag: 9223090561878065152,
     extras_tag_mask: 18446462598732840960,
     proto_mask: 268435455,
-    proto_record_base: 134217728,
-    proto_record_end: 150994944,
+    proto_record_base: 67108864,
+    proto_record_end: 134217728,
     mark_records_per_block: 1024,
     mark_word_bits: 64,
     mark_block_size: 512,
@@ -101,7 +101,7 @@ pub(crate) struct NativeArrayLayout {
 }
 
 pub(crate) const NATIVE_ARRAY_LAYOUT: NativeArrayLayout = NativeArrayLayout {
-    record_capacity: 16777216,
+    record_capacity: 33554432,
     record_size: 12,
     record_align: 4,
     elements_offset: 0,

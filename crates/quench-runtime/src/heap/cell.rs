@@ -1,4 +1,7 @@
-use super::records::RECORD_SPACE_CAPACITY;
+use super::records::{
+    ARRAY_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY, ITERATOR_RECORD_CAPACITY,
+    OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY,
+};
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -1512,22 +1515,49 @@ pub(crate) struct Object {
     layout: u32,
 }
 
-/// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
-/// by reference family: legacy slot indices, then one range per direct record space, then
-/// the null and undefined sentinels at the top.
+/// Bits of `Object::meta` holding the prototype's heap reference (`PROTO_INDEX_BITS`, 28 bits).
+///
+/// The link is one flat index space, carved into windows in this order. Every window's base is
+/// the previous window's end, so each is a sum of the window sizes above it:
+///
+/// | window     | size (records)          | base (= sum of sizes before it) | end       |
+/// |------------|-------------------------|---------------------------------|-----------|
+/// | legacy     | `LEGACY_SLOT_CAPACITY`  | 0                               | 2^25      |
+/// | array      | `ARRAY_RECORD_CAPACITY` | 2^25                            | 2^26      |
+/// | object     | `OBJECT_RECORD_CAPACITY`| 2^26                            | 2^27      |
+/// | function   | `FUNCTION_RECORD_CAPACITY` | 2^27                         | 2^27+2^26 |
+/// | promise    | `PROMISE_RECORD_CAPACITY` | 3*2^26 = 201,326,592          | 218,103,808 |
+/// | iterator   | `ITERATOR_RECORD_CAPACITY` | 218,103,808                  | 234,881,024 |
+/// | collection | `COLLECTION_RECORD_CAPACITY` | 234,881,024               | 251,658,240 |
+/// | sentinels  | 2                       | 2^28-2 (undefined), 2^28-1 (null) | 2^28  |
+///
+/// Sum check: 2^25 + 2^25 + 2^26 + 2^26 + 3 * 2^24 = 251,658,240, below the sentinels at
+/// 268,435,454. 16,777,214 codes stay free. Each direct window is aligned to its own size, so a
+/// link inside it is `base | id` with `id < size`: the object window is the one
+/// `staged/object.rs` masks. A record space never issues an id at or past its window size.
 const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
 const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
-/// Cells a heap may hold so that any of them can be a prototype.
+/// The record count of the environment, symbol and string spaces, which no prototype link names.
 pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
-const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
-const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
-const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+/// Legacy slots a heap may hold, each a prototype link below `PROTO_ARRAY_RECORD_BASE`. Only
+/// exotic kinds (Proxy, TypedArray, Date, RegExp and the like) live there now.
+pub(crate) const LEGACY_SLOT_CAPACITY: usize = 1 << 25;
+const PROTO_ARRAY_RECORD_BASE: u32 = LEGACY_SLOT_CAPACITY as u32;
+const PROTO_OBJECT_RECORD_BASE: u32 = PROTO_ARRAY_RECORD_BASE + ARRAY_RECORD_CAPACITY as u32;
+const PROTO_FUNCTION_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + OBJECT_RECORD_CAPACITY as u32;
+const PROTO_PROMISE_RECORD_BASE: u32 = PROTO_FUNCTION_RECORD_BASE + FUNCTION_RECORD_CAPACITY as u32;
+const PROTO_ITERATOR_RECORD_BASE: u32 = PROTO_PROMISE_RECORD_BASE + PROMISE_RECORD_CAPACITY as u32;
+const PROTO_COLLECTION_RECORD_BASE: u32 = PROTO_ITERATOR_RECORD_BASE + ITERATOR_RECORD_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_COLLECTION_RECORD_BASE + COLLECTION_RECORD_CAPACITY as u32;
 const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
+const _: () = assert!(PROTO_OBJECT_RECORD_BASE.is_multiple_of(OBJECT_RECORD_CAPACITY as u32));
+const _: () = assert!(PROTO_ARRAY_RECORD_BASE.is_multiple_of(ARRAY_RECORD_CAPACITY as u32));
+const _: () = assert!(PROTO_FUNCTION_RECORD_BASE.is_multiple_of(FUNCTION_RECORD_CAPACITY as u32));
+const _: () = assert!(PROTO_PROMISE_RECORD_BASE.is_multiple_of(PROMISE_RECORD_CAPACITY as u32));
+const _: () = assert!(PROTO_ITERATOR_RECORD_BASE.is_multiple_of(ITERATOR_RECORD_CAPACITY as u32));
+const _: () = assert!(PROTO_COLLECTION_RECORD_BASE.is_multiple_of(COLLECTION_RECORD_CAPACITY as u32));
+const _: () = assert!(LEGACY_SLOT_CAPACITY <= PROTO_ARRAY_RECORD_BASE as usize);
 
 /// An object's encoded prototype reference (`PROTO_INDEX_BITS`). Equal links name the same
 /// prototype, so a chain walk compares links instead of decoding each to a `Value`.
@@ -1565,7 +1595,7 @@ impl ProtoLink {
         // link in it holds the record id in its low bits: a mask, which addresses the record
         // without the subtracted base as a 64-bit displacement.
         // `staged::object::proto_object_record_id` over u32, which keeps hot readers' registers free.
-        let span = RECORD_SPACE_CAPACITY as u32;
+        let span = OBJECT_RECORD_CAPACITY as u32;
         (self.0 & !(span - 1) == PROTO_OBJECT_RECORD_BASE).then_some(self.0 & (span - 1))
     }
 
@@ -1575,12 +1605,12 @@ impl ProtoLink {
         match self.0 {
             PROTO_NULL => Value::NULL,
             PROTO_UNDEFINED => Value::UNDEFINED,
-            index if index < PROTO_OBJECT_RECORD_BASE => Value::heap(index),
-            index if index < PROTO_ARRAY_RECORD_BASE => {
-                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
+            index if index < PROTO_ARRAY_RECORD_BASE => Value::heap(index),
+            index if index < PROTO_OBJECT_RECORD_BASE => {
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
             }
             index if index < PROTO_FUNCTION_RECORD_BASE => {
-                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
             }
             index if index < PROTO_PROMISE_RECORD_BASE => {
                 Value::direct_function(index - PROTO_FUNCTION_RECORD_BASE)
@@ -1669,7 +1699,7 @@ pub(super) const NATIVE_OBJECT_EXTRAS_TAG: u64 = EXTRAS_TAG;
 pub(super) const NATIVE_OBJECT_EXTRAS_TAG_MASK: u64 = EXTRAS_TAG_MASK;
 pub(super) const NATIVE_OBJECT_PROTO_MASK: u32 = PROTO_INDEX_BITS;
 pub(super) const NATIVE_OBJECT_PROTO_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE;
-pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE;
+pub(super) const NATIVE_OBJECT_PROTO_RECORD_END: u32 = PROTO_FUNCTION_RECORD_BASE;
 
 const _: () =
     assert!(NATIVE_OBJECT_META_OFFSET + std::mem::size_of::<u32>() <= NATIVE_OBJECT_RECORD_SIZE);
@@ -2286,8 +2316,8 @@ impl Object {
         match proto.heap_reference() {
             Some(HeapReference::LegacySlot(index)) => {
                 assert!(
-                    (index as usize) < MAX_HEAP_CELLS,
-                    "heap exhausted the prototype index space"
+                    (index as usize) < LEGACY_SLOT_CAPACITY,
+                    "legacy slots exhausted: the prototype link holds 2^25 legacy slots"
                 );
                 index
             }
@@ -3316,11 +3346,15 @@ mod object_payload_tests {
             Value::NULL,
             Value::UNDEFINED,
             Value::heap(0),
-            Value::heap(super::MAX_HEAP_CELLS as u32 - 1),
-            Value::direct_object(0),
-            Value::direct_object(super::RECORD_SPACE_CAPACITY as u32 - 1),
+            Value::heap(super::LEGACY_SLOT_CAPACITY as u32 - 1),
             Value::direct_array(0),
-            Value::direct_array(super::RECORD_SPACE_CAPACITY as u32 - 1),
+            Value::direct_array(super::ARRAY_RECORD_CAPACITY as u32 - 1),
+            Value::direct_object(0),
+            Value::direct_object(super::OBJECT_RECORD_CAPACITY as u32 - 1),
+            Value::direct_function(super::FUNCTION_RECORD_CAPACITY as u32 - 1),
+            Value::direct_promise(super::PROMISE_RECORD_CAPACITY as u32 - 1),
+            Value::direct_iterator(super::ITERATOR_RECORD_CAPACITY as u32 - 1),
+            Value::direct_collection(super::COLLECTION_RECORD_CAPACITY as u32 - 1),
         ] {
             let mut object = Object::new(proto);
             assert_eq!(object.proto(), proto);

@@ -3,7 +3,7 @@
 
 extern crate test;
 
-use super::{OCCUPANCY_WORD_BITS, PromotionAge, RecordSpace};
+use super::{OBJECT_RECORD_CAPACITY, OCCUPANCY_WORD_BITS, PromotionAge, RecordSpace, TEST_RECORD_CAPACITY};
 use crate::heap::{ArrayElements, ArrayObject, Heap, Object};
 use crate::value::Value;
 use std::hint::black_box;
@@ -77,7 +77,7 @@ fn primitive_record_array_clone_drop_batch(b: &mut Bencher) {
 }
 
 fn recycle<T: std::fmt::Debug>(b: &mut Bencher, mut make: impl FnMut() -> T) {
-    let mut records: RecordSpace<T> = RecordSpace::default();
+    let mut records: RecordSpace<T, TEST_RECORD_CAPACITY> = RecordSpace::default();
     for _ in 0..BATCH_RECORDS {
         records.try_insert(make()).unwrap();
     }
@@ -117,7 +117,7 @@ fn primitive_record_array_owned_recycle_batch(b: &mut Bencher) {
 
 #[bench]
 fn primitive_record_object_mark_sweep_live_batch(b: &mut Bencher) {
-    let mut records: RecordSpace<Object> = RecordSpace::default();
+    let mut records: RecordSpace<Object, OBJECT_RECORD_CAPACITY> = RecordSpace::default();
     let ids: [_; BATCH_RECORDS] = std::array::from_fn(|_| records.try_insert(empty_object()).unwrap());
     b.iter(|| {
         black_box(&mut records).clear_marks();

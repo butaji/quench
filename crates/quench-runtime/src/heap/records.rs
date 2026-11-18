@@ -28,18 +28,17 @@ pub(super) trait TraceRecord {
     fn extend_children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
 }
 
-pub(super) type ObjectRecordSpace = RecordSpace<Object>;
-pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
-pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord>;
-pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell>;
-pub(super) type AwaitRecordSpace = RecordSpace<AwaitState>;
-/// Iterators: records only, with no legacy-slot fallback. The space keeps the default capacity
-/// (`RECORD_SPACE_CAPACITY`), which the prototype links (`PROTO_ITERATOR_RECORD_BASE`) assume.
-pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord>;
+pub(super) type ObjectRecordSpace = RecordSpace<Object, OBJECT_RECORD_CAPACITY>;
+pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject, ARRAY_RECORD_CAPACITY>;
+pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord, FUNCTION_RECORD_CAPACITY>;
+pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell, PROMISE_RECORD_CAPACITY>;
+pub(super) type AwaitRecordSpace = RecordSpace<AwaitState, AWAIT_RECORD_CAPACITY>;
+/// Iterators: records only, with no legacy-slot fallback. The space holds
+/// `ITERATOR_RECORD_CAPACITY` records, the window its prototype links name (`cell.rs`).
+pub(super) type IteratorRecordSpace = RecordSpace<IteratorRecord, ITERATOR_RECORD_CAPACITY>;
 /// Maps and Sets: records of an object and its entries, with no legacy-slot fallback. The space
-/// keeps the default capacity (`RECORD_SPACE_CAPACITY`), which the prototype links
-/// (`PROTO_COLLECTION_RECORD_BASE`) assume.
-pub(super) type CollectionRecordSpace = RecordSpace<CollectionRecord>;
+/// holds `COLLECTION_RECORD_CAPACITY` records, the window its prototype links name (`cell.rs`).
+pub(super) type CollectionRecordSpace = RecordSpace<CollectionRecord, COLLECTION_RECORD_CAPACITY>;
 /// Environments have no legacy-slot fallback, so their space holds as many records as the
 /// legacy slots do (`MAX_HEAP_CELLS`).
 pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, { super::MAX_HEAP_CELLS }>;
@@ -47,7 +46,7 @@ pub(super) type EnvironmentRecordSpace = RecordSpace<super::EnvironmentRecord, {
 /// as the legacy slots do (`MAX_HEAP_CELLS`).
 pub(super) type SymbolRecordSpace = RecordSpace<super::SymbolData, { super::MAX_HEAP_CELLS }>;
 /// Wasm vectors: immutable leaves, so a record's bytes are its whole state.
-pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES]>;
+pub(super) type V128RecordSpace = RecordSpace<[u8; crate::wasm::V128_BYTES], V128_RECORD_CAPACITY>;
 /// Strings have no legacy-slot fallback, so their space holds as many records as the legacy
 /// slots do (`MAX_HEAP_CELLS`).
 /// The ids `[STRING_RECORD_HOLE, 2 * STRING_RECORD_HOLE)` are never this space's: they name the
@@ -147,48 +146,42 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
 const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
-/// Records each typed space (object, array, function, promise, iterator, collection) holds.
-///
-/// Why it is still 2^24, and what raising it requires:
-///
-/// 1. Value encoding (`value.rs`). A direct record handle is `TAG_HEAP | family bits | index`,
-///    where `heap_reference` and every `direct_*_index` read the index as `self.0 as u32`. Bits
-///    32..43 are zero in a handle and bits 44..47 are the family code (`DIRECT_V128_HANDLE_BIT`,
-///    `DIRECT_PROMISE_HANDLE_BIT`, `DIRECT_ARRAY_HANDLE_BIT`, `DIRECT_OBJECT_HANDLE_BIT`). So a
-///    handle names up to 2^32 records per family, and `RecordId` is `u32`. Symbols and
-///    environments use `MAX_HEAP_CELLS` (2^27) because that was the legacy-slot bound they
-///    shared, not the handle width. Narrow values (an object's inline slot) keep only
-///    `NARROW_INDEX_BITS` = 25 index bits, so a record at id 2^25 or above is never narrow and
-///    its field widens. That is a cost, not a limit.
-/// 2. Prototype links (`cell.rs`, `PROTO_*_RECORD_BASE`). `Object::meta` holds a link in
-///    `PROTO_INDEX_BITS` = 28 bits, as a flat space: legacy slots below 2^27, then one window of
-///    `RECORD_SPACE_CAPACITY` per family, then two sentinels. Six 2^24 windows fit only because
-///    the window is 2^24. A 2^32 window needs a 35-bit link (3 family bits plus a 32-bit id).
-///    `meta` is the high half of the interned header word (`layouts.rs`) and holds the
-///    `OBJECT_ARRAY` and `OBJECT_INLINE_STORAGE` flags at bits 28 and 29, so the link cannot grow
-///    inside it. Widening means a wider header entry, which changes the layout table, the layout
-///    id equality that inline caches rely on, and the JIT readers (`NATIVE_OBJECT_PROTO_*`,
-///    `quench-bjit` stencils).
-/// 3. Reservation (`records/reservation.rs`). A space reserves `CAPACITY * size_of::<T>()` bytes
-///    through the global allocator and `CAPACITY / RECORDS_PER_BLOCK` block slots. At 2^32 that
-///    is hundreds of gigabytes of address space, which the allocator's overcommit heuristic may
-///    refuse. Reserving with `mmap(MAP_NORESERVE)`, as `layouts.rs` does, avoids the check. The
-///    block vector's pages are touched only when a block is made.
-/// 4. Counters. `next_id` is `u32`, so a space at 2^32 must not increment past its last id.
-///
-/// Until 1 and 2 land, the prototype windows (`2^24` each) and this capacity must stay equal.
-pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
+/// Records each typed space holds, one constant per space. Each direct-record family's capacity
+/// is also its prototype window's size (`cell.rs`, `PROTO_*_RECORD_BASE`): a link to record `id`
+/// is `window base + id`, so a space never issues an id its window cannot hold. The windows and
+/// the legacy slot cap share the prototype link's 28 bits (`PROTO_INDEX_BITS`); the table in
+/// `cell.rs` does the arithmetic. Every capacity is a power of two and a multiple of
+/// `RECORDS_PER_BLOCK`, and every window is aligned to its own size (`staged/object.rs`
+/// masks a link to its object window).
+pub(super) const OBJECT_RECORD_CAPACITY: usize = 1 << 26;
+pub(super) const ARRAY_RECORD_CAPACITY: usize = 1 << 25;
+pub(super) const FUNCTION_RECORD_CAPACITY: usize = 1 << 26;
+pub(super) const PROMISE_RECORD_CAPACITY: usize = 1 << 24;
+pub(super) const ITERATOR_RECORD_CAPACITY: usize = 1 << 24;
+pub(super) const COLLECTION_RECORD_CAPACITY: usize = 1 << 24;
+/// Await states and Wasm vectors are never prototypes, so their capacity is not bounded by the
+/// prototype link.
+pub(super) const AWAIT_RECORD_CAPACITY: usize = 1 << 24;
+pub(super) const V128_RECORD_CAPACITY: usize = 1 << 24;
+
+#[cfg(test)]
+pub(super) const TEST_RECORD_CAPACITY: usize = 1 << 24;
+
+const _: () = assert!(OBJECT_RECORD_CAPACITY.is_power_of_two() && ARRAY_RECORD_CAPACITY.is_power_of_two());
+const _: () = assert!(FUNCTION_RECORD_CAPACITY.is_power_of_two() && PROMISE_RECORD_CAPACITY.is_power_of_two());
+const _: () = assert!(ITERATOR_RECORD_CAPACITY.is_power_of_two() && COLLECTION_RECORD_CAPACITY.is_power_of_two());
+const _: () = assert!(OBJECT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(AWAIT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && V128_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+// Ids are `u32`, and the id after a space's last one must still fit.
+const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());
-const _: () = assert!(RECORD_SPACE_CAPACITY.is_power_of_two());
-const _: () = assert!(RECORD_SPACE_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
-const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 
 /// Each record family owns one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it. A nonzero `HOLE` keeps
 /// the ids `[HOLE, 2 * HOLE)` out of use: their blocks exist, with every id withheld.
-pub(super) struct RecordSpace<T, const CAPACITY: usize = RECORD_SPACE_CAPACITY, const HOLE: usize = 0> {
+pub(super) struct RecordSpace<T, const CAPACITY: usize, const HOLE: usize = 0> {
     pub(super) base: NonNull<MaybeUninit<T>>,
     reservation: Reservation,
     blocks: Vec<RecordBlock>,
@@ -614,12 +607,14 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         if id as usize >= CAPACITY {
             return None;
         }
+        // The id after the last one a space may hold; `CAPACITY` is below `u32::MAX`, so it fits.
+        let following = id.checked_add(1)?;
         let (block_index, record_index) = Self::split_id(id);
         self.add_blocks_through(block_index);
         if !self.blocks[block_index].claim(record_index) {
             return None;
         }
-        self.next_id += 1;
+        self.next_id = following;
         Some(id)
     }
 
