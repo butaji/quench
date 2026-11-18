@@ -1,5 +1,6 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
+use super::typescript_files::TypeScriptFile;
 use crate::host::{EntryGoal, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
@@ -173,7 +174,9 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 /// The path whose package scope decides `path`'s goal: `.js`, `.ts` or an extensionless file
 /// asks its package scope, which is its real path's.
 fn real_path_for_kind(path: &Path) -> Result<std::borrow::Cow<'_, Path>, String> {
-    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js" | "ts") | None) {
+    if matches!(path.extension().and_then(|extension| extension.to_str()), Some("js") | None)
+        || TypeScriptFile::of(path) == Some(TypeScriptFile::PackageScoped)
+    {
         return crate::host::real_path::real_path(path).map(std::borrow::Cow::Owned).map_err(|error| error.to_string());
     }
     Ok(std::borrow::Cow::Borrowed(path))
@@ -207,7 +210,7 @@ pub(crate) fn source_kind_of_real_bytes(path: &Path, bytes: &[u8]) -> Result<que
 }
 
 fn detect_source_kind_for_path(path: &Path, text: &str) -> quench_runtime::SourceKind {
-    if path.extension().is_some_and(|extension| extension == "ts") {
+    if TypeScriptFile::of(path) == Some(TypeScriptFile::PackageScoped) {
         let body = script_body(text);
         let Some(has_module_syntax) = quench_runtime::Engine::typescript_has_module_syntax(body) else {
             return quench_runtime::SourceKind::Script;
@@ -1308,10 +1311,18 @@ enum BuiltinModule {
 }
 
 impl BuiltinModule {
+    /// The module a specifier names: a listed name, or `node:` plus a public builtin's name
+    /// (`module_shared_vm::BUILTIN_MODULES`), so no public module is listed twice.
     fn from_specifier(specifier: &str) -> Option<Self> {
-        BUILTIN_SPECIFIERS
-            .iter()
-            .find_map(|(name, module)| (*name == specifier).then_some(*module))
+        let listed = |name: &str| {
+            BUILTIN_SPECIFIERS
+                .iter()
+                .find_map(|(listed, module)| (*listed == name).then_some(*module))
+        };
+        listed(specifier).or_else(|| {
+            let name = specifier.strip_prefix("node:")?;
+            crate::modules::module_shared_vm::BUILTIN_MODULES.contains(&name).then(|| listed(name)).flatten()
+        })
     }
 
     fn cache_key(self) -> Option<&'static str> {
@@ -1403,7 +1414,15 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
     BuiltinModule::from_specifier(specifier).is_some()
 }
 
+/// Each loadable builtin under its bare name (internal modules included); a public builtin's
+/// `node:` form is derived (`from_specifier`), so only `node:`-only modules carry the prefix here.
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
+    // Node's legacy stream entry points export the class their internal module exports.
+    ("_stream_duplex", BuiltinModule::Internal("internal/streams/duplex")),
+    ("_stream_passthrough", BuiltinModule::Internal("internal/streams/passthrough")),
+    ("_stream_readable", BuiltinModule::Internal("internal/streams/readable")),
+    ("_stream_transform", BuiltinModule::Internal("internal/streams/transform")),
+    ("_stream_writable", BuiltinModule::Internal("internal/streams/writable")),
     ("internal/options", BuiltinModule::Internal("internal/options")),
     ("node:internal/options", BuiltinModule::Internal("internal/options")),
     (
@@ -1445,138 +1464,71 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/streams/add-abort-signal", BuiltinModule::Internal("internal/streams/add-abort-signal")),
     ("internal/net", BuiltinModule::Internal("internal/net")),
     ("constants", BuiltinModule::Internal("constants")),
-    ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::DnsPromises),
-    ("node:dns/promises", BuiltinModule::DnsPromises),
     (
         "inspector/promises",
         BuiltinModule::Internal("inspector/promises"),
     ),
-    (
-        "node:inspector/promises",
-        BuiltinModule::Internal("inspector/promises"),
-    ),
     ("punycode", BuiltinModule::Internal("punycode")),
-    ("node:punycode", BuiltinModule::Internal("punycode")),
     (
         "readline/promises",
         BuiltinModule::Internal("readline/promises"),
     ),
-    (
-        "node:readline/promises",
-        BuiltinModule::Internal("readline/promises"),
-    ),
     ("_http_agent", BuiltinModule::Internal("_http_agent")),
-    ("node:_http_agent", BuiltinModule::Internal("_http_agent")),
     ("_http_client", BuiltinModule::Internal("_http_client")),
-    ("node:_http_client", BuiltinModule::Internal("_http_client")),
     ("_http_common", BuiltinModule::Internal("_http_common")),
-    ("node:_http_common", BuiltinModule::Internal("_http_common")),
     ("_http_incoming", BuiltinModule::Internal("_http_incoming")),
-    (
-        "node:_http_incoming",
-        BuiltinModule::Internal("_http_incoming"),
-    ),
     ("_http_outgoing", BuiltinModule::Internal("_http_outgoing")),
-    (
-        "node:_http_outgoing",
-        BuiltinModule::Internal("_http_outgoing"),
-    ),
     ("_http_server", BuiltinModule::Internal("_http_server")),
-    ("node:_http_server", BuiltinModule::Internal("_http_server")),
     ("_tls_common", BuiltinModule::Internal("_tls_common")),
-    ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
     ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
-    ("node:_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
     ("process", BuiltinModule::Process),
-    ("node:process", BuiltinModule::Process),
     ("assert", BuiltinModule::Assert),
-    ("node:assert", BuiltinModule::Assert),
     ("assert/strict", BuiltinModule::AssertStrict),
-    ("node:assert/strict", BuiltinModule::AssertStrict),
     ("path", BuiltinModule::Path),
-    ("node:path", BuiltinModule::Path),
     ("path/posix", BuiltinModule::PathPosix),
-    ("node:path/posix", BuiltinModule::PathPosix),
     ("path/win32", BuiltinModule::PathWin32),
-    ("node:path/win32", BuiltinModule::PathWin32),
     ("fs", BuiltinModule::Fs),
-    ("node:fs", BuiltinModule::Fs),
     ("fs/promises", BuiltinModule::FsPromises),
-    ("node:fs/promises", BuiltinModule::FsPromises),
     ("net", BuiltinModule::Net),
-    ("node:net", BuiltinModule::Net),
     ("http", BuiltinModule::Http),
-    ("node:http", BuiltinModule::Http),
     ("os", BuiltinModule::Os),
-    ("node:os", BuiltinModule::Os),
     ("buffer", BuiltinModule::Buffer),
-    ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
-    ("node:stream", BuiltinModule::Stream),
     ("stream/promises", BuiltinModule::StreamPromises),
-    ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
-    ("node:stream/web", BuiltinModule::WebStreams),
     ("stream/consumers", BuiltinModule::StreamConsumers),
-    ("node:stream/consumers", BuiltinModule::StreamConsumers),
     ("timers", BuiltinModule::Timers),
     ("internal/timers", BuiltinModule::InternalTimers),
-    ("node:timers", BuiltinModule::Timers),
     ("timers/promises", BuiltinModule::TimersPromises),
-    ("node:timers/promises", BuiltinModule::TimersPromises),
     ("node:test", BuiltinModule::NodeTest),
     ("string_decoder", BuiltinModule::StringDecoder),
-    ("node:string_decoder", BuiltinModule::StringDecoder),
     ("worker_threads", BuiltinModule::WorkerThreads),
-    ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
     // Node keeps the deprecated `sys` specifier as an alias of `util`.
     ("sys", BuiltinModule::Sys),
-    ("node:sys", BuiltinModule::Sys),
-    ("node:util", BuiltinModule::Util),
     ("util/types", BuiltinModule::UtilTypes),
-    ("node:util/types", BuiltinModule::UtilTypes),
     ("child_process", BuiltinModule::ChildProcess),
-    ("node:child_process", BuiltinModule::ChildProcess),
     ("url", BuiltinModule::Url),
-    ("node:url", BuiltinModule::Url),
     ("querystring", BuiltinModule::Querystring),
-    ("node:querystring", BuiltinModule::Querystring),
     ("readline", BuiltinModule::Readline),
-    ("node:readline", BuiltinModule::Readline),
     ("events", BuiltinModule::Events),
-    ("node:events", BuiltinModule::Events),
     ("console", BuiltinModule::Console),
-    ("node:console", BuiltinModule::Console),
     ("tty", BuiltinModule::Tty),
-    ("node:tty", BuiltinModule::Tty),
     ("crypto", BuiltinModule::Crypto),
-    ("node:crypto", BuiltinModule::Crypto),
     ("domain", BuiltinModule::Domain),
-    ("node:domain", BuiltinModule::Domain),
     ("tls", BuiltinModule::Tls),
-    ("node:tls", BuiltinModule::Tls),
     ("v8", BuiltinModule::V8),
-    ("node:v8", BuiltinModule::V8),
     ("module", BuiltinModule::Module),
-    ("node:module", BuiltinModule::Module),
     ("async_hooks", BuiltinModule::AsyncHooks),
-    ("node:async_hooks", BuiltinModule::AsyncHooks),
     ("internal/async_hooks", BuiltinModule::AsyncHooks),
     (
         "internal/child_process",
         BuiltinModule::InternalChildProcess,
     ),
     ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
-    (
-        "node:diagnostics_channel",
-        BuiltinModule::DiagnosticsChannel,
-    ),
     ("dns", BuiltinModule::Dns),
-    ("node:dns", BuiltinModule::Dns),
     ("dgram", BuiltinModule::Dgram),
-    ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/url", BuiltinModule::InternalUrl),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
@@ -1585,26 +1537,16 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
         BuiltinModule::InternalSocketAddress,
     ),
     ("https", BuiltinModule::Https),
-    ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
-    ("node:http2", BuiltinModule::Http2),
     ("vm", BuiltinModule::Vm),
-    ("node:vm", BuiltinModule::Vm),
     ("inspector", BuiltinModule::Inspector),
-    ("node:inspector", BuiltinModule::Inspector),
     ("repl", BuiltinModule::Repl),
-    ("node:repl", BuiltinModule::Repl),
     ("node:sea", BuiltinModule::Sea),
     ("cluster", BuiltinModule::Cluster),
-    ("node:cluster", BuiltinModule::Cluster),
     ("wasi", BuiltinModule::Wasi),
-    ("node:wasi", BuiltinModule::Wasi),
     ("trace_events", BuiltinModule::TraceEvents),
-    ("node:trace_events", BuiltinModule::TraceEvents),
     ("perf_hooks", BuiltinModule::PerfHooks),
-    ("node:perf_hooks", BuiltinModule::PerfHooks),
     ("zlib", BuiltinModule::Zlib),
-    ("node:zlib", BuiltinModule::Zlib),
 ];
 
 fn builtin_cache_key(builtin: BuiltinModule) -> Result<String, RootedError> {
@@ -3056,7 +2998,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
         _ => file_text,
     };
     #[cfg(feature = "aot")]
-    if filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts") {
+    if TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs) {
         context.host_mut().record_prepared_module(filename, &file_text).map_err(RootedError::host)?;
     }
 
@@ -3116,10 +3058,7 @@ fn execute_module(context: &mut Context<'_>, source: ModuleSource<'_>) -> Result
                     wrapper_source.reserve_exact(prefix.len() + suffix.len());
                     wrapper_source.replace_range(..body_start, prefix);
                     wrapper_source.push_str(suffix);
-                    let typescript = matches!(
-                        filename.extension().and_then(|extension| extension.to_str()),
-                        Some("cts" | "ts"),
-                    );
+                    let typescript = TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs);
                     if typescript {
                         crate::host::ts_checker::prepare(
                             filename, &wrapper_source, prefix.len()..wrapper_source.len() - suffix.len(), disk_offset_utf16,
@@ -3196,7 +3135,7 @@ pub(crate) fn native_commonjs_source(
 ) -> Result<quench_runtime::NativeSourceKey, String> {
     let decoded = source_text(bytes);
     let body = script_body(&decoded);
-    let typescript = filename.extension().is_some_and(|extension| extension == "ts" || extension == "cts");
+    let typescript = TypeScriptFile::of(filename).is_some_and(TypeScriptFile::loads_as_commonjs);
     if typescript && super::esm_errors::node_modules_typescript(filename) {
         return Err(format!("TypeScript in node_modules is not supported: {}", filename.display()));
     }
@@ -3355,4 +3294,43 @@ pub(crate) fn initialize_cluster_worker(context: &mut Context<'_>) -> Result<(),
         crate::modules::process_shared_vm::delete_env(context, undefined, &[key])?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod builtin_table_tests {
+    use super::is_builtin_specifier;
+    use crate::modules::module_shared_vm::BUILTIN_MODULES;
+
+    /// Public builtins Node lists that Quench does not load yet.
+    const NOT_LOADED: &[&str] = &["node:sqlite", "node:test/reporters"];
+    /// Builtins of the targeted Node release the export table knows and Quench does not list yet.
+    const NOT_LISTED: &[&str] = &["_stream_wrap", "bench", "bench/reporters", "stream/iter", "zlib/iter"];
+
+    #[test]
+    fn every_public_builtin_loads_bare_and_with_the_node_prefix() {
+        for name in BUILTIN_MODULES.iter().filter(|name| !NOT_LOADED.contains(name)) {
+            if !name.starts_with("node:") {
+                assert!(is_builtin_specifier(name), "{name}");
+            }
+            let prefixed = if name.starts_with("node:") { (*name).to_owned() } else { format!("node:{name}") };
+            assert!(is_builtin_specifier(&prefixed), "{prefixed}");
+        }
+    }
+
+    #[test]
+    fn node_only_builtins_need_the_prefix() {
+        for name in BUILTIN_MODULES.iter().filter_map(|name| name.strip_prefix("node:")) {
+            assert!(!is_builtin_specifier(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_export_table_names_only_public_builtins() {
+        let exports: std::collections::BTreeMap<String, Vec<String>> =
+            serde_json::from_str(include_str!("../builtin_esm_exports.json")).unwrap();
+        for name in exports.keys().map(String::as_str).filter(|name| !NOT_LISTED.contains(name)) {
+            let prefixed = format!("node:{name}");
+            assert!(BUILTIN_MODULES.contains(&name) || BUILTIN_MODULES.contains(&prefixed.as_str()), "{name}");
+        }
+    }
 }

@@ -3,6 +3,9 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
 
+/// Node's `module.builtinModules`: the one list of public builtins. A bare name is also
+/// reachable as `node:` plus the name; an entry written with `node:` exists only in that form.
+/// `require`'s specifier table (`commonjs::BUILTIN_SPECIFIERS`) derives `node:` forms from it.
 pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "_http_agent",
     "_http_client",
@@ -10,6 +13,11 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "_http_incoming",
     "_http_outgoing",
     "_http_server",
+    "_stream_duplex",
+    "_stream_passthrough",
+    "_stream_readable",
+    "_stream_transform",
+    "_stream_writable",
     "_tls_common",
     "_tls_wrap",
     "assert",
@@ -71,8 +79,6 @@ pub(crate) const BUILTIN_MODULES: &[&str] = &[
     "node:test",
     "node:test/reporters",
 ];
-
-const NODE_ONLY_BUILTINS: &[&str] = &["sea", "sqlite", "test", "test/reporters"];
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
@@ -813,13 +819,8 @@ pub(crate) fn is_builtin(
         .first()
         .and_then(|argument| context.string_text(*argument).ok().flatten())
         .is_some_and(|specifier| {
-            if let Some(name) = specifier.strip_prefix("node:") {
-                BUILTIN_MODULES.contains(&specifier.as_str())
-                    || BUILTIN_MODULES.contains(&name)
-                    || NODE_ONLY_BUILTINS.contains(&name)
-            } else {
-                BUILTIN_MODULES.contains(&specifier.as_str())
-            }
+            BUILTIN_MODULES.contains(&specifier.as_str())
+                || specifier.strip_prefix("node:").is_some_and(|name| BUILTIN_MODULES.contains(&name))
         });
     Ok(context.boolean(result))
 }

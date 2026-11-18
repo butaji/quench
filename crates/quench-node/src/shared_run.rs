@@ -1,6 +1,7 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
 use crate::host::NodeHost;
+use crate::host::shared_vm::typescript_files::TypeScriptFile;
 use quench_runtime::{ExecutionRequest, MemoryPolicy, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
@@ -355,7 +356,7 @@ fn execute_shared_on_worker(
             };
             let is_module = kind == SourceKind::Module;
             let wasm = path.extension().is_some_and(|extension| extension == "wasm");
-            let typed_module = is_module && path.extension().is_some_and(|extension| extension == "ts" || extension == "mts");
+            let typed_module = is_module && TypeScriptFile::of(&path).is_some_and(TypeScriptFile::loads_as_module);
             let source = if is_module && wasm {
                 crate::host::shared_vm::esm_wasm::entry_facade(&path)?
             } else if typed_module {
