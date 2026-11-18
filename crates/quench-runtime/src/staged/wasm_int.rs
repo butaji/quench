@@ -26,6 +26,9 @@ pub(crate) enum WasmIntOperation {
     I64Binary { operator: I64BinaryOperator, destination: Register, left: Register, right: Register, raw: bool },
     /// `destination = op source` on an i64 word (`raw` as for `I64Binary`).
     I64Unary { operator: I64UnaryOperator, destination: Register, source: Register, raw: bool },
+    /// `destination = (source >>> shift) & mask` on an i32 word: a bit-field extraction, whose
+    /// shift is the record's signed constant and whose mask is its immediate.
+    I32BitField { destination: Register, source: Register, shift: i32, mask: i32 },
 }
 
 /// Whether the i64 opcode `op` runs on raw words (its operands and result are the machine words,
@@ -50,6 +53,8 @@ pub(crate) fn decode(instruction: WideInstruction) -> Option<WasmIntOperation> {
     match op {
         Op::WasmI32Unary => Some(WasmIntOperation::I32Unary {
             operator: I32UnaryOperator::from_tag(instruction.imm())?, destination, source: b }),
+        Op::WasmI32ShiftRightUnsignedAndImmediate => Some(WasmIntOperation::I32BitField {
+            destination, source: b, shift: i32::from(c as i16), mask: instruction.imm() as i32 }),
         Op::WasmI64Binary => Some(WasmIntOperation::I64Binary {
             operator: I64BinaryOperator::from_tag(instruction.imm())?, destination, left: b, right: c, raw: raw_i64(op) }),
         Op::WasmI64Unary => Some(WasmIntOperation::I64Unary {
@@ -93,6 +98,19 @@ pub(crate) fn step<S: Stage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, o
             let Some(value) = frame.wide_read(stage, source, raw) else { return Step::Unresolved };
             match stage.wasm_i64_unary(operator, value) {
                 Some((word, is_i32)) => define_wide(stage, frame, destination, word, is_i32, raw),
+                None => Step::Unresolved,
+            }
+        }
+        WasmIntOperation::I32BitField { destination, source, shift, mask } => {
+            // The shift, then the mask, as the two i32 operators the extraction names.
+            let value = frame.read(stage, source);
+            let shift = stage.constant(u64::from(shift as u32));
+            let Some(shifted) = stage.wasm_i32_binary(I32BinaryOperator::ShiftRightUnsigned, value, shift) else {
+                return Step::Unresolved;
+            };
+            let mask = stage.constant(u64::from(mask as u32));
+            match stage.wasm_i32_binary(I32BinaryOperator::And, shifted, mask) {
+                Some(word) => define_i32(stage, frame, destination, word),
                 None => Step::Unresolved,
             }
         }

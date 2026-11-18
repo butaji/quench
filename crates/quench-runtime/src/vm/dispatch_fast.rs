@@ -10874,17 +10874,6 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_bit_field<ACC: u8>(cx, r, ip, i, view) {
-        let value = crate::wasm::integer::shift_right_unsigned_and(
-            read_i32::<ACC, ACC_B>(r, i.b, view),
-            i32::from(i.c as i16),
-            i.imm() as i32,
-        );
-        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
-    }
-}
-
-lane_handler! {
     /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`. With `CARRY`, the taken
     /// jump carries register `c` (a field the instruction leaves unused) as
     /// the accumulator, for a target that reads it there.
@@ -20685,14 +20674,9 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
         if lane_runs_row(op) {
             return Some(LaneHandler { handler: lane_row::<H, OP, ACC, FLAG_UNREAD>, produces: row_produces(op) });
         }
-        match op.class() {
-            Class::WasmI32ShiftRightUnsignedAnd => {
-                return LaneHandler::producer(lane_bit_field::<H, ACC>);
-            }
-            _ => match other_handler::<H, BACKWARD, ACC>(op) {
-                Some(handler) => handler,
-                None => return None,
-            },
+        match other_handler::<H, BACKWARD, ACC>(op) {
+            Some(handler) => handler,
+            None => return None,
         }
     };
     Some(LaneHandler {

@@ -984,7 +984,7 @@ opcodes!($;
     WasmI32GreaterEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32GreaterEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
     // `(b >>> c) & imm`: a bit-field extraction fused from its two operators.
-    WasmI32ShiftRightUnsignedAndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32ShiftRightUnsignedAnd, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    WasmI32ShiftRightUnsignedAndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32ShiftRightUnsignedAnd; staged WasmInt; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     // `a = b + c`, then jump when `a` is nonzero: a counted loop's step and test.
     WasmI32AddImmediateJumpNonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmI32AddJump; staged WasmJump, @ Register, @ fields(ResultRegister, Register, SignedConstant),
     WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmInstanceBinding, @ Register, @ fields(ResultRegister, Unused, Unused),
