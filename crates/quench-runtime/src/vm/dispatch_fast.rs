@@ -1930,6 +1930,10 @@ const TARGET_GATHERS_KEEPING: u8 = 4;
 /// `RestLength` read (`Function::rest_view`): a plain call's activation keeps the values
 /// passed and makes no rest array (`lane_activate_gathering`).
 const TARGET_REST_VIEW: u8 = 8;
+/// `ScriptCallTarget::forms`: an arrow that may read its maker's implicit bindings
+/// (`Function::arrow_reads_implicit_bindings`), whose sibling closures read their own
+/// lexical `this` (`sibling_closure_target`).
+const TARGET_READS_IMPLICIT: u8 = 16;
 
 impl ScriptCallTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
@@ -14210,7 +14214,8 @@ impl<H: Host> Vm<H> {
             forms: u8::from(shape.constructs && !(environment && body.activation_bindings_observable(code)) && !settles && !body.rest && !(cross && plan.keeps_arguments)) * TARGET_CONSTRUCTS
                 | u8::from(shape.initializes && !environment && !settles && !cross && !body.rest) * TARGET_INITIALIZES
                 | u8::from(body.rest && (plan.keeps_arguments || plan.legacy_reflection || (lexical_this.is_none() && !body.strict))) * TARGET_GATHERS_KEEPING
-                | u8::from(body.rest_view()) * TARGET_REST_VIEW,
+                | u8::from(body.rest_view()) * TARGET_REST_VIEW
+                | u8::from(lexical_this.is_some() && body.arrow_reads_implicit_bindings(code, function)) * TARGET_READS_IMPLICIT,
             fill: u8::try_from(body.register_roots.entry_fill(body.registers)).unwrap_or(u8::MAX),
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
