@@ -171,19 +171,35 @@ fn insert_markers(instructions: &mut Vec<WideInstruction>, origins: &mut Vec<lan
     inserted.sort_unstable_by_key(|(at, _)| *at);
     inserted.dedup_by_key(|(at, _)| *at);
     let mut markers: Vec<usize> = inserted.iter().map(|(at, _)| *at).collect();
+    // The frame each instruction runs in, before the markers move them.
+    let running: Vec<Option<usize>> = origins.iter().map(|origin| match origin {
+        lane_unit::Origin::Inlined { frame, .. } => Some(*frame),
+        _ => None,
+    }).collect();
     for &(at, call) in inserted.iter().rev() {
         instructions.insert(at, WideInstruction::new(Op::Nop, 0, 0, 0, 0));
         origins.insert(at, lane_unit::Origin::Caller(call));
     }
     // A jump target lands on the marker at its own position, as the call's PC did: an
-    // insertion at the target itself is that marker, so only earlier ones move it.
-    let shift = |target: usize| target + inserted.iter().filter(|(at, _)| *at < target).count();
-    for instruction in instructions.iter_mut() {
+    // insertion at the target itself is that marker, so only earlier ones move it. A callee's
+    // own jump to its first instruction (a loop at its entry) is no call: it lands past its
+    // frame's marker, which would bind the call's arguments to the parameters again.
+    let within = |frame: usize, mut inner: usize| loop {
+        if inner == frame { return true; }
+        match frames.get(inner).and_then(|candidate| candidate.parent) { Some(parent) => inner = parent, None => return false }
+    };
+    let shift = |target: usize, from: Option<usize>| target + inserted.iter().filter(|(at, _)| *at < target
+        || (*at == target && from.is_some_and(|inner| running.get(target).copied().flatten().is_some_and(|frame| within(frame, inner))))).count();
+    let mut original = 0;
+    for (unit_pc, instruction) in instructions.iter_mut().enumerate() {
+        if inserted.iter().any(|(at, _)| *at + inserted.iter().filter(|(before, _)| before < at).count() == unit_pc) { continue; }
+        let from = running.get(original).copied().flatten();
+        original += 1;
         if instruction.op().immediate_role() == crate::bytecode::ImmediateRole::JumpTarget {
-            instruction.set_jump_target(shift(instruction.imm() as usize) as u32);
+            instruction.set_jump_target(shift(instruction.imm() as usize, from) as u32);
         }
     }
-    for marker in &mut markers { *marker = shift(*marker); }
+    for marker in &mut markers { *marker = shift(*marker, None); }
     (inserted, markers)
 }
 
