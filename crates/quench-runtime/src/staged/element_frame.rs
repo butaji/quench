@@ -7,6 +7,13 @@ use super::elements::DenseView;
 use super::{value, PropertyFrame, Stage};
 use crate::bytecode::{Operand, Register};
 
+/// The element frame's contract for a stencil. The only method a stencil frame must override is
+/// `array_records`; every other element method refuses by default (`None`, the row's miss edge):
+/// `kept_view`, `array_store_gate`, `index_set_host` and `proved_view`/`keep_view`. `index_key`,
+/// `index_offset` and `element_probed` carry the stage logic every frame shares (an int32 guard and
+/// the fast-then-host join), so they are not overrides. `index_get_host` is declared on `PropertyFrame`,
+/// which this trait extends, and refuses there (`None`); `stored` is the same fast-then-slow join as
+/// `element_probed`. Neither is redeclared here, since a second declaration would make the call ambiguous.
 pub(crate) trait ElementFrame<S: Stage>: PropertyFrame<S> {
     /// The VM's store of `value` to `base[key]` where no in-place replacement answers it: an
     /// added element, a typed array, a keyed property, a setter; a failure leaves at `miss`.
