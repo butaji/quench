@@ -2,6 +2,7 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 pub(crate) mod eval_source;
+mod owned_host;
 mod private_names;
 
 /// Whether source contains only ECMAScript whitespace and comments. This is a
@@ -434,7 +435,7 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>, keep_records: bool,
     ) -> Result<Value, JsError> {
         let prepared = self.prepare_embedding_specialized_script_retaining(
-            source, name, origin, None, keep_records, true,
+            source, name, origin, None, keep_records, true, None,
         )?;
         self.evaluate_embedding_prepared_script(&prepared)
     }
@@ -449,7 +450,7 @@ impl<H: Host> Vm<H> {
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
         let prepared =
-            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true, false)?;
+            self.prepare_embedding_specialized_script_retaining(source, name, origin, None, true, false, None)?;
         self.evaluate_embedding_prepared_script(&prepared)
     }
 
@@ -464,7 +465,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("host wrapper origin exceeds compiler positions".into()))?;
         let base = u32::try_from(prefix.len())
             .map_err(|_| JsError("host wrapper prefix exceeds compiler positions".into()))?;
-        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true, false)
+        self.prepare_embedding_specialized_script_retaining(&wrapped, name, Some(origin), Some((body, base)), true, false, None)
     }
 
     /// `prepare_embedding_library_body` through the host's compile cache
@@ -600,16 +601,18 @@ impl<H: Host> Vm<H> {
     pub(crate) fn prepare_embedding_specialized_script(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
     ) -> Result<crate::PreparedScript, JsError> {
-        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false, false)
+        self.prepare_embedding_specialized_script_retaining(source, name, origin, None, false, false, None)
     }
 
     /// `retained` names static text the program keeps in place of its compiled source, and
-    /// the compiled byte offset where that text starts.
+    /// the compiled byte offset where that text starts. `provided` is the caller's shared text
+    /// of `source`, which the program keeps when it compiled exactly it (`kept_or_provided`).
     pub(super) fn prepare_embedding_specialized_script_retaining(
         &mut self, source: &str, name: &str, origin: Option<(u32, u32)>,
         retained: Option<(crate::bytecode::SourceText, u32)>,
         keep_records: bool,
         typescript: bool,
+        provided: Option<crate::bytecode::SourceText>,
     ) -> Result<crate::PreparedScript, JsError> {
         let program = self.embedding_program()?;
         // A script compiled from its own text (a package's module, an application's entry) goes
@@ -639,7 +642,7 @@ impl<H: Host> Vm<H> {
         // A program keeping only static text cannot compile its functions again from it. One
         // that runs from its kept form encodes each record its load releases.
         let released = if cache_key.is_some() { crate::compile::ReleasedRecords::Encoded } else { crate::compile::ReleasedRecords::Dropped };
-        let compiled = crate::Engine::specialize_host_script(source, name, &*self, options, released, true);
+        let compiled = crate::Engine::specialize_host_script_provided(source, name, &*self, options, released, true, provided);
         let mut residual = compiled
             .map_err(|diagnostics| {
                 if diagnostics
@@ -717,6 +720,11 @@ impl<H: Host> Vm<H> {
         &mut self, source: &str, name: &str, origin: (u32, u32),
     ) -> Result<crate::CompiledScript, JsError> {
         let prepared = self.prepare_embedding_specialized_script(source, name, Some(origin))?;
+        self.register_embedding_compiled_script(prepared)
+    }
+
+    /// Makes the compiled Script of `prepared` the state its handle names.
+    fn register_embedding_compiled_script(&mut self, prepared: crate::PreparedScript) -> Result<crate::CompiledScript, JsError> {
         let context = self.embedding_program()?;
         let Some(source) = self.store_prepared_script(&prepared)? else {
             return Err(self.type_error(&context, "dynamic program store is full".into()));

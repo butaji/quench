@@ -794,26 +794,29 @@ impl Engine {
         source: &str, name: &str, prefix: &dyn AtomPrefix,
         options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        if options.typescript {
-            Self::specialize_typescript_script_with_atom_prefix(source, name, prefix, options.keep_records, released)
-        } else if options.keep_records {
-            Self::specialize_kept_script_with_atom_prefix(source, name, prefix)
-        } else if first_call {
-            Self::specialize_script_shaped(source, name, prefix, ParsedProgramShape::FirstCallScript, released, SourceType::script())
-        } else {
-            Self::specialize_script_with_atom_prefix(source, name, prefix, released)
-        }
+        Self::specialize_host_script_provided(source, name, prefix, options, released, first_call, None)
     }
 
-    pub(crate) fn specialize_typescript_script_with_atom_prefix(
-        source: &str, name: &str, atom_prefix: &dyn AtomPrefix,
-        keep_records: bool, released: ReleasedRecords,
+    /// `specialize_host_script` for a host text the caller holds in shared storage: `provided`
+    /// is that storage, which the program keeps in place of a copy of `source` (`kept_or_provided`).
+    pub(crate) fn specialize_host_script_provided(
+        source: &str, name: &str, prefix: &dyn AtomPrefix,
+        options: HostScriptOptions, released: ReleasedRecords, first_call: bool,
+        provided: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(
-            source, name, atom_prefix,
-            if keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any },
-            released, SourceType::script().with_typescript(true),
-        )
+        // The routes of the Script, typescript and first-call forms; each one's shape and
+        // released records are those its own helper gave.
+        let (shape, released, source_type) = if options.typescript {
+            let shape = if options.keep_records { ParsedProgramShape::KeptRecords } else { ParsedProgramShape::Any };
+            (shape, released, SourceType::script().with_typescript(true))
+        } else if options.keep_records {
+            (ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
+        } else if first_call {
+            (ParsedProgramShape::FirstCallScript, released, SourceType::script())
+        } else {
+            (ParsedProgramShape::Any, released, SourceType::script())
+        };
+        Self::specialize_script_shaped(source, name, prefix, shape, released, source_type, provided)
     }
 
     pub fn specialize(source: &str, name: &str) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -835,17 +838,7 @@ impl Engine {
         atom_prefix: &dyn AtomPrefix,
         released: ReleasedRecords,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script())
-    }
-
-    /// `specialize_script_with_atom_prefix` for a program whose functions keep their records:
-    /// a host script whose program will keep only a static body of `source`, or an entry.
-    pub(crate) fn specialize_kept_script_with_atom_prefix(
-        source: &str,
-        name: &str,
-        atom_prefix: &dyn AtomPrefix,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::KeptRecords, ReleasedRecords::Dropped, SourceType::script())
+        Self::specialize_script_shaped(source, name, atom_prefix, ParsedProgramShape::Any, released, SourceType::script(), None)
     }
 
     fn specialize_script_shaped(
@@ -855,6 +848,7 @@ impl Engine {
         shape: ParsedProgramShape<'_>,
         released: ReleasedRecords,
         source_type: SourceType,
+        provided_text: Option<crate::bytecode::SourceText>,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
@@ -869,7 +863,7 @@ impl Engine {
             &[],
             shape,
             released,
-            None,
+            provided_text,
         )
     }
     pub fn specialize_unspecialized(
@@ -1909,7 +1903,7 @@ struct Compiler<'a> {
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
     /// The text the caller already holds in shared storage, which the program keeps in place
-    /// of a copy of `text` when it is exactly `text` (`source_text::kept_or_provided`).
+    /// of a copy of `text` (`source_text::kept_or_provided`).
     provided_text: Option<crate::bytecode::SourceText>,
     eval_annex_b_collisions: early::AnnexBCollisions,
     atoms: CompilerAtoms<'a>,

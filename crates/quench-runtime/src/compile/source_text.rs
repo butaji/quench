@@ -13,11 +13,14 @@ pub(super) fn kept(text: &str, eval: bool) -> SourceText {
     }
 }
 
-/// `provided` when it holds exactly `text`, which the program keeps without a copy of its own;
-/// otherwise the copy `kept` makes. A wrapped or hashbang-stripped text is never `provided`'s.
+/// `provided` when it holds exactly `text` (the same storage, or equal bytes), which the program
+/// keeps without a copy of its own; otherwise the copy `kept` makes. A wrapped or
+/// hashbang-stripped text is never `provided`'s.
 pub(super) fn kept_or_provided(text: &str, eval: bool, provided: Option<SourceText>) -> SourceText {
     match provided {
-        Some(provided) if provided.len() == text.len() && *provided == *text => provided,
+        Some(provided)
+            if provided.len() == text.len()
+                && (std::ptr::eq(provided.as_ptr(), text.as_ptr()) || *provided == *text) => provided,
         _ => kept(text, eval),
     }
 }

@@ -210,7 +210,7 @@ impl Engine {
         let outer = stubs.binary_search_by_key(&function, |(stub, _)| *stub).ok().map(|at| (span.start, &stubs[at].1));
         let checked = program.replay.as_deref().is_some_and(|replay| replay.checked_at_load(span.start));
         let window = ChunkWindow { source, start: chunk.start, function: span.start, outer, line_starts, utf16_excess, run, checked };
-        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script())
+        Self::specialize_script_shaped(&chunk.text, name, atom_prefix, ParsedProgramShape::FirstCallChunk(window), ReleasedRecords::Dropped, SourceType::script(), None)
     }
 }
 

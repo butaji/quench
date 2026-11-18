@@ -11288,7 +11288,7 @@ mod tests {
             let mut vm = Vm::new(host);
             vm.initialize_shared(&Rc::new(entry), super::super::builtins::RealmScope::Complete).unwrap();
             let prepared = vm.prepare_embedding_specialized_script_retaining(
-                source, "library", None, None, false, typescript,
+                source, "library", None, None, false, typescript, None,
             ).unwrap();
             for _ in 0..2 {
                 let result = vm.evaluate_embedding_prepared_script(&prepared).unwrap();
