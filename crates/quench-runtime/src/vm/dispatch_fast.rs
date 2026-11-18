@@ -3315,7 +3315,7 @@ use lane_reads::RecordOperand;
 mod loop_body;
 mod loop_resume;
 use loop_body::LoopBody;
-use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, staged_typeof_index, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
+use lane_frame::{is_row, jump_row, row_jump, jumps_by_row, lane_row, row_near, row_produces, FLAG_CLEAR, FLAG_SET, FLAG_UNREAD, lane_runs_row, staged_allocate, NameBinding, NameRead, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED};
 
 
 lane_handler! {
@@ -5998,17 +5998,6 @@ script_handler! {
             sibling!(lane_unary::<H>, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, Value::number(result));
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `Unary` of `UNARY_TYPEOF_INDEX`, chosen when the view was derived
-    /// (`specialize_register_operands`): the index of `typeof`'s name, which runs no guest code.
-    fn lane_typeof_index<>(cx, r, ip, i, view) {
-        if !staged_typeof_index(r, Carried::script_in(cx, view), i.a, i.b) {
-            r.set(i.a, unsafe { vm(cx) }.typeof_index_value(r.get(i.b)));
-        }
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
 }
@@ -20902,9 +20891,8 @@ fn specialize_register_operands<H: Host>(
             continue;
         }
         if is_row::<H, { crate::staged::UNARY_ROW }>(record.handler) {
-            if instruction.imm() == crate::bytecode::UNARY_TYPEOF_INDEX {
-                record.handler = lane_typeof_index::<H> as Handler as *const ();
-            } else if tested_next && let Some(handler) = typeof_test_jump_handler::<H>(instruction.imm()) {
+            // `UNARY_TYPEOF_INDEX` keeps the plain row, which decodes it (`TypeofIndex`).
+            if tested_next && let Some(handler) = typeof_test_jump_handler::<H>(instruction.imm()) {
                 record.handler = handler as *const ();
             } else if let Some(handler) = unary_operator_handler::<H>(instruction.imm()) {
                 record.handler = handler as *const ();

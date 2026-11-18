@@ -12,21 +12,6 @@ fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
     }
 }
 
-/// The `typeof` name index of `source` into `destination` by the staged operation; false,
-/// writing nothing, where a heap value's cell decides the name.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_typeof_index(r: Registers, view: Carried, destination: u16, source: u16) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    match crate::staged::step(&mut stage, &mut frame, Operation::TypeofIndex { destination, source }) {
-        Step::Value(_) => true,
-        Step::Unresolved => false,
-        Step::Control(_) => unreachable!("a typeof transfers no control"),
-    }
-}
-
-}
-
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
 /// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
 /// storing nothing, where the binding does not take the direct store.
