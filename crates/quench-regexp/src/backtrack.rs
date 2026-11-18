@@ -17,6 +17,7 @@ use std::ops::Range;
 
 mod compile;
 mod dispatch;
+pub mod machine;
 pub mod matcher;
 pub mod native;
 mod possessive;
@@ -28,7 +29,7 @@ mod workspace;
 use dispatch::Dispatch;
 use matcher::{Admission, AssertionTest};
 use native::NativeSlot;
-pub use specialize::CAPTURE_REGISTERS;
+pub use machine::CAPTURE_REGISTERS;
 use specialize::{replay, step, Concrete, Cursor, Replay, Step};
 pub(crate) use workspace::recycle_captures;
 use workspace::{AnchoredRun, ClassRun, anchored_run_of, class_run_of};
@@ -44,10 +45,7 @@ const UNSET: usize = usize::MAX;
 mod exhaustion;
 pub use exhaustion::take_backtrack_exhausted;
 use exhaustion::{EXHAUSTED, MAXIMUM_STACK_FRAMES};
-/// A quantifier bound without a maximum.
-const UNBOUNDED: u32 = u32::MAX;
-/// `Inst::LoopTail::start` of a loop whose body cannot match empty, which keeps no start.
-const NO_START: u32 = u32::MAX;
+use machine::{NO_START, UNBOUNDED};
 
 /// The code units an ASCII bitmap covers.
 const ASCII_UNITS: u32 = ASCII_MAX as u32 + 1;
@@ -1719,10 +1717,12 @@ impl Program {
         let mut stage = Concrete { program: self, text, registers, stack };
         let mut at = Cursor::at(pc, position);
         loop {
-            match step(&mut stage, self.instructions[at.pc() as usize], at) {
+            match step(&mut stage, self.instructions[at.pc as usize], at) {
                 Step::Continue(next) => at = next,
-                Step::Accept => return Some((start, at.position())),
+                Step::Accept => return Some((start, at.position)),
                 Step::Fail => at = self.resume(&mut stage, search, &mut start)?,
+                // SAFETY: only an emitting machine branches; `Concrete::choose` returns an arm's step.
+                Step::Branched => unsafe { std::hint::unreachable_unchecked() },
             }
         }
     }

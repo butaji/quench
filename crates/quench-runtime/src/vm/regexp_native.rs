@@ -9,11 +9,11 @@ use crate::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineSc
 use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use quench_regexp::backtrack::CAPTURE_REGISTERS;
-use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission, AssertionTest};
+use quench_regexp::backtrack::matcher::{admits, ascii_units_are_words, assertion_holds, takes_unit, word_assertion_given, Admission};
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativeInst, NativePlan, NativeRestarts, NativeTest, NATIVE_FAIL, NATIVE_FRAME_WORDS, NATIVE_OVERFLOW};
 
 mod look;
+mod machine;
 mod repeats;
 mod stage;
 
@@ -193,13 +193,6 @@ impl<'a, 'f> Emit<'a, 'f> {
         self.b.branch_if(condition, (then, &[]), (otherwise, &[]));
     }
 
-    /// Continues in a new block where `condition` holds, failing where it does not.
-    fn require(&mut self, condition: ir::Value) {
-        let held = self.b.new_block();
-        self.branch(condition, held, self.backtrack);
-        self.b.enter_open(held);
-    }
-
     fn compare(&mut self, relation: Relation, left: ir::Value, right: ir::Value) -> ir::Value {
         self.b.raw_compare(relation, left, right)
     }
@@ -246,111 +239,6 @@ impl<'a, 'f> Emit<'a, 'f> {
             self.resumes.len() - 1
         });
         FIRST_RESUME + index as i64
-    }
-
-    /// Records the register's old value so backtracking puts it back, then sets it.
-    fn set_register(&mut self, index: u32, value: ir::Value) {
-        let old = self.register(index);
-        let id = self.constant(RESTORE);
-        let register = self.constant(i64::from(index));
-        self.push_frame(id, register, old);
-        self.store_register(index, value);
-    }
-
-    /// `set_register` of both bounds of a capture.
-    fn set_capture(&mut self, capture: u32, start: ir::Value, end: ir::Value) {
-        self.set_register(CAPTURE_REGISTERS * capture, start);
-        self.set_register(CAPTURE_REGISTERS * capture + 1, end);
-    }
-
-    fn instruction(&mut self, pc: u32, inst: &NativeInst) {
-        match inst {
-            NativeInst::Unit(test) => self.unit(pc, *test),
-            NativeInst::UnitRepeat { test, min, max, greedy, atomic } => self.unit_repeat(pc, *test, (*min, *max), (*greedy, *atomic)),
-            NativeInst::Assert(test) => self.assertion(pc, *test),
-            NativeInst::Split { alternative } => {
-                let position = self.position();
-                self.push_resume(Resume::Choice(*alternative), position, position);
-                self.next(pc);
-            }
-            NativeInst::GuardedSplit { alternative, guard } => self.guarded_split(pc, *alternative, *guard),
-            NativeInst::Jump(target) => self.goto(*target),
-            NativeInst::Match => {
-                let position = self.position();
-                self.b.leave(&[position]);
-            }
-            NativeInst::Look { .. } => self.look(pc),
-            NativeInst::LookSucceed => self.look_succeed(pc),
-            other => self.registers_instruction(pc, other),
-        }
-    }
-
-    fn unit(&mut self, pc: u32, test: NativeTest) {
-        let position = self.position();
-        let takes = takes_unit(self, test, position);
-        self.require(takes);
-        let after = self.b.raw_binary_imm(Binary::Add, position, 1);
-        self.set_position(after);
-        self.next(pc);
-    }
-
-    fn assertion(&mut self, pc: u32, test: AssertionTest) {
-        let position = self.position();
-        let holds = assertion_holds(self, test, position);
-        self.require(holds);
-        self.next(pc);
-    }
-
-    fn guarded_split(&mut self, pc: u32, alternative: u32, guard: Admission<NativeTest>) {
-        let position = self.position();
-        let admitted = admits(self, guard, position);
-        let (admit, refuse) = (self.b.new_block(), self.b.new_block());
-        self.branch(admitted, admit, refuse);
-        self.b.enter_open(admit);
-        self.push_resume(Resume::Choice(alternative), position, position);
-        self.next(pc);
-        self.b.enter_open(refuse);
-        self.goto(alternative);
-    }
-
-    /// The instructions that read and write registers, the counters and captures of the loops.
-    fn registers_instruction(&mut self, pc: u32, inst: &NativeInst) {
-        match inst {
-            NativeInst::CaptureOpen { temporary, count, restores } => {
-                let position = self.position();
-                for register in *temporary..*temporary + *count {
-                    if *restores {
-                        self.set_register(register, position);
-                    } else {
-                        self.store_register(register, position);
-                    }
-                }
-                self.next(pc);
-            }
-            NativeInst::CaptureClose { capture, temporary } => {
-                let start = self.register(*temporary);
-                let end = self.position();
-                self.set_capture(*capture, start, end);
-                self.next(pc);
-            }
-            NativeInst::ResetCaptures { captures } => self.reset_captures(pc, captures),
-            other => self.loop_instruction(pc, other),
-        }
-    }
-
-    fn reset_captures(&mut self, pc: u32, captures: &[u32]) {
-        let unset = self.constant(self.plan.unset as i64);
-        for capture in captures {
-            let current = self.register(CAPTURE_REGISTERS * capture);
-            let is_set = self.compare(Relation::NotEqual, current, unset);
-            let (reset, skip) = (self.b.new_block(), self.b.new_block());
-            self.branch(is_set, reset, skip);
-            self.b.enter_open(reset);
-            self.set_capture(*capture, unset, unset);
-            self.b.goto(skip, &[]);
-            self.b.enter_open(skip);
-        }
-        self.next(pc);
     }
 
     /// The backtrack block: pops a frame and goes where its id says; then each resume block.

@@ -79,11 +79,81 @@ impl<T: Text + ?Sized> MatchStage for Concrete<'_, T> {
     }
 }
 
-impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
+impl<T: Text + ?Sized> Machine for Concrete<'_, T> {
     #[inline(always)]
-    fn run_end(&self, test: UnitTest, from: usize, to: usize) -> usize {
+    fn constant(&mut self, value: usize) -> usize {
+        value
+    }
+
+    #[inline(always)]
+    fn unset(&mut self) -> usize {
+        UNSET
+    }
+
+    #[inline(always)]
+    fn load(&mut self, register: u32) -> usize {
+        self.registers[register as usize]
+    }
+
+    #[inline(always)]
+    fn store(&mut self, register: u32, value: usize) {
+        self.registers[register as usize] = value;
+    }
+
+    #[inline(always)]
+    fn taken_end(&mut self, test: UnitTest, from: usize, to: usize) -> usize {
         self.program.run_end(test, self.text, from, to)
     }
+
+    #[inline(always)]
+    fn ceiling(&mut self, position: usize, count: u32) -> usize {
+        position.saturating_add(count as usize).min(self.text.len())
+    }
+
+    #[inline(always)]
+    fn push_restore(&mut self, register: u32, value: usize) {
+        self.push(Frame::Restore { register, value });
+    }
+
+    #[inline(always)]
+    fn push_capture_restore(&mut self, capture: u32, start: usize, end: usize) {
+        self.push(Frame::RestoreCapture { capture, start, end });
+    }
+
+    #[inline(always)]
+    fn push_choice(&mut self, pc: u32, position: usize) {
+        self.push(Frame::Choice { pc, position });
+    }
+
+    #[inline(always)]
+    fn push_greedy(&mut self, pc: u32, floor: usize, position: usize) {
+        self.push(Frame::Greedy { pc, floor, position });
+    }
+
+    #[inline(always)]
+    fn push_lazy(&mut self, pc: u32, test: UnitTest, ceiling: usize, position: usize) {
+        self.push(Frame::Lazy { pc, test, ceiling, position });
+    }
+
+    #[inline(always)]
+    fn require(&mut self, flag: bool) -> bool {
+        flag
+    }
+
+    #[inline(always)]
+    fn when(&mut self, flag: bool, effect: impl FnOnce(&mut Self)) {
+        if flag {
+            effect(self);
+        }
+    }
+
+    #[inline(always)]
+    fn choose(&mut self, flag: bool, then: impl FnOnce(&mut Self) -> Step, otherwise: impl FnOnce(&mut Self) -> Step) -> Step {
+        if flag { then(self) } else { otherwise(self) }
+    }
+}
+
+impl<T: Text + ?Sized> Stage for Concrete<'_, T> {
 
     #[inline(always)]
     fn run_start(&self, test: UnitTest, from: usize, to: usize) -> usize {

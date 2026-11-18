@@ -81,10 +81,6 @@ pub const NATIVE_FAIL: usize = usize::MAX;
 pub const NATIVE_OVERFLOW: usize = usize::MAX - 1;
 /// The units of an ASCII subject: a byte below this.
 pub const NATIVE_ASCII_UNITS: u32 = ASCII_UNITS;
-/// A quantifier bound without a maximum.
-pub const NATIVE_UNBOUNDED: u32 = super::UNBOUNDED;
-/// `LoopTail::start` of a loop whose body cannot match empty: no empty check.
-pub const NATIVE_NO_START: u32 = super::NO_START;
 /// The words of one backtracking frame: its resume id and two operands.
 pub const NATIVE_FRAME_WORDS: usize = 3;
 

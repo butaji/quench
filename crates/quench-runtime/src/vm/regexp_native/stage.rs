@@ -3,7 +3,7 @@
 //! one, and a guarded operation a pair of blocks that join on the flag.
 use super::Emit;
 use crate::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation};
-use cranelift_codegen::ir::{self, MemFlagsData};
+use cranelift_codegen::ir::{self, condcodes::CondCode, InstBuilder, MemFlagsData};
 use quench_regexp::backtrack::matcher::MatchStage;
 use quench_regexp::backtrack::native::{NativeTest, NATIVE_ASCII_UNITS};
 
@@ -24,6 +24,15 @@ impl Emit<'_, '_> {
         let bit = self.b.raw_binary(Binary::ShiftRightUnsigned, word, shift);
         let bit = self.b.raw_binary_imm(Binary::And, bit, 1);
         self.compare_constant(Relation::NotEqual, bit, 0)
+    }
+
+    /// The opposite comparison where `flag` is a comparison.
+    fn complement(&mut self, flag: ir::Value) -> Option<ir::Value> {
+        let ir::ValueDef::Result(inst, _) = self.b.func.dfg.value_def(flag) else { return None };
+        match self.b.func.dfg.insts[inst] {
+            ir::InstructionData::IntCompare { cond, args: [left, right], .. } => Some(self.b.ins().icmp(cond.complement(), left, right)),
+            _ => None,
+        }
     }
 
     /// Whether `byte` lies in `first..=last`.
@@ -95,8 +104,9 @@ impl MatchStage for Emit<'_, '_> {
         found
     }
 
+    /// The complement of a comparison is the opposite comparison, which a branch fuses with.
     fn not(&mut self, flag: ir::Value) -> ir::Value {
-        self.b.raw_binary_imm(Binary::Xor, flag, 1)
+        self.complement(flag).unwrap_or_else(|| self.b.raw_binary_imm(Binary::Xor, flag, 1))
     }
 
     fn differ(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
