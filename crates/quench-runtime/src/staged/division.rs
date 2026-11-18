@@ -120,6 +120,7 @@ impl<W, P> Operation<W, P> {
             Self::Yield { .. } => SmallVec::from_slice(&[("value", REGISTER)]),
             Self::YieldStar { .. } => SmallVec::from_slice(&[("iterable", REGISTER)]),
             Self::TypeofIndex { .. } | Self::TypeofString { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
+            Self::SetFunctionName { .. } => SmallVec::from_slice(&[("function", REGISTER), ("name", BYTECODE), ("site", SITE)]),
             Self::TypeofTest { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER),
                 ("index", BYTECODE), ("negated", BYTECODE)]),
             _ => self.heap_operand_times(),

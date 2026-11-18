@@ -866,6 +866,10 @@ pub(crate) enum Operation<W, P> {
     /// Define `destination` with the `typeof` name of the global `atom` through cache `site`
     /// (the lane's own read); an unresolvable name is `undefined`, not an error.
     GlobalTypeof { destination: Register, atom: u32, site: u16 },
+    /// SetFunctionName of the function in register `function` to the program atom `name` through cache
+    /// `site`: the frame's own naming (`Frame::set_function_name`); a frame that holds none leaves at the
+    /// miss edge, where the interpreter names it. Defines no register.
+    SetFunctionName { function: Register, name: u32, site: u16 },
     /// The global-name store of `source` to `atom` through cache `site`, an initialization
     /// where `initialize`; a binding the lane's store does not take leaves at the miss edge.
     GlobalWrite { source: Register, atom: u32, site: u16, initialize: bool },

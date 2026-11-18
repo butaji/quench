@@ -44,6 +44,8 @@ pub(super) fn decode<W, P>(instruction: WideInstruction) -> Option<Operation<W, 
         Op::ArgumentsLength => Operation::ArgumentsLength { destination: destination(), slot: slot()? },
         Op::ArgumentGet => Operation::ArgumentGet { destination: destination(), index: instruction.register_b(), slot: slot()? },
         Op::LoadNameTypeof => Operation::GlobalTypeof { destination: destination(), atom: instruction.atom_index(), site: instruction.cache_site_index() },
+        Op::SetFunctionName => Operation::SetFunctionName { function: instruction.register_a(), name: instruction.atom_index(),
+            site: instruction.cache_site_index() },
         Op::StoreName => Operation::GlobalWrite { source: instruction.register_a(), atom: instruction.atom_index(),
             site: instruction.cache_site_index(),
             initialize: instruction.boolean_field(crate::bytecode::InstructionField::B)? },
@@ -96,6 +98,7 @@ pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &m
         Operation::ArgumentsLength { destination, slot } => arguments_length(stage, frame, destination, slot),
         Operation::ArgumentGet { destination, index, slot } => argument_get(stage, frame, destination, index, slot),
         Operation::GlobalTypeof { destination, atom, site } => global_typeof(stage, frame, destination, (atom, site)),
+        Operation::SetFunctionName { function, name, site } => set_function_name(stage, frame, function, (name, site)),
         Operation::GlobalWrite { source, atom, site, initialize } =>
             global_write(stage, frame, source, (atom, site, initialize)),
         Operation::LoadName { destination, atom, site, receiver, proof } =>
@@ -171,6 +174,18 @@ fn global_typeof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
     match frame.global_typeof(stage, destination, atom, site) {
         Some(()) => Step::Value(stage.constant(0)),
         None => calling(stage, frame, CallOut::GlobalTypeof { atom, site }, Some(destination)),
+    }
+}
+
+/// `SetFunctionName`: the frame's own naming of the function in `function`, which defines no register;
+/// where the frame holds no naming, the row leaves to the interpreter.
+#[inline(always)]
+fn set_function_name<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, function: Register,
+    (name, site): (u32, u16)) -> Step<S::Word, F::Control> {
+    let word = frame.tagged(stage, function);
+    match frame.set_function_name(stage, word, name, site) {
+        Some(()) => Step::Value(word),
+        None => Step::Unresolved,
     }
 }
 
