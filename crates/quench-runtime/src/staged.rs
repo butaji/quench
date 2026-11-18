@@ -739,6 +739,50 @@ impl Operation<u64, ()> {
         instruction.op() == Op::Throw
     }
 
+    /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
+    pub(crate) fn is_field_read(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::GetField
+    }
+
+    /// Whether `instruction` is a named field store (`SetField`, `SetThisField`, or a store of a
+    /// field of `this`), whatever its operand.
+    pub(crate) fn is_field_store(instruction: WideInstruction) -> bool {
+        instruction.op().is_field_store()
+    }
+
+    /// Whether `instruction` is the named store `SetField` itself (not a store to `this`).
+    pub(crate) fn is_set_field(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::SetField
+    }
+
+    /// Whether `instruction` reads a capture (`LoadCapture`), whatever its result flags.
+    pub(crate) fn is_capture_read(instruction: WideInstruction) -> bool {
+        instruction.op() == Op::LoadCapture
+    }
+
+    /// Whether `instruction` is an ordinary call (`Call`, `CallArray`), which a native tier
+    /// profiles and dispatches as a call.
+    pub(crate) fn is_ordinary_call(instruction: WideInstruction) -> bool {
+        instruction.op().is_ordinary_call()
+    }
+
+    /// The field cache sites `instruction` reads (`true`) or stores through (`false`), as the
+    /// program's field sites name them: a named read's lookup (its site, or the sites of a
+    /// nested lookup), and a field store's cache site.
+    pub(crate) fn field_cache_sites(instruction: WideInstruction, field_sites: &[crate::bytecode::FieldSite]) -> Vec<(u16, bool)> {
+        if Self::is_field_read(instruction) {
+            return match instruction.field_lookup() {
+                Some(FieldLookup::Atom { cache_site, .. }) => vec![(cache_site, true)],
+                Some(FieldLookup::Site(index)) => field_sites.get(index).map_or_else(Vec::new, |site| {
+                    let reads = [Some(site.first), site.second].into_iter().flatten().map(|(_, cache)| (cache, true));
+                    reads.chain(site.sink.map(|(_, cache)| (cache, false))).collect()
+                }),
+                None => Vec::new(),
+            };
+        }
+        if Self::is_field_store(instruction) { vec![(instruction.cache_site_index(), false)] } else { Vec::new() }
+    }
+
     /// Whether a unit holds `instruction` by its own rewrite or an exit rather than by renaming
     /// (the catalog's `UNIT_REWRITTEN` trait).
     pub(crate) fn is_unit_rewritten(instruction: WideInstruction) -> bool {
