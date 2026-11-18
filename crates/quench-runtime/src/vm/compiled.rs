@@ -3240,6 +3240,13 @@ pub(super) struct CompiledOsrRegion {
     parked: std::cell::Cell<Option<Box<JsStepDispatch>>>,
     /// Whether the region has parked its dispatch (`parked`).
     made: std::cell::Cell<bool>,
+    /// Whether the region's instructions call, which decides how its captures bind
+    /// (`osr_lane::bind_captures`): found at its first run, not rescanned at each.
+    region_calls: std::cell::OnceCell<bool>,
+    /// The dense capture copy a run of a region that reads its captures from the entry points
+    /// the dispatch at (`osr_lane::bind_captures`), kept between runs so an entry fills it in
+    /// place instead of allocating it. A run entered while another runs takes an empty one.
+    dense: std::cell::Cell<Vec<crate::Value>>,
 }
 
 
@@ -3313,12 +3320,16 @@ impl CompiledOsrRegion {
         (lane_context, direct_calls): (usize, bool),
     ) -> RegionRun {
         let lend = self.calls.enters_callees().then_some(direct_calls);
-        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>| {
+        let calls = *self.region_calls.get_or_init(|| osr_lane::region_calls(region));
+        // The dense capture copy, which the dispatch reads during the run: put back after it.
+        let mut dense = self.dense.take();
+        // `rebound`: the dispatch was just rebound (`rebind_region`), whose base refresh set the
+        // program's field entries and store specialization already.
+        let mut bind = |dispatch: &mut JsStepDispatch, residual: &Rc<ResidualProgram>, vm: &mut Vm<H>, rebound: bool| {
             osr_lane::bind_loop::<H>(dispatch, region, entry, lane_context);
             // SAFETY: the caller's contract covers the context and `registers`.
-            let captures = unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context) };
-            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers) };
-            captures
+            unsafe { osr_lane::bind_captures::<H>(dispatch, region, entry, lane_context, calls, &mut dense) };
+            unsafe { osr_lane::bind_frame(dispatch, residual, vm, (program, function, lane_context), registers, rebound) };
         };
         // A region that calls callees by their entries runs on the lane frame's payload, which their
         // own helpers read (`region_lend`).
@@ -3329,7 +3340,7 @@ impl CompiledOsrRegion {
                 match vm.programs.get(program) {
                     Some(residual) => {
                         dispatch.rebind_region(vm, program, &residual, frame);
-                        let _captures = bind(&mut dispatch, &residual, vm);
+                        bind(&mut dispatch, &residual, vm, true);
                         let run = osr_lane::enter(&mut dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                         self.parked.set(Some(dispatch));
                         run
@@ -3339,7 +3350,7 @@ impl CompiledOsrRegion {
             },
             None => unsafe { JsNativeActivation::with_function(&mut *vm, program, (frame, function), 0, false, self.crossing == Crossing::General, |native, vm| {
                 native.dispatch.bind_native_storage(vm);
-                let _captures = bind(&mut native.dispatch, &native._program, vm);
+                bind(&mut native.dispatch, &native._program, vm, false);
                 let run = osr_lane::enter(&mut native.dispatch, vm, program, (code, resume), registers, interrupt, (lane_context, lend));
                 // The first run of the region parks a dispatch for the runs after it.
                 if self.crossing == Crossing::General && !self.made.replace(true) {
@@ -3348,6 +3359,7 @@ impl CompiledOsrRegion {
                 run
             }) }.unwrap_or(RegionRun::own(LaneExit::Terminated)),
         };
+        self.dense.set(dense);
         // SAFETY: as above; the activation that held `vm` has returned.
         note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome

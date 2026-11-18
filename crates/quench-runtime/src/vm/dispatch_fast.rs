@@ -7718,7 +7718,13 @@ fn lane_specialize<H: Host>(cx: *mut LaneContext<H>, own: &LaneView, function: u
         {
             return outcome;
         }
+        let started: Option<Vec<super::compiled::LaneExit>> = match &work { super::compiled::LaneBodyWork::Start { generic, .. } => Some(generic.to_vec()), _ => None };
         let outcome = vm.lane_body_work(code, function, &|function, pc| lane_unit_targets(cx, function, pc), &|function, header| lane_unit_trips(cx, function, header), &|callee| lane_callee_captures(cx, callee), &direct, work, None);
+        // The tier model picked b-jit for good (`tier_model::Pick::Base`): u-jit stays ahead of
+        // b-jit, so a function it would not beat takes the stencil body, stitched at once.
+        if let (super::compiled::LaneBodyOutcome::Base, Some(generic)) = (&outcome, &started) {
+            return vm.base_body_work(code, function, generic, parameters, own, &direct);
+        }
         if diagnostics && let super::compiled::LaneBodyOutcome::Published(method) = &outcome {
             if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
         }
