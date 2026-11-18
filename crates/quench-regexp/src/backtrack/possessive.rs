@@ -28,9 +28,8 @@ pub(super) fn restart_skip(instructions: &[Inst], scanned: bool) -> Option<UnitT
 /// that ends just before an occurrence of the byte (`Program::inner_literal_start`).
 pub(super) fn run_then_literal(instructions: &[Inst], sets: &[MatchSet], scanned: bool) -> Option<(UnitTest, u8)> {
     let test = restart_skip(instructions, scanned)?;
-    let mut rest = instructions.iter().filter(|inst| !matches!(inst, Inst::CaptureOpen { .. } | Inst::CaptureClose { .. }));
-    let _repeat = rest.next()?;
-    let Inst::Unit(UnitTest::Exact(literal)) = *rest.next()? else { return None };
+    let repeat = instructions.iter().position(|inst| !matches!(inst, Inst::CaptureOpen { .. }))?;
+    let UnitTest::Exact(literal) = follower(&instructions[repeat + 1..])? else { return None };
     let byte = u8::try_from(literal).ok().filter(u8::is_ascii)?;
     let refused = match test {
         UnitTest::Exact(unit) => unit != literal,
