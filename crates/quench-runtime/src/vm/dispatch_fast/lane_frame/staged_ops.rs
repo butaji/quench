@@ -2,16 +2,6 @@
 //! record, steps the operation on the concrete stage, and answers the edge or the written value.
 use super::*;
 
-/// The edge a staged jump's step takes, or `None` where the interpreter's own path decides it.
-#[inline(always)]
-fn jump_edge(step: Step<u64, Edge>) -> Option<Edge> {
-    match step {
-        Step::Control(edge) => Some(edge),
-        Step::Unresolved => None,
-        Step::Value(_) => unreachable!("a jump produces no value"),
-    }
-}
-
 /// `StoreCapture` of `source` to the capture at `depth` and `slot` past the running function's
 /// dense slots, by the staged operation and the lane's own store (`lane_capture_store`); false,
 /// storing nothing, where the binding does not take the direct store.
@@ -24,30 +14,7 @@ pub(in crate::vm::dispatch_fast) fn staged_store_capture<H: Host>(cx: *mut LaneC
     matches!(crate::staged::step(&mut stage, &mut frame, Operation::StoreCapture { source, depth, slot }), Step::Value(_))
 }
 
-/// The edge the staged comparison jump of registers `left` and `right` takes, or `None` where the
-/// interpreter's own path decides it. The jump's backward poll is `lane_jump`'s, the one copy
-/// every jump takes through `jump_on_edge!`.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_compare_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried,
-    comparison: Comparison, [left, right]: [u16; 2]) -> Option<Edge> {
-    staged_comparison_jump::<H>(cx, r, view, comparison, [RecordOperand::Register(left), RecordOperand::Register(right)])
-}
 
-
-
-/// The edge the staged jump of `comparison` over the record's `operands` takes, or `None` where
-/// the interpreter's own path decides it.
-#[inline(always)]
-pub(in crate::vm::dispatch_fast) fn staged_comparison_jump<H: Host>(cx: *mut LaneContext<H>, r: Registers, view: Carried, comparison: Comparison,
-    operands: [RecordOperand; 2]) -> Option<Edge> {
-    let mut stage = Concrete::new(std::ptr::null());
-    let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
-    frame.decisions = Some(Decisions::of(cx));
-    let ([left, right], reads) = RecordOperand::staged_pair::<H>(cx, operands);
-    frame.reads = reads;
-    let operation = Operation::CompareJump { comparison, left, right, negate: true };
-    jump_edge(crate::staged::step(&mut stage, &mut frame, operation))
-}
 
 /// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected
 /// binding where `root`), by the staged operation: the running function's own slots, else the lane's

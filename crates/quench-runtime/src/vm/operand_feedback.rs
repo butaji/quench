@@ -164,17 +164,6 @@ pub(super) unsafe fn note_operands<H: Host>(cx: *mut LaneContext<H>, ip: Ip, lef
     }
 }
 
-/// Adds both Number kinds to the feedback byte of the record at `ip`, for a handler that
-/// stops noting Number pairs (`requicken_number_relation`).
-///
-/// # Safety
-/// As `note_operands`.
-pub(super) unsafe fn note_number_kinds<H: Host>(cx: *mut LaneContext<H>, ip: Ip) {
-    // SAFETY: as the function's own.
-    let cell = unsafe { feedback_cell((*cx).base, ip) };
-    cell.set(OperandKinds(cell.get()).union(OperandKinds::INT32).union(OperandKinds::DOUBLE).0);
-}
-
 /// Adds `kind` to the feedback byte of the record at `ip`: what `note_operands` adds for an
 /// operand pair already known to be of that kind (two BigInts, two strings), without
 /// classifying them again.

@@ -1,7 +1,7 @@
 //! The interpreter's register frame: `staged` moves and constants over the live file.
 
 use super::*;
-use super::lane_reads::{RecordOperand, Reads};
+use super::lane_reads::Reads;
 use crate::bytecode::{Operand, Register};
 use crate::typed_ir::Type;
 use crate::bytecode::RegisterWindow;
@@ -1010,7 +1010,7 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         let binary: unsafe fn(*mut (), u32, Value, Value) -> Option<Value> =
             |context, operator, left, right| unsafe { super::lane_binary_values::<H>(context.cast(), operator, left, right) };
         // Its operands may name a constant, a plain local or a capture, and a comparison pair its words
-        // leave is the VM's steady decision (`staged_comparison_jump`).
+        // leave is the VM's steady decision (`staged::step` over the comparison).
         return LaneFrame::<ACC> { binary: Some((cx.cast(), binary)), decisions: Some(Decisions::of(cx)), reads: Reads::of_jump::<H>(cx, None),
             ..LaneFrame::<ACC>::new(r, view) };
     }
@@ -1170,12 +1170,12 @@ macro_rules! row_step {
 }
 
 /// Where opcode `op`'s jump row leaves when its words do not decide the edge: a truth test of a
-/// heap value asks its cell (`lane_jump_test_cell`); a comparison the frame leaves takes the
+/// heap value asks its cell (`jump_test_cell_miss`); a comparison the frame leaves takes the
 /// lane's comparison chain (`lane_jump_binary_false_chain`); any other takes the VM's general step.
 const fn jump_row_miss<H: Host, const BACKWARD: bool>(op: Op) -> Handler {
     match crate::staged::miss(op) {
-        crate::staged::Miss::CellTruth { taken: false } => super::lane_jump_test_cell::<H, BACKWARD, false>,
-        crate::staged::Miss::CellTruth { taken: true } => super::lane_jump_test_cell::<H, BACKWARD, true>,
+        crate::staged::Miss::CellTruth { taken: false } => super::jump_test_cell_miss::<H, BACKWARD, false>,
+        crate::staged::Miss::CellTruth { taken: true } => super::jump_test_cell_miss::<H, BACKWARD, true>,
         crate::staged::Miss::CompareChain => super::lane_jump_binary_false_chain::<H, BACKWARD>,
         _ => lane_general_step::<H>,
     }
@@ -1540,8 +1540,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
             )),*]
         };
     }
-    let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
-    const { assert!(crate::staged::FUSED_CHAINS.len() <= 32, "`chains!` covers 32 chains; add indices") };
+    let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36);
+    const { assert!(crate::staged::FUSED_CHAINS.len() <= 37, "`chains!` covers 37 chains; add indices") };
     for pc in 0..records.len() {
         let Some((_, length, backward, row)) = chains.iter().find(|(links, length, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))
@@ -1593,8 +1593,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_rows<H: Host>(records: &mut [LaneInstru
             )),*]
         };
     }
-    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63);
-    const { assert!(crate::staged::FUSED_ROWS.len() <= 64, "`pairs!` covers 64 fused pairs; add indices") };
+    let pairs = pairs!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81);
+    const { assert!(crate::staged::FUSED_ROWS.len() <= 82, "`pairs!` covers 82 fused pairs; add indices") };
     for pc in 0..records.len().saturating_sub(1) {
         let (first, second) = (records[pc].handler, records[pc + 1].handler);
         let Some((_, _, backward, mode, fused, plain)) = pairs.iter().find(|(a, b, _, _, _, _)| a(first) && b(second)) else {

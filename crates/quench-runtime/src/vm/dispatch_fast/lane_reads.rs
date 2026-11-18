@@ -1,73 +1,8 @@
 //! What the interpreter's staged frame reads beyond its registers: the constants, local slots and
-//! capture slots a jump record or a capture row names. A record's operands are data decoded once
-//! (`RecordOperand`); the frame answers each from the running lane, so a handler states which
-//! operands its record holds and the staged step decides the rest.
+//! capture slots a jump record or a capture row names. The frame answers each from the running lane.
 
 use super::*;
 use crate::bytecode::{Operand, OperandKind};
-
-/// The constant index a staged operand names where the record holds its constant as an immediate
-/// (`RecordOperand::Immediate`): the frame answers that index with the immediate itself.
-const IMMEDIATE_CONSTANT: u32 = 0;
-
-/// A comparison jump's operand as its record holds it.
-#[derive(Clone, Copy)]
-pub(super) enum RecordOperand {
-    Register(u16),
-    /// A plain local slot of the running function.
-    Local(u16),
-    /// A constant of the program, by index.
-    Constant(u16),
-    /// A constant the record carries itself (a small integer, a Boolean).
-    Immediate(Value),
-}
-
-impl RecordOperand {
-    /// The operand an encoded record field names; `None` for a field operand, which only the
-    /// general path reads.
-    #[inline(always)] pub(super) fn encoded(encoded: u16) -> Option<Self> {
-        let operand = Operand(encoded);
-        Some(match operand.kind()? {
-            OperandKind::Register => Self::Register(operand.payload()),
-            OperandKind::Local => Self::Local(operand.payload()),
-            OperandKind::Constant => Self::Constant(operand.payload()),
-            OperandKind::Field => return None,
-        })
-    }
-
-    /// The staged operand, and the immediate the frame answers its constant index with; inlined so
-    /// the encoding folds into the reader, which decodes it again (`Reads::word`).
-    #[inline(always)]
-    fn staged(self) -> (Operand, Option<Value>) {
-        let constant = |index| Operand::constant(index).expect("a record's constant operand was a constant operand");
-        match self {
-            Self::Register(register) => (Operand::register(register), None),
-            Self::Local(slot) => (Operand::local(slot), None),
-            Self::Constant(index) => (constant(u32::from(index)), None),
-            Self::Immediate(value) => (constant(IMMEDIATE_CONSTANT), Some(value)),
-        }
-    }
-
-    /// The value the operand holds in `r`, as the frame reads it.
-    #[inline(always)] pub(super) fn value<H: Host>(self, cx: *mut LaneContext<H>, r: Registers) -> Option<Value> {
-        match self {
-            Self::Register(register) => Some(r.get(register)),
-            operand => {
-                let (staged, immediate) = operand.staged();
-                Reads::of_jump::<H>(cx, immediate).word(staged)
-            }
-        }
-    }
-
-    /// The staged operands of a jump over `operands`, and the reads that answer them.
-    #[inline(always)]
-    pub(super) fn staged_pair<H: Host>(cx: *mut LaneContext<H>, operands: [Self; 2]) -> ([Operand; 2], Reads) {
-        // Destructured, not `array::map`, whose out-of-line drain would keep the pair in memory.
-        let [left, right] = operands;
-        let ((left, left_immediate), (right, right_immediate)) = (left.staged(), right.staged());
-        ([left, right], Reads::of_jump::<H>(cx, left_immediate.or(right_immediate)))
-    }
-}
 
 /// The reads a staged frame makes outside its registers, erased of the lane's host so the frame
 /// names no `H`.
