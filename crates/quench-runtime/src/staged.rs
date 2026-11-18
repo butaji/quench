@@ -334,6 +334,10 @@ pub(crate) const LOAD_NAME_TYPEOF_ROW: u16 = Op::LoadNameTypeof as u16;
 pub(crate) const LOCAL_LOAD_ROW: u16 = Op::LoadLocal as u16;
 pub(crate) const LOCAL_STORE_ROW: u16 = Op::StoreLocal as u16;
 pub(crate) const LOCAL_INITIALIZE_ROW: u16 = Op::InitializeTdz as u16;
+/// The opcodes whose rows read and write the running captured environment's slots (`LoadEnvLocal`,
+/// `StoreEnvLocal`), which a frame's specialization rewrites where the slot is not captured.
+pub(crate) const LOAD_ENV_LOCAL_ROW: u16 = Op::LoadEnvLocal as u16;
+pub(crate) const STORE_ENV_LOCAL_ROW: u16 = Op::StoreEnvLocal as u16;
 
 /// Whether `op` is a checked local access: its row reads and writes the frame's own locals in
 /// place, and leaves to its hand handler (`Miss`) for any slot those locals do not hold.

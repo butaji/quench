@@ -23118,22 +23118,23 @@ fn specialize_capture_updates<H: Host>(records: &mut [LaneInstruction]) {
 /// binding facts (`lane_load_frame_local`): a slot a mapped `arguments` mirrors, or a self
 /// binding a store must leave, keeps the general handler.
 fn specialize_frame_locals<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
-    let load = lane_load_local::<H> as Handler as *const ();
-    let store = lane_store_local::<H> as Handler as *const ();
     for record in records.iter_mut() {
         let slot = record.imm() as usize;
-        if (record.handler != load && record.handler != store)
-            || super::arguments::mapped_arguments_slot(function, slot).is_some()
-        {
+        let load = is_row::<H, { crate::staged::LOAD_ENV_LOCAL_ROW }>(record.handler);
+        let store = is_row::<H, { crate::staged::STORE_ENV_LOCAL_ROW }>(record.handler);
+        if (!load && !store) || super::arguments::mapped_arguments_slot(function, slot).is_some() {
             continue;
         }
+        // A slot the frame's captured environment holds is read and written there (`lane_load_frame_local`,
+        // `lane_store_frame_local`); one it does not hold is the frame's own local, which the generated
+        // LoadLocal and StoreLocal rows read and write.
         let environment = function.local_slot_uses_environment(slot);
-        let handler: Handler = match (record.handler == load, environment) {
+        let handler: Handler = match (load, environment) {
             (true, true) => lane_load_frame_local::<H, true>,
-            (true, false) => lane_load_frame_local::<H, false>,
+            (true, false) => lane_row::<H, { crate::staged::LOCAL_LOAD_ROW }, ACC_NONE, FLAG_UNREAD>,
             _ if function.is_self_binding_slot(slot) => continue,
             (false, true) => lane_store_frame_local::<H, true>,
-            (false, false) => lane_store_frame_local::<H, false>,
+            (false, false) => lane_row::<H, { crate::staged::LOCAL_STORE_ROW }, ACC_NONE, FLAG_UNREAD>,
         };
         record.handler = handler as *const ();
     }
