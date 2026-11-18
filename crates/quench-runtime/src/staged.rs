@@ -618,6 +618,9 @@ pub(crate) enum Operation<W, P> {
     SuperCall { destination: Register, callee: Register, arguments: Arguments, passing: Passing },
     /// Complete the activation with the value of `source` (`invoke::ret`).
     Return { source: Register },
+    /// Raise the value of register `source` (Throw). No staged row raises it: `step` leaves it
+    /// `Unresolved`, so each tier keeps its own throw path.
+    Throw { source: Register },
     /// The value `base[key]` reads, a present dense element where the array and the key's int32
     /// are proved (`element_rows`), else the VM's read; the tier defines the result register.
     ElementRead { base: Register, key: Operand },
@@ -701,6 +704,7 @@ impl<W, P> Operation<W, P> {
                 register: instruction.register_a(), taken: false },
             Op::JumpTrue => Self::JumpIf {
                 register: instruction.register_a(), taken: true },
+            Op::Throw => Self::Throw { source: instruction.register_a() },
             _ => Self::Return { source: instruction.register_a() },
         })
     }
@@ -850,9 +854,9 @@ impl Operation<u64, ()> {
         instruction.op() == Op::Construct
     }
 
-    /// Whether `instruction` throws: a row with no staged operation, which leaves at its miss edge.
+    /// Whether `instruction` throws: its decoded operation is `Throw`, which leaves at the miss edge.
     pub(crate) fn is_throw(instruction: WideInstruction) -> bool {
-        instruction.op() == Op::Throw
+        matches!(Self::of(instruction), Some(Self::Throw { .. }))
     }
 
     /// Whether `instruction` is a named field read (`GetField`), whatever its result flags.
