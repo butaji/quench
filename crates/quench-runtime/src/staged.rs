@@ -824,10 +824,11 @@ pub(crate) enum Operation<W, P> {
     /// `left == right` (or `===`; negated for `!=`, `!==`) where the two words decide it: the
     /// same word, two int32s, or `null` and `undefined` under `==`. Any other pair leaves at the
     /// miss edge, where the VM compares (strings, BigInts, conversions that run guest code).
-    Equality { destination: Register, left: Register, right: Register, strict: bool, negated: bool },
-    /// Any other `Binary` of two registers (a string or BigInt relation, an arithmetic of other
-    /// than Numbers, `instanceof`, `in`): the VM's own operation, a callout.
-    Binary { destination: Register, left: Register, right: Register, operator: u32 },
+    Equality { destination: Register, left: Operand, right: Operand, strict: bool, negated: bool },
+    /// Any other `Binary` of two operands, each a register or a program constant (a string or BigInt
+    /// relation, an arithmetic of other than Numbers, `instanceof`, `in`): the VM's own operation, a
+    /// callout.
+    Binary { destination: Register, left: Operand, right: Operand, operator: u32 },
     /// Define `destination` from environment slot `slot` (`environment::environment_slot`); a
     /// sparse storage or an internal marker leaves at the frame's miss edge.
     LoadEnvLocal { destination: Register, slot: u16 },

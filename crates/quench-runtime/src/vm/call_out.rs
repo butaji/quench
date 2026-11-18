@@ -292,7 +292,10 @@ impl<H: Host> Frame<Concrete> for HostFrame<'_, H> {
 
     fn vm_step(&mut self, _stage: &mut Concrete, operation: CallOut, _result: Option<Register>) -> Option<(u64, ())> {
         let (vm, owner) = (&*self.vm, self.site.owner);
-        let operands = operation.operands().read(&self.program.method_arguments, |register| vm.owner_register(owner, register));
+        let operands = operation.operands().read(&self.program.method_arguments, |operand| match operand.register_index() {
+            Some(register) => vm.owner_register(owner, register),
+            None => vm.active_constant(usize::from(operand.payload())).expect("a call-out's constant is in its program"),
+        });
         match self.vm.call_out(self.program, self.site, operation, operands) {
             Ok(value) => Some((value.map_or(0, Value::to_bits), ())),
             Err(error) => {

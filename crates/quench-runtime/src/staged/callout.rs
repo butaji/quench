@@ -5,6 +5,7 @@
 
 use super::spread::Passing;
 use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register, Step};
+use crate::bytecode::Operand;
 
 /// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
 pub(crate) const TAG_EQUALITY: u8 = 0;
@@ -32,10 +33,10 @@ pub(crate) const TAG_CLONE_ENV: u8 = 16;
 pub(crate) enum CallOut {
     /// `left == right`, or `===` where `strict`, negated for `!=` and `!==`, by the VM's full
     /// equality: strings and BigInts compare by contents, a conversion may run guest code.
-    Equality { left: Register, right: Register, strict: bool, negated: bool } = TAG_EQUALITY,
+    Equality { left: Operand, right: Operand, strict: bool, negated: bool } = TAG_EQUALITY,
     /// `left operator right` by the VM's `Vm::binary`: a string or BigInt relation or operator,
-    /// `instanceof`, `in`.
-    Binary { left: Register, right: Register, operator: u32 } = TAG_BINARY,
+    /// `instanceof`, `in`. An operand may be a program constant (`Operand::constant`).
+    Binary { left: Operand, right: Operand, operator: u32 } = TAG_BINARY,
     /// ToPropertyKey of `source` (`Vm::to_property_key`): a Number allocates, an object runs
     /// guest code.
     PropertyKey { source: Register } = TAG_PROPERTY_KEY,
@@ -82,32 +83,40 @@ pub(crate) enum CallOut {
 /// passes (`Arguments`), which a handle names without copying it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Operands {
-    pub(crate) fixed: [Option<Register>; 2],
+    /// The fixed operands: a register or a program constant (`Operand`).
+    pub(crate) fixed: [Option<Operand>; 2],
     pub(crate) list: Option<Arguments>,
 }
 
-/// The values of a `CallOut`'s operands, read by the tier from its own registers.
+/// The values of a `CallOut`'s operands, read by the tier from its own registers or constants.
 pub(crate) struct OperandValues<V> {
     pub(crate) fixed: [Option<V>; 2],
     pub(crate) list: Vec<V>,
 }
 
 impl Operands {
-    /// Operands of fixed place alone.
-    const fn of_fixed(fixed: [Option<Register>; 2]) -> Self {
+    /// Operands of register place alone.
+    fn of_fixed(fixed: [Option<Register>; 2]) -> Self {
+        Self::of_operands(fixed.map(|register| register.map(Operand::register)))
+    }
+
+    /// Operands of fixed place alone, each a register or a constant.
+    const fn of_operands(fixed: [Option<Operand>; 2]) -> Self {
         Self { fixed, list: None }
     }
 
     /// Every register the operands name, with the list's resolved by `records` (the call records
-    /// of a method site; a window needs none).
+    /// of a method site; a window needs none). A constant operand names no register.
     pub(crate) fn registers<'a>(self, records: &'a [Register]) -> impl Iterator<Item = Register> + 'a {
-        self.fixed.into_iter().flatten().chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
+        self.fixed.into_iter().flatten().filter_map(Operand::register_index)
+            .chain(self.list.into_iter().flat_map(move |list| list.registers(records)))
     }
 
-    /// The operands' values, each register read by `read` in the order `registers` names them.
-    pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Register) -> V) -> OperandValues<V> {
-        let fixed = self.fixed.map(|register| register.map(&mut read));
-        let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(&mut read).collect());
+    /// The operands' values, each operand read by `read` in the order `registers` names them, the
+    /// list's as registers.
+    pub(crate) fn read<V>(self, records: &[Register], mut read: impl FnMut(Operand) -> V) -> OperandValues<V> {
+        let fixed = self.fixed.map(|operand| operand.map(&mut read));
+        let list = self.list.map_or_else(Vec::new, |list| list.registers(records).map(Operand::register).map(&mut read).collect());
         OperandValues { fixed, list }
     }
 }
@@ -126,8 +135,9 @@ impl CallOut {
     /// then the second, which is the only one an operation of a single operand has, then the
     /// list of arguments a call passes.
     pub(crate) fn operands(self) -> Operands {
-        Operands::of_fixed(match self {
-            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } | Self::Delete { base: left, key: right, .. }
+        let fixed = match self {
+            Self::Equality { left, right, .. } | Self::Binary { left, right, .. } => return Operands::of_operands([Some(left), Some(right)]),
+            Self::Delete { base: left, key: right, .. }
                 | Self::Decide { left, right, .. } | Self::EnumeratedGet { base: left, key: right } => [Some(left), Some(right)],
             Self::PropertyKey { source: operand } | Self::ForInNext { state: operand } => [None, Some(operand)],
             Self::StoreEnvLocal { source: operand, .. } | Self::GlobalWrite { source: operand, .. } => [Some(operand), None],
@@ -135,9 +145,11 @@ impl CallOut {
                 | Self::CloneEnv { .. } => [None, None],
             Self::Protocol { operands, .. } => operands,
             Self::Spread { callee, receiver, arguments, .. } =>
-                return Operands { fixed: [Some(callee), Some(receiver)], list: Some(arguments) },
-            Self::SuperCall { callee, arguments, .. } => return Operands { fixed: [Some(callee), None], list: Some(arguments) },
-        })
+                return Operands { fixed: [Some(Operand::register(callee)), Some(Operand::register(receiver))], list: Some(arguments) },
+            Self::SuperCall { callee, arguments, .. } =>
+                return Operands { fixed: [Some(Operand::register(callee)), None], list: Some(arguments) },
+        };
+        Operands::of_fixed(fixed)
     }
 }
 

@@ -6,9 +6,16 @@
 
 use super::value::{is_direct_string, is_int};
 use super::*;
+use crate::bytecode::OperandKind;
 use crate::value::ValueLayout;
 use crate::vm::operations::equality_operator;
 use crate::Value;
+
+/// Whether `operand` names a register or a program constant: the operands a `Binary` or an
+/// `Equality` row reads (`NumericFrame::operand_word`).
+fn is_value_operand(operand: Operand) -> bool {
+    matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
+}
 
 impl<W, P> Operation<W, P> {
     /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where
@@ -24,17 +31,18 @@ impl<W, P> Operation<W, P> {
     }
 
     /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
-    /// (`numeric::binary_operation`, whose operands may be constants), equality as its own row,
-    /// and any other operator the VM's over two registers.
+    /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
+    /// Both operands may be registers or program constants; any other operand leaves the record
+    /// to the general step.
     fn decode_binary(instruction: WideInstruction) -> Option<Self> {
         if instruction.result_flags() != 0 { return None; }
         let destination = instruction.result_register();
         let operator = instruction.binary_operator();
-        if let Some(number) = super::numeric::binary_operation(operator, destination, instruction.operand_b(), instruction.operand_c()) {
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        if let Some(number) = super::numeric::binary_operation(operator, destination, left, right) {
             return Some(Self::Number(number));
         }
-        let left = instruction.operand_b().register_index()?;
-        let right = instruction.operand_c().register_index()?;
+        if !is_value_operand(left) || !is_value_operand(right) { return None; }
         Some(match equality_operator(operator) {
             Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
             None => Self::Binary { destination, left, right, operator },
@@ -116,9 +124,11 @@ pub(super) fn decide<S: NumericStage>(stage: &mut S, [left, right]: [S::Word; 2]
 /// words do not decide it.
 #[inline(always)]
 fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
-    [left, right]: [Register; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
-    let words = [frame.tagged(stage, left), frame.tagged(stage, right)];
-    let (decided, equal) = decide(stage, words, strict);
+    [left, right]: [Operand; 2], (strict, negated): (bool, bool)) -> Step<S::Word, F::Control> {
+    let (Some(left_word), Some(right_word)) = (frame.operand_word(stage, left), frame.operand_word(stage, right)) else {
+        return Step::Unresolved;
+    };
+    let (decided, equal) = decide(stage, [left_word, right_word], strict);
     let result = if negated { stage.not(equal) } else { equal };
     let (decision, fact) = frame.boolean(stage, result);
     let call = CallOut::Equality { left, right, strict, negated };

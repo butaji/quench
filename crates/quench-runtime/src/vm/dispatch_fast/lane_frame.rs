@@ -331,7 +331,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
 
 /// The operands and operator of a binary call-out the lane's pure binary answers: a `Binary`, or an
 /// `Equality` as the operator of its strictness and negation.
-fn binary_call(operation: CallOut) -> Option<(Register, Register, u32)> {
+fn binary_call(operation: CallOut) -> Option<(Operand, Operand, u32)> {
     match operation {
         CallOut::Binary { left, right, operator } => Some((left, right, operator)),
         CallOut::Equality { left, right, strict, negated } =>
@@ -540,7 +540,8 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         if let Some((context, binary)) = self.binary
             && let Some((left, right, operator)) = binary_call(operation)
         {
-            let (left, right) = (Value::from_bits(self.read(stage, left)), Value::from_bits(self.read(stage, right)));
+            let (left, right) = (self.operand_word(stage, left)?, self.operand_word(stage, right)?);
+            let (left, right) = (Value::from_bits(left), Value::from_bits(right));
             // SAFETY: the running lane's context, live for the row's step.
             return unsafe { binary(context, operator, left, right) }.map(|value| (value.to_bits(), Boxing::Value));
         }
@@ -553,7 +554,7 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
             CallOut::Protocol { .. } | CallOut::ForInNext { .. } => {
                 let (context, step) = self.names?;
                 let operands = operation.operands().fixed;
-                let operands = operands.map(|register| register.map(|register| Value::from_bits(self.read(stage, register))));
+                let operands = operands.map(|operand| operand.and_then(|operand| self.operand_word(stage, operand)).map(Value::from_bits));
                 // SAFETY: the running lane's context, live for the row's step.
                 unsafe { step(context, operation, operands) }.map(|value| (value.to_bits(), Boxing::Value))
             }

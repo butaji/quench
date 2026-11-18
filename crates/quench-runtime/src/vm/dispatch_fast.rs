@@ -3422,6 +3422,13 @@ fn lane_operand_value<H: Host>(
     }
 }
 
+/// A call-out operand's value in the lane: a register's or a program constant's
+/// (`lane_operand_value`); a call-out names only those two kinds.
+#[inline(always)]
+fn lane_call_operand<H: Host>(cx: *mut LaneContext<H>, r: Registers, operand: crate::bytecode::Operand) -> Value {
+    lane_operand_value(cx, r, operand.0).expect("a call-out operand is a register or a constant")
+}
+
 /// A local operand of the running function that is a plain slot, which the general loop
 /// reads as `LoadLocalPlain` does (`Vm::operand_value`): generators and other functions that
 /// keep frame locals compare and compute with them in place, and an environment
@@ -3662,7 +3669,7 @@ fn lane_step_beside_activations<H: Host>(cx: *mut LaneContext<H>, r: Registers, 
     }
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a result step is a call-out row");
-    let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
+    let operands = operation.operands().read(&code.method_arguments, |operand| lane_call_operand(cx, r, operand));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
         let site = super::call_out::CallSite { owner: vm.call_out_owner(operation), function, resume: pc + 1 };
         vm.call_out(code, site, operation, operands)

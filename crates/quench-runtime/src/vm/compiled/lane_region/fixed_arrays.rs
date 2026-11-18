@@ -23,8 +23,9 @@ impl Lowering<'_, '_> {
             if instruction.op().is_return() { return true; }
             let decoded = Operation::<ir::Value, EmitProof>::decode(*instruction, context);
             match decoded {
+                // A constant operand is no proven Number here (its constants are untyped).
                 Some(Operation::Binary { left, right, .. } | Operation::Equality { left, right, .. }) =>
-                    number(pc, left) && number(pc, right),
+                    [left, right].into_iter().all(|operand| operand.register_index().is_some_and(|register| number(pc, register))),
                 Some(operation) => !operation.moves_arrays(),
                 None => false,
             }

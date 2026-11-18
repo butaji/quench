@@ -37,7 +37,7 @@ unsafe fn lane_vm_step_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64) -> u64
     let instruction = decoded_instruction(body, body.code[call_pc as usize]);
     let (operation, result) = crate::staged::Operation::<(), ()>::decode(instruction, crate::staged::DecodeContext::of(code))
         .and_then(|row| row.call_out()).expect("a call-out record decodes");
-    let operands = operation.operands().read(&code.method_arguments, |register| r.get(register));
+    let operands = operation.operands().read(&code.method_arguments, |operand| lane_call_operand(cx, r, operand));
     let Some(value) = lane_in_place(cx, ip, |vm, code| {
         let site = super::super::call_out::CallSite { owner: vm.call_out_owner(operation), function, resume: call_pc as usize + 1 };
         vm.call_out(code, site, operation, operands)
