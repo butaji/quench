@@ -24,6 +24,9 @@ macro_rules! sign_extend {
 /// `$signed` or `$unsigned` values. Division is plain: the staged traps have run.
 macro_rules! integer_width {
     ($binary:ident, $unary:ident, $signed:ty, $unsigned:ty, $wide:ty, $wide_unsigned:ty) => {
+        // Always inlined: a handler whose operator is a constant keeps only its arm (the match
+        // left out of line cost about 10 Ir per i32 operator in the interpreter).
+        #[inline(always)]
         fn $binary(operator: Binary, left: $signed, right: $signed) -> $signed {
             let (unsigned_left, unsigned_right) = (left as $unsigned, right as $unsigned);
             let amount = right as u32;
@@ -64,6 +67,7 @@ macro_rules! integer_width {
             }
         }
 
+        #[inline(always)]
         fn $unary(operator: Unary, value: $signed) -> $signed {
             match operator {
                 Unary::EqualZero => <$signed>::from(value == 0),
