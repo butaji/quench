@@ -2636,8 +2636,9 @@ impl ProgramStore {
     /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
     /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
     /// general path.
-    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`).
-    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool) -> bool {
+    /// An unlowered function derives only where `unlowered` (`Vm::lane_call_may_derive`); where
+    /// `now`, its deferred runs are skipped, uncounted.
+    pub(super) fn lane_call_may_derive(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
         let Some(entry) = self.lane_entry(id) else {
             return false;
         };
@@ -2646,7 +2647,7 @@ impl ProgramStore {
             || entry
                 .lane_deferred
                 .get(function as usize)
-                .is_some_and(deferred_run_completes)
+                .is_some_and(|runs| now || deferred_run_completes(runs))
                 && (unlowered || !entry.residual.runs_tier0(function as usize))
     }
 

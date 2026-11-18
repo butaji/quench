@@ -13116,6 +13116,13 @@ impl<H: Host> Vm<H> {
             })
     }
 
+    /// Whether a lane activation runs over a suspended frame's record (a generator's or an
+    /// async function's window, or one a direct eval gave a record): leaving the lane boxes
+    /// that record's state as a frame, which a call waiting for its callee's view would do.
+    pub(in crate::vm) fn lane_runs_windows(&self) -> bool {
+        self.lane_stack.activations.iter().any(|activation| activation.script().is_some_and(|script| !script.record.is_null()))
+    }
+
     /// Whether `callee` is a native that runs beside a lane's activations
     /// (`runs_beside_activations`), which a call made while they stay frameless may make
     /// without making them frames.

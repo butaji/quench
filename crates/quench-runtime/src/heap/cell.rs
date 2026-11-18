@@ -912,6 +912,9 @@ impl Native {
     /// iteration from a frameless activation). A keyed collection's or array's iterator
     /// creation, `%IteratorPrototype%[@@iterator]`, `concat`, `Array.from` and `Object.isExtensible` belong
     /// too (MobX's observable set reads `values()` 4,087 times per three proxy-mobx iterations).
+    /// `print` and `String` convert their argument with a coercion and `print` hands the text to
+    /// the host's line writer, which reads no frame: a generator's or async function's window
+    /// that prints stays frameless.
     pub(crate) fn runs_beside_activations(self) -> bool {
         self.is_reflect_operation() || matches!(
             self,
@@ -986,6 +989,8 @@ impl Native {
                 | Self::PromiseResolve
                 | Self::PromiseWithResolvers
                 | Self::WasmExportedFunction
+                | Self::Print
+                | Self::String
         )
     }
 
