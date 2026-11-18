@@ -237,7 +237,8 @@ unsafe fn lane_body_construct_in<H: Host>(cx: *mut LaneContext<H>, call_pc: u64,
     }
 }
 
-/// `lane_body_construct` of the decoded `call`.
+/// `lane_body_construct` of the decoded `call`, inlined into its one caller so the decoded form is not copied.
+#[inline(always)]
 fn body_construct<H: Host>(cx: *mut LaneContext<H>, call: &BodyCall, moved: &mut bool) -> u64 {
     let vm = unsafe { vm(cx) };
     // A construction's callee is a register: no receiver loads it.

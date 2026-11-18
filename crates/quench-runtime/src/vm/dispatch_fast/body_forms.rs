@@ -113,6 +113,7 @@ impl<'a> BodyCall<'a> {
     /// The callee: a register's value, a method the site's caches load from `receiver`
     /// (`Vm::method_cache_load`), or the function a known call names, which its site linked. `None`
     /// where the method is not cached or the site linked no such function.
+    #[inline(always)]
     pub(super) fn callee<H: Host>(&self, vm: &mut Vm<H>, receiver: Value) -> Option<Value> {
         match self.site.callee {
             Callee::Register(register) => Some(self.registers.get(register)),
@@ -123,8 +124,9 @@ impl<'a> BodyCall<'a> {
 
     /// Parameter `k` of a plain activation as this call passes it: argument `k`, or `undefined`
     /// where it is not passed.
+    #[inline(always)]
     pub(super) fn argument(&self) -> impl Fn(u16) -> Value + '_ {
-        move |parameter| match self.site.arguments {
+        #[inline(always)] move |parameter| match self.site.arguments {
             Arguments::Window { first, count } if parameter < count => self.registers.get(first + parameter),
             Arguments::Window { .. } => Value::UNDEFINED,
             Arguments::List(_) => self.list.get(usize::from(parameter)).map_or(Value::UNDEFINED, |&register| self.registers.get(register)),
