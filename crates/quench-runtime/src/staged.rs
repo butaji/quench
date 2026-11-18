@@ -425,6 +425,16 @@ pub(crate) const FUSED_DEAD_FIRST: u8 = 1;
 /// The mode of a window pair or chain `fuse_rows` installs for a window local's (`FLAG_WINDOW`) first row: both
 /// rows run at the window's flag, reading the window's locals. Not a table mode; `fuse_rows` names it.
 pub(crate) const FUSED_WINDOW: u8 = 3;
+/// `fuse_rows` mode for a backward jump (`B`, the row after `A`) whose target record holds a
+/// conditional test (`jump_target_test`, one of `FUSED_TARGET_ROWS`): the fused record runs
+/// `A`, then the jump, then the target's test over the target's own fields in the same dispatch,
+/// and continues at the test's taken or fall-through edge. The target record keeps its own row
+/// for every other entry. The back edge's fuel check runs before the test, as the jump's own does.
+/// It subsumes `lane_inc_dec_loop` and `lane_inc_dec_small_loop` (an update pair whose back edge
+/// enters a register test or a constant test; `specialize_update_jumps`). A back edge into a loaded
+/// bound (`lane_inc_dec_load_loop`) or into an update, and a lone back jump (`lane_jump_back_nullish`),
+/// are not pairs and are not this mode.
+pub(crate) const FUSED_TARGET: u8 = 4;
 
 /// The opcode whose row answers an arguments binding's count (`Frame::arguments_length`), which a
 /// tier names to give the row a fact it proved at view time.
@@ -562,6 +572,26 @@ pub(crate) const fn binary(op: Op) -> bool {
 pub(crate) const fn conditional_jump(op: Op) -> bool {
     matches!(op, Op::JumpFalse | Op::JumpTrue | Op::JumpBinaryFalse)
 }
+
+/// Whether `op` is a conditional test a backward jump may run in its target's place
+/// (`FUSED_TARGET`): a truthiness jump, or a comparison jump (`JumpBinaryFalse`, whose
+/// comparison may be the nullish test of `x == null`). Wasm jumps are not admitted.
+pub(crate) const fn jump_target_test(op: Op) -> bool {
+    conditional_jump(op)
+}
+
+/// The conditional tests `FUSED_TARGET` instantiates a fused back edge for. `fuse_target_backedges`
+/// matches a target record's handler against each one's row; a target outside the list keeps its own row.
+/// Each entry passes `jump_target_test` (checked at compile time below).
+pub(crate) const FUSED_TARGET_ROWS: [u16; 3] = [Op::JumpFalse as u16, Op::JumpTrue as u16, Op::JumpBinaryFalse as u16];
+
+const _: () = {
+    let mut k = 0;
+    while k < FUSED_TARGET_ROWS.len() {
+        assert!(jump_target_test(row_op(FUSED_TARGET_ROWS[k])), "a FUSED_TARGET_ROWS entry is not a conditional test");
+        k += 1;
+    }
+};
 
 /// Whether `op` copies a register (`Move`).
 pub(crate) const fn copies_register(op: Op) -> bool {
