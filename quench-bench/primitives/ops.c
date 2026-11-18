@@ -574,6 +574,19 @@ static double NOINL op_typed_store_f64(long n) {
   return t[7];
 }
 
+static double NOINL op_typed_store_u8c(long n) {
+  int32_t N = (int32_t)n;
+  uint8_t t[256];
+  for (int32_t i = 0; i < 256; i++) t[i] = 0;
+  ESCAPE(t);
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    double v = (double)(i & 511) * 0.75 - 64.0;
+    t[i & 255] = v > 0.0 ? (v < 255.0 ? (uint8_t)nearbyint(v) : 255) : 0;
+  }
+  return (double)t[7] + (double)t[200];
+}
+
 /* ---------------- driver ---------------- */
 
 struct pair { int32_t x, y; };
@@ -752,7 +765,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"arr_load_dbl", op_arr_load_dbl}, {"arr_store_dbl", op_arr_store_dbl},
   {"arr_load_obj", op_arr_load_obj}, {"arr_store_obj", op_arr_store_obj},
   {"arr_length", op_arr_length}, {"arr_push", op_arr_push},
-  {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
+  {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64}, {"typed_store_u8c", op_typed_store_u8c},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
 };

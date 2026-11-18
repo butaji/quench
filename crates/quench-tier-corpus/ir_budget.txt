@@ -69,5 +69,6 @@ truthy_obj 4 18 62.1
 truthy_str 4 18 117.1
 typed_load 5 21 83.1
 typed_store_f64 8 30 99.6
+typed_store_u8c 24 78 155.9
 typeof_op 4 18 57.1
 ushr 5 21 56.1

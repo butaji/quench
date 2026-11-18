@@ -51,8 +51,8 @@ const CONCEPTS: &[Concept] = &[
     },
     Concept {
         name: "to-uint8-clamp",
-        homes: &["quench-runtime/src/staged/", "quench-runtime/src/vm/compiled/object_slots/emit.rs", STENCILS],
-        marks: &[Mark::Function("clamp_u8"), Mark::Function("uint8_clamped_from_value")],
+        homes: &["quench-runtime/src/value/number_conversion.rs", "quench-runtime/src/staged/", "quench-runtime/src/vm/compiled/object_slots/emit.rs", STENCILS],
+        marks: &[Mark::Function("clamp_u8"), Mark::Function("uint8_clamped_from_value"), Mark::Function("number_to_uint8_clamp"), Mark::Spelled("round_ties_even()asu8")],
     },
     Concept {
         name: "string-order",
