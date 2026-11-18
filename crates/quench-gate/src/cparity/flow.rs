@@ -80,6 +80,28 @@ fn innermost(loops: &[Loop]) -> impl Iterator<Item = &Loop> {
 /// target of every unconditional jump — so the cold blocks a region keeps between the header and
 /// the back edge (each guard's miss stub) are not counted as per-iteration work. Each instruction
 /// is counted once; the walk stops at the back edge or where the path leaves the loop.
+/// The fewest instructions from `from` to `to` inside a loop: a guard's miss stub and a call's
+/// cold path cost more than the check they guard, which is what tells the two apart without
+/// weights.
+fn distance(code: &[Instruction], found: &Loop, from: usize, to: usize) -> usize {
+    let mut visited = Visited::new(code.len());
+    let mut pending = std::collections::VecDeque::from([(from, 0usize)]);
+    while let Some((at, steps)) = pending.pop_front() {
+        if at == to {
+            return steps;
+        }
+        if !visited.insert(at) {
+            continue;
+        }
+        for next in successors(code, at) {
+            if (found.header..=found.branch).contains(&next) {
+                pending.push_back((next, steps + 1));
+            }
+        }
+    }
+    usize::MAX
+}
+
 fn iteration(code: &[Instruction], found: &Loop) -> Vec<(usize, Instruction)> {
     let mut visited = Visited::new(code.len());
     let mut path = Vec::new();
@@ -89,12 +111,19 @@ fn iteration(code: &[Instruction], found: &Loop) -> Vec<(usize, Instruction)> {
         if at == found.branch {
             break;
         }
+        let fall_through = code[at].falls_through().then_some(at + 1).filter(|next| *next <= found.branch);
+        let target = target_index(code, at).filter(|next| (found.header..=found.branch).contains(next));
         let next = if code[at].is_conditional_jump() {
-            (code[at].falls_through() && at + 1 <= found.branch).then_some(at + 1)
+            // Two ways on: the loop keeps the one that reaches the back edge sooner, where the
+            // other is a guard's miss stub, a callout or another cold path.
+            match (fall_through, target) {
+                (Some(left), Some(right)) => Some(if distance(code, found, left, found.branch) <= distance(code, found, right, found.branch) { left } else { right }),
+                (left, right) => left.or(right),
+            }
         } else if code[at].falls_through() {
-            (at + 1 <= found.branch).then_some(at + 1)
+            fall_through
         } else {
-            target_index(code, at).filter(|next| (found.header..=found.branch).contains(next))
+            target
         };
         match next {
             Some(next) => at = next,
@@ -103,6 +132,8 @@ fn iteration(code: &[Instruction], found: &Loop) -> Vec<(usize, Instruction)> {
     }
     path
 }
+
+
 
 /// The instructions of an iteration of the hottest loop of `code`: the smallest innermost loop
 /// (alignment padding not counted), which is the specialized version a region runs once its

@@ -10,5 +10,5 @@ fib 8 8
 matmul 6 6
 nbody 34 34
 qsort 4 4
-structs 19 19
+structs 17 17
 sum 16 7
