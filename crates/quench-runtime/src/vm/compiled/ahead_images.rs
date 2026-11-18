@@ -131,7 +131,7 @@ impl AheadImages {
 
     /// The code of `function`'s loop at `header`, its relocations and the atom texts it names,
     /// for a load that links them.
-    #[cfg(all(test, feature = "aot"))]
+    #[cfg(feature = "aot")]
     pub(in crate::vm) fn loop_code(&self, function: u32, header: u32) -> Option<(&RelocatableCode, &[(u32, String)], bool)> {
         let loop_ = self.get(function)?.loops.iter().find(|loop_| loop_.header == header)?;
         Some((&loop_.code, &loop_.atoms, loop_.fault_poll))
@@ -215,6 +215,32 @@ fn read_code(words: &mut Words<'_>) -> Result<(bool, RelocatableCode, Vec<(u32, 
         Ok((atom, String::from_utf8(words.bytes(length)?.to_vec()).map_err(|_| "an atom is not text")?))
     }).collect::<Result<_, String>>()?;
     Ok((fault_poll, RelocatableCode { code, relocations }, atoms))
+}
+
+impl<H: Host> Vm<H> {
+    /// The region the image holds for `function`'s loop at `header`, linked to this VM's helper
+    /// table and atoms and ready to publish (`LoopTier::adopt`); `None` where the image carries
+    /// no loop starting there.
+    #[cfg(all(feature = "aot", feature = "native-execution"))]
+    pub(in crate::vm) fn ahead_loop_region(&mut self, program: &ResidualProgram, function: u32, header: u32)
+        -> Option<super::CompiledOsrRegion> {
+        let images = self.programs.ahead_images(self.active_program, program)?;
+        let (code, atoms, _fault_poll) = images.loop_code(function, header)?;
+        let table = crate::vm::compiled::LaneHelper::addresses::<H>();
+        let atoms: Vec<(u32, u32)> = atoms.iter().map(|(atom, text)| (*atom, self.intern_atom(text))).collect();
+        // The loop's symbols resolve as a body's do (`install_ahead_body`): helpers from the
+        // process's table, atoms from this VM's interning.
+        let linked = code.link(0, |namespace, key| match lane_region::relocs::atom_key(namespace, key) {
+            Some(atom) => atoms.iter().find(|(named, _)| *named == atom).map(|(_, here)| u64::from(*here)),
+            None => table.get(lane_region::relocs::helper_key(namespace, key)?).map(|address| *address as usize as u64),
+        }).ok()?;
+        let memory = super::CodeMemory::new(&linked)?;
+        // SAFETY: the image's loop lowers under `lane_body_signature`, as a region does.
+        let entry = unsafe { std::mem::transmute::<*mut u8, super::BodyEntry>(memory.pointer()) };
+        Some(super::CompiledOsrRegion { code: memory, entry, facts: super::OsrFacts::none(),
+            crossing: super::Crossing::Lean, resumes: super::base_region::ResumeTable::empty(),
+            calls: super::CallCode::default() })
+    }
 }
 
 /// The images of each program stored while recording (`start_recording`); the entry may run

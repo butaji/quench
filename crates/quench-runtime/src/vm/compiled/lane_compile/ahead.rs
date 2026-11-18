@@ -89,6 +89,29 @@ mod tests {
 
     /// A body whose loop lowers under static facts ships that loop's code in the image, and the
     /// file round trip keeps it.
+    /// The install finds a shipped loop and builds the region a site publishes, from the code
+    /// the image carries (`Vm::ahead_loop_region`).
+    #[test]
+    fn a_shipped_loop_installs_as_a_region() {
+        // The call before the loop makes the lane body leave there, so the loop runs from its
+        // site — the case an installed region serves.
+        let source = "function id(x){return x;}\n\
+            function loopfn(n){ let a=id(0); for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\n\
+            let s=0; for(let k=0;k<200;k++){ s=(s+loopfn(1000))|0; }\nprint(s);";
+        let program = crate::Engine::specialize(source, "ahead-run.js").unwrap();
+        let images = AheadImages::compile(&program);
+        let (function, header) = (0..program.function_count() as u32)
+            .find_map(|function| images.loops_of(function).first().map(|(header, _, _)| (function, *header)))
+            .expect("a shipped loop");
+        let mut vm = Vm::new(TestHost::default());
+        vm.execute(&program).unwrap();
+        vm.load_ahead_images(AheadImages::from_bytes(&images.to_bytes()).unwrap());
+        assert!(vm.ahead_loop_region(&program, function, header).is_some(), "the loop did not install");
+        // The installed region runs the loop like the interpreter.
+        let expected = output_with(source, None);
+        assert_eq!(output_with(source, Some(&images.to_bytes())), expected);
+    }
+
     /// A shipped loop's code links at load against the running VM's helper table and atoms,
     /// the step an install needs before it can publish the loop.
     #[test]
