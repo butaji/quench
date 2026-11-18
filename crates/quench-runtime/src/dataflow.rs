@@ -28,7 +28,7 @@ pub(crate) trait Dataflow {
 pub(crate) fn solve<D: Dataflow>(analysis: &mut D) -> Vec<Option<D::State>> {
     let count = analysis.blocks();
     let mut states: Vec<Option<D::State>> = (0..count).map(|block| analysis.entry_state(block)).collect();
-    let mut work = CompoundBitSet::with_capacity(count);
+    let mut work: CompoundBitSet = CompoundBitSet::with_capacity(count);
     for (block, state) in states.iter().enumerate() {
         if state.is_some() { work.insert(block); }
     }
