@@ -834,6 +834,15 @@ pub(crate) const fn leaf_value_or_jump(op: Op) -> bool { op.is_leaf_value() || o
 pub(crate) const fn leaf_binary_operation(op: Op) -> bool { op.is_leaf_binary() }
 /// Computes a Wasm f64 binary operator (`WasmF64Binary`).
 pub(crate) const fn wasm_f64_binary(op: Op) -> bool { matches!(op, Op::WasmF64Binary) }
+/// Whether `op`'s record holds its i64 and f64 operands and result as raw machine words (the
+/// `*Raw` Wasm classes, `compile::liveness::raw_webs`, and a raw i64 return). Its row reads and
+/// writes those registers as they are (`Frame::raw_read`, `Frame::raw_write`): no tag check and
+/// no boxing, so a word a tag claims is an ordinary operand.
+pub(crate) const fn raw_representation(op: Op) -> bool {
+    matches!(op.class(), crate::bytecode::Class::WasmI64BinaryRaw | crate::bytecode::Class::WasmI64BinaryImmediateRaw
+        | crate::bytecode::Class::WasmI64UnaryRaw | crate::bytecode::Class::WasmFloatBinary64Raw
+        | crate::bytecode::Class::WasmFloatUnary64Raw | crate::bytecode::Class::WasmReturn64)
+}
 /// Computes a Wasm f64 unary operator (`WasmF64Unary`).
 pub(crate) const fn wasm_f64_unary(op: Op) -> bool { matches!(op, Op::WasmF64Unary) }
 /// Loads an f64 from the function's memory (`WasmF64Load`).

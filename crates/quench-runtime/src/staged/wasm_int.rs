@@ -5,7 +5,7 @@
 //! (`Step::Unresolved`), where the general step raises it.
 
 use super::machine::MachineStage;
-use super::register_frame::{Frame, Step, WasmRep};
+use super::register_frame::{Frame, Step, WasmRep, wasm_operand, wasm_result};
 use super::wasm::{Width, binary_result, integer_binary, unary_result};
 use super::wasm_concrete::ConcreteWasm;
 use super::wasm_operation::{Form, Operand, WasmOperation};
@@ -26,17 +26,20 @@ pub(crate) struct WasmIntOperation {
 pub(crate) fn decode(instruction: WideInstruction) -> Option<WasmIntOperation> {
     let operation = WasmOperation::of(instruction.op(), instruction.imm())?;
     let integer_row = match operation {
-        WasmOperation::Binary { form, .. } => matches!(form, Form::Register | Form::Immediate),
+        // A 16-bit constant right operand (`Form::Short`) is the i64 immediate form, raw or boxed.
+        WasmOperation::Binary { form, .. } => matches!(form, Form::Register | Form::Immediate | Form::Short),
         WasmOperation::Unary { .. } | WasmOperation::BitField => true,
         _ => false,
     };
     integer_row.then_some(WasmIntOperation { operation, instruction })
 }
 
-/// The representation a scalar of `width` takes in a register frame.
-const fn rep_of(width: Width) -> WasmRep {
+/// The representation a scalar of `width` takes in a register frame: an i64 is its raw word where
+/// `raw` (`staged::raw_representation`), else boxed where untagged.
+const fn rep_of(width: Width, raw: bool) -> WasmRep {
     match width {
         Width::I32 => WasmRep::Int32,
+        Width::I64 if raw => WasmRep::RawBits64,
         Width::I64 => WasmRep::Bits64,
     }
 }
@@ -50,33 +53,35 @@ type Computed = (Register, u64, WasmRep);
 #[inline(always)]
 pub(crate) fn step<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmIntOperation) -> Step<u64, F::Control> {
     let Some((destination, word, rep)) = computed(stage, frame, operation) else { return Step::Unresolved };
-    match frame.wasm_write(stage, destination, word, rep) {
+    match wasm_result(stage, frame, destination, word, rep) {
         Some(tagged) => Step::Value(tagged),
         None => Step::Unresolved,
     }
 }
 
 /// The word `operation` computes, with its destination and representation; `None` where an operand
-/// is not held so or the operator traps.
+/// is not held so or the operator traps. A raw record (`staged::raw_representation`) reads and writes
+/// its i64 operands as raw words.
 #[inline(always)]
 fn computed<F: Frame<Concrete>>(stage: &mut Concrete, frame: &mut F, operation: WasmIntOperation) -> Option<Computed> {
     let WasmIntOperation { operation, instruction } = operation;
     let destination = instruction.a();
+    let raw = super::raw_representation(instruction.op());
     match operation {
         WasmOperation::Binary { operator, width, form } => {
-            let operand = rep_of(width);
-            let left = frame.wasm_read(stage, form.left(instruction), operand)?;
+            let operand = rep_of(width, raw);
+            let left = wasm_operand(stage, frame, form.left(instruction), operand)?;
             let right = match form.right(instruction) {
-                Operand::Register(register) => frame.wasm_read(stage, register, operand)?,
+                Operand::Register(register) => wasm_operand(stage, frame, register, operand)?,
                 Operand::Constant(value) => ConcreteWasm.constant(width, value),
             };
             let word = integer_binary(&mut ConcreteWasm, operator, width, left, right).ok()?;
-            Some((destination, word, rep_of(binary_result(operator, width))))
+            Some((destination, word, rep_of(binary_result(operator, width), raw)))
         }
         WasmOperation::Unary { operator, width } => {
-            let value = frame.wasm_read(stage, instruction.b(), rep_of(width))?;
+            let value = wasm_operand(stage, frame, instruction.b(), rep_of(width, raw))?;
             let word = ConcreteWasm.operate_unary(operator, width, value);
-            Some((destination, word, rep_of(unary_result(operator, width))))
+            Some((destination, word, rep_of(unary_result(operator, width), raw)))
         }
         WasmOperation::BitField => {
             // The shift, then the mask, as the two i32 operators the extraction names.
