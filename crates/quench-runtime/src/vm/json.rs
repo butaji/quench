@@ -1781,9 +1781,6 @@ impl<H: Host> Vm<H> {
             _ if self.is_array(p, value)? => {
                 self.json_serialize_array(p, value, state).map(|()| true)
             }
-            Some(Cell::Object(_)) => {
-                self.json_serialize_object(p, value, state).map(|()| true)
-            }
             Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))

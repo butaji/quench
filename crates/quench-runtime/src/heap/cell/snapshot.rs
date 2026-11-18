@@ -25,7 +25,6 @@ snapshot_enum!(lexical_binding_kind: crate::bytecode::LexicalBindingKind { Mutab
 
 /// The cell tags, in the order `Cell` declares its variants.
 mod tag {
-    pub(super) const OBJECT: u8 = 0;
     pub(super) const ARRAY_BUFFER: u8 = 2;
     pub(super) const TYPED_ARRAY: u8 = 3;
     pub(super) const DATA_VIEW: u8 = 4;
@@ -623,10 +622,6 @@ impl Cell {
     /// Writes this cell, or refuses one a snapshot cannot hold.
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
         match self {
-            Self::Object(object) => {
-                writer.u8(tag::OBJECT);
-                write_object(writer, object)?;
-            }
             Self::ArrayBuffer { object, bytes, shared, detached, max_byte_length, resizable, immutable } => {
                 let Some((contents, pinned_residue)) = bytes.snapshot_contents() else {
                     return Err(SnapshotError::unsupported("a buffer over Wasm or atomically shared memory"));
@@ -781,7 +776,6 @@ impl Cell {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         let boxed_object = |reader: &mut Reader<'_>| read_object(reader).map(Box::new);
         Ok(match reader.u8()? {
-            tag::OBJECT => Self::Object(read_object(reader)?),
             tag::ARRAY_BUFFER => Self::ArrayBuffer {
                 object: boxed_object(reader)?,
                 bytes: {

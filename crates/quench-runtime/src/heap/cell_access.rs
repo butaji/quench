@@ -11,9 +11,7 @@ impl Cell {
     #[inline]
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
-            // The hot object kinds keep their object inline; the rest box it so the
-            // cell stays small.
-            Self::Object(object) => Some(object),
+            // The rest box their object so the cell stays small.
             Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
@@ -44,9 +42,7 @@ impl Cell {
     #[inline]
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
-            // The hot object kinds keep their object inline; the rest box it so the
-            // cell stays small.
-            Self::Object(object) => Some(object),
+            // The rest box their object so the cell stays small.
             Self::RegExp { object, .. } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }

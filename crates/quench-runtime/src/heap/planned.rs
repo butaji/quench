@@ -28,7 +28,7 @@ impl Heap {
                     unsafe { record.write(object) };
                     value
                 }
-                None => self.insert_admitted_object_record(object),
+                None => self.insert_object_record(object),
             },
             None => self.alloc_object_with_properties(prototype, header.shape(), &values[..len]),
         }
@@ -49,7 +49,7 @@ impl Heap {
                 unsafe { record.write(object) };
                 value
             }
-            None => self.insert_admitted_object_record(object),
+            None => self.insert_object_record(object),
         }
     }
 
@@ -88,6 +88,6 @@ impl Heap {
         let object = Object::new(prototype);
         debug_assert!(object.exact_shape() == object.shape() && self.properties.shape_length(object.exact_shape()) == 0);
         self.mark_prototype(prototype);
-        self.insert_admitted_object_record(object)
+        self.insert_object_record(object)
     }
 }

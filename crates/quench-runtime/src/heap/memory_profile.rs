@@ -681,8 +681,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         .map_or(0, |object| object.allocated_extra_bytes());
     object_extra_bytes
         + match cell {
-            Cell::Object(_)
-            | Cell::WasmObject { .. }
+            Cell::WasmObject { .. }
             | Cell::ShadowRealm { .. }
             | Cell::PromiseResolvingState { .. }
             | Cell::TemporalDuration { .. }

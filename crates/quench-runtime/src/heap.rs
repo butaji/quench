@@ -1328,15 +1328,6 @@ impl Heap {
         self.charge_allocation(cell.payload_bytes(), cell.external_bytes());
         let track_young = self.tracks_young_cells();
         let cell = match cell {
-            Cell::Object(object) => {
-                let Ok(record_id) = self.object_records.try_insert(object) else {
-                    panic!("object records exhausted");
-                };
-                let value = Value::direct_object(record_id);
-                #[cfg(feature = "profile-memory")]
-                self.profile_allocation(value);
-                return value;
-            }
             Cell::Promise(promise) => match self.promise_records.try_insert(*promise) {
                 Ok(record_id) => {
                     let value = Value::direct_promise(record_id);
@@ -1412,8 +1403,8 @@ impl Heap {
         (Value::direct_environment(record_id), storage)
     }
 
-    /// `alloc(Cell::Object(object))` without the dispatch on the cell's kind, which an
-    /// ordinary object's construction knows: a direct record while one is free.
+    /// An ordinary object's allocation: its prototype marked, its values admitted, and its record
+    /// inserted by `insert_object_record`, with no dispatch on a cell's kind (there is no object cell).
     #[inline(always)]
     pub(crate) fn alloc_object(&mut self, object: Object) -> Value {
         let prototype = object.proto();
@@ -1473,10 +1464,8 @@ impl Heap {
     /// `alloc_object` of `object`, whose prototype is `prototype`.
     #[inline(always)]
     fn alloc_object_of(&mut self, object: Object, prototype: Value) -> Value {
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Object(object));
-        }
         self.mark_prototype(prototype);
+        self.admit_object_contents(&object);
         self.insert_object_record(object)
     }
 
@@ -1489,10 +1478,7 @@ impl Heap {
         let object = Object::from_inline_header(header, [Value::UNDEFINED; INLINE_PROPERTY_COUNT])
             .expect("undefined is narrow");
         debug_assert!(self.prototype_flagged(object.proto()));
-        if cfg!(feature = "profile-aggregate") {
-            return self.alloc(Cell::Object(object));
-        }
-        self.insert_admitted_object_record(object)
+        self.insert_object_record(object)
     }
 
     /// `alloc_unfilled_object_under_flagged_prototype` of an object whose first slot holds
@@ -1506,6 +1492,7 @@ impl Heap {
         inline[0] = first;
         let object = Object::from_inline_header(header, inline)?;
         debug_assert!(self.prototype_flagged(object.proto()));
+        self.admit_object_contents(&object);
         Some(self.insert_object_record(object))
     }
 
@@ -1583,18 +1570,17 @@ impl Heap {
         self.object(prototype).is_none_or(Object::was_used_as_prototype)
     }
 
-    /// An object record of `object`, else a slot: one allocation, with no external bytes.
+    /// The record of `object`, an ordinary object's only allocation, charged as one allocation
+    /// with no payload or external bytes (`charge_allocation(0, 0)`). The caller admits the
+    /// object's initial values (`admit_object_contents`) and marks its prototype, or leaves them
+    /// as they are where placeholders must record nothing. The object record space holds as many
+    /// records as `RECORD_SPACE_CAPACITY`, so a full space is a panic, as for functions and
+    /// iterators; no legacy slot takes an object.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
-        self.admit_object_contents(&object);
-        self.insert_admitted_object_record(object)
-    }
-    /// `insert_object_record` of an object whose initial values the caller already admitted.
-    /// The object record space holds as many records as `RECORD_SPACE_CAPACITY`, so a full
-    /// space is a panic, as for functions and iterators; no legacy slot takes an object.
-    #[inline(always)]
-    fn insert_admitted_object_record(&mut self, object: Object) -> Value {
-        self.allocated += 1;
+        self.charge_allocation(0, 0);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile_record_allocation(CellKind::Object, "object", 0);
         let Ok(record_id) = self.object_records.try_insert(object) else {
             panic!("object records exhausted");
         };
@@ -4707,7 +4693,6 @@ impl Heap {
             return;
         }
         match cell {
-            Cell::Object(value) => object(value),
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
                 object: value,
@@ -4990,8 +4975,7 @@ impl Heap {
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
-            Cell::Object(_)
-            | Cell::WasmObject { .. }
+            Cell::WasmObject { .. }
             | Cell::ArrayBuffer { .. }
             | Cell::TypedArray { .. }
             | Cell::DataView { .. }
@@ -5036,8 +5020,7 @@ impl Heap {
             .map_or(0, |object| object.allocated_extra_bytes());
         object_extra_bytes
             + match cell {
-                Cell::Object(_)
-                | Cell::WasmObject { .. }
+                Cell::WasmObject { .. }
                 | Cell::ShadowRealm { .. }
                 | Cell::ArrayFromAsyncState(_)
                 | Cell::AwaitState(_)
@@ -5441,7 +5424,6 @@ impl Heap {
         for slot in self.slots.iter() {
             let Some(cell) = slot.cell.as_ref() else { continue };
             let kind = match cell {
-                Cell::Object(_) => "object",
                 Cell::Proxy { .. } => "proxy", Cell::WeakMap { .. } => "weakmap",
                 Cell::AccessorPair { .. } => "accessor", Cell::BindingReference { .. } => "binding",
                 _ => "other",
