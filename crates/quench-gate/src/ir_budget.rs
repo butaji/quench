@@ -14,7 +14,7 @@
 //!
 //! `QUENCH_IR_BUDGET_MODE=tiers` measures every op under `--no-jit`, `--b-jit` and `--u-jit`
 //! and reports the tier order the design asks for, no-jit >= b-jit >= u-jit, with u-jit within
-//! 5x of the C twin, naming each op that breaks it (report only).
+//! its budget (3x C + 6, the design target for u-jit), naming each op that breaks it (report only).
 //!
 //! Alone: `quench-gate --only ir-budget`. `QUENCH_IR_BUDGET_OPS=a,b` measures only those ops,
 //! `QUENCH_IR_BUDGET_MODE=b-jit` (or `u-jit`) measures a JIT tier against the same budgets
@@ -322,8 +322,6 @@ fn ratchet(config: &Config, measured: &[Measured], rows: &mut BTreeMap<String, R
     grown
 }
 
-/// u-jit's allowance over the C twin.
-const UJIT_OVER_C: f64 = 5.0;
 
 /// The tier report: each op's count per tier, worst u-jit-to-C ratio first, with the order it
 /// breaks.
@@ -342,13 +340,14 @@ fn tiers(config: &Config, ops: &[String], rows: &BTreeMap<String, Row>) -> Verdi
         if *baseline > interpreter + tolerance(*interpreter) { faults.push("b-jit>no-jit") }
         if *optimized > baseline + tolerance(*baseline) { faults.push("u-jit>b-jit") }
         if !faults.is_empty() { broken += 1 }
-        if *optimized > UJIT_OVER_C * c { faults.push("u-jit>5C"); over_c += 1 }
+        // The design target: u-jit within the op's budget, 3x C plus one dispatch allowance.
+        if rows.get(name).is_some_and(|row| *optimized > row.budget + SAME_COUNT) { faults.push("u-jit>budget"); over_c += 1 }
         lines.push((optimized / c.max(1.0), format!("{name:<16}{interpreter:>10.1}{baseline:>10.1}{optimized:>10.1}{c:>7.1}{:>7.1}x  {}", optimized / c.max(1.0), faults.join(" "))));
     }
     lines.sort_by(|a, b| b.0.total_cmp(&a.0));
     let head = format!("{:<16}{:>10}{:>10}{:>10}{:>7}{:>8}  {}", "op", "no-jit", "b-jit", "u-jit", "C", "u/C", "breaks");
     let table = std::iter::once(head).chain(lines.into_iter().map(|(_, line)| line)).collect::<Vec<_>>().join("\n");
-    Ok(format!("tiers: {broken} of {} ops out of order, {over_c} with u-jit past 5x C (report only)\n{table}", counts.len()))
+    Ok(format!("tiers: {broken} of {} ops out of order, {over_c} with u-jit past its budget (3x C + 6; report only)\n{table}", counts.len()))
 }
 
 pub fn run(config: &Config) -> Verdict {

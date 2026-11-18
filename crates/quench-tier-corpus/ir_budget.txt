@@ -2,8 +2,9 @@
 # One row per op of quench-bench/primitives/ops.js: op, C, budget, ceiling, in instructions per loop
 # iteration under --no-jit (callgrind, exact to 0.1).
 # C: the twin in ops.c (cc -O2 -fno-tree-vectorize -fno-unroll-loops), loop step included.
-# budget: the target, 3 x C + 6 (three instructions of handler per instruction of C, plus one
-#   dispatch allowance per iteration for the loop's backward jump).
+# budget: the design target for u-jit, 3 x C + 6 (three instructions per instruction of C, plus
+#   one dispatch allowance per iteration for the loop's backward jump). The interpreter and b-jit
+#   are held to their ceilings; the tier report (QUENCH_IR_BUDGET_MODE=tiers) checks u-jit here.
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
 arr_includes 247.2 747.6 1219.3
