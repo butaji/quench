@@ -76,6 +76,9 @@ pub(super) unsafe fn bind_frame<H: Host>(
         native.dispatch.local_count = usize::from(body.locals);
         native.dispatch.body = body as *const _;
         native.dispatch.residual = Rc::as_ptr(&program) as usize;
+        // A region's inline-cache stores run in place only where the VM and the program run
+        // specialized, the fact its rows were planned under (`start_osr_region`'s `stores`).
+        native.dispatch.stores_specialized = usize::from(vm.specialized && program.specialized);
     }
     native.dispatch.refresh_object_bases(vm);
     // The program's field cache entries, which its site rows read and a body it calls by its entry

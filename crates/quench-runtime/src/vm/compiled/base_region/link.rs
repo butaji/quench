@@ -79,7 +79,7 @@ pub(super) fn leave_chain(spills: &[(Place, Register)], copies: &[(Register, Reg
     }
     chain.push((routine(tail)?, leave));
     let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> = chain.iter().map(|(_, h)| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
-    let rows: Vec<Placed> = chain.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: None }).collect();
+    let rows: Vec<Placed> = chain.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: None, cold: false }).collect();
     let mut code = vec![0u8; rows.iter().map(|row| row.stencil.code.len()).sum()];
     // SAFETY: `code` has room for every stencil's full length, which bounds the chain.
     let (len, _) = unsafe { quench_bjit::copy_patch(&rows, code.as_mut_ptr(), |_, _| 0) };
@@ -363,9 +363,9 @@ pub(super) fn link(layout: &Layout, planned: &[Planned]) -> Result<(Vec<u8>, Res
     let hole_fns: Vec<Box<dyn Fn(u32) -> u64 + '_>> =
         holes.iter().map(|h| Box::new(move |i: u32| h[i as usize]) as Box<dyn Fn(u32) -> u64>).collect();
     let mut rows: Vec<Placed> = Vec::with_capacity(g + n + leaves.0.len());
-    rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + failed) }));
-    rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k] }));
-    rows.extend(leaves.0.iter().enumerate().map(|(k, (_, stencil))| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None }));
+    rows.extend(entry.iter().enumerate().map(|(k, (stencil, _))| Placed { stencil, hole: &*hole_fns[k], taken: Some(g + n + failed), cold: false }));
+    rows.extend(body.iter().enumerate().map(|(k, row)| Placed { stencil: row.stencil, hole: &*hole_fns[g + k], taken: targets[k], cold: row.cold }));
+    rows.extend(leaves.0.iter().enumerate().map(|(k, (_, stencil))| Placed { stencil, hole: &*hole_fns[g + n + k], taken: None, cold: false }));
     let jumps = place_stubs(&mut rows, &stubs, &jump, &hole_fns, g + n + failed);
     let exits: Vec<Vec<Target>> = std::iter::repeat_with(Vec::new).take(g).chain(body_exits).chain(std::iter::repeat_with(Vec::new).take(rows.len() - g - n)).collect();
     let (code, offsets, thunk) = place_rows(layout.ending, &rows, (&exits, &routines), &jumps)?;
@@ -471,7 +471,7 @@ mod tests {
     fn exits_land_in_the_cold_area_behind_the_hot_rows() {
         let (hot, leave) = (exiting(), leave_row(vec![quench_bjit::RET]));
         let hole = |_: u32| 0u64;
-        let rows = [Placed { stencil: &hot, hole: &hole, taken: None }, Placed { stencil: &hot, hole: &hole, taken: None }, Placed { stencil: &leave, hole: &hole, taken: None }];
+        let rows = [Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &hot, hole: &hole, taken: None, cold: false }, Placed { stencil: &leave, hole: &hole, taken: None, cold: false }];
         let exits = [vec![Target::Stub { pc: 7, routine: 0 }], vec![Target::Row(2)], Vec::new()];
         let routines = [vec![quench_bjit::RET]];
         let (code, ..) = place_rows(Ending::Body, &rows, (&exits, &routines), &[]).expect("a layout");

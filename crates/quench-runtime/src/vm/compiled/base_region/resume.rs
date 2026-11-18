@@ -99,10 +99,10 @@ pub(super) fn place_stubs<'a>(rows: &mut Vec<Placed<'a>>, stubs: &'a [Stub], jum
     for stub in stubs {
         let first = rows.len();
         for (stencil, _) in &stub.rows {
-            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed) });
+            rows.push(Placed { stencil, hole: &*holes[hole], taken: Some(failed), cold: false });
             hole += 1;
         }
-        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None });
+        rows.push(Placed { stencil: jump, hole: &*holes[hole], taken: None, cold: false });
         hole += 1;
         jumps.push(Jump { first, row: rows.len() - 1, target: stub.target });
     }

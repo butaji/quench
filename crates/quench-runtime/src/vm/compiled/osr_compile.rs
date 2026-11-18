@@ -242,6 +242,26 @@ fn loop_fields(region: &LoopRegion, observation: &Observation<'_>)
     }))
 }
 
+/// A store site the observation names no load for, whose receiver register the loop just read the
+/// same field of (`o.f = o.f + x`), takes that read's loads: the store meets the shapes the read
+/// met, whose facts the region already names, and its row guards the shape it holds.
+fn stored_after_reads(instructions: &[crate::bytecode::WideInstruction], fields: &mut Vec<Option<Vec<NativeFieldLoad>>>) {
+    for (at, store) in instructions.iter().enumerate() {
+        let Some(receiver) = store.field_store_register() else { continue };
+        let site = usize::from(store.cache_site_index());
+        if fields.get(site).is_some_and(|loads| loads.as_ref().is_some_and(|loads| !loads.is_empty())) { continue }
+        let atom = store.atom_index();
+        let read = instructions[..at].iter().rev().take_while(|earlier| earlier.defined_register() != Some(receiver))
+            .find_map(|earlier| match earlier.op().is_get_field().then(|| earlier.field_lookup()).flatten() {
+                Some(FieldLookup::Atom { atom: read, cache_site, .. }) if read == atom && earlier.register_b() == receiver => Some(cache_site),
+                _ => None,
+            });
+        let Some(loads) = read.and_then(|read| fields.get(usize::from(read)).cloned().flatten()) else { continue };
+        if fields.len() <= site { fields.resize(site + 1, None) }
+        fields[site] = Some(loads);
+    }
+}
+
 impl OsrFacts {
     /// The facts the observation's field descriptors embed in code compiled from it.
     fn observed(observation: &Observation<'_>) -> Self {
@@ -388,7 +408,9 @@ pub(in crate::vm) fn start_osr_region(
     // The field sites' loads the observation recorded, which its facts name (`OsrFacts::observed`): a
     // shape compaction retires the region, so its inline-cache rows may patch these shapes in.
     let fields = loop_fields(region, observation);
-    let reads = |site: u16| fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
+    let mut row_fields = fields.clone();
+    stored_after_reads(region.instructions(), &mut row_fields);
+    let reads = |site: u16| row_fields.get(usize::from(site)).cloned().flatten().unwrap_or_default();
     let reads = stores.is_some().then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>);
     let known = super::base_region::Known { program, stores, reads, adds: None, names: None, invalidation: Some(invalidation.address()), constants: &[], typeof_names: &[], instanceofs: None, presences: None, globals: globals.as_ref(), stitch: &tiers.stitch };
     if let Some(decided) = fast_pending(region, views, known, widened, observation, helpers, (function_id, calls, invalidation)) {
