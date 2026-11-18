@@ -2562,6 +2562,7 @@ unsafe fn retire_lane_binding<H: Host>(context: *mut ()) {
     unsafe {
         (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
+        (*cx).root_walk = NO_OUTER_WALK;
         (*cx).frame_storage = NO_FRAME_STORAGE;
         (*cx).instance_slots = (Value::DELETED, std::ptr::null());
     }
@@ -2642,6 +2643,9 @@ struct LaneContext<H: Host> {
     /// The last outer capture walk an activation read through (`lane_load_outer_capture`).
     /// One walk measured better than one per depth parity on closure-heavy code.
     outer: OuterWalk,
+    /// The last walk a root binding read took (`lane_root_slots`): from the running
+    /// activation's environment word, or its frame's, out to the root environment's slots.
+    root_walk: OuterWalk,
     /// The storage of the environment a frame run's captured locals live in, once a local
     /// access found it (`lane_frame_storage`).
     frame_storage: FrameStorage,
@@ -6513,19 +6517,53 @@ script_handler! {
     fn lane_load_root_binding<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let slot = usize::from(ImmediateLayout::capture_slot(imm));
-        let vm = unsafe { vm(cx) };
-        let value = lane_root_environment(cx, ImmediateLayout::capture_depth(imm)).and_then(|env| match vm.heap.reachable_environment(env) {
-            Some(crate::heap::EnvironmentRecord { function, slots, .. }) if *function == super::ROOT_FUNCTION_ID => {
-                slots.owned(slot).filter(|value| !value.is_internal_marker())
-            }
-            _ => None,
-        });
+        // SAFETY: the root record's slots, live while no collection runs (`lane_root_slots`).
+        // A dense slot's ordinary value; a sparse storage, a shared slot or a binding in its
+        // temporal dead zone takes the walk.
+        let value = lane_root_slots(cx, ImmediateLayout::capture_depth(imm))
+            .and_then(|slots| unsafe { &*slots }.dense()?.dense_plain(slot));
         let Some(value) = value else {
             sibling!(lane_load_capture_walk::<H>, r, ip, view)
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
+}
+
+/// The slots of the root environment `depth` layers out from the running activation, as
+/// `lane_root_environment` walks to it, through the walk the lane remembers
+/// (`LaneContext::root_walk`): an environment's chain is fixed and its record stays put while
+/// no collection runs, which retires the walk (`retire_lane_binding`), so the walk holds while
+/// the activation's environment word, or its frame's, is the one it started from.
+#[inline(always)]
+fn lane_root_slots<H: Host>(cx: *mut LaneContext<H>, depth: u16) -> Option<*const crate::heap::EnvironmentSlots> {
+    let env = unsafe { (*cx).registers }.env();
+    let key = if env.is_deleted() {
+        let frame = unsafe { (*cx).frame() };
+        unsafe { vm(cx) }.frames.get(frame).map_or(Value::DELETED, |frame| frame.env)
+    } else {
+        env
+    };
+    let walk = unsafe { (*cx).root_walk };
+    if walk.env == key && walk.depth == depth && !walk.slots.is_null() {
+        return Some(walk.slots);
+    }
+    lane_root_slots_walk(cx, depth, key)
+}
+
+/// `lane_root_slots` past its remembered walk: the walk, remembered when its start is an
+/// environment word.
+#[inline(never)]
+fn lane_root_slots_walk<H: Host>(cx: *mut LaneContext<H>, depth: u16, key: Value) -> Option<*const crate::heap::EnvironmentSlots> {
+    let root = lane_root_environment(cx, depth)?;
+    let slots = match unsafe { vm(cx) }.heap.reachable_environment(root)? {
+        crate::heap::EnvironmentRecord { function, slots, .. } if *function == super::ROOT_FUNCTION_ID => std::ptr::from_ref(slots),
+        _ => return None,
+    };
+    if !key.is_deleted() {
+        unsafe { (*cx).root_walk = OuterWalk { env: key, depth, slots } };
+    }
+    Some(slots)
 }
 
 script_handler! {
@@ -13069,6 +13107,7 @@ fn lane_frame_state<H: Host>(
         r.set_env(Value::DELETED);
         (*cx).registers.set_capture(std::ptr::null());
         (*cx).outer = NO_OUTER_WALK;
+        (*cx).root_walk = NO_OUTER_WALK;
     }
     let view = Carried {
         memory: view,
@@ -13426,6 +13465,7 @@ impl<H: Host> Vm<H> {
             (*cx).instance = Value::DELETED;
             (*cx).registers.set_capture(std::ptr::null());
             (*cx).outer = NO_OUTER_WALK;
+        (*cx).root_walk = NO_OUTER_WALK;
         }
     }
 
@@ -24761,6 +24801,7 @@ impl<H: Host> Vm<H> {
                     frame_registers.set_env(Value::DELETED);
                     (*cx).registers.set_capture(std::ptr::null());
                     (*cx).outer = NO_OUTER_WALK;
+        (*cx).root_walk = NO_OUTER_WALK;
                     (*cx).memory = MemoryView::script(cx);
                 }
                 let result = match (returned, exit_pc) {
