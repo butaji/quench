@@ -340,8 +340,8 @@ impl Lowering<'_, '_> {
     pub(super) fn keeps_stable_facts(&self, pc: usize, instruction: WideInstruction) -> bool {
         match instruction.op().class() {
             Class::LoadName | Class::LoadNameCall => self.global_reads.contains_key(&pc),
-            Class::GetField => !instruction.writes_current_this(),
-            Class::GetIndex => true,
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::GetField { .. })) => !instruction.writes_current_this(),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => true,
             Class::Call => super::native_calls::keeps_arrays(&self.intrinsics, pc),
             _ if instruction.op().js_denotation() == crate::bytecode::JsDenotation::NumericBinary => true,
             _ => reads_only(&self.program.constants, instruction),

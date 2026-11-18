@@ -37,7 +37,7 @@ fn copied_from(instructions: &[WideInstruction], leader: impl Fn(usize) -> bool,
         if instruction.written_registers().any(|written| written == register) {
             return match instruction.op() {
                 _ if matches!(crate::vm::compiled::decoded(instruction), Some(crate::staged::Operation::Move { .. })) => ArraySource::Register(instruction.register_b()),
-                opcode if opcode.is_load_capture() && captured(at) => ArraySource::Capture(at),
+                _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::LoadCapture { .. })) && captured(at) => ArraySource::Capture(at),
                 _ => ArraySource::Register(register),
             };
         }
@@ -72,8 +72,8 @@ pub(super) fn loop_arrays(unit: &super::super::lane_unit::Unit, loops: &[(usize,
         let first = arrays.len();
         for (pc, instruction) in (header..).zip(body) {
             let (base, stores) = match instruction.op() {
-                opcode if opcode.is_get_index() => (instruction.operand_b().register_index(), false),
-                opcode if opcode.is_set_index() => (Some(instruction.register_b()), true),
+                _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => (instruction.operand_b().register_index(), false),
+                _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => (Some(instruction.register_b()), true),
                 _ => continue,
             };
             let Some(source) = base.and_then(|base| array_source(unit, leaders, &written, |at| captured(header, at),
@@ -101,7 +101,7 @@ impl Lowering<'_, '_> {
     /// around `pc` that proved it (the outermost lowered one: `loop_arrays`), if any.
     pub(super) fn loop_array(&self, pc: usize, register: Option<Register>) -> Option<LoopArray> {
         let source = copied_from(&self.unit.instructions, |at| self.blocks[at].is_some(),
-            |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && self.unit.instructions[at].op().is_load_capture(), pc, register?);
+            |at| self.hoisted.get(&at).is_some_and(|read| read.representation == Representation::Tagged) && matches!(crate::vm::compiled::performed(self.unit.instructions[at]), Some(crate::staged::Operation::LoadCapture { .. })), pc, register?);
         self.loop_arrays.iter().copied()
             .filter(|array| array.source == source && (array.header..=array.back).contains(&pc))
             .min_by_key(|array| array.back - array.header)
@@ -115,8 +115,8 @@ impl Lowering<'_, '_> {
     pub(super) fn hoisted_access(&self, pc: usize) -> bool {
         let instruction = self.unit.instructions[pc];
         let base = match instruction.op().class() {
-            Class::GetIndex => instruction.operand_b().register_index(),
-            Class::SetIndex => Some(instruction.register_b()),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementRead { .. })) => instruction.operand_b().register_index(),
+            _ if matches!(crate::vm::compiled::performed(instruction), Some(crate::staged::Operation::ElementWrite { .. })) => Some(instruction.register_b()),
             _ => None,
         };
         self.loop_array(pc, base).is_some()

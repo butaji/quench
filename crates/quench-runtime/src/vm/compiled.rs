@@ -53,6 +53,20 @@ pub(in crate::vm) fn decoded(instruction: impl std::borrow::Borrow<crate::byteco
     crate::staged::Operation::decode(*instruction.borrow(), crate::staged::DecodeContext::EMPTY)
 }
 
+/// The staged operation a record performs, whatever completion its result flags ask (a result
+/// that also returns from the frame or writes `this`): what an analysis asks of a record when the
+/// question is the operation, not how the frame completes. `decoded` declines a flagged record,
+/// whose row a tier makes through its completion.
+#[inline]
+pub(in crate::vm) fn performed(instruction: impl std::borrow::Borrow<crate::bytecode::WideInstruction>) -> Option<crate::staged::Operation<(), ()>> {
+    let instruction = *instruction.borrow();
+    let plain = if instruction.op().field_layout(crate::bytecode::InstructionField::A) == crate::bytecode::FieldLayout::ResultRegister {
+        crate::bytecode::WideInstruction::new(instruction.op(), instruction.a() & crate::bytecode::REGISTER_MASK,
+            instruction.b(), instruction.c(), instruction.imm())
+    } else { instruction };
+    decoded(plain)
+}
+
 #[path = "compiled/osr_loop.rs"]
 mod osr_loop;
 mod exit_protocol;
