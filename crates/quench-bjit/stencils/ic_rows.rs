@@ -42,7 +42,7 @@ use crate::staged::ic::{self, IcOp, Reached};
 use crate::staged::object::{Form, direct_object_record, object_record_at};
 use crate::staged::region::Region;
 use crate::staged::object::Rep;
-use crate::staged::slot_store::{own_flat_known, own_flat_store, proved_flat_read, proved_flat_store};
+use crate::staged::slot_store::{own_flat_known, own_flat_store, proved_flat_store};
 use crate::staged::Stage;
 use crate::typed_ir::Type;
 use crate::words::{hole, hole64};
@@ -79,8 +79,7 @@ fn read<const HOLDER: bool>(s: &S, payload: usize) -> Option<u64> {
         let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
         ic::run(&mut stage, &ops, at, Some(records), ())
     } else {
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }];
-        ic::run(&mut stage, &ops, at, None, ())
+        ic::own_field(&mut stage, record, 0, 0, ())
     }
 }
 
@@ -156,21 +155,13 @@ fn known_record<const H: u8>(s: &S, stage: &mut StencilStage, payload: usize) ->
     object_record_at(stage, records, id)
 }
 
-/// The own slot of the receiver known to be a direct object, where it is of the exact shape at hole 2 (the
-/// slot's flat byte offset at hole 3): one compare proves the shape with flat plain values and the slot is
-/// loaded, as a C struct field is; any other storage form takes `read`'s ops with no family test.
+/// The own slot of the receiver known to be a direct object (`ic::own_field`: hole 2 the shape, hole 3 the
+/// slot's flat byte offset), with no family test.
 #[inline(always)]
 fn known_get<const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     let record = known_record::<GET_RECEIVER>(&s, &mut stage, payload);
-    let word = if own_flat_known(&mut stage, record, 0, ()).is_some() {
-        Some(proved_flat_read(&mut stage, record, 0))
-    } else {
-        // A stage of its own numbers the holes from the entry's first again.
-        let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1 }];
-        ic::run(&mut stage, &ops, Reached { record, shape: None, inline: None }, None, ())
-    };
+    let word = ic::own_field(&mut stage, record, 0, 0, ());
     match word {
         Some(word) => hit::<true>(deliver::<D>(s, word)),
         None => miss::<true>(s),

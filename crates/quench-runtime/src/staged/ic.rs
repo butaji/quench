@@ -139,12 +139,31 @@ pub(crate) unsafe fn concrete_own_field_hit(object: &crate::heap::Object, proper
     shape: u32, slot: u16) -> Option<crate::Value> {
     let mut stage = super::Concrete::new(property_values);
     let record = object as *const crate::heap::Object as u64;
-    // The word proves the shape and, by its storage-form bits, where the values live.
-    let word = super::object::header_u32(&mut stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
-    let at = Reached { record, shape: Some(recorded_shape(&mut stage, word)), inline: None };
-    guard_shape(&mut stage, &at, shape, ())?;
-    let layout = formed_own_layout(&mut stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, ())?;
-    Some(crate::value_vec::decode_staged_word(read_slot(&mut stage, layout, slot, Rep::Tagged)))
+    own_field(&mut stage, record, shape, slot, ()).map(crate::value_vec::decode_staged_word)
+}
+
+/// The own field of the object record at `record` where its exact shape is `shape`: the interpreter's
+/// `GetField` hit (`concrete_own_field_hit`) and a stencil's inline-cache read (`quench-bjit/stencils/ic_rows.rs`)
+/// alike. The auxiliary word proves the shape and, by its storage-form bits, where the values live, so a flat
+/// run is one test away; `None`, leaving at `miss`, for another shape.
+#[inline(always)]
+pub(crate) fn own_field<S: Stage>(stage: &mut S, record: S::Word, shape: u32, slot: u16, miss: S::Miss) -> Option<S::Word> {
+    let word = super::object::header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset);
+    let expected = stage.site(u64::from(shape));
+    // The word is the shape with no storage-form bit: that shape, its values a wide flat run, on one compare.
+    let exact = stage.eq_imm(word, expected);
+    stage.choose_leaving(exact, #[inline(always)] |stage| {
+        let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
+        let run = super::object::arena_run(stage, payload);
+        let layout = super::object::Layout { slots: super::object::Slots::Flat(run), storage_len: usize::from(slot) + 1 };
+        Some(read_slot(stage, layout, slot, Rep::Tagged))
+    }, #[inline(always)] |stage| {
+        let recorded = recorded_shape(stage, word);
+        let same = stage.eq_imm(recorded, expected);
+        stage.guard(same, miss)?;
+        let layout = formed_own_layout(stage, record, word, Form::Either, usize::from(slot) + 1, PackedAccess::Reload, miss)?;
+        Some(read_slot(stage, layout, slot, Rep::Tagged))
+    })
 }
 
 /// `concrete_hinted_own_field_hit`'s form: the one the hint's bits name at run time.

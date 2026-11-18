@@ -55,9 +55,9 @@ pub(super) enum Heap {
     SiteStore,
     /// `SiteStore` into the activation's receiver: hole 0 is unused.
     ThisStore,
-    /// The inline-cache read (`ic_rows`) of the own flat slot of the object register (hole 1), whose
+    /// The inline-cache read (`ic_rows`) of the own slot of the object register (hole 1), whose
     /// exact shape (hole 2) and slot byte offset (hole 3) the code holds from the site's one entry,
-    /// into the destination (hole 0): a shape compare and a load, no cache table read.
+    /// into the destination (hole 0): a shape compare and a load, no cache table read (`staged::ic::own_field`).
     IcGet,
     /// The inline-cache store of a Number (hole 1) into that slot of the object register (hole 0),
     /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds

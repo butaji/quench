@@ -107,17 +107,6 @@ pub(crate) fn own_flat_known<S: Stage>(stage: &mut S, record: S::Word, shape: u3
     stage.guard(same, miss)
 }
 
-/// Flat value `slot` of the record at `record`, which `own_flat_known` proved of the slot's shape with
-/// plain flat values: the payload word, the run, the slot.
-#[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`)
-pub(crate) fn proved_flat_read<S: Stage>(stage: &mut S, record: S::Word, slot: u16) -> S::Word {
-    let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
-    let run = arena_run(stage, payload);
-    let offset = stage.site(u64::from(slot) * OBJECT.property_value_size as u64);
-    stage.load_site(Region::ObjectSlots.mutable(), run, offset)
-}
-
 /// `value` written at flat `slot` of the record at `record`, which `own_flat_known` proved of the slot's
 /// shape with plain flat values; the value is one the slot's observed type holds, so the store gate does not apply.
 #[inline(always)]
