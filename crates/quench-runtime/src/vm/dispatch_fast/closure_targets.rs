@@ -58,9 +58,7 @@ impl<H: Host> Vm<H> {
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
         if entry.admission != self.lane_stack.admission
             || entry.function != function
-            // An arrow that reads its maker's implicit bindings reads `this` from its own
-            // environment (`sibling_closure_target`); one that reads none keeps the entry's.
-            || !(entry.this_binding.binds_receiver() || entry.forms & TARGET_READS_IMPLICIT == 0)
+            || !entry.this_binding.binds_receiver()
         {
             return None;
         }
