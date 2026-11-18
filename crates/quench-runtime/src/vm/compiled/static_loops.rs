@@ -64,8 +64,8 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
         }
         return;
     }
-    let value = match Operation::<u64, ()>::decode(instruction, DecodeContext::of_constants(&program.constants)) {
-        Some(Operation::LoadConst { .. }) => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
+    let value = match Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY) {
+        _ if crate::staged::loads_constant(instruction.op()) => program.constants.get(instruction.constant_index()).and_then(facts::immediate),
         Some(Operation::Move { .. }) => values.get(usize::from(instruction.register_b())).copied().flatten(),
         Some(Operation::Number(NumberOperation::IncDec { .. })) => {
             values.get(usize::from(instruction.register_b())).copied().flatten().and_then(Value::as_number)
@@ -96,7 +96,8 @@ fn scalar(program: &ResidualProgram, values: &mut [Option<Value>], instruction: 
 
 fn scalar_body(program: &ResidualProgram, instruction: WideInstruction) -> bool {
     instruction.result_flags() == 0 && instruction.numeric_local_target().is_none()
-        && (matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::of_constants(&program.constants)),
+        && (crate::staged::loads_constant(instruction.op())
+            || matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY),
                 Some(Operation::LoadConst { .. } | Operation::Move { .. } | Operation::Number(NumberOperation::IncDec { .. })))
             || (Operation::<u64, ()>::is_number_binary(instruction)
                 && (NumberArithmetic::from_js_instruction(instruction.op(), instruction.binary_operator()).is_some()

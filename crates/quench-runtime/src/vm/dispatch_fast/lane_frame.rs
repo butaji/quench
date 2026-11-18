@@ -146,21 +146,7 @@ impl Decisions {
     }
 }
 
-/// The interpreter's frame: the live register file and the accumulator view a producer
-/// carries. `ACC` names the record's accumulator field (`read`).
-pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
-    registers: Registers,
-    view: Carried,
-    /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
-    /// not hold it.
-    this: Value,
-    /// The activation's local slots and their count, for a staged local operation.
-    locals: Option<(*mut Value, usize)>,
-    /// The lane context and what it makes, for a staged allocation or deletion row.
-    host: Option<LaneHost>,
-    /// The capture stores of the running lane, for a staged capture store.
-    captures: Option<CaptureStores>,
-    /// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
+/// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's
 /// filter, null where the record has none.
 #[derive(Clone, Copy)]
 struct StringCases {
@@ -187,7 +173,21 @@ struct YieldSuspension {
     resume: unsafe fn(*mut (), *const LaneInstruction, Registers, Register) -> Option<Resumed>,
 }
 
-/// The running lane's steady decisions, for a staged comparison jump.
+/// The interpreter's frame: the live register file and the accumulator view a producer
+/// carries. `ACC` names the record's accumulator field (`read`).
+pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
+    registers: Registers,
+    view: Carried,
+    /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
+    /// not hold it.
+    this: Value,
+    /// The activation's local slots and their count, for a staged local operation.
+    locals: Option<(*mut Value, usize)>,
+    /// The lane context and what it makes, for a staged allocation or deletion row.
+    host: Option<LaneHost>,
+    /// The capture stores of the running lane, for a staged capture store.
+    captures: Option<CaptureStores>,
+    /// The running lane's steady decisions, for a staged comparison jump.
     decisions: Option<Decisions>,
     /// The slots the running function's captures read from (`capture_reads`), for a staged capture read.
     capture_slots: Option<*const usize>,

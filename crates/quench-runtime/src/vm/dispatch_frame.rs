@@ -2148,7 +2148,7 @@ impl<H: Host> Vm<H> {
             // Register moves, local slot accesses and conditional jumps run as their staged rows on the
             // running frame's registers. A row that leaves runs the arms below and the general path.
             self.pending_row = None;
-            if let Some(operation) = Self::decode_row(ins, crate::staged::DecodeContext::of_constants(&p.constants))
+            if let Some(operation) = Self::decode_row(ins, crate::staged::DecodeContext::of(p))
                 && runs_row(operation)
                 && self.row_admitted(p, frame, operation)
             {

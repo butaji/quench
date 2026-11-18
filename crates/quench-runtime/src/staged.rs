@@ -90,7 +90,7 @@ pub(crate) mod value;
 mod steps;
 mod control;
 mod generic;
-pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access};
+pub(crate) use steps::{step, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector};
 pub(crate) mod effects;
 #[allow(dead_code)] // the K-PLAN builder; its first consumer is the u-jit lowering (P4, TOD-1700)
 pub(crate) mod function_plan;
@@ -641,7 +641,6 @@ pub(crate) const LOCAL_INITIALIZE_ROW: u16 = Op::InitializeTdz as u16;
 /// The opcodes whose rows read and write the running captured environment's slots (`LoadEnvLocal`,
 /// `StoreEnvLocal`), which a frame's specialization rewrites where the slot is not captured.
 pub(crate) const LOAD_ENV_LOCAL_ROW: u16 = Op::LoadEnvLocal as u16;
-pub(crate) const STORE_ENV_LOCAL_ROW: u16 = Op::StoreEnvLocal as u16;
 
 /// The local slot a local-access record names. An environment window's record carries its register
 /// count above the slot (`dispatch_fast::specialize_environment_window`), so the slot is the low half
@@ -658,10 +657,6 @@ pub(crate) const fn checked_local(op: Op) -> bool {
     matches!(op, Op::LoadLocal | Op::StoreLocal | Op::InitializeTdz)
 }
 
-/// Whether `op` is an increment or decrement (`IncDec`), the update a fused index triple starts with.
-pub(crate) const fn increments(op: Op) -> bool {
-    matches!(op, Op::IncDec)
-}
 
 /// Whether `op`'s row writes its result register itself when it answers a value. A keyed for-in
 /// read (`EnumeratedGet`) answers the word it read and leaves the write to the tier; a global

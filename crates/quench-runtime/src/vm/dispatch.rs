@@ -578,7 +578,7 @@ impl<H: Host> Vm<H> {
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of_constants(&p.constants)) {
+                match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::of(p)) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => {
                         return self.load_const_miss(f, i);
@@ -772,7 +772,7 @@ impl<H: Host> Vm<H> {
                 match self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
                     RowRun::Done(_) => {}
                     RowRun::Declined => {
-                        return self.get_field_miss(p, f, i, pc, allow_inline_calls);
+                        return self.get_field_step_miss(p, f, i, pc, allow_inline_calls);
                     }
                     RowRun::Stop(stop) => return stop,
                 }
@@ -1571,7 +1571,7 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(never)]
-    fn get_field_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+    fn get_field_step_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
         let lookup = i.field_lookup().ok_or_else(|| {
             JsError::validation("invalid nested field lookup encoding".into())
         })?;
@@ -1685,7 +1685,6 @@ impl<H: Host> Vm<H> {
             value,
             destination: i.result_register(),
         });
-        Ok(StepResult::Continue)
     }
 
     #[inline(never)]
@@ -1701,7 +1700,6 @@ impl<H: Host> Vm<H> {
             destination: i.result_register(),
             delegated_result: None,
         });
-        Ok(StepResult::Continue)
     }
 
     #[inline(never)]

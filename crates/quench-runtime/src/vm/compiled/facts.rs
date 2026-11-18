@@ -239,7 +239,12 @@ fn transfer(
     native_calls: bool,
 ) -> Flow {
     let op = instruction.op();
-    let operation = Operation::<u64, ()>::decode(instruction, DecodeContext::of_constants(constants));
+    if crate::staged::loads_constant(instruction.op()) {
+        let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);
+        set(types, instruction.result_register(), ty);
+        return Flow::Next;
+    }
+    let operation = Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY);
     match operation {
         Some(Operation::LoadConst { .. }) => {
             let ty = constants.get(instruction.constant_index()).map_or(Type::ANY, constant_type);

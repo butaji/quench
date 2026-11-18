@@ -16530,7 +16530,7 @@ pub(in crate::vm) const ELEMENT_WRITE: u16 = {
 pub(in crate::vm) fn proved_read_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_READ, ACC_NONE, FLAG_SET> as Handler as *const () }
 pub(in crate::vm) fn proved_store_handler<H: Host>() -> *const () { lane_row::<H, ELEMENT_WRITE, ACC_NONE, FLAG_SET> as Handler as *const () }
 pub(in crate::vm) fn updated_read_add_handler<H: Host>() -> *const () {
-    chain_row::<H, { opc::IncDec }, { opc::GetIndex }, { opc::Binary }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(false) as *const ()
+    lane_frame::chain_row::<H, { opc::IncDec }, { opc::GetIndex }, { opc::Binary }, { crate::staged::NO_LINK }, { crate::staged::FUSED_PLAIN }>(false) as *const ()
 }
 
 /// The handler serving opcode `OP` whose accumulator field is `ACC`, derived
@@ -17886,7 +17886,7 @@ fn update_fusion<H: Host>(update: &LaneInstruction, jump: &LaneInstruction) -> O
         plain if plain == jump_row::<H, JUMP>(false) as *const () => false,
         _ => return None,
     };
-    Some(fused_row::<H, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(backward))
+    Some(lane_frame::fused_row::<H, { opc::IncDec }, { opc::Jump }, { crate::staged::FUSED_PLAIN }>(backward))
 }
 
 /// Whether `record`, an `IncDec` running its row (`lane_row`), decrements (its immediate flag);

@@ -1,6 +1,7 @@
 //! Stable facts in a lane region: what its code folds under code dependencies, and the
 //! invalidation points where it learns that one changed.
 
+use crate::bytecode::Class;
 use super::*;
 use super::super::object_slots::emit;
 use crate::staged::machine::{Lane, MachineScalar, Relation};

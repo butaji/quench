@@ -217,10 +217,10 @@ impl BranchTable {
     /// The table `instruction` is: its selector is `a`, and its immediate counts the cases before
     /// the default (`branch_table_entries`), so the entries are that count plus one.
     pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
-        (instruction.op() == Op::WasmBranchTable).then(|| Self {
-            index: instruction.a(),
-            entries: instruction.imm().checked_add(1)?,
-        })
+        if instruction.op() != Op::WasmBranchTable {
+            return None;
+        }
+        Some(Self { index: instruction.a(), entries: instruction.imm().checked_add(1)? })
     }
 }
 

@@ -140,7 +140,7 @@ pub(super) fn bitwise(lookup: Lookup<'_>, operation: NumberBitwise, operands: [O
 /// operation or a step that fits int32, a bitwise result; `None` for any other.
 pub(in crate::vm::compiled) fn result(lookup: Lookup<'_>, constants: &[Constant], instruction: WideInstruction) -> Option<IntRange> {
     if instruction.result_flags() != 0 { return None; }
-    if matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::of_constants(constants)), Some(Operation::LoadConst { .. })) {
+    if crate::staged::loads_constant(instruction.op()) {
         return constants.get(instruction.constant_index()).and_then(immediate).and_then(Value::as_int).map(IntRange::singleton);
     }
     let bitwise_operation = Operation::<u64, ()>::is_number_binary(instruction)

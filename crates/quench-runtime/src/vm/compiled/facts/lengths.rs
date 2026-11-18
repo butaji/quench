@@ -108,9 +108,9 @@ impl Model<'_> {
     /// Whether `instruction` may change an array's length or run guest code that can: all but
     /// numeric steps, moves, jumps and reads of a hoisted view, whose misses leave.
     pub(in crate::vm::compiled) fn disturbs_lengths(&self, pc: usize, instruction: WideInstruction) -> bool {
-        let constants = &self.program.constants;
         let quiet = Operation::<u64, ()>::is_nop(instruction)
-            || matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::of_constants(constants)),
+            || crate::staged::loads_constant(instruction.op())
+            || matches!(Operation::<u64, ()>::decode(instruction, DecodeContext::EMPTY),
                 Some(Operation::Move { .. } | Operation::LoadConst { .. } | Operation::Jump | Operation::JumpIf { .. }
                     | Operation::CompareJump { .. } | Operation::Number(NumberOperation::IncDec { .. })))
             || Operation::<u64, ()>::is_number_binary(instruction)

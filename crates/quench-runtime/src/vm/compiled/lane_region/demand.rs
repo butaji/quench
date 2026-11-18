@@ -9,6 +9,8 @@
 //! read that finds the view unavailable boxes it there from the unboxed view
 //! (`frame::register_tagged`), which costs a box and never reads garbage.
 
+use crate::bytecode::JsDenotation;
+use crate::bytecode::Class;
 use super::*;
 use crate::compile::liveness::transfer;
 use std::num::NonZeroUsize;
