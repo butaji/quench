@@ -5,18 +5,6 @@ use super::*;
 use super::super::activation::FrameRecord;
 
 impl<H: Host> Vm<H> {
-    /// The frame of `generator` the lane resumes as an activation over its register file, which
-    /// `code`, the running program's, lays out as its registers or with an environment window
-    /// after them (`window_layout`, the `bool`): a suspended generator of this realm and
-    /// program that is not running or done.
-    pub(in crate::vm) fn generator_window_frame(&self, generator: Value, code: &ResidualProgram) -> Option<(&FrameRecord, bool)> {
-        let IteratorRecord { ext, .. } = self.heap.iterator(generator)?;
-        let record = ext.generator.as_deref()?;
-        let frame = &*record.suspended_continuation()?.frame;
-        let environment = self.window_layout(frame, code)?;
-        (record.realm == self.realm.globals).then_some((frame, environment))
-    }
-
     /// Whether the lane resumes `frame`, suspended by a function of `code`, over its register
     /// file, and whether its window carries an environment after the registers: a frame of the
     /// active program whose function lays out as its registers or with an environment window
@@ -41,18 +29,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Starts a windowed run of `generator`, which `generator_window_frame` admitted: the
+    /// Starts a windowed run of `generator`, which `lane_resume_generator` admitted: the
     /// frame stays in its record, `sent` is the value the suspending `yield` evaluates to, and
     /// the native activation roots the generator while the run lasts. The frame's address, which
     /// its box keeps until the run ends.
+    /// `record` is `generator`'s, which its cell keeps boxed while the generator lives.
     pub(in crate::vm) fn resume_generator_window(
         &mut self,
+        (generator, record): (Value, *mut GeneratorRecord),
         method: Value,
-        generator: Value,
         sent: Value,
         depth: usize,
     ) -> Option<*mut FrameRecord> {
-        let (frame, resume_register) = self.generator_record_mut(generator)?.resume_windowed()?;
+        // SAFETY: the caller's; nothing since its lookup freed the generator.
+        let (frame, resume_register) = unsafe { &mut *record }.resume_windowed()?;
         // SAFETY: the record owns the box, which nothing moves or drops until the run ends.
         let epoch = self.heap.collection_epoch();
         let record = unsafe { &mut *frame };
@@ -81,15 +71,12 @@ impl<H: Host> Vm<H> {
         depth: usize,
     ) {
         self.realm.promise.active_native.pop();
-        let mut frame = self
-            .generator_record_mut(generator)
-            .and_then(GeneratorRecord::take_windowed)
-            .expect("a windowed yield belongs to a windowed generator");
+        let record = std::ptr::from_mut(self.generator_record_mut(generator).expect("a windowed yield belongs to a generator"));
+        // SAFETY: the generator's cell keeps its record boxed, and parking the frame frees no cell.
+        let mut frame = unsafe { &mut *record }.take_windowed().expect("a windowed yield belongs to a windowed generator");
         self.park_frame(&mut frame, pc, depth);
         let continuation = Continuation { frame, completion: Completion::Yield(value), resume_register: Some(destination), promise: Value::UNDEFINED };
-        if let Some(record) = self.generator_record_mut(generator) {
-            record.suspend(continuation);
-        }
+        unsafe { &mut *record }.suspend(continuation);
     }
 
     /// Suspends the frame of a windowed run at `pc`: the environment window closed, its dead

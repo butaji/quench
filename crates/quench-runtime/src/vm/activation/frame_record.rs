@@ -265,6 +265,12 @@ impl FrameRecord {
         #[cfg(test)]
         note_frame_made();
         self.settle_registers(u64::MAX);
+        self.into_buffers(with_base)
+    }
+
+    /// The finished activation's buffers as a frame for the pool (`Vm::pool_finished_frame`):
+    /// no run reads its values again.
+    pub(in crate::vm) fn into_buffers(self: Box<Self>, with_base: usize) -> Box<Frame> {
         let this = self.this();
         let Self {
             prefix: _, context, reflected_parameters, original_arguments, program, function, pc, env,

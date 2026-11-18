@@ -1732,6 +1732,10 @@ enum Completion {
     /// native receives. Made a frame, it is the entry frame of the general loop that finishes
     /// it, which no pending call names.
     ReturnsToNative,
+    /// `Generates` of a for-of step whose `done` and `value` reads its records make
+    /// (`lane_iterator_step_reads`): a yield or return writes them to those reads' registers and
+    /// the caller goes on past them, the result object unmade. Made a frame, it is `Generates`.
+    StepReads(ForOfTest),
     /// A plain call of a non-suspending async function of the caller's program
     /// (`CallEntry::Settles`): its return resolves the promise the call made, which
     /// `LaneStack::settling` keeps, and the call yields that promise. Made a frame, its
@@ -1838,7 +1842,13 @@ impl Completion {
 
     /// Whether the activation runs a generator over its record's register file.
     #[inline] fn is_generator(self) -> bool {
-        matches!(self, Self::Generates | Self::Delegates)
+        matches!(self, Self::Generates | Self::Delegates | Self::StepReads(_))
+    }
+
+    /// Whether a generator's step yields this realm's reused iterator result, which only the
+    /// step's own reads observe: a delegate's step makes it fresh.
+    #[inline] fn reuses_result(self) -> bool {
+        matches!(self, Self::Generates | Self::StepReads(_))
     }
 
     /// Whether the activation runs over the register file of a heap record's frame, a
@@ -2303,6 +2313,10 @@ pub(super) struct LaneStack {
     /// The exported Wasm function a JavaScript call last entered (`Vm::wasm_export_frame_call`),
     /// so the next call of it reads its closure and signature once. A collection forgets it.
     pub(super) wasm_export: Option<super::wasm_js::WasmExportCall>,
+    /// The window plan last derived for a frame that made no environment of its own
+    /// (`generator_windows::cached_window_plan`): every new activation of the same function
+    /// under the same environment, as each call of an async function is, shares it.
+    pub(super) last_window_plan: Option<(ProgramId, u32, generator_windows::WindowPlan)>,
 }
 
 /// The addresses a lane run's direct calls push onto (`Vm::lane_stack_words`).
@@ -2351,6 +2365,7 @@ impl Default for LaneStack {
             body_boundary: None,
             boundary_frames: None,
             wasm_export: None,
+            last_window_plan: None,
         }
     }
 }
@@ -14890,7 +14905,7 @@ script_handler! {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
         match vm.iteration_step(iterator, method) {
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
-                sibling!(lane_generator_step::<H>, r, ip, Carried::script_in(cx, view))
+                sibling!(lane_generator_step::<H, 0>, r, ip, Carried::script_in(cx, view))
             }
             super::iterators::IterationStep::Call => sibling!(lane_script_call::<H, ANY_ARGC, false>, r, ip, Carried::script_in(cx, view)),
             _ => {}
@@ -14909,10 +14924,18 @@ script_handler! {
     /// (`lane_resume_generator_step`), or, where its function has no window, as the native
     /// `next` runs it (`Vm::generator_iteration_step`), with a result only the step's `done`
     /// and `value` reads observe.
+    /// `READS` names a for-of step whose `done` and `value` reads the generator's yields make
+    /// (`Completion::StepReads`, the `ForOfTest` form `STEP_READS_EMITTED` or
+    /// `STEP_READS_THREADED`), else `0`.
     #[inline(never)]
-    fn lane_generator_step<>(cx, r, ip, i, view) {
+    fn lane_generator_step<READS: u8>(cx, r, ip, i, view) {
         let (method, iterator) = (r.get(i.b), r.get(i.c));
-        if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator) {
+        let completion = match READS {
+            STEP_READS_EMITTED => Completion::StepReads(ForOfTest::Emitted),
+            STEP_READS_THREADED => Completion::StepReads(ForOfTest::Threaded),
+            _ => Completion::Generates,
+        };
+        if let Some((registers, start)) = lane_resume_generator_step(cx, r, ip, i, method, iterator, completion) {
             next!(cx, registers, start, Carried::script_in(cx, view))
         }
         let value = lane_call_from_frame(cx, ip, |vm, code| vm.generator_iteration_step(code, method, iterator));
@@ -14938,8 +14961,14 @@ script_handler! {
         match kind {
             super::iterators::IterationStep::Array | super::iterators::IterationStep::Collection if reads_step => {}
             // A generator's step resumes it over its record, as `lane_iterator_step` makes it.
+            super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } && reads_step => {
+                if THREADED {
+                    sibling!(lane_generator_step::<H, STEP_READS_THREADED>, r, ip, Carried::script_in(cx, view))
+                }
+                sibling!(lane_generator_step::<H, STEP_READS_EMITTED>, r, ip, Carried::script_in(cx, view))
+            }
             super::iterators::IterationStep::Generator if unsafe { (*cx).script_calls } => {
-                sibling!(lane_generator_step::<H>, r, ip, Carried::script_in(cx, view))
+                sibling!(lane_generator_step::<H, 0>, r, ip, Carried::script_in(cx, view))
             }
             _ => sibling!(lane_iterator_step::<H>, r, ip, Carried::script_in(cx, view)),
         }
@@ -22066,7 +22095,11 @@ const FOR_OF_DONE_TEST: usize = 3;
 /// How a for-of step's records test its `done` read (`lane_for_of_step`). As `for_of` emits
 /// it, a `JumpFalse` into the body jumps over the `Jump` that leaves the loop; the rewrite
 /// that threads a jump over a jump makes them one `JumpTrue` that leaves it.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// `lane_generator_step`'s `READS` for a for-of step of each `ForOfTest` form.
+const STEP_READS_EMITTED: u8 = 1;
+const STEP_READS_THREADED: u8 = 2;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ForOfTest {
     /// `JumpFalse` to the `value` read, past a `Jump` out of the loop.
     Emitted,
