@@ -83,11 +83,12 @@ pub(super) fn lane_resume_generator_step<H: Host>(
     i: &LaneInstruction,
     method: Value,
     generator: Value,
+    completion: Completion,
 ) -> Option<(Registers, Ip)> {
     if i.a & crate::bytecode::RETURN_REGISTER != 0 {
         return None;
     }
-    lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, Completion::Generates)
+    lane_resume_generator(cx, r, ip, generator, method, Value::UNDEFINED, completion)
 }
 
 /// How a resumed generator's window carries its locals (`FrameRecord::open_environment_window`):
@@ -283,10 +284,7 @@ fn lane_suspend_generator<H: Host>(
     vm.suspend_generator_window(script.callee, pc, destination, value, depth);
     vm.lane_stack.pop_activation();
     let (memory, _) = lane_restore_caller(cx, &activation);
-    let result = passed_on.unwrap_or_else(|| vm.generator_step_result(value, false, script.completion == Completion::Generates));
-    // The result may be a fresh allocation, which the caller's safepoints collect after.
-    note_allocation(vm);
-    lane_resume_generated(&activation, memory, result)
+    lane_resume_generated(vm, &activation, memory, (value, false), passed_on)
 }
 
 /// The return of the generator activation, popped with its caller restored (`memory`), with
@@ -302,17 +300,31 @@ pub(super) fn lane_generator_returned<H: Host>(
         unreachable!("a generator runs as a script activation");
     };
     vm.finish_generator_window(script.callee);
-    let result = vm.generator_step_result(value, true, script.completion == Completion::Generates);
-    note_allocation(vm);
-    lane_resume_generated(activation, memory, result)
+    lane_resume_generated(vm, activation, memory, (value, true), None)
 }
 
 /// The caller of a generator `activation` it left (`lane_suspend_generator`,
-/// `lane_generator_returned`) resumes with the step's `result`: after its call, in the call's
-/// register, or, for a delegate's step, at the `yield*` itself with the result in its state
-/// register.
-fn lane_resume_generated(activation: &Activation, memory: MemoryView, result: Value) -> Resumed {
-    if activation.script().is_some_and(|script| script.completion == Completion::Delegates) {
+/// `lane_generator_returned`) resumes with the step's `value` and `done`, or the delegate's own
+/// result `passed_on`: a for-of step's reads take them in their registers and the caller goes
+/// on past them (`Completion::StepReads`), as `lane_iterator_step_reads` makes an array's step;
+/// any other caller takes the step's result object after its call, in the call's register, or,
+/// for a delegate's step, at the `yield*` itself in its state register.
+fn lane_resume_generated<H: Host>(vm: &mut Vm<H>, activation: &Activation, memory: MemoryView, (value, done): (Value, bool), passed_on: Option<Value>) -> Resumed {
+    let completion = activation.script().map(|script| script.completion);
+    if let (Some(Completion::StepReads(form)), None) = (completion, passed_on) {
+        // SAFETY: the step's records follow its call in the caller's live view (`lane_for_of_step`).
+        let (done_read, value_read) = unsafe { (&*activation.call.add(FOR_OF_DONE_READ), &*activation.call.add(form.value_read())) };
+        activation.caller_registers.set(done_read.a, if done { Value::TRUE } else { Value::FALSE });
+        if done {
+            return lane_resume_at(activation, memory, unsafe { activation.call.add(form.exit()) });
+        }
+        activation.caller_registers.set(value_read.a, value);
+        return lane_resume_at(activation, memory, unsafe { activation.call.add(form.records()) });
+    }
+    let result = passed_on.unwrap_or_else(|| vm.generator_step_result(value, done, completion.is_some_and(Completion::reuses_result)));
+    // The result may be a fresh allocation, which the caller's safepoints collect after.
+    note_allocation(vm);
+    if completion == Some(Completion::Delegates) {
         // SAFETY: the `yield*` record belongs to the caller's live view.
         let (state, _) = ImmediateLayout::register_pair(unsafe { (*activation.call).imm() });
         activation.caller_registers.set(state, result);
