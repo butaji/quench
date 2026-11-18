@@ -137,6 +137,9 @@ pub(super) enum Heap {
     /// The tagged word of hole 1 into the destination: an immutable global, a folded `typeof` name, and
     /// the `undefined` receiver of a name call.
     Word,
+    /// An inlined callee's depth-0 capture: the ordinary value of the slot at the address in hole 1 (the
+    /// guarded closure's environment is fixed) into the destination, else the row leaves inside the callee.
+    CalleeCapture,
     /// The fast arm of `AppendArray` (`elements::append_in_room`): the Number operand at hole 1 is appended to
     /// the unique writable dense array in the frame slot of hole 0 where the backing's capacity word proves
     /// room, else the row leaves into the helper step after it, which grows the backing.
@@ -245,6 +248,7 @@ impl Heap {
             Heap::GlobalRead => library::GLOBAL_READ_ROW,
             Heap::GlobalStore => library::GLOBAL_STORE_ROW,
             Heap::LexicalRead => library::LEXICAL_READ_ROW,
+            Heap::CalleeCapture => library::CALLEE_CAPTURE_ROW,
             Heap::LexicalWrite => library::LEXICAL_WRITE_ROW,
             _ => return None,
         })
