@@ -1520,6 +1520,18 @@ impl ProgramStore {
         }
     }
 
+    /// Whether every slot of `id`'s root environment is the binding itself
+    /// (`RootSlotRule::Binding`), as a strict eval's or a function-wrapped script's is: its
+    /// dense slots then serve a closure's captures as any function environment's do
+    /// (`Vm::target_capture`). A module's imports read through their records, so none is.
+    pub(crate) fn root_slots_are_bindings(&self, id: ProgramId) -> bool {
+        let Some(entry) = self.entry(id) else { return false };
+        if entry.module || !entry.module_imports.is_empty() { return false; }
+        let locals = entry.residual.functions.first().map_or(0, |root| root.local_atoms.len());
+        // Past the named locals every slot is a temporary, the binding itself (`root_slot`).
+        (0..locals).all(|slot| self.root_slot(id, slot as u16) == crate::bytecode::RootSlotRule::Binding)
+    }
+
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
     /// module-import or (unless `lexical_slots_are_bindings`) global lexical projection reads
     /// through it.

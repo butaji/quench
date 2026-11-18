@@ -14325,7 +14325,12 @@ impl<H: Host> Vm<H> {
         let Some(crate::heap::EnvironmentRecord { function, slots, scope, .. }) = self.heap.environment(env) else {
             return std::ptr::null();
         };
-        if *function == u32::MAX || *function == super::ROOT_FUNCTION_ID {
+        // A root environment's slot may project a global var, a global lexical binding or an
+        // import, which reads go through; one whose every slot is the binding (a strict
+        // eval's) is read as any other.
+        if *function == u32::MAX
+            || (*function == super::ROOT_FUNCTION_ID && (scope.program() != Some(program.raw()) || !self.programs.root_slots_are_bindings(program)))
+        {
             return std::ptr::null();
         }
         let Some(capture) = slots.dense_storage() else {
