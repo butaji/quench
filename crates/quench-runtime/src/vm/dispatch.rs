@@ -585,8 +585,14 @@ impl<H: Host> Vm<H> {
                 let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocal | Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreLocal | Op::StoreEnvLocal
-            | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
+            // Checked local reads and writes run their staged rows first; a row that leaves (a binding in
+            // its temporal dead zone, a root or mirrored binding) is the owner's step.
+            Op::LoadLocal | Op::StoreLocal => {
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    self.owner_step(p, VarOwner::Frame(f), i, *pc)?;
+                }
+            }
+            Op::LoadEnvLocal | Op::StoreVarBinding | Op::StoreEnvLocal | Op::StoreName => self.owner_step(p, VarOwner::Frame(f), i, *pc)?,
             // Captures and name loads run their staged rows first; a row that leaves is the owner's step.
             Op::LoadCapture | Op::StoreCapture | Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof => {
                 if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
@@ -1357,6 +1363,9 @@ impl<H: Host> Vm<H> {
     fn step_staged(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
         operation: crate::staged::Operation<u64, ()>) -> bool {
         use crate::staged::{Edge, Operation, Step};
+        if !self.row_admitted(p, f, operation) {
+            return false;
+        }
         match super::dispatch_frame::InterpreterFrame::step_row(&mut self.frames[f], operation) {
             Step::Control(Edge::Target) => {
                 *pc = i.jump_target() as usize;
@@ -1377,9 +1386,27 @@ impl<H: Host> Vm<H> {
     /// `i` decoded under `context` (a name load under no context: its proof is the frame's, so it
     /// takes `decode_load_name`), run as its staged row by `step_staged`. `false` where the row
     /// does not decide `i` on this frame.
+    /// Whether the staged row `operation` may run on frame `f`: the checked local rows need the
+    /// frame's slots to be its own (`Function::has_plain_locals`); every other row is admitted.
+    #[inline(always)]
+    pub(super) fn row_admitted(&self, p: &ResidualProgram, f: usize, operation: crate::staged::Operation<u64, ()>) -> bool {
+        match operation {
+            crate::staged::Operation::LoadLocalChecked { .. } | crate::staged::Operation::StoreLocalChecked { .. } => {
+                let function = self.frames[f].function;
+                p.function(function as usize).has_plain_locals(function == super::ROOT_FUNCTION_ID)
+            }
+            _ => true,
+        }
+    }
+
     #[inline(always)]
     fn step_row_of(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize,
         context: crate::staged::DecodeContext<'_>) -> bool {
+        // The fast prelude already decoded this instruction and tried its row: that row left, so the
+        // arm runs its miss path without decoding or trying it again.
+        if self.pending_row.take().is_some() {
+            return false;
+        }
         let decoded = crate::staged::Operation::<u64, ()>::decode(i, context)
             .or_else(|| crate::staged::Operation::<u64, ()>::decode_load_name(i, ()))
             .or_else(|| crate::staged::Operation::<u64, ()>::decode_lane(i));

@@ -3112,6 +3112,13 @@ impl Function {
             .is_some_and(|self_slot| usize::from(self_slot) == slot)
     }
 
+    /// Whether the interpreter's checked local rows answer this function's slots directly: the root
+    /// body's bindings are the VM's (`root`), and so are a self-binding slot and mapped arguments,
+    /// whose stores the owner step writes through. A function without them keeps its slots in its frame.
+    pub(crate) fn has_plain_locals(&self, root: bool) -> bool {
+        !root && self.self_binding_slot.is_none() && !self.arguments_alias_parameters()
+    }
+
     pub(crate) fn local_slot_uses_environment(&self, slot: usize) -> bool {
         self.selective_capture_slots
             .as_ref()

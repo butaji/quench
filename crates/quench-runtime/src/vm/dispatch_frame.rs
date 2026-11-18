@@ -2147,8 +2147,10 @@ impl<H: Host> Vm<H> {
             // need neither the published root-map PC nor the general step result.
             // Register moves, local slot accesses and conditional jumps run as their staged rows on the
             // running frame's registers. A row that leaves runs the arms below and the general path.
+            self.pending_row = None;
             if let Some(operation) = crate::staged::Operation::<u64, ()>::decode(ins, crate::staged::DecodeContext::of_constants(&p.constants))
                 && InterpreterFrame::runs_row(operation)
+                && self.row_admitted(p, frame, operation)
             {
                 #[cfg(feature = "profile-aggregate")]
                 if let crate::staged::Operation::JumpIf { register, .. } = operation {
@@ -2175,6 +2177,8 @@ impl<H: Host> Vm<H> {
                             }
                             continue;
                         }
+                        // The arm below runs the miss path; its step takes this declined row, undecoded.
+                        self.pending_row = Some(operation);
                     }
                     crate::staged::Step::Control(crate::staged::Edge::Leave | crate::staged::Edge::Transfer | crate::staged::Edge::Entry(_)) =>
                         unreachable!("the interpreter frame neither suspends nor enters a branch table"),

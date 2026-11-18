@@ -46,7 +46,7 @@ impl InterpreterFrame {
                 | Operation::JumpIf { .. } | Operation::LoadConst { .. } | Operation::LoadCapture { .. }
                 | Operation::StoreCapture { .. } | Operation::Number(_) | Operation::CompareJump { .. }
                 | Operation::ElementRead { .. } | Operation::ElementWrite { .. } | Operation::GetField { .. }
-                | Operation::SetField { .. })
+                | Operation::SetField { .. } | Operation::LoadLocalChecked { .. } | Operation::StoreLocalChecked { .. })
     }
 
     /// The register `register` of the file.

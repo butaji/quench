@@ -95,6 +95,7 @@ impl<H: Host> Vm<H> {
             program_cache_layouts: Vec::new(),
             free_cache_layouts: FxHashMap::default(),
             active_registers: std::ptr::null_mut(),
+            pending_row: None,
             lane_raised: None,
             lane_raise_site: 0,
             lane_deferred: None, running_window: None,

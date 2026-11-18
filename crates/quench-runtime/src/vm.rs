@@ -1916,6 +1916,9 @@ pub(crate) struct Vm<H> {
     free_cache_layouts: FxHashMap<crate::bytecode::CacheSiteCounts, Vec<ProgramCacheLayout>>,
     /// The register file of the frame the general loop dispatches; see `run_general_loop`.
     active_registers: *mut Value,
+    /// The staged row the general loop's fast prelude decoded for the instruction it dispatches and
+    /// found the frame left: the arm that runs next takes it as declined, rather than decode and try it again.
+    pending_row: Option<crate::staged::Operation<u64, ()>>,
     /// The error of a call the lane made in place (`dispatch_fast::lane_call_native`), which
     /// the general loop raises at that call's instruction once the lane exits there.
     lane_raised: Option<JsError>,
