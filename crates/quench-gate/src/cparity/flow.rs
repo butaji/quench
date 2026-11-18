@@ -85,6 +85,14 @@ pub fn hottest(code: &[Instruction]) -> Option<&[Instruction]> {
         .min_by_key(|body| body.iter().filter(|instruction| !instruction.is_nop()).count())
 }
 
+/// The instructions of the largest innermost loop of `code`: a C twin's work loop, where the
+/// smallest can be a generator's.
+pub fn largest_innermost(code: &[Instruction]) -> Option<&[Instruction]> {
+    let all = loops(code);
+    innermost(&all).max_by_key(|found| found.branch - found.header)
+        .map(|found| &code[found.header..=found.branch])
+}
+
 /// The instructions one call runs through a scalar entry at `entry` (a byte offset): from the
 /// entry, the fall-through of every conditional branch (the path its checks expect) and the
 /// target of every unconditional jump, up to the return. A function without a loop has no

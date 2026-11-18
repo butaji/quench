@@ -12,13 +12,13 @@
 //! per call, along the scalar entry of the body that has one (`flow::call_path`). Dumps are
 //! deterministic only when compiles run synchronously, so the runs set `QUENCH_DEV=sync-compile`.
 
-mod asm;
+pub(crate) mod asm;
 /// Its fields name the ratchet's columns on every architecture; the classes themselves are read
 /// from x86-64 mnemonics, so other architectures record only the instruction count until their
 /// classes are written (`Measured::Instructions`).
 #[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 mod classes;
-mod flow;
+pub(crate) mod flow;
 mod stats;
 mod table;
 
