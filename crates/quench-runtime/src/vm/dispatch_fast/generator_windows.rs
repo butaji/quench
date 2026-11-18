@@ -123,7 +123,7 @@ pub(in crate::vm) struct WindowPlan {
 /// function has no view or environment layout.
 pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord, environment: bool) -> Option<WindowPlan> {
     let (program, function, env, captured) = (frame.program, frame.function, frame.env, frame.captured);
-    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), env, captured);
+    let key = (vm.cache_epochs.gc, vm.programs.context_epoch(), env, captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
         return Some(plan);
     }
@@ -139,8 +139,8 @@ pub(super) fn window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame
 /// (`Vm::window_layout`). Whether the record needs it stored (`store_window_plan`): only a
 /// plan it does not hold already.
 #[inline(always)]
-pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<(WindowPlan, bool)> {
-    let key = (vm.heap.collection_epoch(), vm.programs.context_epoch(), frame.env, frame.captured);
+pub(super) fn cached_window_plan<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, frame: &FrameRecord) -> Option<WindowPlan> {
+    let key = (vm.cache_epochs.gc, vm.programs.context_epoch(), frame.env, frame.captured);
     if let Some(plan) = frame.window_plan.filter(|plan| plan.key == key) {
         return Some((plan, false));
     }

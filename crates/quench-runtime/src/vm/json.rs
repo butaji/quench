@@ -1812,7 +1812,81 @@ impl<H: Host> Vm<H> {
             w.output.extend_from_slice(raw.as_bytes());
             return Ok(true);
         }
-        self.json_serialize_heap_value(p, value, w)
+        if self.heap.object_record(value).is_some()
+            || self.heap.promise(value).is_some()
+            || self.heap.is_map(value)
+            || self.heap.is_set(value)
+        {
+            return self.json_serialize_object(p, value, state).map(|()| true);
+        }
+        if let Some(array) = self.heap.array(value) {
+            // An arguments object is an ordinary object to IsArray, so it serializes as one.
+            return if array.is_arguments_object() {
+                self.json_serialize_object(p, value, state)
+            } else {
+                self.json_serialize_array(p, value, state)
+            }
+            .map(|()| true);
+        }
+        match self.heap.get(value).cloned() {
+            _ if let Some(text) = self.heap.string(value).cloned()  => {
+                write_json_string(&text, &mut state.output);
+                Ok(true)
+            }
+            _ if self.heap.is_symbol(value) => Ok(false),
+            Some(Cell::BigInt(_)) => {
+                Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
+            }
+            Some(Cell::Function(_)) | None => Ok(false),
+            Some(Cell::Array { .. } | Cell::Promise(_)) => {
+                unreachable!("heap.array, heap.promise and the collection accessors classify their values before this match")
+            }
+            _ if self.is_array(p, value)? => {
+                self.json_serialize_array(p, value, state).map(|()| true)
+            }
+            Some(Cell::Object(_)) => {
+                self.json_serialize_object(p, value, state).map(|()| true)
+            }
+            Some(Cell::Proxy { .. })
+            | Some(Cell::Date { .. })
+            | Some(Cell::Error(_))
+            | Some(Cell::ShadowRealm { .. })
+            | Some(Cell::WeakMap { .. })
+            | Some(Cell::WeakSet { .. })
+            | Some(Cell::WeakRef { .. })
+            | Some(Cell::FinalizationRegistry { .. })
+            | Some(Cell::RegExp { .. })
+            | Some(Cell::TypedArray { .. })
+            | Some(Cell::ArrayBuffer { .. })
+            | Some(Cell::DataView { .. })
+            | Some(Cell::TemporalDuration { .. })
+            | Some(Cell::TemporalPlainDate { .. })
+            | Some(Cell::TemporalPlainDateTime { .. })
+            | Some(Cell::TemporalPlainMonthDay { .. })
+            | Some(Cell::TemporalPlainYearMonth { .. })
+            | Some(Cell::TemporalZonedDateTime { .. })
+            | Some(Cell::TemporalInstant { .. })
+            | Some(Cell::WasmObject { .. })
+            | Some(Cell::WasmGlobal { .. })
+            | Some(Cell::WasmMemory { .. })
+            | Some(Cell::WasmTable { .. }) => {
+                self.json_serialize_object(p, value, state).map(|()| true)
+            }
+            Some(Cell::ArrayFromAsyncState(_))
+            | Some(Cell::AwaitState(_))
+            | Some(Cell::PromiseResolvingState { .. })
+            | Some(Cell::WasmElements(_))
+            | Some(Cell::WasmBits64(_))
+            | Some(Cell::WasmInstance(_))
+            | Some(Cell::WasmGc { .. })
+            | Some(Cell::WasmExtern(_))
+            | Some(Cell::AccessorPair { .. })
+            | Some(Cell::WasmTag { .. })
+            | Some(Cell::WasmException { .. })
+            | Some(Cell::WasmV128(_))
+            | Some(Cell::BindingReference { .. })
+            | Some(Cell::WasmHostFunction { .. }) => Ok(false),
+        }
     }
 
     /// SerializeJSONValue's last steps, for a value no earlier step writes: an object or

@@ -30,14 +30,11 @@ mod tag {
     pub(super) const ARRAY_BUFFER: u8 = 2;
     pub(super) const TYPED_ARRAY: u8 = 3;
     pub(super) const DATA_VIEW: u8 = 4;
-    pub(super) const MAP: u8 = 5;
-    pub(super) const SET: u8 = 6;
     pub(super) const SHADOW_REALM: u8 = 7;
     pub(super) const WEAK_MAP: u8 = 8;
     pub(super) const WEAK_SET: u8 = 9;
     pub(super) const WEAK_REF: u8 = 10;
     pub(super) const FINALIZATION_REGISTRY: u8 = 11;
-    pub(super) const ITERATOR: u8 = 12;
     pub(super) const PROXY: u8 = 13;
     pub(super) const FUNCTION: u8 = 14;
     pub(super) const BINDING_REFERENCE: u8 = 15;
@@ -659,13 +656,6 @@ impl Cell {
                 writer.value(*buffer);
                 write_view_length(writer, *length);
             }
-            Self::Collection(collection) => {
-                writer.u8(match collection.entries {
-                    CollectionStorage::Map(_) => tag::MAP,
-                    CollectionStorage::Set(_) => tag::SET,
-                });
-                collection.write_body(writer)?;
-            }
             Self::ShadowRealm { object, caller_global, realm_global } => {
                 writer.u8(tag::SHADOW_REALM);
                 write_object(writer, object)?;
@@ -701,10 +691,6 @@ impl Cell {
                     writer.value(entry.held);
                     writer.option_value(entry.token.map(|handle| handle.value));
                 }
-            }
-            Self::Iterator(iterator) => {
-                writer.u8(tag::ITERATOR);
-                iterator.write_snapshot(writer)?;
             }
             Self::Proxy { object, kind, target, handler } => {
                 writer.u8(tag::PROXY);
@@ -828,8 +814,6 @@ impl Cell {
                 buffer: reader.value()?,
                 length: read_view_length(reader)?,
             },
-            tag::MAP => Self::Collection(Box::new(CollectionRecord::read_body(reader, true)?)),
-            tag::SET => Self::Collection(Box::new(CollectionRecord::read_body(reader, false)?)),
             tag::SHADOW_REALM => Self::ShadowRealm {
                 object: boxed_object(reader)?,
                 caller_global: reader.value()?,
@@ -857,7 +841,6 @@ impl Cell {
                 })?;
                 Self::FinalizationRegistry { object, callback, entries: Box::new(FinalizationEntries(entries)) }
             }
-            tag::ITERATOR => Self::Iterator(Box::new(IteratorRecord::read_snapshot(reader)?)),
             tag::PROXY => Self::Proxy {
                 object: boxed_object(reader)?,
                 kind: proxy_kind::read(reader)?,

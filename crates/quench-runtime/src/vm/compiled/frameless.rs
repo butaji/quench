@@ -208,7 +208,7 @@ pub(super) fn chain<H: Host>(vm: &mut Vm<H>, program: &ResidualProgram, dispatch
         ChainFrame { function, call_pc: record.call_pc as u32, source_pc, registers, this: record.this, callee: record.callee }
     }).collect();
     if let Some(last) = records.last() {
-        let epoch = vm.heap.collection_epoch();
+        let epoch = vm.cache_epochs.gc;
         let (leaves, counted) = vm.frameless.materializations.entry((dispatch.program_id.raw(), last.function)).or_default();
         if *counted != epoch { (*leaves, *counted) = (0, epoch); }
         *leaves += 1;

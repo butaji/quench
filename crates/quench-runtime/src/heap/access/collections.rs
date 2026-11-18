@@ -1,36 +1,26 @@
 //! Map, Set and Symbol, reached through the heap rather than by matching `Cell`
 //! variants at each site. Every caller asks the heap for the record it means, so the
-//! storage behind these accessors can move without touching a single call site. A Symbol
-//! is already a record (`Heap::symbol_records`); a Map or Set is still a legacy arena cell.
+//! storage behind these accessors can move without touching a single call site. Each of
+//! them is a record of its own family (`Heap::collection_records`, `Heap::symbol_records`).
 
-use super::super::{Cell, CollectionRecord, CollectionStorage, Entries, Heap, Object, SymbolData};
+use super::super::{CollectionRecord, CollectionStorage, Entries, Heap, Object, SymbolData};
 use crate::value::Value;
 
 impl Heap {
-    /// A Map's or Set's record, in its direct record or in a slot (`CollectionRecord`).
+    /// A Map's or Set's record (`CollectionRecord`).
     #[inline(always)]
     pub(crate) fn collection(&self, value: Value) -> Option<&CollectionRecord> {
-        if let Some(record_id) = value.direct_collection_index() {
-            // SAFETY: a direct-collection Value names an initialized collection record.
-            return Some(unsafe { self.collection_records.get_live(record_id) });
-        }
-        match self.get(value)? {
-            Cell::Collection(collection) => Some(collection),
-            _ => None,
-        }
+        let record_id = value.direct_collection_index()?;
+        // SAFETY: a direct-collection Value names an initialized collection record.
+        Some(unsafe { self.collection_records.get_live(record_id) })
     }
 
     /// `collection`, mutably, past the write barrier.
     #[inline(always)]
     pub(crate) fn collection_mut(&mut self, value: Value) -> Option<&mut CollectionRecord> {
-        if let Some(record_id) = value.direct_collection_index() {
-            // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.collection_records.get_live_mut(record_id, &self.properties) });
-        }
-        match self.get_mut(value)? {
-            Cell::Collection(collection) => Some(collection),
-            _ => None,
-        }
+        let record_id = value.direct_collection_index()?;
+        // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.collection_records.get_live_mut(record_id, &self.properties) })
     }
 
     /// The entries of a Map or Set, mutably, past the write barrier.
@@ -127,21 +117,34 @@ impl Heap {
         self.alloc_collection(CollectionRecord { object, entries: CollectionStorage::Set(entries) })
     }
 
-    /// A new Map or Set record, charged as `alloc` charges its entries. `alloc_object_record`
-    /// charges no payload, so the entries' storage is charged here (`alloc` does it itself
-    /// when allocations are profiled).
+    /// A new Map or Set record, admitted and charged as an object record is, with its entries'
+    /// storage charged as `alloc` charges a collection's. The collection space holds
+    /// `RECORD_SPACE_CAPACITY` records, so a full space is a panic.
     fn alloc_collection(&mut self, record: CollectionRecord) -> Value {
         let payload = record.entries.payload_bytes();
-        let value = self.alloc_object_record(
-            record,
-            |record| &record.object,
-            |heap, record| heap.collection_records.try_insert(record),
-            Value::direct_collection,
-            |record| Cell::Collection(Box::new(record)),
-        );
-        if !cfg!(feature = "profile-aggregate") {
-            self.charge_payload_growth(payload);
+        #[cfg(feature = "profile-aggregate")]
+        let (kind, variant) = match record.entries {
+            CollectionStorage::Map(_) => (super::super::CellKind::Map, "map"),
+            CollectionStorage::Set(_) => (super::super::CellKind::Set, "set"),
+        };
+        #[cfg(feature = "profile-aggregate")]
+        let bytes = record.object.allocated_extra_bytes() + payload;
+        self.admit_object_contents(&record.object);
+        self.mark_prototype(record.object.proto());
+        self.allocated += 1;
+        let Ok(record_id) = self.collection_records.try_insert(record) else {
+            panic!("collection records exhausted");
+        };
+        let value = Value::direct_collection(record_id);
+        #[cfg(feature = "profile-aggregate")]
+        {
+            self.profile_record_allocation(kind, variant, bytes);
+            self.charge_allocation(payload, 0);
         }
+        #[cfg(not(feature = "profile-aggregate"))]
+        self.charge_payload_growth(payload);
+        #[cfg(feature = "profile-memory")]
+        self.profile_allocation(value);
         value
     }
 

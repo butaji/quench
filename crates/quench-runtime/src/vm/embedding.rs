@@ -911,10 +911,6 @@ impl<H: Host> Vm<H> {
             Cell::ArrayBuffer { .. } => "ArrayBuffer",
             Cell::TypedArray { object, .. } => object.native.kind().name(),
             Cell::DataView { .. } => "DataView",
-            Cell::Collection(record) => match record.entries {
-                CollectionStorage::Map(_) => "Map",
-                CollectionStorage::Set(_) => "Set",
-            },
             Cell::Date { .. } => "Date",
             Cell::RegExp { .. } => "RegExp",
             Cell::Function(_) => "Function",

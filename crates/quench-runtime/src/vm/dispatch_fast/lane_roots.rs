@@ -171,7 +171,7 @@ impl<H: Host> Vm<H> {
         if stack.activations().is_empty() {
             self.spare_lane_stacks.push(stack);
         }
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
+        self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         result
     }
 
@@ -233,8 +233,8 @@ impl<H: Host> Vm<H> {
         start: impl FnOnce(*mut LaneContext<H>) -> Ip,
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
-        self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
-        let epoch = self.heap.collection_epoch();
+        self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
+        let epoch = self.cache_epochs.gc;
         let cx: *mut LaneContext<H> = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
         // the outer run's resumes after this one.
@@ -252,7 +252,7 @@ impl<H: Host> Vm<H> {
         LANE_FUEL.with(|current| current.set(outer_fuel));
         // A collection this run made ran under its own context, not the outer one, which
         // resumes now: it drops what it resolved before (`retire_lane_binding`).
-        if !outer.is_null() && self.heap.collection_epoch() != epoch {
+        if !outer.is_null() && self.cache_epochs.gc != epoch {
             // SAFETY: every active context has the repr(C) prefix, whose callback owns its Host.
             unsafe { (outer.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(outer) };
         }

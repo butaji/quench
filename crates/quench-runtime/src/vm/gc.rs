@@ -923,6 +923,9 @@ impl<H: Host> Vm<H> {
             Some(&closure_reads),
             full,
         );
+        // The heap's collection counter advanced inside that call, the only path into it: every
+        // cache keyed on `CacheEpochs::gc` retires here, before any VM code reads one again.
+        self.cache_epochs.bump_gc();
         // Whether every startup root is old now, so the next minor collection may leave
         // them out (`StartupIntrinsics::roots_old`).
         if !self.startup_roots_old() {
@@ -974,7 +977,7 @@ impl<H: Host> Vm<H> {
         self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
         // A lane run this collection interrupts continues under the new epoch: what its
         // stack resolved before names cells the sweep freed (`LaneStack::retire_after_collection`).
-        let generation_key = (self.heap.collection_epoch(), self.realm.globals);
+        let generation_key = (self.cache_epochs.gc, self.realm.globals);
         self.lane_stack.retire_after_collection(generation_key);
         super::dispatch_fast::retire_running_lane_context();
         self.forget_dead_parked_lanes_and_hints();

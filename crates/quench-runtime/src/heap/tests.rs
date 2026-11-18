@@ -1548,26 +1548,30 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             let value = Value::number(0.5);
             let (properties, inline) = heap.initial_object_storage(1, &[value], false);
             let object = Object::with_property_storage(Value::NULL, properties, inline);
-            let cell = match family {
-                Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },
-                Family::Function => Cell::Function(Box::new(FunctionRecord {
-                    object, realm: Value::NULL, env: Value::NULL,
-                    kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
-                })),
-                Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
-                Family::Iterator => Cell::Iterator(Box::new(IteratorRecord {
+            // An iterator has no cell: its record is allocated directly, both ways.
+            let published = if let Family::Iterator = family {
+                heap.alloc_iterator(IteratorRecord {
                     object, source: Value::NULL, kind: IteratorKind::Array, index: 0, done: false,
                     ext: IteratorExt::default(),
-                })),
-                Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
-            };
-            let published = if generic { heap.alloc_cell(cell) } else {
-                match cell {
-                    Cell::Array { object } => heap.alloc_array(object),
-                    Cell::Function(function) => heap.alloc_function(*function),
-                    Cell::Promise(promise) => heap.alloc_promise(*promise),
-                    Cell::Iterator(iterator) => heap.alloc_iterator(*iterator),
-                    cell => heap.alloc(cell),
+                })
+            } else {
+                let cell = match family {
+                    Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },
+                    Family::Function => Cell::Function(Box::new(FunctionRecord {
+                        object, realm: Value::NULL, env: Value::NULL,
+                        kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
+                    })),
+                    Family::Promise => Cell::Promise(Box::new(PromiseCell { object, record: PromiseRecord::pending(None.into()) })),
+                    Family::Iterator => unreachable!("an iterator is allocated as a record"),
+                    Family::Date => Cell::Date { object: Box::new(object), milliseconds: 0.0 },
+                };
+                if generic { heap.alloc_cell(cell) } else {
+                    match cell {
+                        Cell::Array { object } => heap.alloc_array(object),
+                        Cell::Function(function) => heap.alloc_function(*function),
+                        Cell::Promise(promise) => heap.alloc_promise(*promise),
+                        cell => heap.alloc(cell),
+                    }
                 }
             };
             assert!(!reader.is_published(), "{family:?}, generic={generic}");

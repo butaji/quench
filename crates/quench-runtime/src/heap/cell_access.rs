@@ -16,7 +16,6 @@ impl Cell {
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
             Self::RegExp { object, .. } => Some(object),
-            Self::Collection(collection) => Some(&collection.object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -39,7 +38,6 @@ impl Cell {
             Self::WasmGlobal { header, .. } => Some(&header.object),
             Self::WasmMemory { header, .. } => Some(&header.object),
             Self::Function(function) => Some(&function.object),
-            Self::Iterator(iterator) => Some(&iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
         }
@@ -53,7 +51,6 @@ impl Cell {
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
             Self::RegExp { object, .. } => Some(object),
-            Self::Collection(collection) => Some(&mut collection.object),
             Self::ArrayBuffer { object, .. }
             | Self::ShadowRealm { object, .. }
             | Self::WeakMap { object, .. }
@@ -76,7 +73,6 @@ impl Cell {
             Self::WasmGlobal { header, .. } => Some(&mut header.object),
             Self::WasmMemory { header, .. } => Some(&mut header.object),
             Self::Function(function) => Some(&mut function.object),
-            Self::Iterator(iterator) => Some(&mut iterator.object),
             Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
                 Some(&mut object.object)
             }
@@ -108,8 +104,8 @@ impl super::Heap {
         // A DataView's and a buffer's geometry is accessors of their prototypes, so their own
         // names are their shape's too. A typed array is not here: every canonical numeric
         // string, not only an index, is its own element.
-        matches!(cell, Cell::Collection(_) | Cell::WeakMap { .. } | Cell::WeakSet { .. }
-            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_) | Cell::Iterator(_)
+        matches!(cell, Cell::WeakMap { .. } | Cell::WeakSet { .. }
+            | Cell::Date { .. } | Cell::RegExp { .. } | Cell::Promise(_)
             | Cell::DataView { .. } | Cell::ArrayBuffer { .. } | Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. })
             .then(|| cell.object()).flatten()
     }

@@ -219,6 +219,7 @@ mod number;
 mod object_template;
 mod object;
 mod shape_memo;
+mod cache_epochs;
 mod symbol_write_proof;
 mod symbol_load_proof;
 mod private_site_home;
@@ -1983,9 +1984,10 @@ pub(crate) struct Vm<H> {
     /// `field_base`), re-derived by `refresh_active_field_entries` whenever the active program
     /// changes or the table grows: a site's entry is then one load from it.
     active_field_entries: *const <FieldCache as site_table::SiteEntry>::Stored,
-    /// The number of times the field cache table's mapping moved (`field_caches_moved`): a run
-    /// that kept a pointer into it across code that may install a program compares it.
-    field_entries_epoch: u64,
+    /// The VM's invalidation counters (`cache_epochs`): the collection count caches key on, and
+    /// the field cache table's moves (`CacheEpochs::field_entries`), which a run that kept a
+    /// pointer into the table across code that may install a program compares.
+    cache_epochs: cache_epochs::CacheEpochs,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -3482,7 +3484,7 @@ impl<H: Host> Vm<H> {
     /// generated code reads (`rebind_lane_field_entries`), and the epoch a run that kept one
     /// across a program install compares (`run_nested_lane_method`).
     fn field_caches_moved(&mut self) {
-        self.field_entries_epoch += 1;
+        self.cache_epochs.bump_field_entries();
         self.refresh_active_field_entries();
         self.rebind_lane_field_entries();
     }
