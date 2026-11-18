@@ -1799,6 +1799,13 @@ impl ArrayObject {
         super::array_proofs::retire_array_storage_proofs();
     }
 
+    /// Whether it owns nothing at all: no extras, so no property store, and the shared empty
+    /// header as its elements, one compare of its payload word (`[]` until it grows).
+    #[inline(always)]
+    pub(crate) fn owns_nothing(&self) -> bool {
+        self.object.payload == super::array_elements::empty_header_word()
+    }
+
     /// Whether a dead array owns anything its drop frees: extras, or an element allocation
     /// it counts among its backing's owners. Young runs and the empty header need none.
     #[inline] pub(crate) fn needs_drop(&self) -> bool {
