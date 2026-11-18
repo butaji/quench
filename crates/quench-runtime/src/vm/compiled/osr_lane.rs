@@ -141,5 +141,5 @@ pub(super) unsafe fn enter<H: Host>(
     }
     let exit = LaneExit::read(status, word, || dispatch.returned_pc);
     // A leave with native frames on the lane stack is read in the innermost of them.
-    RegionRun { exit, nested: vm.lane_stack.activations.native_depth() != 0 }
+    RegionRun { exit, nested: vm.lane_stack.activations().native_depth() != 0 }
 }

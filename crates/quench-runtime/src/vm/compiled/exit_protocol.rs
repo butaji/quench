@@ -146,7 +146,7 @@ impl LoopRegion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Source {
     /// An inlined callee's register, which the leave stores to this slot of the entry's
-    /// scratch window (`LaneFrame::scratch`).
+    /// scratch window (`BodyRunContext::scratch`).
     Scratch(u16),
 }
 

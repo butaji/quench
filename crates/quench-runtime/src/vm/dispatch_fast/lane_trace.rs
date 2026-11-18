@@ -10,7 +10,7 @@ impl LaneStack {
     pub(in crate::vm) fn extend_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         self.extend_window_roots(programs, out);
         out.extend(
-            self.activations
+            self.activations()
                 .iter()
                 .filter_map(Activation::script)
                 .map(|script| script.callee),
@@ -31,13 +31,13 @@ impl LaneStack {
     /// which its callee keeps alive.
     fn extend_window_roots(&self, programs: &ProgramStore, out: &mut Vec<Value>) {
         let (span, top) = (self.values.span(), self.values.top().addr());
-        let mut windows = self.activations.iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
+        let mut windows = self.activations().iter().enumerate().filter(|(_, activation)| span.contains(&activation.window_word())).peekable();
         while let Some((depth, activation)) = windows.next() {
             let end = windows.peek().map_or(top, |(_, next)| next.window_word());
             let len = end.wrapping_sub(activation.window_word()) / std::mem::size_of::<Value>() - lane_values::CONTEXT;
             // SAFETY: the values `base..top` are initialized, and the span lies within them.
             let window = unsafe { std::slice::from_raw_parts(activation.window_ptr(), len) };
-            match activation.kind {
+            match *activation.kind() {
                 ActivationKind::Script(_) => {
                     let registers = Registers(activation.window_ptr());
                     out.extend([registers.this(), registers.env()]);
@@ -59,11 +59,11 @@ impl LaneStack {
     /// (`Vm::collect_slow`): every register where no activation is above it or the function
     /// has no liveness. Its registers hold Wasm values the collector reads as it reads a frame's.
     fn extend_wasm_roots(&self, programs: &ProgramStore, depth: usize, window: &[Value], out: &mut Vec<Value>) {
-        let activation = &self.activations[depth];
-        let program = programs.residual(activation.caller_program);
-        let masks = program.and_then(|program| program.register_root_masks(activation.function));
-        let raw = programs.raw_register_masks(activation.caller_program, activation.function);
-        let call_pc = self.activations.get(depth + 1).and_then(Activation::caller_pc);
+        let activation = &self.activations()[depth];
+        let program = programs.residual(activation.caller_program());
+        let masks = program.and_then(|program| program.register_root_masks(activation.function()));
+        let raw = programs.raw_register_masks(activation.caller_program(), activation.function());
+        let call_pc = self.activations().get(depth + 1).and_then(Activation::caller_pc);
         match masks.zip(call_pc) {
             Some((masks, pc)) => masks.extend_live_except(pc, raw.as_deref(), window, out),
             None => out.extend_from_slice(window),
@@ -84,15 +84,15 @@ mod tests {
         vm.execute(&program).unwrap();
         let held = vm.heap.alloc_object(Vm::<TestHost>::empty_object(vm.object_proto));
         let registers = [held, Value::integer(7)];
-        let wasm = Activation {
-            native: crate::vm::compiled::ShadowFrame::EMPTY,
-            function: 0,
-            call: std::ptr::null(),
-            caller_base: std::ptr::null(),
-            caller_registers: Registers(std::ptr::null_mut()),
-            caller_program: ProgramId::MAIN,
-            kind: ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: std::mem::size_of_val(&registers) },
-        };
+        let wasm = Activation::of_parts(
+            crate::vm::compiled::ShadowFrame::EMPTY,
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            Registers(std::ptr::null_mut()),
+            ProgramId::MAIN,
+            ActivationKind::Wasm { memory: MemoryView::NONE, frame_storage_bytes: std::mem::size_of_val(&registers) },
+        );
         let window = vm.lane_stack.values.top();
         // SAFETY: the fresh stack's capacity holds the window, the next one's context words and
         // the activation, and the window's values are initialized.

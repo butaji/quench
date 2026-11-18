@@ -167,7 +167,7 @@ impl<H: Host> Vm<H> {
         (self.lane_deferred, self.lane_native, self.running_window) = (deferred, native, window);
         let mut stack = self.lane_roots.pop().expect("the lane stack this run parked").stack;
         std::mem::swap(&mut self.lane_stack, &mut stack);
-        if stack.activations.is_empty() {
+        if stack.activations().is_empty() {
             self.spare_lane_stacks.push(stack);
         }
         self.lane_stack.enter_generation((self.heap.collection_epoch(), self.realm.globals));
@@ -258,13 +258,13 @@ impl<H: Host> Vm<H> {
     /// The census detail of a lane exit at the record `ip` of the innermost activation.
     #[cfg(feature = "profile-lane-exits")]
     fn record_lane_exit(&self, cx: *mut LaneContext<H>, ip: Ip) {
-        let Some(activation) = self.lane_stack.activations.last() else {
+        let Some(activation) = self.lane_stack.activations().last() else {
             return;
         };
         // SAFETY: the context's program outlives the run; `ip` is a record of
         // the innermost activation's view.
         let (code, pc) = unsafe { (&*(*cx).code, ip.offset_from((*cx).base) as usize) };
-        let Some(body) = code.function_get(activation.function as usize) else {
+        let Some(body) = code.function_get(activation.function() as usize) else {
             return;
         };
         let instruction = body.instructions().nth(pc);
@@ -480,14 +480,14 @@ fn job_activation(
     environment: bool,
     record: *mut FrameRecord,
 ) -> Activation {
-    Activation {
-        native: prefix,
-        function: entry.function,
-        call: base,
-        caller_base: base,
-        caller_registers: Registers(window),
-        caller_program: entry.program,
-        kind: ActivationKind::Script(ScriptActivation {
+    Activation::of_parts(
+        prefix,
+        entry.function,
+        base,
+        base,
+        Registers(window),
+        entry.program,
+        ActivationKind::Script(ScriptActivation {
             callee: job.object,
             argc: 0,
             completion: Completion::ResumesJob,
@@ -496,5 +496,5 @@ fn job_activation(
             environment,
             record,
         }),
-    }
+    )
 }

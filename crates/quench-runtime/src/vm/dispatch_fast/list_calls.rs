@@ -35,7 +35,7 @@ pub(super) fn lane_apply_activation<H: Host>(
             vm.heap.array(list).is_some_and(|array| array.is_arguments_object()),
             vm.heap.sparse_length(list).is_some(),
             vm.heap.array(list).is_some_and(|array| array.elements().as_slice().iter().any(|value| value.is_deleted())),
-            vm.lane_stack.activations.len(),
+            vm.lane_stack.activation_count(),
         ));
     }
     let absent = native == Native::FunctionApply && (list.is_undefined() || list.is_null());

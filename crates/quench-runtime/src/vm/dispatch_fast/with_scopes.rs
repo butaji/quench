@@ -71,8 +71,8 @@ pub(super) fn lane_with_scope<H: Host>(cx: *mut LaneContext<H>, native: Native, 
     if vm.lane_deferred.is_some() || vm.lane_stack.native_boundary.is_some() {
         return None;
     }
-    let depth = vm.lane_stack.activations.len().checked_sub(1)?;
-    vm.lane_stack.activations.last().and_then(Activation::script)?;
+    let depth = vm.lane_stack.activation_count().checked_sub(1)?;
+    vm.lane_stack.activations().last().and_then(Activation::script)?;
     if native == Native::WithEnter {
         let object = args.first().copied().filter(|value| vm.is_object_like(*value))?;
         vm.lane_stack.with_objects.push((depth, object));

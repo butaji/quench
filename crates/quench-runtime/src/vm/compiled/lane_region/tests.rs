@@ -291,7 +291,7 @@ fn comparison_boolean_proofs_survive_branch_joins() {
     let code = compile_native_function(region.function, &*isa, usize::MAX, CodeMemory::new).unwrap();
     // SAFETY: the lowered function uses the shared lane-entry ABI and only live frame/register storage.
     let entry = unsafe { std::mem::transmute::<*mut u8, super::super::BodyEntry>(code.pointer()) };
-    let mut frame = super::super::LaneFrame::new();
+    let mut frame = super::super::BodyRunContext::new();
     let mut vm = Vm::new(crate::test_host::TestHost::default());
     frame.dispatch.refresh_object_bases(&vm);
     frame.dispatch.bind_native_storage(&mut vm);

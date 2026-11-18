@@ -1015,7 +1015,7 @@ unsafe fn kept_values<H: Host>(cx: *mut ()) -> Option<(u16, u16)> {
     if unsafe { (*cx).registers }.env().is_deleted() {
         return None;
     }
-    let script = unsafe { vm(cx) }.lane_stack.activations.last()?.script().filter(|script| script.forwards)?;
+    let script = unsafe { vm(cx) }.lane_stack.activations().last()?.script().filter(|script| script.forwards)?;
     Some((script.argc, script.kept))
 }
 
@@ -1072,7 +1072,7 @@ fn lane_const_array_value<H: Host>(cx: *mut LaneContext<H>, constant: u32, count
 #[inline(never)]
 fn lane_template_value<H: Host>(cx: *mut LaneContext<H>, template: u32) -> Option<Value> {
     let vm = unsafe { vm(cx) };
-    if !vm.lane_stack.activations.is_empty() {
+    if !vm.lane_stack.activations().is_empty() {
         return None;
     }
     // SAFETY: the context's program outlives the lane run.

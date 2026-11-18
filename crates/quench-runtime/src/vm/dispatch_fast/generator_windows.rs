@@ -45,7 +45,7 @@ impl LaneStack {
     pub(super) unsafe fn push_generator_activation(&mut self, mut activation: Activation) {
         activation.native.window |= HEAP_WINDOW;
         // SAFETY: as the caller guarantees; a script activation holds no Wasm storage.
-        unsafe { self.activations.push_unchecked(activation) };
+        unsafe { self.activations_mut().push_unchecked(activation) };
     }
 
     /// The iterators a resumed generator's loops left open, now the loops of the activation at
@@ -71,7 +71,7 @@ impl LaneStack {
 /// Whether the running activation is a generator over its record's register file.
 #[inline(always)]
 pub(super) fn running_generator<H: Host>(vm: &Vm<H>) -> bool {
-    vm.lane_stack.activations.last().and_then(Activation::script).is_some_and(|script| script.completion.is_generator())
+    vm.lane_stack.activations().last().and_then(Activation::script).is_some_and(|script| script.completion.is_generator())
 }
 
 /// `lane_generator_step` of a for-of step of a generator's `next` that the lane resumes as an
@@ -228,7 +228,7 @@ fn lane_resume_generator<H: Host>(
     let code = unsafe { &*(*cx).code };
     let (record, frame) = resumable_generator_frame(vm, generator)?;
     let (program, function, this, pc, size) = (frame.program, frame.function, frame.this(), frame.pc, frame.registers.len());
-    let depth = Some(vm.lane_stack.activations.len()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
+    let depth = Some(vm.lane_stack.activation_count()).filter(|&depth| depth < vm.lane_stack.activation_limit.get())?;
     let cached = cached_window_plan(vm, code, frame)?;
     let WindowPlan { view, parent, locals, capture, environment, .. } = cached.0;
     let frame = vm.resume_generator_window((generator, record), method, sent, depth)?;
@@ -305,15 +305,15 @@ fn push_generator_window<H: Host>(cx: *mut LaneContext<H>, vm: &mut Vm<H>, (r, i
 /// The activation of `window`'s generator for the call record at `ip`, made by the running
 /// function with registers `r`.
 fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, window: GeneratorWindow) -> Activation {
-    Activation {
-        native: window.prefix,
-        function: window.function,
-        call: ip,
-        // SAFETY: the running lane's context, which nothing else accesses.
-        caller_base: unsafe { (*cx).base },
-        caller_registers: r,
-        caller_program: unsafe { (*cx).program },
-        kind: ActivationKind::Script(ScriptActivation {
+    // SAFETY: the running lane's context, which nothing else accesses.
+    Activation::of_parts(
+        window.prefix,
+        window.function,
+        ip,
+        unsafe { (*cx).base },
+        r,
+        unsafe { (*cx).program },
+        ActivationKind::Script(ScriptActivation {
             callee: window.generator,
             argc: 0,
             completion: window.completion,
@@ -322,7 +322,7 @@ fn generator_activation<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
             environment: window.environment,
             record: window.record,
         }),
-    }
+    )
 }
 
 /// `yield` (or the pass-on of a `yield*`) of the running generator activation: its frame, resuming
@@ -338,9 +338,9 @@ fn lane_suspend_generator<H: Host>(
     passed_on: Option<Value>,
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let depth = vm.lane_stack.activations.len() - 1;
-    let activation = *vm.lane_stack.activations.last().expect("a running generator's activation");
-    let ActivationKind::Script(script) = activation.kind else {
+    let depth = vm.lane_stack.activation_count() - 1;
+    let activation = *vm.lane_stack.activations().last().expect("a running generator's activation");
+    let ActivationKind::Script(script) = activation.kind() else {
         unreachable!("a generator runs as a script activation");
     };
     vm.suspend_generator_window(script.callee, pc, destination, value, depth);
@@ -358,7 +358,7 @@ pub(super) fn lane_generator_returned<H: Host>(
     value: Value,
 ) -> Resumed {
     let vm = unsafe { vm(cx) };
-    let ActivationKind::Script(script) = activation.kind else {
+    let ActivationKind::Script(script) = activation.kind() else {
         unreachable!("a generator runs as a script activation");
     };
     vm.finish_generator_window(script.callee);
@@ -388,9 +388,9 @@ fn lane_resume_generated<H: Host>(vm: &mut Vm<H>, activation: &Activation, memor
     note_allocation(vm);
     if completion == Some(Completion::Delegates) {
         // SAFETY: the `yield*` record belongs to the caller's live view.
-        let (state, _) = ImmediateLayout::register_pair(unsafe { (*activation.call).imm() });
-        activation.caller_registers.set(state, result);
-        return lane_resume_at(activation, memory, activation.call);
+        let (state, _) = ImmediateLayout::register_pair(unsafe { (*activation.call()).imm() });
+        activation.caller_registers().set(state, result);
+        return lane_resume_at(activation, memory, activation.call());
     }
     lane_resume_after_call(activation, memory, result)
 }

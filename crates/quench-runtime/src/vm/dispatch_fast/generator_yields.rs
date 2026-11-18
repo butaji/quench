@@ -96,7 +96,7 @@ script_handler! {
     #[inline(never)]
     fn lane_await<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let completion = vm.lane_stack.activations.last().and_then(Activation::script).map(|script| script.completion);
+        let completion = vm.lane_stack.activations().last().and_then(Activation::script).map(|script| script.completion);
         if completion == Some(Completion::SettlesPromise) {
             resume!(cx, lane_await_settling(cx, r, ip, i))
         }
@@ -147,7 +147,7 @@ fn lane_await_settling<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, i
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let activation = *vm.lane_stack.activations.last().expect("a settling activation runs");
+    let activation = *vm.lane_stack.activations().last().expect("a settling activation runs");
     let ActivationKind::Script(script) = activation.kind else { unreachable!("a settling activation is a script one") };
     // SAFETY: the call record belongs to the caller's live view.
     let returns = unsafe { (*activation.call).a } & crate::bytecode::RETURN_REGISTER != 0;
@@ -187,7 +187,7 @@ fn settling_frame<H: Host>(vm: &mut Vm<H>, code: &ResidualProgram, activation: &
     frame.pc = pc;
     frame.pc_is_resume = true;
     frame.with_objects = vm.with_stack.split_off(frame.with_base);
-    let depth = vm.lane_stack.activations.len() - 1;
+    let depth = vm.lane_stack.activation_count() - 1;
     vm.lane_stack.take_iterators(depth, &mut frame.active_iterators);
     vm.persist_global_lexical_bindings(code, &frame);
     frame
