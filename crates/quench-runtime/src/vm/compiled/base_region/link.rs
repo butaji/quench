@@ -108,6 +108,8 @@ pub(super) struct Layout<'a> {
     pub(super) invalidation: Option<usize>,
     /// The realm the entry proves active, where the code inlines callees.
     pub(super) realm: Option<RealmProof>,
+    /// Per row, whether a receiver proof reaches it (`Decoded::relies`): no resume stub enters there.
+    pub(super) relies: &'a [bool],
 }
 
 impl Layout<'_> {
