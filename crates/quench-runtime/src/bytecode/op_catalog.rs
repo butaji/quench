@@ -33,6 +33,8 @@ pub(crate) enum Class {
     WasmI64BinaryRaw,
     WasmI64BinaryImmediateRaw,
     WasmI64UnaryRaw,
+    WasmFloatBinary64Raw,
+    WasmFloatUnary64Raw,
     /// A Wasm return of a raw i64 register, which boxes the word where a `Value` cannot hold it.
     WasmReturn64,
     WasmScalarConvert,

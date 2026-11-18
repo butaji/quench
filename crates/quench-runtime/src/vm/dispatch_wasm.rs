@@ -365,6 +365,21 @@ impl<H: Host> Vm<H> {
                 let value = self.encode_raw_wasm_value(operator.evaluate(value));
                 self.write(f, i.result_register(), value);
             }
+            Op::WasmF64BinaryRaw => {
+                let left = f64::from_bits(self.read(f, i.register_b()).to_bits());
+                let right = f64::from_bits(self.read(f, i.register_c()).to_bits());
+                let operator = crate::wasm::float::F64BinaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm float operator");
+                let value = self.encode_raw_wasm_value(operator.evaluate(left, right));
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmF64UnaryRaw => {
+                let input = f64::from_bits(self.read(f, i.register_b()).to_bits());
+                let operator = crate::wasm::float::F64UnaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm float operator");
+                let value = self.encode_raw_wasm_value(operator.evaluate(input));
+                self.write(f, i.result_register(), value);
+            }
             Op::WasmReturn64 => {
                 let word = self.read(f, i.register_a()).to_bits();
                 return Ok(StepResult::Return(self.encode_bits64(word)));
@@ -402,17 +417,21 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::WasmF64Binary => {
-                let left = self.wasm_f64_operand(self.read(f, i.register_b()))?;
-                let right = self.wasm_f64_operand(self.read(f, i.register_c()))?;
                 let operator = crate::wasm::float::F64BinaryOperator::from_tag(i.imm())
                     .expect("validated Wasm float operator");
+                // An operator a NaN operand matters to only as a NaN reads any word as its float
+                // (a boxed payload's bits are a NaN): its operand may be a raw register (`raw_webs`).
+                let operand = |vm: &Self, value: Value| if operator.nan_agnostic() { Ok(f64::from_bits(value.float_bits64())) } else { vm.wasm_f64_operand(value) };
+                let left = operand(self, self.read(f, i.register_b()))?;
+                let right = operand(self, self.read(f, i.register_c()))?;
                 let value = self.encode_wasm_value(operator.evaluate(left, right));
                 self.write(f, i.result_register(), value);
             }
             Op::WasmF64Unary => {
-                let left = self.wasm_f64_operand(self.read(f, i.register_b()))?;
                 let operator = crate::wasm::float::F64UnaryOperator::from_tag(i.imm())
                     .expect("validated Wasm float operator");
+                let value = self.read(f, i.register_b());
+                let left = if operator.nan_agnostic() { f64::from_bits(value.float_bits64()) } else { self.wasm_f64_operand(value)? };
                 let value = self.encode_wasm_value(operator.evaluate(left));
                 self.write(f, i.result_register(), value);
             }

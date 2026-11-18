@@ -11231,10 +11231,11 @@ lane_handler! {
     fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
-        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) } {
+        let raw = const { opcode(OP).class().eq(Class::WasmFloatBinary64Raw) };
+        let value = if const { opcode(OP).class().eq(Class::WasmFloatBinary64) || opcode(OP).class().eq(Class::WasmFloatBinary64Raw) } {
             let (Some(left), Some(right), Some(operator)) = (
-                left.bits64(),
-                right.bits64(),
+                if raw { Some(left.to_bits()) } else { left.bits64() },
+                if raw { Some(right.to_bits()) } else { right.bits64() },
                 F64BinaryOperator::from_tag(i.imm()),
             ) else {
                 return exit(ip);
@@ -11250,7 +11251,7 @@ lane_handler! {
             };
             operator.evaluate(f32::from_bits(left as u32), f32::from_bits(right as u32))
         };
-        let Some(value) = lane_encode(view, value) else {
+        let Some(value) = (if raw { wide_result::<true>(view, value) } else { lane_encode(view, value) }) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -11276,7 +11277,7 @@ const FLOAT_ARITHMETIC: usize = 10;
 /// The arithmetic index of a float binary selector, when it has one.
 fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
     Some(match op.class() {
-        Class::WasmFloatBinary64 => match F64BinaryOperator::from_tag(selector)? {
+        Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => match F64BinaryOperator::from_tag(selector)? {
             F64BinaryOperator::Add => FLOAT_ADD,
             F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
             F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
@@ -11309,7 +11310,7 @@ fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
 lane_handler! {
     /// Float arithmetic `ARITH` of width f64 (`WIDE`) or f32, with the
     /// operators' own semantics (`crate::wasm::float`): the hardware result.
-    fn lane_float_arithmetic<WIDE: bool, ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
+    fn lane_float_arithmetic<WIDE: bool, RAW: bool, ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
         let left = read::<ACC, ACC_B>(r, i.b, view);
         let right = read::<ACC, ACC_C>(r, i.c, view);
         /// The arithmetic result, or a comparison's truth value.
@@ -11341,6 +11342,8 @@ lane_handler! {
             let left = f64::from_bits(left.float_bits64());
             let right = f64::from_bits(right.float_bits64());
             match apply!(left, right) {
+                // A raw register holds any word: no NaN is canonicalized.
+                Outcome::Float(result) if RAW => Value::from_bits(result.to_bits()),
                 Outcome::Float(result) => Value::from_float_bits64(result.to_bits()),
                 Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
             }
@@ -11371,6 +11374,15 @@ fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
         FLOAT_GREATER => Err(left > right),
         FLOAT_LESS_EQUAL => Err(left <= right),
         _ => Err(left >= right),
+    }
+}
+
+/// The width index of float binary `op` in `FloatArithmetic::HANDLERS`.
+fn float_width_index(op: Op) -> usize {
+    match op.class() {
+        Class::WasmFloatBinary64Raw => 2,
+        Class::WasmFloatBinary64 => 1,
+        _ => 0,
     }
 }
 
@@ -11635,36 +11647,38 @@ impl<H: Host> FloatPairs<H> {
 struct FloatArithmetic<H>(std::marker::PhantomData<H>);
 
 macro_rules! float_arithmetic_handlers {
-    ($host:ty, $wide:expr) => {
+    ($host:ty, $wide:expr, $raw:expr) => {
         [
-            float_arithmetic_handlers!($host, $wide, FLOAT_ADD),
-            float_arithmetic_handlers!($host, $wide, FLOAT_SUBTRACT),
-            float_arithmetic_handlers!($host, $wide, FLOAT_MULTIPLY),
-            float_arithmetic_handlers!($host, $wide, FLOAT_DIVIDE),
-            float_arithmetic_handlers!($host, $wide, FLOAT_EQUAL),
-            float_arithmetic_handlers!($host, $wide, FLOAT_NOT_EQUAL),
-            float_arithmetic_handlers!($host, $wide, FLOAT_LESS),
-            float_arithmetic_handlers!($host, $wide, FLOAT_GREATER),
-            float_arithmetic_handlers!($host, $wide, FLOAT_LESS_EQUAL),
-            float_arithmetic_handlers!($host, $wide, FLOAT_GREATER_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_ADD),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_SUBTRACT),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_MULTIPLY),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_DIVIDE),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_NOT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_LESS),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_GREATER),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_LESS_EQUAL),
+            float_arithmetic_handlers!($host, $wide, $raw, FLOAT_GREATER_EQUAL),
         ]
     };
-    ($host:ty, $wide:expr, $arith:expr) => {
+    ($host:ty, $wide:expr, $raw:expr, $arith:expr) => {
         [
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_NONE> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_A> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_B> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_C> as Handler,
-            lane_float_arithmetic::<$host, $wide, $arith, ACC_PAIR> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_NONE> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_A> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_B> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_C> as Handler,
+            lane_float_arithmetic::<$host, $wide, $raw, $arith, ACC_PAIR> as Handler,
         ]
     };
 }
 
 impl<H: Host> FloatArithmetic<H> {
-    /// By width (f32, then f64), arithmetic index and accumulator field.
-    const HANDLERS: [[[Handler; ACC_POSITIONS]; FLOAT_ARITHMETIC]; 2] = [
-        float_arithmetic_handlers!(H, false),
-        float_arithmetic_handlers!(H, true),
+    /// By width (f32, then f64, then f64 over raw registers: `FLOAT_RAW_F64`), arithmetic
+    /// index and accumulator field.
+    const HANDLERS: [[[Handler; ACC_POSITIONS]; FLOAT_ARITHMETIC]; 3] = [
+        float_arithmetic_handlers!(H, false, false),
+        float_arithmetic_handlers!(H, true, false),
+        float_arithmetic_handlers!(H, true, true),
     ];
 }
 
@@ -11680,9 +11694,10 @@ lane_handler! {
 lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
-        let value = if const { opcode(OP).is_wasm_f64_unary() } {
+        let raw = const { opcode(OP).class().eq(Class::WasmFloatUnary64Raw) };
+        let value = if const { opcode(OP).is_wasm_f64_unary() || opcode(OP).class().eq(Class::WasmFloatUnary64Raw) } {
             let (Some(input), Some(operator)) =
-                (input.bits64(), F64UnaryOperator::from_tag(i.imm()))
+                (if raw { Some(input.to_bits()) } else { input.bits64() }, F64UnaryOperator::from_tag(i.imm()))
             else {
                 return exit(ip);
             };
@@ -11695,7 +11710,7 @@ lane_handler! {
             };
             operator.evaluate(f32::from_bits(input as u32))
         };
-        let Some(value) = lane_encode(view, value) else {
+        let Some(value) = (if raw { wide_result::<true>(view, value) } else { lane_encode(view, value) }) else {
             return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
@@ -11714,6 +11729,7 @@ fn wide_operand<const RAW: bool>(value: Value) -> Option<u64> {
 fn wide_result<const RAW: bool>(view: Carried, value: crate::WasmValue) -> Option<Value> {
     match value {
         crate::WasmValue::I64(word) if RAW => Some(Value::from_bits(word as u64)),
+        crate::WasmValue::F64(bits) if RAW => Some(Value::from_bits(bits)),
         value => lane_encode(view, value),
     }
 }
@@ -21251,10 +21267,10 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
             Class::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
-            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 => {
+            Class::WasmFloatBinary32 | Class::WasmFloatBinary64 | Class::WasmFloatBinary64Raw => {
                 return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
             }
-            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 => {
+            Class::WasmFloatUnary32 | Class::WasmFloatUnary64 | Class::WasmFloatUnary64Raw => {
                 return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
             }
             Class::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, false, ACC>),
@@ -21950,7 +21966,7 @@ fn derive_lane_view<'live, H: Host>(
                         })
                     })
             } else if let Some(handler) = float_arithmetic(op, instruction.imm())
-                .map(|arith| FloatArithmetic::<H>::HANDLERS[usize::from(op.is_wasm_f64_binary())][usize::from(arith)][usize::from(acc)])
+                .map(|arith| FloatArithmetic::<H>::HANDLERS[float_width_index(op)][usize::from(arith)][usize::from(acc)])
                 .or_else(|| i64_operator_handler::<H>(op, instruction.imm(), acc))
             {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
