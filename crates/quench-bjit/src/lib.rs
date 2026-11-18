@@ -296,6 +296,8 @@ mod rustc_tests {
     /// Every row the library names was built, and canonicalizing is idempotent.
     #[test]
     fn the_library_is_built() {
+        // The base tier's rows are x86-64's only (`build.rs` `instances`).
+        #[cfg(target_arch = "x86_64")]
         for code in library::library() {
             assert_eq!(library::canonical(code), code);
             assert!(rustc::stencil(&library::name(code)).is_some(), "{code:?}");
@@ -303,6 +305,7 @@ mod rustc_tests {
         for name in ROUTINES {
             assert!(rustc::stencil(name).is_some(), "{name}");
         }
+        #[cfg(target_arch = "x86_64")]
         for code in library::heap_library() {
             assert_eq!(library::heap_canonical(code), code);
             assert!(rustc::stencil(&library::heap_name(code)).is_some(), "{code:?}");
@@ -310,7 +313,6 @@ mod rustc_tests {
         for code in crate::wasm::wasm_library() {
             assert!(rustc::stencil(&crate::wasm::wasm_name(code)).is_some(), "{code:?}");
         }
-        #[cfg(target_arch = "x86_64")]
         for name in crate::wasm::ROUTINES {
             assert!(rustc::stencil(name).is_some(), "{name}");
         }
@@ -320,8 +322,10 @@ mod rustc_tests {
     /// patches: the range `copy_patch` writes through.
     #[test]
     fn patch_ranges_lie_inside_the_code() {
-        let names = library::library().into_iter().map(library::name).chain(library::heap_library().into_iter().map(library::heap_name));
-        for name in names.chain(ROUTINES.map(String::from)) {
+        let mut names: Vec<String> = ROUTINES.map(String::from).into();
+        #[cfg(target_arch = "x86_64")]
+        names.extend(library::library().into_iter().map(library::name).chain(library::heap_library().into_iter().map(library::heap_name)));
+        for name in names {
             let stencil = rustc::stencil(&name).unwrap_or_else(|| panic!("{name}"));
             for field in &stencil.imm32 {
                 assert!(field.offset as usize + 4 <= stencil.code.len() && (field.index as usize) < crate::HOLES, "{name}: {field:?}");
@@ -338,6 +342,7 @@ mod rustc_tests {
     /// destination, receiver, shape and slot offset (a holder read also the holder's shape), a
     /// store its receiver, value, atom, shape and slot offset; a chained row's hit takes the
     /// branch target and the last entry's miss takes the exit.
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn cache_rows_patch_their_entry_holes_and_take_their_successors() {
         use super::numeric::library::{heap_canonical, heap_name, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_SET_ROW, MEM};

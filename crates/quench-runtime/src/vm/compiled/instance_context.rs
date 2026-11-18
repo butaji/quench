@@ -150,6 +150,23 @@ impl InstanceContext {
         self.instance as usize
     }
 
+    /// The body the record at `address` publishes for function `entry`, or 0 when it publishes
+    /// none for it, or `entry` is `NO_ENTRY`. A table row's `body` is this value (`TableTarget`).
+    pub(crate) fn published_body(address: usize, entry: u32) -> usize {
+        if address == 0 || entry == u32::MAX {
+            return 0;
+        }
+        // SAFETY: a row names a record its function keeps alive (the function's environment holds
+        // the record's cell), so the address is a live record.
+        let record = unsafe { &*(address as *const InstanceContext) };
+        // SAFETY: `compiled` is null or the artifact `publish` retained, which lives as long as
+        // the record (`retained`).
+        let Some(compiled) = (unsafe { record.compiled.as_ref() }) else {
+            return 0;
+        };
+        compiled.table.get(entry as usize).copied().unwrap_or(0)
+    }
+
     /// Fills the areas from the bindings of the environment, by slot.
     pub(super) fn bind(
         &mut self,
@@ -167,8 +184,10 @@ impl InstanceContext {
     /// Publishes `compiled` as the code the instance runs natively, and the memory it runs on:
     /// the artifact's words are written when it differs from the last, the memory's each time,
     /// as it may have grown.
-    pub(super) fn publish<H: Host>(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) {
-        if !std::ptr::eq(self.compiled, Rc::as_ptr(compiled)) {
+    /// Returns whether the artifact changed, so the rows that name this instance take its bodies.
+    pub(super) fn publish<H: Host>(&mut self, compiled: &Rc<CompiledProgram>, memory: &MemoryBinding) -> bool {
+        let changed = !std::ptr::eq(self.compiled, Rc::as_ptr(compiled));
+        if changed {
             self.compiled = Rc::as_ptr(compiled);
             self.table = compiled.table.as_ptr();
             self.abi = compiled.abi();
@@ -189,6 +208,7 @@ impl InstanceContext {
         self.memory_base = memory.base;
         self.memory_length = memory.length;
         (self.guard_start, self.guard_end) = (start, end);
+        changed
     }
 }
 
@@ -353,8 +373,24 @@ impl<H: Host> Vm<H> {
         let Some(Cell::WasmInstance(record)) = self.heap.get_mut(record) else {
             return None;
         };
-        record.publish::<H>(compiled, &memory);
-        Some((&**record as *const InstanceContext, (memory.base, memory.length)))
+        let address = &**record as *const InstanceContext as usize;
+        let changed = record.publish::<H>(compiled, &memory);
+        if changed {
+            self.refresh_wasm_bodies(address, compiled);
+        }
+        Some((address as *const InstanceContext, (memory.base, memory.length)))
+    }
+
+    /// Rewrites the body of each row, in every Wasm table of the heap, that names the instance at
+    /// `address`: the bodies `compiled` publishes for it. Called when a publication changes the
+    /// artifact, so no row keeps a body the record no longer publishes.
+    fn refresh_wasm_bodies(&mut self, address: usize, compiled: &CompiledProgram) {
+        self.heap.for_each_wasm_table_mut(|elements| {
+            elements.refresh_bodies(|row| {
+                (row.instance == address as u64)
+                    .then(|| compiled.table.get(row.entry as usize).copied().unwrap_or(0))
+            });
+        });
     }
 }
 

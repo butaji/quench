@@ -115,62 +115,6 @@ pub enum WasmReferenceInitializer {
     Expression(WasmConstantExpression),
 }
 
-impl WasmReferenceInitializer {
-    fn validate(
-        &self,
-        name: &str,
-        ty: wasmparser::RefType,
-        signatures: &WasmSignatures,
-        globals: &[WasmGlobal],
-    ) -> Result<(), Diagnostic> {
-        match self {
-            Self::Null if ty.is_nullable() => Ok(()),
-            Self::Function(index)
-                if signatures.function_type_index(*index as usize).is_some_and(
-                    |actual| match ty.heap_type() {
-                        wasmparser::HeapType::FUNC => true,
-                        wasmparser::HeapType::Concrete(wasmparser::UnpackedIndex::Module(
-                            index,
-                        ))
-                        | wasmparser::HeapType::Exact(wasmparser::UnpackedIndex::Module(index)) => {
-                            signatures.matches_declaration(
-                                actual,
-                                &signatures.declarations,
-                                index,
-                                matches!(ty.heap_type(), wasmparser::HeapType::Exact(_)),
-                            )
-                        }
-                        _ => false,
-                    },
-                ) =>
-            {
-                Ok(())
-            }
-            Self::Expression(expression)
-                if signatures
-                    .declarations
-                    .callable_value_type(wasmparser::ValType::Ref(ty))
-                    .is_some_and(|target| {
-                        signatures.declarations.value_subtype(
-                            expression.value_type(),
-                            &signatures.declarations,
-                            target,
-                        )
-                    })
-                    || (ty.heap_type() == wasmparser::HeapType::FUNC
-                        && expression.produces_non_null_function()) =>
-            {
-                expression.validate(name, globals)?;
-                expression.validate_functions(name, signatures, globals)
-            }
-            _ => Err(Diagnostic::unsupported(
-                name,
-                "invalid Wasm reference initializer",
-            )),
-        }
-    }
-}
-
 /// Shared immutable module facts; a module need not contain any function.
 #[derive(Clone)]
 pub struct WasmModule {
@@ -733,9 +677,6 @@ impl Engine {
                 "too many Wasm instance bindings",
             ));
         }
-        for tag in tags {
-            tag.validate(name, types)?;
-        }
         let mut signature_pool =
             WasmSignatures::with_imports(name, imports, function_types, types)?;
         for element in elements {
@@ -751,32 +692,10 @@ impl Engine {
                     "unsupported Wasm element reference type",
                 ));
             }
-            if let WasmElementMode::Active { table, offset } = &element.mode {
-                let table = tables.get(*table as usize).ok_or_else(|| {
+            if let WasmElementMode::Active { table, .. } = &element.mode {
+                tables.get(*table as usize).ok_or_else(|| {
                     Diagnostic::unsupported(name, "Wasm element table out of bounds")
                 })?;
-                offset.validate(name, globals)?;
-                if Some(offset.value_type()) != WasmType::from_wasm(table.ty.index_type()) {
-                    return Err(Diagnostic::unsupported(
-                        name,
-                        "invalid Wasm element offset type",
-                    ));
-                }
-
-                if !types.reference_subtype(element.element_type, types, table.ty.element_type) {
-                    return Err(Diagnostic::unsupported(
-                        name,
-                        "incompatible Wasm element type",
-                    ));
-                }
-            }
-            for item in element.items.iter() {
-                item.validate(name, element.element_type, &signature_pool, globals)?;
-            }
-        }
-        for table in tables {
-            if let WasmTableInitializer::Reference(initializer) = &table.initializer {
-                initializer.validate(name, table.ty.element_type, &signature_pool, globals)?;
             }
         }
         for segment in data {
@@ -786,23 +705,10 @@ impl Engine {
                     "Wasm data segment exceeds index domain",
                 ));
             }
-            if let WasmDataMode::Active { memory, offset } = &segment.mode {
-                offset.validate(name, globals)?;
-                let memory = memories.get(*memory as usize).ok_or_else(|| {
+            if let WasmDataMode::Active { memory, .. } = &segment.mode {
+                memories.get(*memory as usize).ok_or_else(|| {
                     Diagnostic::unsupported(name, "Wasm data memory index out of bounds")
                 })?;
-                if Some(offset.value_type()) != WasmType::from_wasm(memory.ty.index_type()) {
-                    return Err(Diagnostic::unsupported(
-                        name,
-                        "invalid Wasm data offset type",
-                    ));
-                }
-            }
-        }
-        for (index, global) in globals.iter().enumerate() {
-            if let WasmGlobalInitializer::Expression(expression) = &global.initial {
-                expression.validate(name, &globals[..index])?;
-                expression.validate_functions(name, &signature_pool, &globals[..index])?;
             }
         }
         let mut import_indices: Vec<_> =

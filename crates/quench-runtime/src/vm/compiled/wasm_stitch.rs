@@ -12,13 +12,14 @@
 use crate::bytecode::{Function, WideInstruction};
 use crate::staged::wasm::Width;
 use crate::staged::wasm_flow::Flow;
-use crate::staged::wasm_instance::Instance;
+use crate::staged::wasm_instance::{Instance, Storage};
 use crate::staged::wasm_memory::{Access, Memory};
 use crate::staged::wasm_operation::{Operand, WasmOperation};
 use crate::staged::wasm_step::Step;
 use crate::wasm::integer::I64BinaryOperator as Binary;
 use quench_bjit::wasm::{self as codes, WasmCode};
 use quench_bjit::{HOLES, Row, Stencil, padded_holes};
+use super::CONTEXT_MEMORY_LENGTH;
 
 /// The frame word a register is, past the header words.
 const fn slot(register: u16) -> u64 {
@@ -197,6 +198,28 @@ fn memory(instruction: WideInstruction, memory: Memory) -> Option<Vec<Planned>> 
     Some(vec![row((kind, access_code(access)?, codes::W64, codes::REGISTER), holes, None)])
 }
 
+/// The row of a direct call (`Call::Known`) of the defined function `callee`: the result to
+/// `destination`, the arguments from `window`. A stitched callee is called through its entry cell
+/// (`CALL`). An unstitched one runs in the VM through the callout (`CALL_VM`: its index in hole
+/// FOURTH, the callout in hole B, the length's offset in hole A's high word). The VM may grow the
+/// memory, so that row is planned only where the base is stable.
+fn known_call(destination: u16, window: u16, callee: usize, world: &World<'_>) -> Option<Planned> {
+    let length = u64::try_from(CONTEXT_MEMORY_LENGTH).ok()?;
+    if let Some(cell) = (world.callee)(callee) {
+        // The callee may grow the memory: the row reloads the length from the context, at hole
+        // `HOLE_FOURTH` (`reload_memory`, `wasm_rows.rs`).
+        let mut call = row((codes::CALL, 0, codes::W64, codes::REGISTER), [slot(destination), slot(window), cell], None);
+        call.holes[3] = length;
+        return Some(call);
+    }
+    if !world.memory_stable {
+        return None;
+    }
+    let holes = [slot(destination), slot(window) | length << 32, world.vm_call, u64::try_from(callee).ok()?];
+    let name = leak(codes::wasm_name((codes::CALL_VM, 0, codes::W64, codes::REGISTER)));
+    Some(Planned { stencil: name, holes: padded_holes(holes), taken: None })
+}
+
 /// The rows of the instruction at `pc`, or `None` where one has no rows yet. `constant` gives a
 /// constant's frame word, `None` for one a row cannot hold (a vector); `memory_slot` is the
 /// instance binding of the memory the entry passes (`WasmEntry`'s base and length), whose
@@ -210,9 +233,15 @@ fn plan(
     let instruction = instructions[pc];
     let (constant, memory_slot) = (world.constant, world.memory_slot);
     let (a, b) = (instruction.a(), instruction.b());
-    match Step::of(instruction.op(), instruction.imm())? {
+    let Some(step) = Step::of(instruction.op(), instruction.imm()) else {
+        return wasm_stitch_simd_more::simd_more(pc, instruction, world);
+    };
+    match step {
         Step::Numeric(operation) => numeric(instruction, operation),
         Step::Instance(step) => {
+            if let Some(rows) = wasm_stitch_simd::instance(pc, instruction, step, world) {
+                return Some(rows);
+            }
             if let Some(registers) = step.constant_registers(instruction) {
                 let value = constant(instruction.constant_index())?;
                 return Some(
@@ -224,10 +253,16 @@ fn plan(
             match step {
                 Instance::Move => Some(vec![row((codes::MOVE, 0, codes::W64, codes::REGISTER), [slot(a), slot(b), 0], None)]),
                 Instance::Binding if memory_slot == Some(instruction.imm()) => Some(vec![]),
+                // Any other binding register is read only by global and table rows (the u-jit's
+                // plan admits no other reader of a binding), which read the context; it places nothing.
+                Instance::Binding => Some(vec![]),
+                Instance::GlobalGet | Instance::GlobalSet => wasm_stitch_global::global(pc, instruction, step, world),
                 _ => None,
             }
         }
-        Step::Memory(step) => memory(instruction, step),
+        Step::Memory(step) => memory(instruction, step)
+            .or_else(|| bulk(instruction, step))
+            .or_else(|| instance_op(pc, instruction, step, world)),
         Step::Flow(Flow::Jump) => Some(vec![row((codes::GOTO, 0, codes::W64, codes::REGISTER), [0; 3], Some(instruction.jump_target() as usize))]),
         Step::Flow(Flow::Select) => {
             let (condition, _) = instruction.register_pair();
@@ -243,14 +278,27 @@ fn plan(
             Some(table(a, cases, *default))
         }
         Step::Call(crate::staged::wasm_call::Call::Known) => {
-            // A tail call (its destination flagged) has no row yet.
+            // A tail call (its destination flagged) calls, then leaves, as the u-jit's does.
             if a & crate::bytecode::RETURN_REGISTER != 0 {
+                return wasm_stitch_tail::tail(pc, instruction, returns, world);
+            }
+            let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
+            Some(vec![known_call(a, window, usize::from(instruction.known_function_index()), world)?])
+        }
+        Step::Call(crate::staged::wasm_call::Call::IndirectTarget) => indirect::target(pc, instructions),
+        Step::Call(crate::staged::wasm_call::Call::Reference) => {
+            if !world.memory_stable {
                 return None;
             }
-            let cell = (world.callee)(usize::from(instruction.known_function_index()))?;
-            let window = crate::bytecode::ImmediateLayout::call_window_base(instruction.imm());
-            Some(vec![row((codes::CALL, 0, codes::W64, codes::REGISTER), [slot(a), slot(window), cell], None)])
+            let mut rows = indirect::reference(pc, instructions, world)?;
+            // A flagged call returns its result: nothing follows it on this path.
+            if instruction.result_flags() & crate::bytecode::RETURN_REGISTER != 0 {
+                rows.push(wasm_stitch_tail::leave(instruction, returns));
+            }
+            Some(rows)
         }
+        Step::Simd(simd) => wasm_stitch_simd::simd(instruction, simd, world).or_else(|| wasm_stitch_simd_more::simd_more(pc, instruction, world)),
+        Step::Table(op) => wasm_stitch_table::table(pc, instruction, op, world),
         Step::Flow(Flow::Return) => Some(vec![if returns {
             Planned { stencil: "leave_wasm_word", holes: padded_holes([slot(a)]), taken: None }
         } else {
@@ -263,8 +311,21 @@ fn plan(
 /// The frame's bytes: the result pointer and the registers, 8 more than a multiple of 16 so the
 /// entry's call of the first row is aligned (`wasm_entry.rs`).
 const fn frame_bytes(registers: u16) -> u64 {
-    let bytes = slot(registers);
+    padded_frame(slot(registers))
+}
+
+/// The frame's bytes for a frame of `bytes` bytes before padding: the padding of `frame_bytes`,
+/// shared with the vector area's frame (`wasm_stitch_simd::frame_bytes`).
+#[cfg(target_arch = "x86_64")]
+const fn padded_frame(bytes: u64) -> u64 {
     if bytes % 16 == 8 { bytes } else { bytes + 8 }
+}
+
+/// The frame's bytes on AArch64 (`wasm_entry_a64.rs`): `sp` must stay 16-byte aligned, and there is no
+/// pushed return address, so the frame is a multiple of 16.
+#[cfg(not(target_arch = "x86_64"))]
+const fn padded_frame(bytes: u64) -> u64 {
+    (bytes + 15) & !15
 }
 
 fn stencil(name: &str) -> Option<Stencil> {
@@ -278,11 +339,48 @@ fn stencil(name: &str) -> Option<Stencil> {
 /// (`None` for one a row cannot hold, a vector), the instance binding of the memory the entry
 /// passes (`WasmEntry`'s base and length), whose binding instruction then places nothing, and
 /// the address of the cell holding a function's entry, which its direct calls call through
-/// (`None` for a function without an entry).
+/// (`None` for a function that is not stitched: its direct calls then go through `vm_call`).
 pub(super) struct World<'a> {
     pub(super) constant: &'a dyn Fn(usize) -> Option<u64>,
     pub(super) memory_slot: Option<u32>,
+    /// Whether the frame's memory keeps its base when it grows (a reservation, or no memory):
+    /// rows that can run a growth (`memory.grow`, an indirect call's VM callout) reload only
+    /// the length, so over a movable memory they have none.
+    pub(super) memory_stable: bool,
     pub(super) callee: &'a dyn Fn(usize) -> Option<u64>,
+    /// The VM callout a `CALL_VM` row makes for a direct call of an unstitched function, as an
+    /// address (`wasm_call_vm.rs`'s `vm_call_callout`).
+    pub(super) vm_call: u64,
+    /// The global a global access at `pc` binds: its environment slot and its storage; `None`
+    /// where the plan did not admit the access.
+    pub(super) global: &'a dyn Fn(usize) -> Option<(u32, Storage)>,
+    /// The byte offset of the context's `globals` pointer (`CONTEXT_GLOBALS`).
+    pub(super) globals_offset: u64,
+    /// The indirect site of a `Call::Reference` at `pc` (`indirect::site`).
+    pub(super) indirect: &'a dyn Fn(usize) -> Option<IndirectSite>,
+    /// The table or segment operation's callout, `table_op_callout::<H>` as an address: the
+    /// stitched code is the program's own, so it names its Host type's callout.
+    pub(super) table_callout: u64,
+    /// The environment slots a table or segment operation at `pc` binds (`TableOp::bindings`:
+    /// the first, then the second), from the function's full plan; `None` where the plan did not
+    /// reach `pc` or names no first binding.
+    pub(super) table_bindings: &'a dyn Fn(usize) -> Option<(Option<u32>, Option<u32>)>,
+    /// The function's register count: the scalar frame's, which places the vector area.
+    pub(super) registers: u16,
+    /// A v128 constant's bytes, `None` for a constant that is not a vector.
+    pub(super) vector_constant: &'a dyn Fn(usize) -> Option<[u8; crate::wasm::V128_BYTES]>,
+    /// Whether the move at `pc` moves a vector (the u-jit's slot of the move is `Slot::Vector`).
+    pub(super) vector_move: &'a dyn Fn(usize) -> bool,
+}
+
+/// The indirect site of a `Call::Reference` (`indirect::site`): its table binding, its type
+/// index, that type's canonical word and the artifact's site id.
+#[derive(Clone, Copy)]
+pub(super) struct IndirectSite {
+    pub(super) table: u32,
+    pub(super) signature: u32,
+    pub(super) canonical: u32,
+    pub(super) site: u32,
 }
 
 pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &World<'_>) -> Option<Vec<u8>> {
@@ -340,7 +438,11 @@ pub(super) fn stitch(function: &Function, params: usize, returns: bool, world: &
     // The parameters follow the instance bindings (`Function::parameter_registers`).
     let first_parameter = function.parameter_registers?;
     let rest = u64::from(function.registers).checked_sub(u64::from(first_parameter) + params as u64)?;
-    let entry_holes = padded_holes([frame_bytes(function.registers), params as u64, rest, slot(first_parameter)]);
+    let vectors = wasm_stitch_simd::uses_vectors(&instructions, world);
+    // A v128 local starts as zero like any other: the vector area follows the registers, so the
+    // entry's zeroing runs on through its two words per register.
+    let rest = if vectors { rest + 2 * u64::from(function.registers) } else { rest };
+    let entry_holes = padded_holes([wasm_stitch_simd::frame_bytes(function.registers, vectors), params as u64, rest, slot(first_parameter)]);
     patch_routine(&entry, &mut code[..entry.code.len()], &entry_holes, rows_at)?;
     code[entry.code.len()..rows_at].copy_from_slice(&trap.code);
     let trap_at = code.as_ptr() as usize + entry.code.len();
@@ -372,6 +474,25 @@ fn patch_routine(routine: &Stencil, code: &mut [u8], holes: &[u64; HOLES], rows_
     }
     Some(())
 }
+
+#[path = "wasm_stitch_memory.rs"]
+mod wasm_stitch_memory;
+use self::wasm_stitch_memory::bulk;
+#[path = "wasm_stitch_global.rs"]
+mod wasm_stitch_global;
+#[path = "wasm_stitch_table.rs"]
+mod wasm_stitch_table;
+#[path = "wasm_stitch_simd.rs"]
+mod wasm_stitch_simd;
+#[path = "wasm_stitch_simd_more.rs"]
+mod wasm_stitch_simd_more;
+#[path = "wasm_stitch_tail.rs"]
+mod wasm_stitch_tail;
+#[path = "wasm_stitch_instance.rs"]
+mod wasm_stitch_instance;
+use self::wasm_stitch_instance::instance_op;
+#[path = "wasm_stitch_indirect.rs"]
+pub(super) mod indirect;
 
 #[cfg(test)]
 #[path = "wasm_stitch_tests.rs"]
