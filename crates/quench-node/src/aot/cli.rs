@@ -139,8 +139,20 @@ fn build_bootstrap(program: &Path, output: &Path) -> Result<(), String> {
     let mut host = crate::NodeHost::new(vec!["quench".into()]).with_exec_argv(Vec::new())?;
     host.building_snapshot = Some(crate::host::startup_snapshot::SnapshotKind::Bootstrap);
     let mut runtime = quench_runtime::Runtime::new(host);
-    let bytes = runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer))?;
-    fs::write(output, bytes).map_err(|error| error.to_string())
+    // The programs this run stores are the ones the image will load; their lanes can be
+    // compiled ahead now (`AheadImages`), so the produced image runs them without a compiler.
+    quench_runtime::AheadImages::start_recording();
+    let bytes = match runtime.build_snapshot(&program, |host, writer| host.write_snapshot(writer)) {
+        Ok(bytes) => bytes,
+        Err(error) => return Err(error.to_string()),
+    };
+    let images = quench_runtime::AheadImages::finish_recording();
+    fs::write(output, bytes).map_err(|error| error.to_string())?;
+    if !images.is_empty() {
+        fs::write(output.with_extension("ahead"), quench_runtime::AheadImages::bundle(&images))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn compile(options: Options) -> Result<(), String> {
@@ -246,7 +258,19 @@ fn compile(options: Options) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
             report["bootstrap"] = json!({"status": "prepared", "bytes": fs::metadata(&bootstrap).map_err(|error| error.to_string())?.len(),
                 "configuration": "neutral", "namespace": "native entry atom IDs preserved", "host_abi": format!("{:#x}", super::BOOTSTRAP_ABI)});
-            inputs.with_bootstrap(bootstrap)
+            let inputs = inputs.with_bootstrap(bootstrap.clone());
+            let ahead = bootstrap.with_extension("ahead");
+            // The worker writes the bundle only when a program stored a body worth shipping.
+            if ahead.exists() {
+                let bytes = fs::metadata(&ahead).map_err(|error| error.to_string())?.len();
+                let programs = quench_runtime::AheadImages::unbundle(&fs::read(&ahead).map_err(|error| error.to_string())?)
+                    .map(|all| all.len()).unwrap_or(0);
+                report["ahead"] = json!({"bytes": bytes, "programs": programs});
+                inputs.with_ahead(ahead)
+            } else {
+                report["ahead"] = json!({"status": "none"});
+                inputs
+            }
         },
         Err(error) => {
             report["bootstrap"] = json!({"status": "unavailable", "diagnostic": error});

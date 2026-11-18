@@ -35,11 +35,14 @@ fn run() -> Result<std::process::ExitCode, String> {
         });
     quench_node::host::resident_pages::phase_peak("native host ready");
     #[cfg(quench_native_bootstrap)]
-    let result = quench_node::aot::execute_native_process_entry_with_bootstrap(
-        host, &entry, SUPPORT, include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP")),
-    );
+    let bootstrap = Some(&include_bytes!(env!("QUENCH_NATIVE_BOOTSTRAP"))[..]);
     #[cfg(not(quench_native_bootstrap))]
-    let result = quench_node::aot::execute_native_process_entry_with_support(host, &entry, SUPPORT);
+    let bootstrap = None;
+    #[cfg(quench_native_ahead)]
+    let ahead = Some(&include_bytes!(env!("QUENCH_NATIVE_AHEAD"))[..]);
+    #[cfg(not(quench_native_ahead))]
+    let ahead = None;
+    let result = quench_node::aot::execute_native_process_entry_with_ahead(host, &entry, SUPPORT, bootstrap, ahead);
     result.map(|completion| completion.exit_code())
 }
 

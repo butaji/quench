@@ -113,6 +113,36 @@ pub fn execute_native_process_entry_with_bootstrap(
     execute_native_with_teardown(host, program, crate::shared_run::Teardown::ProcessExit, support, Some(bootstrap))
 }
 
+/// `execute_native_process_entry_with_bootstrap` after loading the ahead-image bundle the
+/// compiler recorded: the programs' lane bodies and loops run from the image.
+pub fn execute_native_process_entry_with_ahead(
+    host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, support: NativeImageSupport,
+    bootstrap: Option<&'static [u8]>, ahead: Option<&'static [u8]>,
+) -> Result<crate::shared_run::SharedCompletion, String> {
+    let bootstrap = bootstrap.filter(|_| host.accepts_native_bootstrap());
+    let mut runtime = crate::shared_run::EntryRuntime::new(Runtime::new(host), crate::shared_run::Teardown::ProcessExit);
+    if let Some(bundle) = ahead {
+        for images in quench_runtime::AheadImages::unbundle(bundle)? {
+            runtime.load_ahead_images(images);
+        }
+    }
+    runtime.set_execution_mode(support.execution_mode());
+    runtime.set_memory_policy(crate::shared_run::select_memory_policy());
+    let execution = match bootstrap {
+        Some(bytes) => runtime.execute_native_from_snapshot(std::rc::Rc::new(bytes), program, |host, reader| host.read_snapshot(reader)),
+        None => runtime.execute_native_deferred_jobs(program),
+    };
+    let completion = crate::shared_run::finish_shared_execution(&mut runtime, program.residual(), execution)?;
+    let rejected = runtime.native_execution_rejections();
+    if rejected != 0 {
+        return Err(format!("native AOT execution rejected {rejected} unsupported operation(s)"));
+    }
+    if let Some(path) = runtime.host_mut().missing_frozen_source() {
+        return Err(format!("native AOT image omitted required module source: {}", path.display()));
+    }
+    Ok(completion)
+}
+
 fn execute_native_with_teardown(
     host: NodeHost, program: &quench_runtime::NativeJsProgram<NodeHost>, teardown: crate::shared_run::Teardown, support: NativeImageSupport,
     bootstrap: Option<&'static [u8]>,

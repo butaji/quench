@@ -230,6 +230,10 @@ impl NativeSupport {
             command.args(["--cfg", "quench_native_bootstrap"])
                 .env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
+        if let Some(ahead) = &inputs.ahead {
+            command.args(["--cfg", "quench_native_ahead"])
+                .env("QUENCH_NATIVE_AHEAD", ahead);
+        }
         if self.rust_lto {
             command.args(["-C", "lto=thin"]);
         }

@@ -20,13 +20,16 @@ pub struct NativeImageInputs {
     objects: Vec<PathBuf>,
     host_exports: BTreeSet<String>,
     bootstrap: Option<PathBuf>,
+    /// The ahead-image bundle the produced image loads before executing (`AheadImages`).
+    ahead: Option<PathBuf>,
 }
 
 impl NativeImageInputs {
     pub fn new(directory: PathBuf, objects: Vec<PathBuf>, host_exports: BTreeSet<String>) -> Self {
-        Self { directory, objects, host_exports, bootstrap: None }
+        Self { directory, objects, host_exports, bootstrap: None, ahead: None }
     }
     pub fn with_bootstrap(mut self, bootstrap: PathBuf) -> Self { self.bootstrap = Some(bootstrap); self }
+    pub fn with_ahead(mut self, ahead: PathBuf) -> Self { self.ahead = Some(ahead); self }
     pub fn catalog(&self) -> PathBuf { self.directory.join(CATALOG_FILENAME) }
     pub fn required_exports(&self) -> PathBuf { self.directory.join(REQUIRED_EXPORTS_FILENAME) }
     pub fn objects(&self) -> impl Iterator<Item = &Path> { self.objects.iter().map(PathBuf::as_path) }
