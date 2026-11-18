@@ -657,6 +657,36 @@ static double NOINL op_k_struct_sum(long n) {
   return s;
 }
 
+struct triple { int32_t x, y, z; };
+
+static double NOINL op_alloc_literal(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct point *p = malloc(sizeof *p);
+    p->x = i; p->y = 1;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->x + (uint32_t)p->y);
+    free(p);
+  }
+  return s;
+}
+
+static double NOINL op_alloc_ctor(long n) { return op_alloc_literal(n); }
+
+static double NOINL op_alloc_class(long n) {
+  int32_t N = (int32_t)n, s = 0;
+  for (int32_t i = 0; i < N; i++) {
+    BODY_BARRIER();
+    struct triple *p = malloc(sizeof *p);
+    p->x = i; p->y = 1; p->z = 2;
+    ESCAPE(p);
+    s = (int32_t)((uint32_t)s + (uint32_t)p->x + (uint32_t)p->z);
+    free(p);
+  }
+  return s;
+}
+
 struct task { int32_t (*run)(const struct task *, int32_t); int32_t k; };
 static int32_t NOINL task_a(const struct task *t, int32_t x) { return (int32_t)((uint32_t)x + (uint32_t)t->k); }
 static int32_t NOINL task_b(const struct task *t, int32_t x) { return x ^ t->k; }
@@ -754,6 +784,7 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"arr_length", op_arr_length}, {"arr_push", op_arr_push},
   {"typed_load", op_typed_load}, {"typed_store_f64", op_typed_store_f64},
   {"k_nbody_pair", op_k_nbody_pair}, {"k_struct_sum", op_k_struct_sum}, {"k_dispatch", op_k_dispatch},
+  {"alloc_literal", op_alloc_literal}, {"alloc_ctor", op_alloc_ctor}, {"alloc_class", op_alloc_class},
   {"k_json", op_k_json}, {"k_regexp", op_k_regexp}, {"k_str_build", op_k_str_build},
 };
 

@@ -6,6 +6,9 @@
 #   dispatch allowance per iteration for the loop's backward jump).
 # ceiling: the count the interpreter may not exceed. The gate lowers it when the count falls; a
 #   count at or under its budget makes the budget the ceiling. Never raise a ceiling by hand.
+alloc_class 146 444
+alloc_ctor 143 435
+alloc_literal 143 435
 arr_length 4 18 76.1
 arr_load_dbl 5 21 92.6
 arr_load_int 5 21 73.1

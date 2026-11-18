@@ -82,6 +82,13 @@ ops.k_nbody_pair = function (n) {
   }
   return a.vx + b.vz;
 };
+// Allocation: an object literal, a function constructor's instance and a class instance per
+// iteration, each read back; the C twins allocate the same struct on the heap (malloc + free).
+ops.alloc_literal = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = { x: i, y: 1 }; s = (s + p.x + p.y) | 0; } return s; };
+function Pair(x, y) { this.x = x; this.y = y; }
+ops.alloc_ctor = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Pair(i, 1); s = (s + p.x + p.y) | 0; } return s; };
+class Triple { constructor(x, y, z) { this.x = x; this.y = y; this.z = z; } }
+ops.alloc_class = function (n) { let s = 0; for (let i = 0; i < n; i++) { const p = new Triple(i, 1, 2); s = (s + p.x + p.z) | 0; } return s; };
 ops.k_struct_sum = function (n) { const pts = []; for (let i = 0; i < 64; i++) pts.push({ x: i, y: i + 1 }); let s = 0; for (let i = 0; i < n; i++) { const p = pts[i & 63]; s = (s + p.x * p.y) | 0; } return s; };
 class KernelTaskA { constructor(k) { this.k = k; } run(x) { return (x + this.k) | 0; } }
 class KernelTaskB { constructor(k) { this.k = k; this.j = 1; } run(x) { return (x ^ this.k) | 0; } }
