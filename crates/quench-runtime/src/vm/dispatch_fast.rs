@@ -14781,6 +14781,11 @@ script_handler! {
         if argc > FIXED_ARGUMENT_COPIES || !crate::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
             sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
         }
+        // The tier's diagnostics count every entry (`record_js_jit_lane_entry`), which a
+        // proved call skips: under them no link is proved.
+        if vm.programs.js_jit_diagnostics_enabled() {
+            sibling!(lane_script_call_full::<H>, r, ip, Carried::script_in(cx, view))
+        }
         i.call_link.set(i.call_link.get() | PLAIN_LINK);
         sibling!(lane_script_call::<H, ARGC, PLAIN>, r, ip, Carried::script_in(cx, view))
     }
@@ -14843,7 +14848,7 @@ macro_rules! lane_plain_activation {
         }
         debug_assert!(!target.settles(), "a settling target activates through its own call form");
         let callee_registers = lane_fill_window(vm, target, passed, argc);
-        let (registers, base) = lane_enter_window_of::<H, false, false>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
+        let (registers, base) = lane_enter_window_of::<H, false, false, { !$proven }>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
         next!(cx, registers, base, Carried::script(cx))
     }};
 }
@@ -19103,7 +19108,7 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let callee_registers = lane_fill_window(vm, target, passed, argc);
-    lane_enter_window_of::<H, GENERAL, SETTLES>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None, None)
+    lane_enter_window_of::<H, GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -19235,14 +19240,14 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
     kept: Option<u16>,
 ) -> (Registers, Ip) {
-    lane_enter_window_of::<H, GENERAL, SETTLES>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, skipped, kept)
+    lane_enter_window_of::<H, GENERAL, SETTLES, true>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, skipped, kept)
 }
 
 /// `lane_enter_window` with the VM its caller already holds, so the push reads the lane
 /// stack through it rather than through the context again after the window's writes.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool>(
+fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool, const COUNTED: bool>(
     cx: *mut LaneContext<H>,
     vm: &mut Vm<H>,
     r: Registers,
@@ -19286,7 +19291,9 @@ fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool>(
     if cross {
         lane_enter_program(cx, target.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    // A proved plain call (`PLAIN_LINK`) never runs under the tier's diagnostics
+    // (`lane_script_call_prove`), so it skips their per-call test (`COUNTED`).
+    if COUNTED { vm.programs.record_js_jit_lane_entry(target.program(), target.function); }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.view).start() } };
     (callee_registers, start)
