@@ -121,6 +121,42 @@ pub(crate) fn array_backing<S: Stage>(stage: &mut S, record_base: S::Word, base:
     Some(backing)
 }
 
+/// Element `index` of the direct array `base` (among the array records at `record_base`) whose
+/// backing is wide or narrow (`ArrayElements::is_narrow`: a narrow element decodes through the
+/// upper-word table at `upper_words`, `object::decode_narrow_through`); `None` (leaving at `miss`)
+/// for a double backing, past the backing's end or at a hole.
+#[inline(always)]
+#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/heap_rows.rs`), which includes this file
+pub(crate) fn record_element<S: Stage>(stage: &mut S, record_base: S::Word, base: S::Word, index: S::Word, upper_words: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    let backing = flagged_backing(stage, record_base, base, miss)?;
+    backing_element(stage, backing, index, upper_words, miss)
+}
+
+/// `record_element` past the backing's loads (`flagged_backing`).
+#[inline(always)]
+fn backing_element<S: Stage>(stage: &mut S, backing: Backing<S::Word>, index: S::Word, upper_words: S::Word,
+    miss: S::Miss) -> Option<S::Word> {
+    use crate::heap::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN};
+    let double = stage.and_imm(backing.length, u64::from(DOUBLE_LEN));
+    let wide_or_narrow = stage.eq_imm(double, 0u32);
+    stage.guard(wide_or_narrow, miss)?;
+    let length = stage.and_imm(backing.length, u64::from(!ENCODED_LEN));
+    let in_bounds = stage.ult(index, length);
+    stage.guard(in_bounds, miss)?;
+    let flag = stage.and_imm(backing.length, u64::from(NARROW_LEN));
+    let narrow = stage.ne_imm(flag, 0u32);
+    let value = stage.choose(narrow, |stage| {
+        let offset = stage.mul_imm(index, std::mem::size_of::<u32>() as u64);
+        let address = stage.add(backing.values, offset);
+        let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
+        super::object::decode_narrow_through(stage, narrow, upper_words)
+    }, |stage| loaded_element(stage, backing.values, index).1);
+    let present = stage.ne_imm(value, crate::Value::DELETED.to_bits());
+    stage.guard(present, miss)?;
+    Some(value)
+}
+
 /// `array_backing` up to the length load: the backing with its length word's flags
 /// (`ENCODED_LEN`) left in.
 #[inline(always)]
@@ -424,45 +460,41 @@ pub(crate) fn concrete_array_length(record_base: *const crate::heap::ArrayObject
 /// element decoded in place.
 #[inline(always)]
 pub(crate) fn concrete_record_element(record_base: *const crate::heap::ArrayObject, base: crate::Value, index: usize) -> Option<crate::Value> {
-    use crate::heap::{DOUBLE_LEN, ENCODED_LEN, NARROW_LEN};
+    use crate::heap::{DOUBLE_LEN, ENCODED_LEN};
     let mut stage = Concrete::new(std::ptr::null());
-    let Backing { values, length, .. } = flagged_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
+    let backing @ Backing { values, length, .. } = flagged_backing(&mut stage, record_base as u64, base.to_bits(), ())?;
     if length <= u64::from(!ENCODED_LEN) {
         return dense_element(&mut stage, values, length, index as u64, ())
             .map(|(_, value)| crate::Value::from_bits(value));
     }
+    if length & u64::from(DOUBLE_LEN) == 0 {
+        // A narrow backing (`ArrayElements::is_narrow`): the reading a compiled row makes (`record_element`).
+        let upper_words = crate::value::NarrowLayout::upper_words() as u64;
+        return backing_element(&mut stage, backing, index as u64, upper_words, ()).map(crate::Value::from_bits);
+    }
     if index as u64 >= length & u64::from(!ENCODED_LEN) {
         return None;
     }
-    if length & u64::from(DOUBLE_LEN) != 0 {
-        // A double backing (`ArrayElements::is_double`): the Number of the element's bits,
-        // canonical, or a hole.
-        let address = values + (index * std::mem::size_of::<u64>()) as u64;
-        let word = stage.load_u64(Region::Elements.mutable(), address, 0);
-        if word == crate::Value::DELETED.to_bits() {
-            return None;
-        }
-        // `Value::number` of the double: a whole one in int32 range, not -0, takes the tag.
-        let number = f64::from_bits(word);
-        let integer = number as i32;
-        let whole = f64::from(integer) == number && (integer != 0 || number.is_sign_positive());
-        // Any NaN a kernel stored (x86 makes 0xfff8...) reads as the canonical one.
-        let bits = if whole {
-            crate::value::ValueLayout::INT_TAG | u64::from(integer as u32)
-        } else if number.is_nan() {
-            crate::value::ValueLayout::CANONICAL_NAN
-        } else {
-            word
-        };
-        return Some(crate::Value::from_bits(bits));
+    // A double backing (`ArrayElements::is_double`): the Number of the element's bits,
+    // canonical, or a hole.
+    let address = values + (index * std::mem::size_of::<u64>()) as u64;
+    let word = stage.load_u64(Region::Elements.mutable(), address, 0);
+    if word == crate::Value::DELETED.to_bits() {
+        return None;
     }
-    // A narrow backing (`ArrayElements::is_narrow`), which `array_backing` misses: the element
-    // decoded from its narrow form.
-    debug_assert!(length & u64::from(NARROW_LEN) != 0);
-    let address = values + (index * std::mem::size_of::<u32>()) as u64;
-    let narrow = stage.load_u32(Region::Elements.mutable(), address, 0);
-    let value = super::object::decode_narrow(&mut stage, narrow);
-    (value != crate::Value::DELETED.to_bits()).then(|| crate::Value::from_bits(value))
+    // `Value::number` of the double: a whole one in int32 range, not -0, takes the tag.
+    let number = f64::from_bits(word);
+    let integer = number as i32;
+    let whole = f64::from(integer) == number && (integer != 0 || number.is_sign_positive());
+    // Any NaN a kernel stored (x86 makes 0xfff8...) reads as the canonical one.
+    let bits = if whole {
+        crate::value::ValueLayout::INT_TAG | u64::from(integer as u32)
+    } else if number.is_nan() {
+        crate::value::ValueLayout::CANONICAL_NAN
+    } else {
+        word
+    };
+    Some(crate::Value::from_bits(bits))
 }
 
 #[cfg(test)]

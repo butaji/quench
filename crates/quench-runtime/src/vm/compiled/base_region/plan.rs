@@ -172,6 +172,8 @@ pub(super) fn heap_holes(decoded: &Decoded, homes: &Homes, heap: Heap, entry: bo
         Heap::Store | Heap::TypedStore(_) => [base, a_hole, b_hole],
         Heap::This => [dst_hole, 0, 0],
         Heap::Index | Heap::TypedIndex(_) if entry => [dst_hole, decoded.hole, b_hole],
+        // A narrow element decodes through the upper-word table (`elements::record_element`).
+        Heap::Index => return padded_holes([dst_hole, a_hole, b_hole, 0, crate::value::NarrowLayout::upper_words() as u64]),
         Heap::Field | Heap::TypedLength => [dst_hole, decoded.hole, 0],
         Heap::Instanceof => {
             let link = decoded.instanceof.map_or(0, |(_, fact)| u64::from(fact.link));
