@@ -1037,8 +1037,8 @@ lane_helper_inventory! { H;
     /// A planned construction (`lane_construct`).
     Construct => constructions::lane_construct::<H>,
     ConstructReceiver => constructions::lane_construct_receiver::<H>,
-    /// Whether a construction may build its receiver here (`constructions::lane_construct_ready`).
-    ConstructReady => constructions::lane_construct_ready::<H>,
+    /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
+    ConstructPlanHolds => constructions::lane_construct_plan_holds::<H>,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::lane_body_construct`).
     ConstructCall => super::dispatch_fast::lane_body_construct::<H>,
     /// A body's uncaught `throw`, stashed for its native callers and the lane (`lane_raise`).
@@ -1306,15 +1306,12 @@ pub(super) struct OnlineFacts<'a> {
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
 /// callee, its receiver's exact shape and, per field in slot order, the field's name and where
 /// its value comes from. A body that reads such a receiver's fields and lets it escape nowhere
-/// keeps the values and allocates the receiver only at a leave. `holders` are the exact shapes
-/// of the callee and its prototype, whose values the plan's proof read: a body that uses the plan
-/// holds them as Stable facts, so a change retires the body instead of testing the plan per use.
+/// keeps the values and allocates the receiver only at a leave.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ScalarConstructPlan {
     pub(super) callee: Value,
     pub(super) shape: u32,
     pub(super) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
-    pub(super) holders: [u32; 2],
 }
 
 /// Where a field of a `ScalarConstructPlan` takes its value.
