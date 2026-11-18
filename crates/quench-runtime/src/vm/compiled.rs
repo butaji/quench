@@ -1352,6 +1352,24 @@ pub(super) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
     Ok(lowered.native)
 }
 
+/// Every loop of `function_id` that lowers ahead: its header, back edge and native records.
+#[cfg(all(test, feature = "aot"))]
+pub(super) fn ahead_loops_of(program: &ResidualProgram, function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa) -> Vec<(u32, u32, usize)> {
+    let Some(function) = program.function_get(function_id as usize) else { return Vec::new() };
+    let decoded: Vec<_> = function.instructions().collect();
+    let mut loops = Vec::new();
+    for (pc, instruction) in decoded.iter().enumerate() {
+        if !instruction.op().control_flow_layout().jumps() { continue; }
+        let header = instruction.jump_target();
+        if header > pc as u32 { continue; }
+        if let Ok(records) = lowered_ahead_loop(program, function_id, isa, (header, pc as u32)) {
+            loops.push((header, pc as u32, records));
+        }
+    }
+    loops
+}
+
 /// `lowered_lane_body`'s code with the atoms it stores without a method-cache test.
 #[cfg(feature = "aot")]
 pub(super) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
@@ -9145,6 +9163,8 @@ mod ahead_loop_tests {
         }).next_back().map(|(pc, instruction)| (instruction.jump_target(), pc as u32)).expect("the body has a loop");
         let records = super::lowered_ahead_loop(&program, 1, &*isa, (header, backedge));
         assert!(matches!(records, Ok(records) if records > 0), "the loop lowered no record: {records:?} ({header}..={backedge})");
+        let loops = super::ahead_loops_of(&program, 1, &*isa);
+        assert!(loops.iter().any(|(_, _, records)| *records > 0), "no loop of the body lowers ahead: {loops:?}");
     }
 }
 
