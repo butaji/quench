@@ -764,66 +764,14 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::GetField => {
-                let lookup = i.field_lookup().ok_or_else(|| {
-                    JsError::validation("invalid nested field lookup encoding".into())
-                })?;
-                let v = match lookup {
-                    crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
-                    crate::bytecode::FieldLookup::Atom {
-                        atom,
-                        base,
-                        cache_site,
-                    } => {
-                        let base = self.resolve_field_base(p, f, base)?;
-                        // A read fused with its frame's return pushes the getter as a call
-                        // whose completion returns from the frame (`PendingGeneralCall::returns`);
-                        // a getter is no tail call, so a strict frame pushes it too.
-                        if allow_inline_calls
-                            && !i.writes_current_this()
-                            && let Some(getter) =
-                                self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
-                            && let Some(result) =
-                                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                        {
-                            return result;
-                        }
-                        // A private field reads straight from the object's private elements;
-                        // methods, accessors and a missing brand take the ordinary [[Get]].
-                        match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
-                            Some(value) => value,
-                            None => self.get_field_cached(p, base, atom, cache_site)?,
-                        }
-                    }
-                };
-                if i.writes_current_this() {
-                    let crate::bytecode::FieldLookup::Site(site) = lookup else {
-                        unreachable!("field sink is only attached to nested field lookup")
-                    };
-                    let sink = p.field_sites[site].sink.expect("fused field sink");
-                    self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
-                        p, vm.frames[f].this, sink.0, v, sink.1,
-                        p.function(vm.frames[f].function as usize).strict,
-                    ))?;
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.get_field_miss(p, f, i, pc, allow_inline_calls);
                 }
-                if i.returns_from_frame() {
-                    return Ok(StepResult::Return(v));
-                }
-                self.write(f, i.result_register(), v);
             }
             Op::GetIndex => {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_dispatch(false, false);
-                let base = self.resolve_operand(p, f, i.operand_b())?;
-                let key = self.resolve_operand(p, f, i.operand_c())?;
-                if allow_inline_calls
-                    && let Some(getter) = self.proved_symbol_getter(base, key)
-                    && let Some(result) =
-                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
-                {
-                    return result;
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.get_index_miss(p, f, i, pc, allow_inline_calls);
                 }
-                let v = self.get_index(p, base, key)?;
-                self.write(f, i.result_register(), v);
             }
             Op::CheckPrivate => {
                 let object = self.read(f, i.register_a());
@@ -1071,16 +1019,9 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::SetField | Op::SetFieldStrict => {
-                let object = self.read(f, i.register_b());
-                let value = self.read(f, i.register_a());
-                self.set_field_cached(
-                    p,
-                    object,
-                    i.atom_index(),
-                    value,
-                    i.cache_site_index(),
-                    i.op().field_store().is_some_and(|store| store.strict),
-                )?;
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.set_field_miss(p, f, i);
+                }
             }
             Op::DefinePropertyRecord => {
                 let mode = i.property_definition_mode().ok_or_else(|| {
@@ -1132,16 +1073,9 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             Op::SetIndex => {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_dispatch(true, false);
-                self.set_index_mode(
-                    p,
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                    self.read(f, i.register_a()),
-                    p.function(self.frames[f].function as usize).strict
-                        || i.boolean_flag().expect("validated boolean immediate"),
-                )?
+                if !self.step_row_of(p, f, i, pc, crate::staged::DecodeContext::EMPTY) {
+                    return self.set_index_miss(p, f, i);
+                }
             }
             Op::DefineArrayElement => {
                 let (array, value) = (self.read(f, i.register_b()), self.read(f, i.register_a()));
@@ -1665,6 +1599,104 @@ impl<H: Host> Vm<H> {
         if !self.binary_truthy(p, operator, left, right)? {
             *pc = i.jump_target() as usize;
         }
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn get_field_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+        let lookup = i.field_lookup().ok_or_else(|| {
+            JsError::validation("invalid nested field lookup encoding".into())
+        })?;
+        let v = match lookup {
+            crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
+            crate::bytecode::FieldLookup::Atom {
+                atom,
+                base,
+                cache_site,
+            } => {
+                let base = self.resolve_field_base(p, f, base)?;
+                // A read fused with its frame's return pushes the getter as a call
+                // whose completion returns from the frame (`PendingGeneralCall::returns`);
+                // a getter is no tail call, so a strict frame pushes it too.
+                if allow_inline_calls
+                    && !i.writes_current_this()
+                    && let Some(getter) =
+                        self.cached_field_getter(base, atom, self.field_cache_index(cache_site))
+                    && let Some(result) =
+                        self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+                {
+                    return result;
+                }
+                // A private field reads straight from the object's private elements;
+                // methods, accessors and a missing brand take the ordinary [[Get]].
+                match self.is_private_name(atom).then(|| self.private_field_value(p, base, atom)).flatten() {
+                    Some(value) => value,
+                    None => self.get_field_cached(p, base, atom, cache_site)?,
+                }
+            }
+        };
+        if i.writes_current_this() {
+            let crate::bytecode::FieldLookup::Site(site) = lookup else {
+                unreachable!("field sink is only attached to nested field lookup")
+            };
+            let sink = p.field_sites[site].sink.expect("fused field sink");
+            self.with_field_source(f, site, crate::bytecode::FieldPart::Sink, |vm| vm.set_field_cached(
+                p, vm.frames[f].this, sink.0, v, sink.1,
+                p.function(vm.frames[f].function as usize).strict,
+            ))?;
+        }
+        if i.returns_from_frame() {
+            return Ok(StepResult::Return(v));
+        }
+        self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn get_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction, pc: &mut usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(false, false);
+        let base = self.resolve_operand(p, f, i.operand_b())?;
+        let key = self.resolve_operand(p, f, i.operand_c())?;
+        if allow_inline_calls
+            && let Some(getter) = self.proved_symbol_getter(base, key)
+            && let Some(result) =
+                self.try_inline_getter(p, f, *pc, getter, base, i.result_register())
+        {
+            return result;
+        }
+        let v = self.get_index(p, base, key)?;
+        self.write(f, i.result_register(), v);
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn set_field_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        let object = self.read(f, i.register_b());
+        let value = self.read(f, i.register_a());
+        self.set_field_cached(
+            p,
+            object,
+            i.atom_index(),
+            value,
+            i.cache_site_index(),
+            i.op().field_store().is_some_and(|store| store.strict),
+        )?;
+        Ok(StepResult::Continue)
+    }
+
+    #[inline(never)]
+    fn set_index_miss(&mut self, p: &ResidualProgram, f: usize, i: WideInstruction) -> Result<StepResult, JsError> {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_dispatch(true, false);
+        self.set_index_mode(
+            p,
+            self.read(f, i.register_b()),
+            self.read(f, i.register_c()),
+            self.read(f, i.register_a()),
+            p.function(self.frames[f].function as usize).strict
+                || i.boolean_flag().expect("validated boolean immediate"),
+        )?
         Ok(StepResult::Continue)
     }
 
