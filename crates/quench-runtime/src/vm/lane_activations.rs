@@ -44,13 +44,6 @@ impl LaneActivations {
     pub(super) fn is_empty(&self) -> bool { self.top == self.base }
     #[inline(always)]
     pub(super) fn is_full(&self) -> bool { self.top == self.end }
-    /// The innermost activation, from the top word alone: one compare with the base, where
-    /// `len` and an index would shift and multiply (`lane_return_from`).
-    #[inline(always)]
-    pub(super) fn innermost(&self) -> Option<&Activation> {
-        // SAFETY: a non-empty region's slot below `top` holds an activation.
-        (self.top != self.base).then(|| unsafe { &*self.top.sub(1) })
-    }
 
     /// The address of the top word, which emitted code bumps through a pointer as the lane does.
     #[inline(always)]
