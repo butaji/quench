@@ -1,7 +1,7 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, ResidualProgram, Runtime, emit_native_module, lower_native_js_module};
+use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, ResidualProgram, Runtime, emit_native_module, lower_native_js_module_with_options};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -16,6 +16,9 @@ pub(super) const NATIVE_ENTRY_UNIT: &str = "entry";
 pub struct SourceManifest {
     units: BTreeSet<NativeSourceKey>,
     pub(super) assets: ModuleAssets,
+    /// Whether a body's leave hands its record back to the VM (`NativeJsCodegenOptions`): a
+    /// dynamic-source image allows the shared loop; a static image requires linked code.
+    hand_back_on_leave: bool,
 }
 
 pub struct CompiledSource {
@@ -33,6 +36,8 @@ pub struct CompiledSources {
     pub units: Vec<CompiledSource>,
     pub syntax_errors: Vec<DeferredSourceSyntaxError>,
     pub assets: ModuleAssets,
+    /// Whether a body's leave hands its record back to the VM (`NativeJsCodegenOptions`).
+    hand_back_on_leave: bool,
 }
 
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
@@ -76,7 +81,11 @@ impl CompiledSources {
                 None => program.clone(),
             };
             records.freeze_native_diagnostics();
-            let module = lower_native_js_module(&records, &format!("quench_{name}"))?;
+            let options = quench_runtime::NativeJsCodegenOptions {
+                hand_back_on_leave: self.hand_back_on_leave,
+                ..Default::default()
+            };
+            let module = lower_native_js_module_with_options(&records, &format!("quench_{name}"), options)?;
             let symbol = module.entry_table_symbol().to_owned();
             for function in &module.functions {
                 if let quench_runtime::NativeFunction::Import { name, .. } = function {
@@ -197,6 +206,10 @@ impl SourceManifest {
 
     /// Node SDK policies are Rust; only startup inputs can contribute guest source.
     /// Keep this entry point for callers combining bootstrap and application manifests.
+    /// Whether the image's bodies hand a leave back to the VM, which only its support policy
+    /// may allow (`--dynamic-source`).
+    pub fn set_hand_back_on_leave(&mut self, hand_back: bool) { self.hand_back_on_leave = hand_back; }
+
     pub fn capture_for_graph(_graph: &DependencyGraph) -> Result<Self, String> {
         Self::capture_bootstrap()
     }
@@ -257,7 +270,7 @@ impl SourceManifest {
                 NativeSourceCompilation::SyntaxError(message) => syntax_errors.push(DeferredSourceSyntaxError { key, message }),
             }
         }
-        Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets })
+        Ok(CompiledSources { entry: compiler.finish(entry)?, units, syntax_errors, assets: self.assets, hand_back_on_leave: self.hand_back_on_leave })
     }
 }
 

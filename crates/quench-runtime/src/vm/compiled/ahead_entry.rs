@@ -29,6 +29,7 @@ pub(in crate::vm) fn lower_ahead_entry(
     function_id: u32,
     instruction_count: usize,
     isa: &dyn cranelift_codegen::isa::TargetIsa,
+    hand_back: bool,
     targets: AheadTargets<'_>,
 ) -> Result<ir::Function, String> {
     let count = u32::try_from(instruction_count).map_err(|_| "native instruction count exceeds u32")?;
@@ -44,7 +45,7 @@ pub(in crate::vm) fn lower_ahead_entry(
     builder.switch_to_block(entry);
     let params = builder.block_params(entry).to_vec();
     let blocks = AheadBlocks::new(&mut builder);
-    emit_dispatch(&mut builder, &params, &blocks, targets.body);
+    emit_dispatch(&mut builder, &params, &blocks, hand_back, targets.body, targets.fallback);
     emit_steps(&mut builder, &params, &blocks, count, targets.fallback);
     builder.seal_all_blocks();
     builder.finalize(isa.frontend_config());
@@ -72,8 +73,9 @@ impl AheadBlocks {
 /// Starts the lane body where the run is the whole function (it starts at the first record
 /// with no bound), the per-PC loop otherwise, and maps the body's status.
 fn emit_dispatch(
-    builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks,
+    builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks, hand_back: bool,
     body: &mut dyn FnMut(&mut FunctionBuilder<'_>, &[ir::Value]) -> (ir::Value, ir::Value),
+    fallback: &mut dyn FnMut(&mut FunctionBuilder<'_>, [ir::Value; 3]) -> ir::Value,
 ) {
     let mut stage = super::object_slots::emit(builder);
     let payload = stage.load_u64(DISPATCH, params[ENTRY_CONTEXT], std::mem::offset_of!(CallContext, adapter_payload) as i32);
@@ -90,13 +92,14 @@ fn emit_dispatch(
     let length = stage.mul_imm(length, 1u64 << entry_cell::CAPTURE_ADDRESS_BITS);
     let captures = stage.or(values, length);
     let (status, word) = body(stage.builder, &[params[ENTRY_CONTEXT], this, captures, params[ENTRY_ARGUMENTS]]);
-    emit_body_status(builder, params, blocks, payload, (status, word));
+    emit_body_status(builder, params, blocks, payload, hand_back, fallback, (status, word));
 }
 
 /// The body's status: a completion returns its record's status and value, a leave continues
 /// in the per-PC loop at its PC, and any other status (termination) is the entry's own.
 fn emit_body_status(
     builder: &mut FunctionBuilder<'_>, params: &[ir::Value], blocks: &AheadBlocks, payload: ir::Value,
+    hand_back: bool, fallback: &mut dyn FnMut(&mut FunctionBuilder<'_>, [ir::Value; 3]) -> ir::Value,
     (status, word): (ir::Value, ir::Value),
 ) {
     let (returned, leave) = (builder.create_block(), builder.create_block());
@@ -119,7 +122,17 @@ fn emit_body_status(
     let entry = stage.eq_imm(word, LaneExit::Entry.word());
     let first = stage.constant(0);
     let pc = stage.select(entry, first, word);
-    stage.jump(blocks.step, &[pc]);
+    if hand_back {
+        // The record goes back to the VM: with the payload's stop at this pc the semantic
+        // entry takes its stop-before-effects branch, which records the transition, and the
+        // shared loop runs the record and the rest of the function.
+        stage.store_u64(DISPATCH, payload, std::mem::offset_of!(JsStepDispatch, stop_pc) as i32, pc);
+        let status = fallback(stage.builder, [params[ENTRY_CONTEXT], pc, params[ENTRY_RESULT]]);
+        let status = super::object_slots::emit(stage.builder).narrow(status);
+        super::object_slots::emit(stage.builder).ret(&[status]);
+    } else {
+        stage.jump(blocks.step, &[pc]);
+    }
 }
 
 /// The per-PC loop: one semantic operation per record until one stops the run, and the two
@@ -157,7 +170,7 @@ mod tests {
     #[test]
     fn a_trampoline_verifies_over_any_targets() {
         let isa = crate::vm::jit_backend::target_isa().unwrap();
-        let function = lower_ahead_entry(0, 1, 4, &*isa, AheadTargets {
+        let function = lower_ahead_entry(0, 1, 4, &*isa, false, AheadTargets {
             body: &mut |builder, words| {
                 let target = object_slots::emit(builder).constant(8);
                 let word = emit_lane_call(builder, target, words);

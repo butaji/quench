@@ -169,7 +169,7 @@ impl<'p, H: Host> EagerCraneliftExtension<'p, H> {
     ) -> Result<Vec<CodeMemory>, String> {
         let (fallback, operands, table) = self.lower_fallback(sites, isa)?;
         let (mut body_signature, mut fallback_signature) = (None, None);
-        let entry = super::ahead_entry::lower_ahead_entry(super::native_object::NATIVE_FUNCTION_NAMESPACE, function_id, sites.len(), isa,
+        let entry = super::ahead_entry::lower_ahead_entry(super::native_object::NATIVE_FUNCTION_NAMESPACE, function_id, sites.len(), isa, self.options.hand_back_on_leave,
             super::ahead_entry::AheadTargets {
                 body: &mut |builder, words| {
                     let signature = *body_signature.get_or_insert_with(|| builder.import_signature(

@@ -86,10 +86,10 @@ pub(super) fn lower_object_regions(
 /// The native entry of function `function_id`: a trampoline over its lane body and its
 /// per-PC fallback, which `symbols` name.
 pub(super) fn lower_object_entry(
-    function_id: u32, instruction_count: usize, isa: &dyn TargetIsa, symbols: (u32, u32),
+    function_id: u32, instruction_count: usize, isa: &dyn TargetIsa, hand_back: bool, symbols: (u32, u32),
 ) -> Result<ir::Function, String> {
     let (mut body_signature, mut fallback_signature) = (None, None);
-    super::super::compiled::lower_ahead_entry(NATIVE_FUNCTION_NAMESPACE, function_id, instruction_count, isa,
+    super::super::compiled::lower_ahead_entry(NATIVE_FUNCTION_NAMESPACE, function_id, instruction_count, isa, hand_back,
         super::super::compiled::AheadTargets {
             body: &mut |builder, words| {
                 let callee = import_symbol(builder, &mut body_signature, symbols.0,

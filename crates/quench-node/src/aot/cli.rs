@@ -227,6 +227,7 @@ fn compile(options: Options) -> Result<(), String> {
     report["archived_module_sources"] = json!(manifest.assets().modules.len());
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
+    manifest.set_hand_back_on_leave(matches!(options.support, SourceSupport::Dynamic));
     let compiled = manifest.compile()?;
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());

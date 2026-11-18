@@ -9065,8 +9065,19 @@ impl<H: Host> Vm<H> {
             let exited = run_js_native_entry(entry, vm as *mut Self, program,
                 (dispatch as *mut JsStepDispatch).cast(), interrupt, poll_page);
             match exited {
-                Some((NATIVE_JS_STOPPED, _)) => Some(dispatch.outcome.take().unwrap_or_else(||
-                    failure("linked native function stopped without a transition".into()))),
+                Some((NATIVE_JS_STOPPED, _)) => {
+                    let step = dispatch.outcome.take().unwrap_or_else(||
+                        failure("linked native function stopped without a transition".into()));
+                    // An image built to hand a leave back (a dynamic-source image) retires its
+                    // code there: the records after the leave have no body, and the shared
+                    // loop then runs (or tiers) them instead of one callout per record.
+                    if vm.execution_mode != ExecutionMode::NativeOnly
+                        && step.instruction_pc == step.next_pc && matches!(step.result, Ok(StepResult::Continue))
+                    {
+                        vm.programs.retire_native_js(program);
+                    }
+                    Some(step)
+                }
                 Some((status, word)) if status.checked_sub(RETURN_STATUS_BASE)
                     .and_then(|pc| usize::try_from(pc).ok())
                     .is_some_and(|pc| pc < instruction_count) => {
@@ -10623,7 +10634,7 @@ mod tests {
     #[cfg(feature = "aot")]
     fn partitioned_native_graph(vm: &mut Vm<crate::test_host::TestHost>) -> (crate::PreparedScript, crate::NativeJsFunctionEntry) {
         let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap(), backend: crate::NativeJsBackend::Cranelift };
+        let options = crate::NativeJsCodegenOptions { region_instruction_budget: std::num::NonZeroUsize::new(1).unwrap(), backend: crate::NativeJsBackend::Cranelift, hand_back_on_leave: false };
         let native = crate::NativeJsProgram::compile_eager_with_options((*program).clone(), options).unwrap();
         let prepared = vm.prepare_native_script(native).unwrap();
         let entry = prepared.native.as_ref().unwrap().entries()[0];

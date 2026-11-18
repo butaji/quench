@@ -46,7 +46,7 @@ unsafe extern "C" fn stub_fallback(context: *mut std::ffi::c_void, pc: u64, _: *
 fn trampoline() -> (CodeMemory, crate::NativeJsFunctionEntry) {
     let isa = super::super::jit_backend::target_isa().unwrap();
     let (mut body_signature, mut fallback_signature) = (None, None);
-    let function = lower_ahead_entry(ENTRY_NAMESPACE, ENTRY_FUNCTION, RECORDS, &*isa, AheadTargets {
+    let function = lower_ahead_entry(ENTRY_NAMESPACE, ENTRY_FUNCTION, RECORDS, &*isa, false, AheadTargets {
         body: &mut |builder, words| {
             let signature = *body_signature.get_or_insert_with(|| builder.import_signature(
                 lane_body_signature(isa.pointer_type(), isa.default_call_conv())));

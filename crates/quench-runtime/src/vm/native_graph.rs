@@ -48,6 +48,11 @@ pub struct NativeJsCodegenOptions {
     /// Bounds the Cranelift working CFG; stencil publication has no CFG.
     pub region_instruction_budget: NonZeroUsize,
     pub backend: NativeJsBackend,
+    /// Whether a body's leave hands its record back to the VM, which runs it and the rest of
+    /// the function in the shared loop: only an image whose support allows dynamic execution
+    /// may (a static image requires linked code at every entry). False keeps the trampoline's
+    /// per-record semantic loop.
+    pub hand_back_on_leave: bool,
 }
 
 impl Default for NativeJsCodegenOptions {
@@ -55,6 +60,7 @@ impl Default for NativeJsCodegenOptions {
         Self {
             region_instruction_budget: DEFAULT_REGION_INSTRUCTION_BUDGET,
             backend: NativeJsBackend::default(),
+            hand_back_on_leave: false,
         }
     }
 }
@@ -150,7 +156,7 @@ impl CallThreadedExtension for ObjectExtension<'_> {
         let mut data = Vec::with_capacity(self.program.function_count());
         let mut pending = Definitions::default();
         for (id, lane_body) in lane_bodies.into_iter().enumerate() {
-            let entry = self.lower_function(id, lane_body, &operations, &symbols, &mut pending)?;
+            let entry = self.lower_function(id, lane_body, &operations, &symbols, self.options.hand_back_on_leave, &mut pending)?;
             data.push(self.operand_data(id)?);
             functions.push(NativeFunction::Definition { name: format!("{}_function_{id}", self.namespace), function: entry });
         }
@@ -210,13 +216,13 @@ impl ObjectExtension<'_> {
     /// budget, else its trampoline over lane body and fallback, else its call-threaded body.
     fn lower_function(
         &self, id: usize, lane_body: Option<ir::Function>, operations: &[Option<u32>], symbols: &Symbols,
-        pending: &mut Definitions,
+        hand_back: bool, pending: &mut Definitions,
     ) -> Result<ir::Function, String> {
         let function_id = u32::try_from(id).map_err(|_| "native function count exceeds u32")?;
         if let Some(regions) = self.options.regions(self.program.function(id).code.len()) {
             self.lower_regions(function_id, &regions, operations, symbols, pending)
         } else if let Some(lane_body) = lane_body {
-            self.lower_lane(function_id, lane_body, operations, symbols, pending)
+            self.lower_lane(function_id, lane_body, operations, symbols, hand_back, pending)
         } else {
             lower_object_body(&self.functions[id], function_id, &*self.isa, operations, None)
         }
@@ -245,7 +251,7 @@ impl ObjectExtension<'_> {
 
     fn lower_lane(
         &self, function_id: u32, lane_body: ir::Function, operations: &[Option<u32>], symbols: &Symbols,
-        pending: &mut Definitions,
+        hand_back: bool, pending: &mut Definitions,
     ) -> Result<ir::Function, String> {
         let id = function_id as usize;
         let (body, namespace) = (self.program.function(id), self.namespace);
@@ -265,7 +271,7 @@ impl ObjectExtension<'_> {
             function: lower_object_fallback(body, function_id, table, &*self.isa)?,
         });
         pending.bodies.push(NativeFunction::Definition { name: format!("{namespace}_function_{id}_body"), function: lane_body });
-        lower_object_entry(function_id, body.code.len(), &*self.isa, entries)
+        lower_object_entry(function_id, body.code.len(), &*self.isa, hand_back, entries)
     }
 
     /// Function `id`'s operand records as object data.
