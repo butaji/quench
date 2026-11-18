@@ -565,11 +565,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn is_intrinsic_promise_then(&self, then: Value) -> bool {
         matches!(
             self.heap.function(then),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(Native::PromiseThen),
-                realm,
                 ..
-            }) if *realm == self.realm.globals
+            }) if self.record_realm(record) == self.realm.globals
         )
     }
 

@@ -145,7 +145,7 @@ impl<H: Host> Vm<H> {
             None => Self::empty_object(parts.function_object_prototype),
         };
         let kind = FunctionKind::User(self.active_program, parts.id);
-        (self.heap.alloc_function(FunctionRecord { object, realm: parts.realm, kind, env }), named_shape)
+        (self.alloc_function_in(FunctionRecord { object, kind, env }, parts.realm), named_shape)
     }
 
     /// Records `function`, a closure of a program's top level, as found again by plan

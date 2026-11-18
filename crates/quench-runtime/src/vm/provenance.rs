@@ -429,8 +429,9 @@ impl<H: Host> Vm<H> {
     /// A function's existing code kind and creation realm own its factory origin.
     /// Bound functions have no such ordinary-function constructor projection.
     fn function_factory_constructor(&self, value: Value) -> Option<Value> {
-        let FunctionRecord { realm, kind, .. } = self.heap.function(value)?;
-        let intrinsic = match *kind {
+        let record = self.heap.function(value)?;
+        let realm = self.record_realm(record);
+        let intrinsic = match record.kind {
             FunctionKind::User(program, id) => {
                 let program = self.programs.get(program)?;
                 let function = program.functions.get(id as usize)?.header();
@@ -442,7 +443,7 @@ impl<H: Host> Vm<H> {
         self.realm
             .intrinsics
             .function_constructors
-            .get(&(*realm, intrinsic))
+            .get(&(realm, intrinsic))
             .copied()
     }
 

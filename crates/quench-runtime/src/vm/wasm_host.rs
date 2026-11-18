@@ -338,10 +338,10 @@ impl<H: Host> Vm<H> {
         self.profile.call_target(0, args.len());
 
         let realm = match self.heap.function(wrapper) {
-            Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.is_shared_native(wrapper) =>
+            Some(record)
+                if self.record_realm(record) == self.realm.globals || !self.is_shared_native(wrapper) =>
             {
-                *realm
+                self.record_realm(record)
             }
             _ => self.realm.globals,
         };

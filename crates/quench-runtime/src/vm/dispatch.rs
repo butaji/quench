@@ -294,7 +294,7 @@ impl<H: Host> Vm<H> {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         };
-        if record.realm != self.realm.globals {
+        if self.record_realm(record) != self.realm.globals {
             super::lane_exits::call_eligibility(super::lane_exits::CallEligibility::NativeOrWrongRealmOrNonCallable);
             return;
         }
@@ -1317,7 +1317,7 @@ impl<H: Host> Vm<H> {
                     let realm = self
                         .heap
                         .function(callee)
-                        .map_or(self.realm.globals, |function| function.realm);
+                        .map_or(self.realm.globals, |function| self.record_realm(function));
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {

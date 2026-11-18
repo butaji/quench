@@ -1556,9 +1556,9 @@ fn named_property_publication_retires_readers_for_every_record_family() {
                 })
             } else if let Family::Function = family {
                 heap.alloc_function(FunctionRecord {
-                    object, realm: Value::NULL, env: Value::NULL,
+                    object, env: Value::NULL,
                     kind: FunctionKind::User(crate::vm::ProgramId::MAIN, 0),
-                })
+                }.with_realm(Value::NULL))
             } else {
                 let cell = match family {
                     Family::Array => Cell::Array { object: ArrayObject::new(object, Vec::<Value>::new()) },

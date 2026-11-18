@@ -428,8 +428,8 @@ impl<H: Host> Vm<H> {
         constructor.is_undefined()
             || (matches!(
                 self.heap.function(constructor),
-                Some(FunctionRecord { kind: FunctionKind::Native(Native::Array), realm, .. })
-                    if *realm == self.realm.globals
+                Some(record @ FunctionRecord { kind: FunctionKind::Native(Native::Array), .. })
+                    if self.record_realm(record) == self.realm.globals
             ) && self.has_intrinsic_species_getter(constructor))
     }
 
@@ -998,11 +998,10 @@ impl<H: Host> Vm<H> {
         };
         let constructor_is_foreign_intrinsic_array = matches!(
             self.heap.function(constructor),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                realm,
                 ..
-            }) if *realm != self.realm.globals
+            }) if self.record_realm(record) != self.realm.globals
         );
         if constructor_is_foreign_intrinsic_array {
             constructor = Value::UNDEFINED;
@@ -1016,11 +1015,10 @@ impl<H: Host> Vm<H> {
         // `new Array(length)` of this realm is ArrayCreate: Array.prototype is fixed.
         let constructor_is_intrinsic_array = matches!(
             self.heap.function(constructor),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(Native::Array),
-                realm,
                 ..
-            }) if *realm == self.realm.globals
+            }) if self.record_realm(record) == self.realm.globals
         );
         if constructor.is_undefined() || constructor_is_intrinsic_array {
             return self.array_create(p, length);

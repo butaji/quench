@@ -67,7 +67,7 @@ impl<H: Host> Vm<H> {
         let intrinsic = self.heap.function(resolve).is_some_and(|function| {
             matches!(function.kind, FunctionKind::Native(Native::PromiseResolve))
                 && function.env.is_null()
-                && function.realm == self.realm.globals
+                && self.record_realm(function) == self.realm.globals
         });
         if intrinsic {
             return self.promise_resolve_for_constructor(p, constructor, value);

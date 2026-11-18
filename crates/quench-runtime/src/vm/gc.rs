@@ -741,6 +741,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
+        roots.extend(Some(self.main_realm).filter(|realm| !realm.is_null()));
         let kept_atoms = self.heap.kept_atom_roots(all_roots);
         (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(

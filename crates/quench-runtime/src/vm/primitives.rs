@@ -37,12 +37,10 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Option<(super::ProgramId, u32, Value)> {
         match self.heap.function(callee) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program, id),
-                env,
-                realm,
-                ..
-            }) if *realm == self.realm.globals => Some((*program, *id, *env)),
+            Some(record) if self.record_realm(record) == self.realm.globals => match record.kind {
+                FunctionKind::User(program, id) => Some((program, id, record.env)),
+                FunctionKind::Native(_) => None,
+            },
             Some(_) => None,
             // A call-only closure of the running program (`Value::known_closure`).
             None => callee.as_known_closure().map(|(id, env)| (self.active_program, id, env)),

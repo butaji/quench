@@ -3045,12 +3045,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn is_current_realm_native(&self, value: Value, native: Native) -> bool {
         matches!(
             self.heap.function(value),
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(kind),
-                realm,
                 ..
             }) if *kind == native
-                && (*realm == self.realm.globals || self.is_shared_native(value))
+                && (self.record_realm(record) == self.realm.globals || self.is_shared_native(value))
         )
     }
 

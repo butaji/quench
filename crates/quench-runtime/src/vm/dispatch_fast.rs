@@ -16028,7 +16028,7 @@ fn lane_passed_frame_call<H: Host>(
                 FunctionKind::Native(native) => format!("{native:?}"),
                 FunctionKind::User(..) => "user".to_string(),
             }),
-            vm.heap.function(callee).is_some_and(|record| record.realm == vm.realm.globals),
+            vm.heap.function(callee).is_some_and(|record| vm.record_realm(record) == vm.realm.globals),
             vm.heap.function(callee).and_then(|record| match record.kind {
                 FunctionKind::User(program, function) => vm.programs.residual(program).and_then(|code| {
                     let body = code.function_get(function as usize)?;
@@ -21498,8 +21498,8 @@ fn lane_frame_construct<H: Host>(cx: *mut LaneContext<H>, r: Registers, ip: Ip, 
     // become frames for it. A constructor of another program is pushed in its own, where the
     // lane admits it.
     let pushable = match vm.heap.function(callee) {
-        Some(FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) => {
-            *realm == vm.realm.globals
+        Some(record @ FunctionRecord { kind: FunctionKind::User(program, id), .. }) => {
+            vm.record_realm(record) == vm.realm.globals
                 && if *program == unsafe { (*cx).program } {
                     code.function_get(*id as usize).is_some_and(Vm::<H>::inline_constructible)
                 } else {

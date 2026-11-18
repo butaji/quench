@@ -275,7 +275,7 @@ impl<H: Host> Vm<H> {
             let realm = self
                 .heap
                 .function(new_target)
-                .map_or(self.realm.globals, |function| function.realm);
+                .map_or(self.realm.globals, |function| self.record_realm(function));
             let constructor_atom = self.intern_atom(if async_stack {
                 "AsyncDisposableStack"
             } else {

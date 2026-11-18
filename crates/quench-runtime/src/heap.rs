@@ -1669,6 +1669,13 @@ impl Heap {
     /// A new function record of `function`, with no payload or external bytes. The function
     /// space holds as many records as `RECORD_SPACE_CAPACITY`, so a full space is a panic, as
     /// for symbols.
+    /// Stores `realm` as `function`'s creation realm override. A narrow property run is widened
+    /// first: an object with extras may not keep one (`Object::extras_mut`).
+    pub(crate) fn set_function_realm_override(&mut self, function: &mut FunctionRecord, realm: Value) {
+        access::widen_narrow_run(&mut function.object, &mut self.properties);
+        function.object.set_function_realm_override(realm);
+    }
+
     pub(crate) fn alloc_function(&mut self, function: FunctionRecord) -> Value {
         self.mark_prototype(function.object.proto());
         self.insert_function_record(function)
@@ -5031,7 +5038,7 @@ impl Heap {
             record.extend_roots(work);
         }
     }
-    /// A function's edges: its object, closure environment and realm.
+    /// A function's edges: its object (with any realm override), and its closure environment.
     // Inlined into each mark visit, as `array_children`.
     #[inline(always)]
     fn function_children(
@@ -5052,10 +5059,8 @@ impl Heap {
             trace_kind,
             last_proto,
         );
-        // The environment edge is the caller's (`EnvironmentTrace::closure`).
-        if last_proto.first_shared(function.realm) {
-            work.push(function.realm);
-        }
+        // The environment edge is the caller's (`EnvironmentTrace::closure`). The realm edge is
+        // the object's extras (`visit_extras_roots`) when overridden, and the main realm is a root.
     }
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {

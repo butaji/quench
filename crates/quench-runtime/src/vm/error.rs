@@ -2204,12 +2204,11 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let prototype = self.heap.alloc_function(FunctionRecord {
+        let prototype = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(object_prototype),
-            realm: global,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-        });
+        }, global);
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -2386,7 +2385,7 @@ impl<H: Host> Vm<H> {
         let global = self
             .heap
             .function(constructor)
-            .map_or(self.realm.globals, |function| function.realm);
+            .map_or(self.realm.globals, |function| self.record_realm(function));
         let (stack_getter, stack_setter) = if constructor == self.native_value(Native::Error) {
             (
                 self.native_value(Native::ErrorStackGetter),
@@ -2500,8 +2499,8 @@ impl<H: Host> Vm<H> {
     // callable forms. Our intrinsic constructor has no JS activation to find.
     fn error_constructor_stack_target(&self, native: Native, new_target: Value) -> Option<Value> {
         match self.heap.function(new_target) {
-            Some(FunctionRecord { kind: FunctionKind::Native(target), realm, .. })
-                if *target == native && *realm == self.realm.globals => None,
+            Some(record @ FunctionRecord { kind: FunctionKind::Native(target), .. })
+                if *target == native && self.record_realm(record) == self.realm.globals => None,
             Some(FunctionRecord { kind, .. })
                 if !matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) => Some(new_target),
             _ => None,

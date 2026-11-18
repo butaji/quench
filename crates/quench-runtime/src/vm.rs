@@ -1865,6 +1865,9 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: builtins::NativeTable,
+    /// The first realm this VM initialized: the creation realm every function record without a
+    /// realm override carries (`Vm::record_realm`). Set once and kept, rooted by the GC.
+    main_realm: Value,
     // Boxed: frames move between this stack, `frame_pool` and suspended generators by pointer.
     #[allow(clippy::vec_box)]
     frames: Vec<Box<Frame>>,
@@ -3160,6 +3163,9 @@ impl<H: Host> Vm<H> {
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        if self.main_realm.is_null() {
+            self.main_realm = self.realm.globals;
+        }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("vm_shell");
         self.materialize_program_constants(ProgramId::MAIN, program);
@@ -3731,7 +3737,7 @@ impl<H: Host> Vm<H> {
                 let realm = self
                     .heap
                     .function(callee)
-                    .map_or(self.realm.globals, |function| function.realm);
+                    .map_or(self.realm.globals, |function| self.record_realm(function));
                 let current_global = self.switch_realm_global(realm);
                 let result = if program
                     .function_get(id as usize)
@@ -3780,13 +3786,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<(Value, Value), JsError> {
         let (program_id, id, env, realm) = match self.heap.function(callee) {
-            Some(FunctionRecord {
-                kind: FunctionKind::User(program_id, id),
-                env,
-                realm,
-                ..
-            }) => (*program_id, *id, *env, *realm),
-            _ => return Err(self.type_error(p, "constructor is not a user function".into())),
+            Some(record) => match record.kind {
+                FunctionKind::User(program_id, id) => (program_id, id, record.env, self.record_realm(record)),
+                FunctionKind::Native(_) => return Err(self.type_error(p, "constructor is not a user function".into())),
+            },
+            None => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {
             self.type_error(p, "function belongs to an unavailable program".into())

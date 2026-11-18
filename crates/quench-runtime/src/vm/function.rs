@@ -107,9 +107,13 @@ impl<H: Host> Vm<H> {
         if caller.as_known_closure().is_some() {
             caller = self.known_closure_function(caller)?;
         }
-        let Some(&FunctionRecord { kind: FunctionKind::User(program, id), realm, .. }) = self.heap.function(caller) else {
+        let Some(record) = self.heap.function(caller) else {
             return Ok(caller);
         };
+        let FunctionKind::User(program, id) = record.kind else {
+            return Ok(caller);
+        };
+        let realm = self.record_realm(record);
         let deferred = self
             .programs
             .get(program)
@@ -176,16 +180,13 @@ impl<H: Host> Vm<H> {
                         });
                         return if visible { caller } else { Value::NULL };
                     }
-                    let Some(FunctionRecord {
-                        kind:
-                            FunctionKind::User(program_id, id),
-                        realm,
-                        ..
-                    }) = self.heap.function(caller)
-                    else {
+                    let Some(record) = self.heap.function(caller) else {
                         return Value::NULL;
                     };
-                    let visible = *realm == self.realm.globals
+                    let FunctionKind::User(program_id, id) = &record.kind else {
+                        return Value::NULL;
+                    };
+                    let visible = self.record_realm(record) == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
                             program.function_get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
@@ -274,7 +275,7 @@ impl<H: Host> Vm<H> {
             let env = self.heap.alloc_object(crate::heap::Object::with_property_storage(object_prototype, storage, inline));
             let realm = self.realm.globals;
             let object = self.finished_closure_object(prototype, shape, [Value::number(length), name], None);
-            let function = self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(Native::FunctionBoundCall), env });
+            let function = self.alloc_function_in(FunctionRecord { object, kind: FunctionKind::Native(Native::FunctionBoundCall), env }, realm);
             self.capture_function_name_for_atom(function, name_atom);
             return Ok(function);
         }

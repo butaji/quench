@@ -111,11 +111,11 @@ impl<H: Host> Vm<H> {
         };
         self.streamed_stubs.insert(stub);
         let (realm, env, proto) = match self.heap.function(callee) {
-            Some(record) => (record.realm, record.env, record.object.proto()),
+            Some(record) => (self.record_realm(record), record.env, record.object.proto()),
             None => return Err(JsError::validation("a first-call stub runs without its function".into())),
         };
         loop {
-            let function = self.heap.alloc_function(crate::heap::FunctionRecord { object: Self::empty_object(proto), realm, env, kind });
+            let function = self.alloc_function_in(crate::heap::FunctionRecord { object: Self::empty_object(proto), env, kind }, realm);
             self.call_value(p, function, this, args)?;
             let Some(from) = next else { return Ok(Some(Value::UNDEFINED)) };
             let run = StreamRun::after(span.start, from, body);

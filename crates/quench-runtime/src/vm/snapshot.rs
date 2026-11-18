@@ -50,6 +50,7 @@ impl<H: Host> Vm<H> {
             native_microtask_running: _,
             queue_resumed: _,
             unobserved_jobs_entered: _,
+            main_realm,
             host,
             specialized,
             heap,
@@ -238,6 +239,7 @@ impl<H: Host> Vm<H> {
         }
         let mut writer = Writer::new();
         writer.bool(*specialized);
+        writer.value(*main_realm);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
         atom_text.iter().for_each(|name| writer.str(name));
@@ -361,6 +363,7 @@ impl<H: Host> Vm<H> {
         self.report_memory_if_enabled("snapshot_restore_begin");
         let mut reader = Reader::new((*bytes).as_ref(), Some(H::kept_bytes_read))?;
         self.specialized = reader.bool()?;
+        self.main_realm = reader.value()?;
         if native.is_some_and(|program| program.specialized != self.specialized) {
             return Err(SnapshotError("native script specialization does not match runtime".into()));
         }

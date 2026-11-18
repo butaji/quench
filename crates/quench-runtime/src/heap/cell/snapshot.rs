@@ -177,6 +177,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
         brand,
         external_address,
         boxed_primitive,
+        function_realm,
         structured_serialization: serialization,
         structured_transfer_forbidden,
         module_bindings,
@@ -200,6 +201,11 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     writer.bool(*structured_transfer_forbidden);
     writer.u8(element_facts.0);
     writer.option_value(*boxed_primitive);
+    // Written only for a function of another realm than the main one.
+    writer.bool(function_realm.is_some());
+    if let Some(realm) = function_realm {
+        writer.value(*realm);
+    }
     structured_serialization::write(writer, *serialization);
     writer.len(module_bindings.len());
     for (atom, program, slot) in module_bindings {
@@ -234,6 +240,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     }
     let element_facts = ElementFacts(element_facts);
     let boxed_primitive = reader.option_value()?;
+    let function_realm = if reader.bool()? { Some(reader.value()?) } else { None };
     let structured_serialization = structured_serialization::read(reader)?;
     let module_bindings = read_list(reader, |reader| Ok((reader.u32()?, ProgramId::from_raw(reader.u32()?), reader.u16()?)))?;
     let deferred_module = if reader.bool()? { Some(read_module_source(reader)?) } else { None };
@@ -243,6 +250,7 @@ fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
         brand,
         external_address: None,
         boxed_primitive,
+        function_realm,
         structured_serialization,
         structured_transfer_forbidden,
         module_bindings,
@@ -411,9 +419,9 @@ impl Object {
 
 impl FunctionRecord {
     pub(crate) fn write_snapshot(&self, writer: &mut Writer) -> SnapshotResult<()> {
-        let Self { object, realm, env, kind } = self;
+        let Self { object, env, kind } = self;
+        // The creation realm, when overridden, is written with the object's extras.
         write_object(writer, object)?;
-        writer.value(*realm);
         writer.value(*env);
         kind.write_snapshot(writer);
         Ok(())
@@ -422,7 +430,6 @@ impl FunctionRecord {
     pub(crate) fn read_snapshot(reader: &mut Reader<'_>) -> SnapshotResult<Self> {
         Ok(Self {
             object: read_object(reader)?,
-            realm: reader.value()?,
             env: reader.value()?,
             kind: FunctionKind::read_snapshot(reader)?,
         })

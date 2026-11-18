@@ -40,7 +40,8 @@ impl records::TraceRecord for ArrayObject {
 impl records::TraceRecord for FunctionRecord {
     fn extend_children(&self, properties: &ValueArena, out: &mut Vec<Value>) {
         snapshot_object(&self.object, properties, out);
-        out.extend([self.realm, self.env]);
+        out.extend(self.realm_override());
+        out.push(self.env);
     }
 }
 

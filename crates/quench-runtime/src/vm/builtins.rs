@@ -993,12 +993,11 @@ impl<H: Host> Vm<H> {
         self.object_proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        self.function_proto = self.heap.alloc_function(FunctionRecord {
+        self.function_proto = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(self.object_proto),
-            realm: self.realm.globals,
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-        });
+        }, self.realm.globals);
         for (native, prototype) in [
             (Native::Object, self.object_proto),
             (Native::Function, self.function_proto),

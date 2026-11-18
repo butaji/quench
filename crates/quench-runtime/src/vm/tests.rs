@@ -6836,10 +6836,9 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc_function(crate::heap::FunctionRecord {
             object: Vm::<TestHost>::empty_object(Value::NULL),
-            realm: Value::NULL,
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
-        });
+        }.with_realm(Value::NULL));
         if replacement == old {
             reused = true;
             break;

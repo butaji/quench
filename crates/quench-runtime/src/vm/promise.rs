@@ -555,10 +555,10 @@ impl<H: Host> Vm<H> {
         // A realm's own natives run in that realm; a native shared by every realm runs in
         // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.function(callee) {
-            Some(FunctionRecord { realm, .. })
-                if *realm == self.realm.globals || !self.is_shared_native(callee) =>
+            Some(record)
+                if self.record_realm(record) == self.realm.globals || !self.is_shared_native(callee) =>
             {
-                *realm
+                self.record_realm(record)
             }
             _ => self.realm.globals,
         };
@@ -604,11 +604,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let native = match self.heap.function(method) {
-            Some(FunctionRecord {
+            Some(record @ FunctionRecord {
                 kind: FunctionKind::Native(native),
-                realm,
                 ..
-            }) if *realm == self.realm.globals
+            }) if self.record_realm(record) == self.realm.globals
                 && matches!(
                     native,
                     Native::RegExpSymbolMatch
@@ -663,14 +662,13 @@ impl<H: Host> Vm<H> {
         if promise_resolver && let Some(shape) = self.resolver_function_shape {
             let name = self.atom_string(self.runtime_atoms.empty);
             let object = self.finished_closure_object(function_prototype, shape, [Value::number(1.0), name], None);
-            return self.heap.alloc_function(FunctionRecord { object, realm, kind: FunctionKind::Native(kind), env });
+            return self.alloc_function_in(FunctionRecord { object, kind: FunctionKind::Native(kind), env }, realm);
         }
-        let function = self.heap.alloc_function(FunctionRecord {
+        let function = self.alloc_function_in(FunctionRecord {
             object: Self::empty_object(function_prototype),
-            realm,
             kind: FunctionKind::Native(kind),
             env,
-        });
+        }, realm);
         let anonymous_capability_executor =
             !env.is_null() && kind == Native::PromiseCapabilityExecutor;
         let anonymous_proxy_revoke = !env.is_null() && kind == Native::ProxyRevoke;

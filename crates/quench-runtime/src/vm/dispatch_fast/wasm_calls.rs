@@ -407,5 +407,5 @@ fn js_import_plan<H: Host>(vm: &Vm<H>, wrapper: Value) -> Option<JsImportPlan> {
             _ => return None,
         };
     }
-    Some(JsImportPlan { wrapper, realm: record.realm, callee: *callee, argc: signature.params.len() as u8, kinds, result })
+    Some(JsImportPlan { wrapper, realm: vm.record_realm(record), callee: *callee, argc: signature.params.len() as u8, kinds, result })
 }
