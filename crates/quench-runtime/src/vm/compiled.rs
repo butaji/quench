@@ -1445,6 +1445,7 @@ enum Kind {
 }
 
 impl Kind {
+    #[inline]
     fn of(ty: crate::WasmType) -> Option<Self> {
         match ty {
             crate::WasmType::I32 | crate::WasmType::F32 => Some(Self::I32),
@@ -3571,6 +3572,7 @@ pub(super) struct LaneMethod {
 
 impl LaneMethod {
     pub(super) fn frame_reach(&self) -> usize { self.frame_reach }
+    #[inline]
     pub(super) fn recovery_space(&self) -> super::dispatch_fast::LaneRecoverySpace { self.recovery_space }
     /// The registers of the function it runs, which an inlined callee's follow.
     pub(super) fn caller_registers(&self) -> u16 {
@@ -3674,6 +3676,7 @@ impl LaneExit {
         match self { Self::At(pc) | Self::Returned { pc, .. } | Self::Threw { pc } => Some(pc), Self::Entry | Self::Stub => Some(0), Self::Inlined { .. } | Self::Callee | Self::Terminated => None }
     }
     /// Where the activation resumes: an entry leave at its first record.
+    #[inline]
     pub(super) fn resumed(self) -> Self {
         if self.entered_nothing() { Self::At(0) } else { self }
     }
@@ -4060,7 +4063,7 @@ impl<H: Host> Vm<H> {
     ) -> LaneExit {
         self.run_lane_body(&BodyRun {
             method, direct_calls, program, residual, registers, receiver, captures, lane_context,
-            pending: NO_PENDING_ACTIVATIONS,
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: false,
         })
     }
 
@@ -4101,7 +4104,13 @@ impl<H: Host> Vm<H> {
             (context.stack_limit, context.entry_stack, context.interrupt,
                 context.adapter_payload, context.poll_start, context.poll_end, context.interrupt_owner)
         };
-        let exit = self.run_lane_method(method, true, program, residual, registers, receiver, captures, lane_context);
+        // The callee runs in the caller's program and its caller's helper allocated nothing since
+        // the caller's body last checked the bases (`BodyRun::bases_stand`).
+        let exit = self.run_lane_body(&BodyRun {
+            method, direct_calls: true, program, residual, registers, receiver, captures, lane_context,
+            // An entry from outside any body (`saved.residual == 0`) checks them as any entry does.
+            pending: NO_PENDING_ACTIVATIONS, bases_stand: saved.residual != 0,
+        });
         // SAFETY: as above.
         unsafe {
             // An entry from outside any body (the interpreter's call) found the run's words
@@ -4199,6 +4208,7 @@ struct LaneEntry {
 }
 
 impl LaneEntry {
+    #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self {
             program_id: dispatch.program_id,
@@ -4218,6 +4228,7 @@ impl LaneEntry {
         Self { program_id: dispatch.program_id, field_entries: dispatch.field_entries, residual: dispatch.residual, ..self }
     }
 
+    #[inline]
     fn install(self, dispatch: &mut JsStepDispatch) {
         dispatch.program_id = self.program_id;
         dispatch.field_entries = self.field_entries;
@@ -4245,6 +4256,7 @@ struct LaneRun {
 }
 
 impl LaneRun {
+    #[inline]
     fn of(dispatch: &JsStepDispatch) -> Self {
         Self { vm: dispatch.vm, program_id: dispatch.program_id, lane_context: dispatch.lane_context, residual: dispatch.residual, stores_specialized: dispatch.stores_specialized }
     }
@@ -4316,6 +4328,7 @@ pub(super) fn take_lane_exit_line() -> u64 {
     unsafe { std::mem::take(&mut (*lane_frame()).dispatch.exit_line) }
 }
 
+#[inline]
 fn lane_frame() -> *mut LaneFrame {
     let frame = LANE_FRAME.with(std::cell::UnsafeCell::get);
     // SAFETY: the frame is reached only through this pointer, on its thread, and no
@@ -5711,6 +5724,7 @@ struct MemoryArguments {
 }
 
 impl MemoryArguments {
+    #[inline]
     fn of(fixed_base: Option<i32>, guarded: bool) -> Self {
         Self {
             base: fixed_base.is_none(),

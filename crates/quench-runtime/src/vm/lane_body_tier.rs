@@ -247,6 +247,7 @@ impl LaneView {
         }
     }
 
+    #[inline]
     pub(super) fn note_late_call(&self) -> bool {
         let history = self.tier().history.get();
         let late_calls = history.late_calls.saturating_add(1);
@@ -254,6 +255,14 @@ impl LaneView {
         late_calls == self.tiers.lane_body.late_call_calls
     }
 
+    /// Whether the late calls counted past the threshold (`note_late_call`), which only a
+    /// respecialization resets.
+    #[inline]
+    pub(super) fn late_calls_settled(&self) -> bool {
+        self.tier().history.get().late_calls > self.tiers.lane_body.late_call_calls
+    }
+
+    #[inline]
     pub(super) fn owns_record(&self, record: super::Ip) -> bool {
         let start = self.records();
         record >= start && record < start.wrapping_add(self.records.len())

@@ -75,11 +75,13 @@ impl<'a> BodyCall<'a> {
     }
 
     /// How many arguments the call passes.
+    #[inline]
     pub(super) fn argc(&self) -> u16 {
         self.site.arguments.count()
     }
 
     /// The record's hint of the script call target that answered it last.
+    #[inline]
     pub(super) fn link(&self) -> &'a std::cell::Cell<u16> {
         // SAFETY: `ip` is a record of the running view.
         unsafe { &(*self.ip).call_link }

@@ -209,6 +209,7 @@ impl<H: Host> Vm<H> {
             callee_resume: std::ptr::null(),
             callee_acc: Value::UNDEFINED,
             body_site: None,
+            late_settled: std::ptr::null(),
             callee_warming: false,
             leaf: NO_LEAF_CALL,
             outer: NO_OUTER_WALK,

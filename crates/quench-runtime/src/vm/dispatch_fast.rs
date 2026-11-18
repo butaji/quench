@@ -986,6 +986,7 @@ impl LaneView {
     }
 
     /// The specialized frameless body, if there is one.
+    #[inline]
     fn lane_body(&self) -> Option<std::rc::Rc<super::compiled::LaneMethod>> {
         // SAFETY: this view is read on its VM's thread. Clone the code owner before
         // execution or recovery can reenter and change the view's publication.
@@ -1082,6 +1083,7 @@ impl LaneView {
 
 
     /// Whether its body left too often and specializes again at its next entry.
+    #[inline]
     fn respecializes(&self) -> bool {
         // SAFETY: as `lane_body`.
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Unspecialized { recompiles, .. } if *recompiles > 0)
@@ -2728,6 +2730,9 @@ struct LaneContext<H: Host> {
     /// form, which the run's code fixes, so a loop's repeated call or construction decodes
     /// its instruction once per run.
     body_site: Option<(*const ResidualProgram, u32, u64, crate::staged::Invocation)>,
+    /// The call record whose caller's late calls last counted past the threshold
+    /// (`lane_note_late_call`), which counts nothing more for it in this run.
+    late_settled: Ip,
     /// What this run proved about the storage of the arrays its loops index
     /// (`ArrayStorageProofs`), which the proved element records read
     /// (`specialize_proved_arrays`). The heap retires them at any change that could falsify
@@ -3745,6 +3750,8 @@ pub(super) fn lane_body_locals<H: Host>(lane_context: *mut (), registers: *mut V
     let function = frame.function;
     match code.function_get(function as usize) {
         Some(body) if frame.locals.len() >= usize::from(body.locals) => frame.locals.as_mut_ptr(),
+        // No record of the function addresses a local (`lane_context_locals_in_window`).
+        Some(body) if !body.call_plan(code).addresses_locals => std::ptr::null_mut(),
         _ => window(function),
     }
 }
@@ -10963,8 +10970,10 @@ pub(super) unsafe fn lane_context_locals_in_window<H: Host>(context: usize) -> b
     }
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
+    // A function none of whose records addresses a local (`CallPlan::addresses_locals`) keeps
+    // none anywhere: its frame holds none, and neither its records nor its bodies read any.
     vm.frames.get(unsafe { (*cx).frame() }).is_some_and(|frame| code.function_get(frame.function as usize)
-        .is_some_and(|body| frame.locals.len() < usize::from(body.locals)))
+        .is_some_and(|body| frame.locals.len() < usize::from(body.locals) && body.call_plan(code).addresses_locals))
 }
 
 /// Where the lane goes after a region of the loop of `function` left inside the callee of a call it
@@ -14583,7 +14592,9 @@ macro_rules! lane_plain_activation {
         {
             resume!(cx, resumed)
         }
-        let (registers, base) = lane_push_passed::<H, false, false>(cx, r, ip, target, passed, argc, this, false);
+        debug_assert!(!target.settles(), "a settling target activates through its own call form");
+        let callee_registers = lane_fill_window(vm, target, passed, argc);
+        let (registers, base) = lane_enter_window_of::<H, false, false>(cx, vm, r, ip, target, callee_registers, argc, this, false, None, None);
         next!(cx, registers, base, Carried::script(cx))
     }};
 }
@@ -14607,7 +14618,7 @@ fn lane_materialize_leaf<H: Host>(cx: *mut LaneContext<H>) {
     // belongs to the caller's live view.
     let (target, call) = unsafe { (&*leaf.target, &*leaf.call) };
     let form = leaf.form;
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
     // (`lane_script_call_leaf`).
     let window = unsafe { (*cx).registers.0 };
@@ -18861,8 +18872,9 @@ fn lane_push_passed<H: Host, const GENERAL: bool, const SETTLES: bool>(
     // Only `lane_script_call_settles` activates a settling target, and it says so statically,
     // so the other call forms decide the completion without reading the target's entry.
     debug_assert_eq!(SETTLES, target.settles(), "a settling target activates through its own call form");
-    let callee_registers = lane_fill_window(unsafe { vm(cx) }, target, passed, argc);
-    lane_enter_window::<H, GENERAL, SETTLES>(cx, r, ip, target, callee_registers, argc, this, constructs, None, None)
+    let vm = unsafe { vm(cx) };
+    let callee_registers = lane_fill_window(vm, target, passed, argc);
+    lane_enter_window_of::<H, GENERAL, SETTLES>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -18905,7 +18917,7 @@ fn lane_enter_cell_body<H: Host>(
     let run = super::compiled::BodyRun {
         method, direct_calls: lane_direct_calls(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
         registers: window.0, receiver: lane_entry_receiver(cx, own.binds_this()), captures: capture_reads(target.capture), lane_context: cx.cast(),
-        pending: CALLEE_ACTIVATION_PENDING };
+        pending: CALLEE_ACTIVATION_PENDING, bases_stand: false };
     Some(lane_cell_body_ended(cx, window, own, target.function, method, vm.run_lane_body(&run)))
 }
 
@@ -18963,7 +18975,7 @@ fn lane_cell_body_ended<H: Host>(
 #[inline(always)]
 fn lane_fill_window<H: Host>(vm: &mut Vm<H>, target: &ScriptCallTarget, passed: *const Value, argc: u16) -> Registers {
     let count = usize::from(target.registers);
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window's admitted room (`ScriptCallTarget::room`); the
     // registers live at entry are written before the length covers them, and no activation's
     // window moves. A register past `fill` is written before any instruction reads it, and
@@ -18991,14 +19003,31 @@ fn lane_enter_window<H: Host, const GENERAL: bool, const SETTLES: bool>(
     callee_registers: Registers,
     argc: u16,
     this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
+    kept: Option<u16>,
+) -> (Registers, Ip) {
+    lane_enter_window_of::<H, GENERAL, SETTLES>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, skipped, kept)
+}
+
+/// `lane_enter_window` with the VM its caller already holds, so the push reads the lane
+/// stack through it rather than through the context again after the window's writes.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn lane_enter_window_of<H: Host, const GENERAL: bool, const SETTLES: bool>(
+    cx: *mut LaneContext<H>,
+    vm: &mut Vm<H>,
+    r: Registers,
+    ip: Ip,
+    target: &ScriptCallTarget,
+    callee_registers: Registers,
+    argc: u16,
+    this: Value, constructs: bool, skipped: Option<SkippedForwarder>,
     // The register of the first value a keeping activation kept past its registers
     // (`ScriptActivation::kept`), which marks it forwarding; `None` for any other.
     kept: Option<u16>,
 ) -> (Registers, Ip) {
     // The receiver goes to its context word first, so it holds no register past the push.
     callee_registers.set_this(this);
-    let vm = unsafe { vm(cx) };
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     // Only a plain call activates another program's callee (`Vm::resolve_script_call_target`).
     let cross = lane_crosses::<H, GENERAL>(cx, target);
     let activation = Activation {
@@ -19169,7 +19198,7 @@ fn lane_activate_environment<H: Host>(
     };
     let count = usize::from(target.registers);
     let locals = usize::from(layout.locals);
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     let held = count + usize::from(WINDOW_LOCALS);
     debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held + locals) <= usize::from(target.room));
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
@@ -19485,7 +19514,7 @@ fn lane_activate_keeping<H: Host, const MAY_CROSS: bool>(
     {
         return Err(lane_script_call_frame::<H>(ip, fill_room::<ACTIVATION_FILL_BLOCK>(window_size)));
     }
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window; each slot is written before the length covers
     // it, and no activation's window moves. Parameter `k` lives in register `k` of a
     // plain activation (`Vm::place_plain_parameters`).
@@ -19723,7 +19752,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
     let then = if SETTLES { lane_settled_then(vm, value)? } else { Value::UNDEFINED };
     // A construction yields its receiver, the activation's `this`, for a non-object result.
     if CONSTRUCTS && !vm.is_object_like(value) { value = unsafe { (*cx).registers }.this(); }
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     let depth = stack.activations.len().checked_sub(1)?;
     // SAFETY: `depth` is below the length; a reference, not `last`'s `Option`, so the
     // address needs no null test.
@@ -19771,7 +19800,7 @@ fn lane_return_from<H: Host, const CROSSES: bool, const INTO_BODY: bool, const C
 #[inline(always)]
 fn lane_return_chain<H: Host>(cx: *mut LaneContext<H>, value: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     let activations: &[Activation] = &stack.activations;
     // The innermost returns its call's completion, which the caller of `lane_return_from` proved.
     let mut index = activations.len().checked_sub(1)?;
@@ -21315,7 +21344,7 @@ fn lane_activate_wasm_export<H: Host>(
         .and_then(super::program_store::derived_lane_view)?;
     let shape = lane_view.activation?;
     let base = lane_view.records();
-    let stack = &mut vm.lane_stack;
+    let stack: &mut LaneStack = &mut vm.lane_stack;
     let count = usize::from(shape.registers);
     let frame_storage_bytes = count.saturating_mul(std::mem::size_of::<Value>());
     if frame_storage_bytes

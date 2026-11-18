@@ -1964,10 +1964,12 @@ impl ProgramStore {
     #[cfg(test)]
     pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
 
+    #[inline]
     pub(super) fn tier_events(&self) -> &super::tier_events::TierEvents {
         &self.tier_events
     }
 
+    #[inline]
     pub(super) fn js_jit_diagnostics_enabled(&self) -> bool {
         self.js_jit_diagnostics.is_some()
     }
