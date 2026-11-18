@@ -154,6 +154,12 @@ pub(crate) trait Frame<S: Stage> {
     #[inline(always)]
     fn direct_memory(&mut self) -> Option<&mut [u8]> { None }
 
+    /// The bytes of the linear memory the Wasm memory value in `register` names, and whether its
+    /// index is an i64 (memory64); `None` where the frame does not resolve it, which leaves the row
+    /// to its miss.
+    #[inline(always)]
+    fn wasm_memory(&mut self, _stage: &mut S, _register: Register) -> Option<(&mut [u8], bool)> { None }
+
     /// The activation's environment storage word and the fact its slot reads carry
     /// (`environment::environment_slot`); `None` where the frame holds no environment.
     #[inline(always)]

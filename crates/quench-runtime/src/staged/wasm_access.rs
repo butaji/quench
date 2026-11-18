@@ -1,25 +1,31 @@
-//! The Wasm direct loads and stores of a function's memory as staged rows (`Decoder::WasmMemory`).
-//! The access is the memory rule of `staged::wasm_memory` (`load`, `store`) run over the bytes the
-//! frame addresses directly (`Frame::direct_memory`): the bounds check and the bytes an access moves
-//! are the rule's. An access past the memory's end, or an operand the frame does not hold in its
-//! word's representation, leaves the row to its miss, which the general step runs and raises.
+//! The Wasm loads and stores of a function's memory as staged rows (`Decoder::WasmMemory`).
+//! The direct ops address the function's memory the frame holds (`Frame::direct_memory`). The
+//! generic ops (`WasmMemoryAddress`, `WasmMemoryLoad`, `WasmMemoryStore`) name their memory by
+//! register, which the frame resolves (`Frame::wasm_memory`). The access is the memory rule of
+//! `staged::wasm_memory` (`load`, `store`) over the bytes it addresses: the bounds check and the
+//! bytes an access moves are the rule's. An access past the memory's end, a value the frame does
+//! not hold in its word's representation, or a vector access leaves the row to its miss, which
+//! the hand handler of the op (or the general step) runs and raises.
 
 use super::register_frame::WasmRep;
 use super::wasm_machine::{ConcreteBytes, ConcreteMemory};
-use super::wasm_memory::{Access, load, store};
-use super::{Concrete, Frame, Operation, Step};
-use crate::bytecode::{Register, WideInstruction};
+use super::wasm_memory::{self, Access};
+use super::{Concrete, DecodeContext, Fields, Frame, Operation, Step};
+use crate::bytecode::{Class, Register};
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::WasmType;
 
-/// A direct access of the function's memory, with the operands its record names: the address is
-/// the 32-bit register `address` plus the record's constant `offset`.
+/// A Wasm memory access, with the operands its record names.
 #[derive(Clone, Copy)]
 pub(crate) enum WasmAccessOperation {
-    /// `destination = load[address + offset]`.
+    /// `destination = load[address + offset]` of the function's memory (a direct op): the address
+    /// is the 32-bit register `address` plus the record's constant `offset`.
     Load { access: Access, destination: Register, address: Register, offset: u32 },
-    /// `store[address + offset] = source`.
+    /// `store[address + offset] = source` of the function's memory (a direct op).
     Store { access: Access, source: Register, address: Register, offset: u32 },
+    /// `destination = index + offset`, the effective address of a generic access (`WasmMemoryAddress`):
+    /// the index in `index`, read as the memory's index type (named by the memory in `memory`).
+    EffectiveAddress { destination: Register, index: Register, memory: Register, offset: u64 },
 }
 
 /// The register representation a value of type `ty` takes: an i32 or f32 as its 32 bits, an i64 or
@@ -33,28 +39,46 @@ const fn representation(ty: WasmType) -> Option<WasmRep> {
 }
 
 impl WasmAccessOperation {
-    /// The access `instruction` denotes: a direct load or store, whose address is its `c` register and
-    /// whose offset is its immediate.
-    pub(crate) fn decode(instruction: WideInstruction) -> Option<Self> {
+    /// The access `instruction` denotes. A direct load or store takes its address from `c` and its
+    /// offset from its immediate. A generic load or store takes its value from `a`, its memory from
+    /// `b` and its effective address from `c`, with the access its immediate tag names. An effective
+    /// address takes its index from `b`, its memory from `c`, and its offset from its constant
+    /// (read through `context`, or the lane's own constant).
+    pub(crate) fn decode<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
         let op = instruction.op();
-        let (register, address, offset) = (instruction.a(), instruction.c(), instruction.imm());
+        let wide = instruction.wide();
         if let Some(access) = MemoryLoad::from_direct_op(op).and_then(Access::of_load) {
-            return Some(Self::Load { access, destination: register, address, offset });
+            return Some(Self::Load { access, destination: wide.a(), address: wide.c(), offset: wide.imm() });
         }
-        let store = MemoryStore::from_direct_op(op)?;
-        Some(Self::Store { access: Access::of_store(store), source: register, address, offset })
+        if let Some(store) = MemoryStore::from_direct_op(op) {
+            return Some(Self::Store {
+                access: Access::of_store(store),
+                source: wide.a(),
+                address: wide.c(),
+                offset: wide.imm(),
+            });
+        }
+        match op.class() {
+            Class::WasmMemoryAddress => Some(Self::EffectiveAddress {
+                destination: wide.a(),
+                index: wide.b(),
+                memory: wide.c(),
+                offset: instruction.constant(context)?.value.bits64()?,
+            }),
+            _ => None,
+        }
     }
 }
 
 impl<W, P> Operation<W, P> {
-    /// The direct memory access `instruction` denotes (`Decoder::WasmMemory`).
-    pub(crate) fn decode_wasm_access(instruction: WideInstruction) -> Option<Self> {
-        WasmAccessOperation::decode(instruction).map(Self::WasmAccess)
+    /// The memory access `instruction` denotes (`Decoder::WasmMemory`).
+    pub(crate) fn decode_wasm_access<F: Fields>(instruction: F, context: DecodeContext<'_>) -> Option<Self> {
+        WasmAccessOperation::decode(instruction, context).map(Self::WasmAccess)
     }
 }
 
-/// Run `operation` on `frame`: a load's value, or a store's word; `Unresolved` where the frame leaves
-/// it, including an out-of-bounds access, which the general step traps.
+/// Run `operation` on `frame`: a load's value, or a store's value; `Unresolved` where the frame
+/// leaves it, including an out-of-bounds access, which the general step traps.
 #[inline(always)]
 pub(crate) fn step<F: Frame<Concrete>>(
     stage: &mut Concrete,
@@ -69,7 +93,7 @@ pub(crate) fn step<F: Frame<Concrete>>(
             };
             let loaded = {
                 let Some(memory) = frame.direct_memory() else { return Step::Unresolved };
-                load(&mut ConcreteBytes { memory: &*memory }, access, index, offset, false)
+                wasm_memory::load(&mut ConcreteBytes { memory: &*memory }, access, index, offset, false)
             };
             let Ok(word) = loaded else { return Step::Unresolved };
             match frame.wasm_write(stage, destination, word, rep) {
@@ -85,11 +109,21 @@ pub(crate) fn step<F: Frame<Concrete>>(
             let Some(word) = frame.wasm_read(stage, source, rep) else { return Step::Unresolved };
             let stored = {
                 let Some(memory) = frame.direct_memory() else { return Step::Unresolved };
-                store(&mut ConcreteMemory { memory }, access, index, offset, word, false)
+                wasm_memory::store(&mut ConcreteMemory { memory }, access, index, offset, word, false)
             };
             match stored {
                 Ok(()) => Step::Value(word),
                 Err(_) => Step::Unresolved,
+            }
+        }
+        WasmAccessOperation::EffectiveAddress { destination, index, memory, offset } => {
+            let Some((_, wide)) = frame.wasm_memory(stage, memory) else { return Step::Unresolved };
+            let rep = if wide { WasmRep::Bits64 } else { WasmRep::Int32 };
+            let Some(address) = frame.wasm_read(stage, index, rep) else { return Step::Unresolved };
+            let Some(effective) = address.checked_add(offset) else { return Step::Unresolved };
+            match frame.wasm_write(stage, destination, effective, WasmRep::Bits64) {
+                Some(tagged) => Step::Value(tagged),
+                None => Step::Unresolved,
             }
         }
     }

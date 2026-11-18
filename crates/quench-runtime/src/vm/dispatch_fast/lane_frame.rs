@@ -162,8 +162,31 @@ pub(in crate::vm::dispatch_fast) struct LaneFrame<const ACC: u8> {
     /// The function's linear memory a direct access row addresses (`Decoder::WasmMemory`): the base
     /// and length the view resolved (`MemoryView::extent`).
     memory: Option<(*mut u8, usize)>,
+    /// The lane context's resolver of a Wasm memory value, for a generic memory row that names its
+    /// memory by register (`Frame::wasm_memory`), where the row is one (`Decoder::WasmMemory`).
+    memories: Option<WasmMemories>,
     /// The constants, local slots and outer captures the staged row's operands name.
     reads: Reads,
+}
+
+/// The lane context's resolver of a Wasm memory value for a generic memory row: the bytes of the
+/// memory the value names, and whether its index is an i64 (`wasm_memory_of`).
+#[derive(Clone, Copy)]
+struct WasmMemories {
+    context: *mut (),
+    resolve: unsafe fn(*mut (), Value) -> Option<(*mut u8, usize, bool)>,
+}
+
+/// `WasmMemories::resolve`: the bytes of the Wasm memory `value` names, as `direct_memory` gives
+/// them, and whether its index type is i64. `None` where the memory is not addressed directly.
+///
+/// # Safety
+/// `context` is the running lane's context.
+unsafe fn wasm_memory_of<H: Host>(context: *mut (), value: Value) -> Option<(*mut u8, usize, bool)> {
+    let vm = unsafe { vm(context.cast::<LaneContext<H>>()) };
+    let (bytes, length) = direct_memory(vm, value)?;
+    let wide = vm.wasm_memory_index_type(value).ok()? == crate::WasmType::I64;
+    Some((bytes, length, wide))
 }
 
 /// The lane context's Wasm global rules for a staged instance-state row: the VM's load of the
@@ -198,7 +221,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(in crate::vm::dispatch_fast) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -222,7 +245,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     fn with_locals(registers: Registers, view: Carried, this: Value,
         locals: *mut Value, len: usize) -> Self {
         Self { registers, view, this, locals: Some((locals, len)), host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, reads: Reads::NONE }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, environment: None, global_store: None, binary: None, names: None, clones: None, callee: None, globals: None, memory: None, memories: None, reads: Reads::NONE }
     }
 }
 
@@ -496,6 +519,21 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         // SAFETY: `bytes` is the memory the view resolved in this lane run, `length` bytes long; the
         // frame holds no other borrow of it.
         Some(unsafe { std::slice::from_raw_parts_mut(bytes, length) })
+    }
+
+    /// The bytes of the Wasm memory value in `register`, resolved through the lane context
+    /// (`wasm_memory_of`), and its index type. A memory the lane cannot address leaves the row.
+    #[inline(always)]
+    fn wasm_memory(&mut self, _stage: &mut Concrete, register: Register) -> Option<(&mut [u8], bool)> {
+        let WasmMemories { context, resolve } = self.memories?;
+        // SAFETY: the context is the running lane's, live for the row's step.
+        let (bytes, length, wide) = unsafe { resolve(context, self.registers.get(register)) }?;
+        if length == 0 {
+            return Some((Default::default(), wide));
+        }
+        // SAFETY: `bytes` is the memory the value names in this lane run, `length` bytes long; the
+        // frame holds no other borrow of it.
+        Some((unsafe { std::slice::from_raw_parts_mut(bytes, length) }, wide))
     }
 }
 
@@ -867,7 +905,9 @@ fn row_frame<H: Host, const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut Lan
         // A direct access addresses the memory its view resolved, as the hand handler did.
         // SAFETY: the view resolved this memory in the current lane run (`MemoryView::extent`).
         let memory = unsafe { view.memory.extent() };
-        return LaneFrame::<ACC> { memory: Some(memory), ..LaneFrame::<ACC>::new(r, view) };
+        // A generic access names its memory by register, which `wasm_memory_of` resolves.
+        let memories = WasmMemories { context: cx.cast(), resolve: wasm_memory_of::<H> };
+        return LaneFrame::<ACC> { memory: Some(memory), memories: Some(memories), ..LaneFrame::<ACC>::new(r, view) };
     }
     if const { matches!(LaneFields::<OP>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
         // An instance-state row reads and writes the VM's globals through the lane context.
@@ -913,6 +953,7 @@ const fn row_miss<H: Host, const FLAG: u8>(op: Op) -> Handler {
         crate::staged::Miss::EnvironmentStore => super::lane_store_local::<H>,
         crate::staged::Miss::StoreNameFirst => super::lane_store_name_first::<H>,
         crate::staged::Miss::PropertyKeyValue => super::lane_to_property_key::<H>,
+        crate::staged::Miss::WasmMemoryAddress => super::lane_wasm_memory_address::<H>,
         crate::staged::Miss::LocalLoad => super::lane_load_local::<H>,
         crate::staged::Miss::LocalStore => super::lane_store_local::<H>,
         crate::staged::Miss::LocalInitialize => super::lane_initialize_tdz::<H>,
@@ -1046,7 +1087,7 @@ macro_rules! row_decode {
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmState)) } {
             Operation::decode_wasm_state($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::WasmMemory)) } {
-            Operation::decode_wasm_access(crate::staged::Fields::wide($fields))
+            Operation::decode_wasm_access($fields, crate::staged::DecodeContext::EMPTY)
         } else if const { matches!(LaneFields::<$op, $flag>::OPCODE.staged(), Some(crate::bytecode::Decoder::Proved)) } {
             // A by-name load's proof of its global is the lane's own binding (`row_frame`), so the
             // proof is the unit.

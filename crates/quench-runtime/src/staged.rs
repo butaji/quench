@@ -171,6 +171,8 @@ pub(crate) enum Miss {
     /// A by-name load the frame does not answer: its first run resolves the name, and a later
     /// run whose binding misses takes that binding's residual (`NameLoad`).
     NameLoad(NameLoad),
+    /// A generic Wasm effective address the row leaves: the lane's hand handler of the address.
+    WasmMemoryAddress,
 }
 
 /// The by-name loads a `LoadName` family row answers: a plain read, a call's read with its
@@ -207,6 +209,7 @@ pub(crate) const fn miss(op: Op) -> Miss {
         Op::LoadLocal => Miss::LocalLoad,
         Op::StoreLocal => Miss::LocalStore,
         Op::InitializeTdz => Miss::LocalInitialize,
+        Op::WasmMemoryAddress => Miss::WasmMemoryAddress,
         _ => match name_load(op) {
             Some(load) => Miss::NameLoad(load),
             None => match truth_jump(op) {
@@ -529,7 +532,7 @@ impl<W, P> Operation<W, P> {
             Decoder::WasmInt => Self::decode_wasm_int(instruction),
             Decoder::WasmJump => Self::decode_wasm_jump(instruction),
             Decoder::WasmState => Self::decode_wasm_state(instruction, context),
-            Decoder::WasmMemory => Self::decode_wasm_access(instruction),
+            Decoder::WasmMemory => Self::decode_wasm_access(instruction, context),
         }
     }
 
