@@ -236,3 +236,8 @@ pub const fn holds_int(place: u8) -> bool {
 /// What a supernode row runs first: a Number row or a heap row (`supernodes.rs`).
 pub const FIRST_NUMBER: u8 = 0;
 pub const FIRST_HEAP: u8 = 1;
+/// A tested field store's hole 3 (`site_rows::site_store_row`): the tag fields past the first tag
+/// a non-int32 word must fall outside. A slot whose observed type holds Number admits a double,
+/// which lies outside the six tags; an int32-only slot admits none, against every tag field.
+pub const STORE_ADMITS_DOUBLES: u64 = 6;
+pub const STORE_ADMITS_INT32: u64 = 1 << 16;

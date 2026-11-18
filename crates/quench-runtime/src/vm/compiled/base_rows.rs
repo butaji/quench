@@ -55,6 +55,14 @@ pub(super) enum Heap {
     SiteStore,
     /// `SiteStore` into the activation's receiver: hole 0 is unused.
     ThisStore,
+    /// The inline-cache read (`ic_rows`) of the own flat slot of the object register (hole 1), whose
+    /// exact shape (hole 2) and slot byte offset (hole 3) the code holds from the site's one entry,
+    /// into the destination (hole 0): a shape compare and a load, no cache table read.
+    IcGet,
+    /// The inline-cache store of a Number (hole 1) into that slot of the object register (hole 0),
+    /// the atom, shape and slot byte offset in holes 2 to 4, where the slot's observed type holds
+    /// Number (`int`: only int32, which takes only int32 words), so no observation widens.
+    IcSet { int: bool },
     /// Stores the value operand (hole 0) into depth-0 capture `slot` of an activation whose slots
     /// admit every direct store; the slot is hole 1 and its byte offset hole 2. It continues at TAKEN, as `Capture` does.
     CaptureSet(u16),
@@ -219,6 +227,9 @@ impl Heap {
             Heap::ThisSite | Heap::ThisChain => library::THIS_SITE_ROW,
             Heap::SiteStore => library::SITE_STORE_ROW,
             Heap::ThisStore => library::THIS_STORE_ROW,
+            Heap::IcGet => library::IC_GET_ROW,
+            Heap::IcSet { int: false } => library::IC_SET_ROW,
+            Heap::IcSet { int: true } => library::IC_SET_INT_ROW,
             Heap::This => library::THIS_ROW,
             Heap::Held | Heap::ThisHeld => library::HELD_ROW,
             _ => return None,

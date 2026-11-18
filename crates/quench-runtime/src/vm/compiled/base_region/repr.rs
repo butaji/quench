@@ -87,9 +87,20 @@ pub(super) fn result_repr(row: &Decoded, reprs: &[Repr], widened: bool, numbers:
         return Repr::Tagged;
     }
     if let Some(heap) = row.heap {
-        return if heap.yields_tagged() { Repr::Tagged } else if heap.yields_double() { Repr::Double } else { heap_repr(numbers, widened) };
+        return if heap.yields_tagged() { Repr::Tagged } else if heap.yields_double() { Repr::Double } else { heap_repr(numbers || read_numbers(row), widened || read_doubles(row)) };
     }
     kind_repr(row.kind, operand_repr(reprs, row.a).max(operand_repr(reprs, row.b)), widened)
+}
+
+/// Whether a field read's cache site observed only Numbers in its own slot (`own_slot_type`): its
+/// row delivers a Number, unboxed where the destination is pinned, and leaves on any other word.
+fn read_numbers(row: &Decoded) -> bool {
+    matches!(row.heap, Some(Heap::Site | Heap::ThisSite)) && row.slot.is_some_and(|ty| ty.is_subtype(crate::typed_ir::Type::NUMBER))
+}
+
+/// Whether that slot also observed a non-int32 Number, so the read delivers a double.
+fn read_doubles(row: &Decoded) -> bool {
+    read_numbers(row) && row.slot.is_some_and(|ty| !ty.is_subtype(crate::typed_ir::Type::INT32))
 }
 
 /// The representation a non-heap row of `kind` writes, given the greatest representation of its `operands`.
