@@ -13,7 +13,76 @@
 
 use super::{lane_unit, LaneExit, LoopRegion, RETURN_STATUS_BASE, LANE_BODY_RETURNED, LANE_BODY_THREW, NATIVE_JS_STOPPED, TERMINATED_STATUS};
 use super::entry_cell::LANE_BODY_NOT_ENTERED;
+use super::object_slots::Emit;
+use crate::staged::machine::{MachineScalar, Relation};
 use crate::value::Value;
+use cranelift_codegen::ir;
+
+/// How a native run's status is read: the one table of status classes. `classify` decodes a
+/// status in Rust and `status_is` compares it in IR, so both derive from `SINGLE_STATUS` and the
+/// reader never names a status constant of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::vm) enum StatusClass {
+    /// The body returned; its result word is the value.
+    Returned,
+    /// The body threw (`Vm::lane_raised`).
+    Threw,
+    /// The entry cell held the stub: the call entered nothing.
+    NotEntered,
+    /// The run was terminated.
+    Terminated,
+    /// The run left: its result word is a leave word (`LaneExit::decode`).
+    Leave,
+    /// The run returned a caller PC: `status - RETURN_STATUS_BASE`.
+    ReturnAt,
+    /// Dispatch reached an invalid PC, which only happens before any instruction ran; it reads as a leave at PC 0.
+    Unstarted,
+}
+
+/// The classes that have one status each, the only table both `classify` and `status_of` read.
+const SINGLE_STATUS: [(u32, StatusClass); 4] = [
+    (LANE_BODY_RETURNED, StatusClass::Returned),
+    (LANE_BODY_THREW, StatusClass::Threw),
+    (LANE_BODY_NOT_ENTERED, StatusClass::NotEntered),
+    (TERMINATED_STATUS as u32, StatusClass::Terminated),
+];
+
+/// The class of `status`: the single statuses first, then the leave, the caller PCs and the
+/// invalid PC.
+pub(in crate::vm) const fn classify(status: u32) -> StatusClass {
+    let mut at = 0;
+    while at < SINGLE_STATUS.len() {
+        if SINGLE_STATUS[at].0 == status {
+            return SINGLE_STATUS[at].1;
+        }
+        at += 1;
+    }
+    match status {
+        NATIVE_JS_STOPPED => StatusClass::Leave,
+        _ if status >= RETURN_STATUS_BASE => StatusClass::ReturnAt,
+        _ => StatusClass::Unstarted,
+    }
+}
+
+/// The single status of `class`, or `None` for a class that is not one value (a leave, a caller PC
+/// or the invalid PC).
+pub(in crate::vm) const fn status_of(class: StatusClass) -> Option<u32> {
+    let mut at = 0;
+    while at < SINGLE_STATUS.len() {
+        if SINGLE_STATUS[at].1 as u8 == class as u8 {
+            return Some(SINGLE_STATUS[at].0);
+        }
+        at += 1;
+    }
+    None
+}
+
+/// The IR compare that is `status` equal to the single status of `class`: the branch condition
+/// that tests one class in emitted code. The class must have a status (`status_of`).
+pub(super) fn status_is(stage: &mut Emit<'_, '_>, status: ir::Value, class: StatusClass) -> ir::Value {
+    let bits = status_of(class).expect("a class tested in IR has a single status");
+    stage.raw_compare_imm(Relation::Equal, status, i64::from(bits))
+}
 
 /// What a leave is, which a leave word holds in its top two bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,15 +148,14 @@ impl LaneExit {
     /// How a native run that returned `status` and wrote `word` ended: the one reader of the
     /// result. `returned_pc` names the record that completes the activation, read only then.
     pub(super) fn read(status: u32, word: u64, returned_pc: impl FnOnce() -> usize) -> Self {
-        match status {
-            _ if i64::from(status) == TERMINATED_STATUS => Self::Terminated,
-            LANE_BODY_RETURNED => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
-            LANE_BODY_THREW => Self::Threw { pc: returned_pc() },
-            NATIVE_JS_STOPPED => Self::decode(word),
-            LANE_BODY_NOT_ENTERED => Self::Stub,
-            _ if status >= RETURN_STATUS_BASE => Self::At((status - RETURN_STATUS_BASE) as usize),
-            // Dispatch reaches an invalid PC only before any instruction ran.
-            _ => Self::At(0),
+        match classify(status) {
+            StatusClass::Terminated => Self::Terminated,
+            StatusClass::Returned => Self::Returned { pc: returned_pc(), value: Value::from_bits(word) },
+            StatusClass::Threw => Self::Threw { pc: returned_pc() },
+            StatusClass::Leave => Self::decode(word),
+            StatusClass::NotEntered => Self::Stub,
+            StatusClass::ReturnAt => Self::At((status - RETURN_STATUS_BASE) as usize),
+            StatusClass::Unstarted => Self::At(0),
         }
     }
 
@@ -282,6 +350,16 @@ mod tests {
         assert_eq!(LaneExit::read(TERMINATED_STATUS as u32, 0, || unreachable!()), LaneExit::Terminated);
         let returned = LaneExit::read(LANE_BODY_RETURNED, Value::UNDEFINED.to_bits(), || 5);
         assert!(matches!(returned, LaneExit::Returned { pc: 5, .. }));
+    }
+
+    #[test]
+    fn a_single_status_classifies_to_its_class_and_back() {
+        for (status, class) in SINGLE_STATUS {
+            assert_eq!(classify(status), class);
+            assert_eq!(status_of(class), Some(status));
+        }
+        assert_eq!(classify(NATIVE_JS_STOPPED), StatusClass::Leave);
+        assert_eq!(status_of(StatusClass::Leave), None);
     }
 
     /// Every producer of a leave word stops with `NATIVE_JS_STOPPED` (the stencil entry thunks
