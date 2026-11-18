@@ -9607,75 +9607,6 @@ fn lane_count_backedge<H: Host>(cx: *mut LaneContext<H>) {
 }
 
 script_handler! {
-    /// A loop's backward jump whose target is its head's forward `null`/`undefined` test
-    /// (`lane_jump_nullish_false`, `specialize_nullish_back_edges`), the `while (p != null)`
-    /// of a list walk: the safepoint and the test as one dispatch. A heap value other than a
-    /// record runs the test's own record.
-    fn lane_jump_back_nullish<NEGATED: bool, NULLISH: u16>(cx, r, ip, i, view) {
-        // SAFETY: the view records the distance to a validated jump target, the test record
-        // `specialize_nullish_back_edges` matched. Computed before the fuel test, so its
-        // branch reads the decrement's own flags.
-        let test_ip = unsafe { ip.byte_offset(i.jump()) };
-        if script_fuel_out(cx) {
-            resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
-        }
-        let value = r.get(unsafe { (*test_ip).b });
-        let equal = match NULLISH {
-            NULLISH_NULL => value == Value::NULL,
-            NULLISH_UNDEFINED => value == Value::UNDEFINED,
-            _ if value.is_heap() => {
-                if !value.is_record() {
-                    next!(cx, r, test_ip, Carried::script_in(cx, view))
-                }
-                false
-            }
-            _ => value.is_null() || value.is_undefined(),
-        };
-        if equal == NEGATED {
-            resume!(cx, lane_jump::<H>(r, test_ip, false, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(test_ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// A loop's backward jump whose target is its head's integer update, an optional copy of
-    /// the update's result and a test of it against a small constant
-    /// (`specialize_update_back_edges`), the `while (--n >= 0)` of compiled loops: the
-    /// safepoint, the update, the copy and the test as one dispatch. An update other than an
-    /// integer's runs the update's own record, a test of anything else the test's.
-    fn lane_jump_back_update_small<DECREMENT: bool, MOVE: bool, OP: u32>(cx, r, ip, i, view) {
-        // SAFETY: the view records the distance to a validated jump target, the update record
-        // `specialize_update_back_edges` matched, which the copy and the test follow. Computed
-        // before the fuel test, so its branch reads the decrement's own flags.
-        let update_ip = unsafe { ip.byte_offset(i.jump()) };
-        if script_fuel_out(cx) {
-            resume!(cx, lane_jump_safepoint::<H>(ip, Carried::script_in(cx, view)))
-        }
-        let update = unsafe { &*update_ip };
-        let Some(value) = super::dispatch::integer_increment(r.get(update.b), DECREMENT) else {
-            next!(cx, r, update_ip, Carried::script_in(cx, view))
-        };
-        r.set(update.a, value);
-        let mut test_ip = following(update_ip);
-        if MOVE {
-            let copy = unsafe { &*test_ip };
-            r.set(copy.a, r.get(copy.b));
-            test_ip = following(test_ip);
-        }
-        let test = unsafe { &*test_ip };
-        let right = lane_small_constant::<H, false>(cx, test);
-        let Some(holds) = super::operations::integer_relation(relation_operator::<OP>(test), r.get(test.b), right) else {
-            next!(cx, r, test_ip, Carried::script_in(cx, view))
-        };
-        if !holds {
-            resume!(cx, lane_jump::<H>(r, test_ip, false, Carried::script_in(cx, view), None));
-        }
-        next!(cx, r, following(test_ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// A loop's backward jump in compiled execution (`LoopSite`): the jump's safepoint, then
     /// the loop's native code once the jump is hot and the region compiled. Native code
     /// resumes the lane where control leaves the region, or leaves to the general path at an
@@ -21598,8 +21529,6 @@ fn derive_lane_view<'live, H: Host>(
     };
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
-        specialize_nullish_back_edges::<H>(&decoded, &mut records);
-        specialize_update_back_edges::<H>(&decoded, &mut records);
         specialize_store_moves::<H>(&mut records);
         specialize_operator_pairs::<H>(&decoded, &function.handlers, &mut records, live().map(|masks| &**masks));
         specialize_int32_truncations::<H>(&mut records, live().map(|masks| &**masks));
@@ -22465,65 +22394,6 @@ fn specialize_array_literals<H: Host>(decoded: &[WideInstruction], records: &mut
     }
 }
 
-/// Gives each backward unconditional jump whose target is an integer update (`lane_row` of `IncDec`),
-/// then optionally a register copy of its result (a `Move`'s `lane_row`), then a forward test against a
-/// small constant (`lane_jump_binary_false_small`), the fused back edge, update, copy and test
-/// (`lane_jump_back_update_small`). The head's records stay, for the loop's entry and for the
-/// values the fused record leaves to them.
-fn specialize_update_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let back = jump_row::<H, JUMP>(true) as *const ();
-    let copy = lane_row::<H, { opc::Move }, ACC_NONE, FLAG_UNREAD> as Handler as *const ();
-    for pc in 0..records.len() {
-        if records[pc].handler != back {
-            continue;
-        }
-        let head = decoded[pc].imm() as usize;
-        let (Some(update), Some(decrement)) = (records.get(head), records.get(head).and_then(|update| update_direction::<H>(update)))
-        else {
-            continue;
-        };
-        let moved = records.get(head + 1).is_some_and(|next| next.handler == copy && next.b == update.a);
-        let Some(test) = records.get(head + 1 + usize::from(moved)) else {
-            continue;
-        };
-        let operator = u32::from(test.a);
-        if test.handler != relation_jump_handler::<H, true>(operator, false) as *const () {
-            continue;
-        }
-        records[pc].handler = update_back_small_handler::<H>(operator, decrement, moved) as *const ();
-    }
-}
-
-/// Gives each backward unconditional jump whose target is a forward nullish test
-/// (`lane_jump_nullish_false`) the fused back edge and test (`lane_jump_back_nullish`). The
-/// test record stays, for the loop's entry and for the values it leaves to that record.
-fn specialize_nullish_back_edges<H: Host>(decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
-    let back = jump_row::<H, JUMP>(true) as *const ();
-    for pc in 0..records.len() {
-        if records[pc].handler != back {
-            continue;
-        }
-        let Some(test) = records.get(decoded[pc].imm() as usize) else {
-            continue;
-        };
-        macro_rules! fused {
-            ($nullish:expr) => {
-                [false, true].into_iter().find_map(|negated| {
-                    (test.handler == equality_test_handler!(lane_jump_nullish_false::<H, { $nullish }>, false, negated) as *const ())
-                        .then(|| if negated {
-                            lane_jump_back_nullish::<H, true, { $nullish }> as Handler
-                        } else {
-                            lane_jump_back_nullish::<H, false, { $nullish }> as Handler
-                        })
-                })
-            };
-        }
-        if let Some(handler) = fused!(NULLISH_NULL).or_else(|| fused!(NULLISH_UNDEFINED)).or_else(|| fused!(NULLISH_LOOSE)) {
-            records[pc].handler = handler as *const ();
-        }
-    }
-}
-
 /// The handler of the `IncDec` record `update` that the record `jump` follows, where `jump` is an
 /// unconditional jump: the generated pair of `IncDec` and `Jump` (`fused_row`, the `staged::FUSED_ROWS`
 /// entry of that pair, `FUSED_PLAIN`). `None` for any other pair. The loader's `fuse_rows` pass and a
@@ -22856,22 +22726,6 @@ unsafe fn requicken_small_number_relation<H: Host, const BACKWARD: bool, const T
     }
     // SAFETY: the record is a live record of the running view.
     relation_operators!(u32::from(unsafe { (*ip).a }), pick)
-}
-
-/// The fused back edge, update, copy and small-constant test handler
-/// (`lane_jump_back_update_small`) of the test's `operator`.
-fn update_back_small_handler<H: Host>(operator: u32, decrement: bool, moved: bool) -> Handler {
-    macro_rules! pick {
-        ($op:expr) => {
-            match (decrement, moved) {
-                (true, true) => lane_jump_back_update_small::<H, true, true, { $op }> as Handler,
-                (true, false) => lane_jump_back_update_small::<H, true, false, { $op }> as Handler,
-                (false, true) => lane_jump_back_update_small::<H, false, true, { $op }> as Handler,
-                (false, false) => lane_jump_back_update_small::<H, false, false, { $op }> as Handler,
-            }
-        };
-    }
-    relation_operators!(operator, pick)
 }
 
 /// Gives a returning `Binary` record of an arithmetic operator on a register and a register
