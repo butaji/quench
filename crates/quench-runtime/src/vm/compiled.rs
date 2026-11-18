@@ -1322,6 +1322,30 @@ fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cran
         .specialize(program).ok().filter(|region| region.native != 0)
 }
 
+/// The loop `header..=backedge` of `function_id` lowered for an ahead image: the same region
+/// specializer as a lane body and the runtime's own loop plan, over static facts and a linking
+/// helper table. `None` where the region declines or lowers no record; otherwise its records.
+#[cfg(feature = "aot")]
+pub(super) fn lowered_ahead_loop(program: &ResidualProgram, function_id: u32,
+    isa: &dyn cranelift_codegen::isa::TargetIsa, (header, backedge): (u32, u32)) -> Result<usize, String> {
+    use super::specializer::Specializer;
+    let function = program.function_get(function_id as usize).ok_or("no such function")?;
+    let decoded: Vec<_> = function.code.iter().map(|&packed| super::dispatch_fast::decoded_instruction(function, packed)).collect();
+    let region = osr_loop::region(function, &decoded, &[], &[], None, header, backedge, osr_loop::MethodCalls::Inliner)
+        .map_err(|failure| format!("region rejected: {:?}", failure.reason))?;
+    let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
+        &|callee| program.function_get(callee as usize)).ok_or("no unit")?;
+    let lowered = lane_region::RegionSpecializer { function_id, unit: &unit, helpers: LaneHelpers::Ahead,
+        fields: &[], global_reads: &crate::vm::global_facts::GlobalReads::default(), facts: VmFacts::STATIC, generic: &[],
+        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
+        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], typed_captures: &[], int_captures: &[],
+        plan: lane_region::RegionPlan { entry_bounds: true,
+            coverage: lane_region::Coverage::Loop { header: region.header as usize, backedge: region.backedge as usize, poll: true },
+            completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
+        .specialize(program)?;
+    Ok(lowered.native)
+}
+
 /// `lowered_lane_body`'s code with the atoms it stores without a method-cache test.
 #[cfg(feature = "aot")]
 pub(super) fn lower_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
@@ -9092,6 +9116,32 @@ impl<H: Host> Vm<H> {
                 None => Some(failure("linked native entry failed".into())),
             }
         }).unwrap_or_else(|| Some(failure("linked native function metadata is missing".into())))
+    }
+}
+
+#[cfg(all(test, feature = "aot"))]
+mod ahead_loop_tests {
+
+    /// The loop a call-bearing top-level body runs is lowered ahead from static facts: the
+    /// capability an ahead image needs to re-enter native code after a call.
+    #[test]
+    #[ignore = "the probe finds a back edge but not the loop the runtime analyzes: the analysis \
+        needs the field sites, constants and liveness `loop_tier` passes (`analyze_osr_region_detailed`), \
+        which an ahead build must derive from the program"]
+    fn a_toplevel_loop_lowers_ahead_from_static_facts() {
+        let source = "function loopfn(n){ let a=0; for(let i=0;i<n;i++){a=(a+i)|0;} return a; }\nfunction fib(n){return n<2?n:fib(n-1)+fib(n-2);}\nprint((loopfn(200000)+fib(20))|0);";
+        let program = crate::Engine::specialize(source, "ahead-loop.js").unwrap();
+        let isa = crate::vm::jit_backend::target_isa().unwrap();
+        let function = program.function(1);
+        // The loop header: a jump whose target is at or before its own pc.
+        let decoded: Vec<_> = function.code.iter().map(|&packed| super::dispatch_fast::decoded_instruction(function, packed)).collect();
+        // The back edge is the last backward unconditional jump; a conditional jump whose target
+        // is behind it only closes the condition, not the iteration.
+        let (header, backedge) = decoded.iter().enumerate().filter(|(pc, instruction)| {
+            instruction.op().control_flow_layout().jumps() && instruction.jump_target() as usize <= *pc
+        }).next_back().map(|(pc, instruction)| (instruction.jump_target(), pc as u32)).expect("the body has a loop");
+        let records = super::lowered_ahead_loop(&program, 1, &*isa, (header, backedge));
+        assert!(matches!(records, Ok(records) if records > 0), "the loop lowered no record: {records:?} ({header}..={backedge}); op {} is {:?}", 61, crate::bytecode::opcode_name(61));
     }
 }
 
