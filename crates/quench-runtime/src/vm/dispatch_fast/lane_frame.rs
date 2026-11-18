@@ -1419,8 +1419,8 @@ pub(in crate::vm::dispatch_fast) fn fuse_chains<H: Host>(records: &mut [LaneInst
             )),*]
         };
     }
-    let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-    const { assert!(crate::staged::FUSED_CHAINS.len() <= 16, "`chains!` covers 16 chains; add indices") };
+    let chains = chains!(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31);
+    const { assert!(crate::staged::FUSED_CHAINS.len() <= 32, "`chains!` covers 32 chains; add indices") };
     for pc in 0..records.len() {
         let Some((_, length, backward, row)) = chains.iter().find(|(links, length, _, _)| {
             pc + length <= records.len() && (0..*length).all(|k| links[k](records[pc + k].handler))

@@ -309,6 +309,21 @@ pub(crate) const FUSED_CHAINS: [[u16; 4]; 4] = [
     [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpFalse as u16, NO_LINK],
     [Op::LoadCapture as u16, Op::Binary as u16, Op::JumpTrue as u16, NO_LINK],
 pub(crate) const FUSED_CHAINS: [[u16; 4]; 1] = [
+pub(crate) const FUSED_CHAINS: [[u16; 4]; 14] = [
+    // An i32 load, an i32 operator on the loaded value, then the i32 store of its result.
+    [Op::WasmI32Load as u16, Op::WasmI32Add as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Subtract as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Multiply as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32And as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Or as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Xor as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32ShiftLeft as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32ShiftRightSigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32ShiftRightUnsigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32Equal as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32NotEqual as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32LessSigned as u16, Op::WasmI32Store as u16, NO_LINK],
+    [Op::WasmI32Load as u16, Op::WasmI32LessUnsigned as u16, Op::WasmI32Store as u16, NO_LINK],
     // An i32 add of a constant, an f64 load at its sum, then an f64 operator on the loaded value.
     [Op::WasmI32AddImmediate as u16, Op::WasmF64Load as u16, Op::WasmF64Binary as u16, NO_LINK],
 ];

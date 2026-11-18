@@ -11328,88 +11328,6 @@ fn store_move_handler<H: Host>(op: Op, acc: u8) -> Option<Handler> {
     stores!(WasmI32Store, WasmI32Store8, WasmI32Store16)
 }
 
-lane_handler! {
-    /// An i32 load, with address field `ACC`, the i32 operator `OP` taking
-    /// the loaded value as its left (`LEFT`) or right operand, and the i32
-    /// store writing the operator's result (`mem[x] op= v`): three records
-    /// run here, each result written as its own record writes it. An access
-    /// the general path must run, or a trapping operator, exits at its
-    /// record.
-    fn lane_i32_update<OP: u16, LEFT: bool, ACC: u8>(cx, r, ip, i, view) {
-        let operator = const {
-            match I32BinaryOperator::from_register_op(opcode(OP)) {
-                Some(operator) => operator,
-                None => panic!("not an i32 register operator"),
-            }
-        };
-        // SAFETY: as for `MemoryView::read`.
-        let Some(crate::WasmValue::I32(loaded)) = (unsafe {
-            view.memory.read(MemoryLoad::I32Load, lane_address::<ACC>(r, i, view))
-        }) else {
-            return exit(ip);
-        };
-        r.set(i.a, view.integers.encode(loaded));
-        let combine = following(ip);
-        // SAFETY: the view fuses a load only with a following operator and
-        // store.
-        let o = unsafe { &*combine };
-        let (left, right) = if LEFT { (loaded, r.i32(o.c)) } else { (r.i32(o.b), loaded) };
-        let Ok(result) = operator.evaluate(left, right) else {
-            return exit(combine);
-        };
-        r.set(o.a, view.integers.encode(result));
-        let store = following(combine);
-        // SAFETY: as above.
-        let access = unsafe { &*store };
-        // SAFETY: as for `MemoryView::write`.
-        if unsafe {
-            view.memory.write(
-                MemoryStore::I32Store,
-                lane_address::<ACC_NONE>(r, access, view),
-                crate::WasmValue::I32(result),
-            )
-        }
-        .is_none()
-        {
-            return exit(store);
-        }
-        next!(cx, r, following(store), view)
-    }
-}
-
-/// The i32 update handler for register operator `op`, loaded value side
-/// `left` and load address field `acc`.
-fn i32_update_handler<H: Host>(op: Op, left: bool, acc: u8) -> Option<Handler> {
-    macro_rules! updates {
-        ($($op:ident),+) => {
-            match (op as u16, left, acc) {
-                $(
-                    (opc::$op, false, ACC_NONE) => Some(lane_i32_update::<H, { opc::$op }, false, ACC_NONE> as Handler),
-                    (opc::$op, true, ACC_NONE) => Some(lane_i32_update::<H, { opc::$op }, true, ACC_NONE> as Handler),
-                    (opc::$op, false, ACC_C) => Some(lane_i32_update::<H, { opc::$op }, false, ACC_C> as Handler),
-                    (opc::$op, true, ACC_C) => Some(lane_i32_update::<H, { opc::$op }, true, ACC_C> as Handler),
-                )+
-                _ => None,
-            }
-        };
-    }
-    updates!(
-        WasmI32Add,
-        WasmI32Subtract,
-        WasmI32Multiply,
-        WasmI32And,
-        WasmI32Or,
-        WasmI32Xor,
-        WasmI32ShiftLeft,
-        WasmI32ShiftRightSigned,
-        WasmI32ShiftRightUnsigned,
-        WasmI32Equal,
-        WasmI32NotEqual,
-        WasmI32LessSigned,
-        WasmI32LessUnsigned
-    )
-}
-
 /// Continue in `frame` at `pc`: the record the frame's function resumes at.
 #[inline(always)]
 fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -> Resumed {
@@ -20208,29 +20126,6 @@ fn derive_lane_view<'live, H: Host>(
                 .position(|acc| variant(opc::WasmI32Add, acc, pc + 1));
             if let (Some(field), Some(left)) = (field, left) {
                 records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
-            }
-        }
-        // An i32 load, the operator taking the loaded value and the store of
-        // its result run as one record.
-        for pc in 0..records.len().saturating_sub(2) {
-            let load = decoded[pc];
-            let combine = decoded[pc + 1];
-            let store = decoded[pc + 2];
-            if !load.op().is_wasm_i32_load() || !store.op().is_wasm_i32_store() {
-                continue;
-            }
-            let field = [ACC_NONE, ACC_C]
-                .into_iter()
-                .find(|&acc| serves(records[pc].handler, opc::WasmI32Load, acc));
-            let left = [ACC_C, ACC_B]
-                .into_iter()
-                .position(|acc| serves(records[pc + 1].handler, combine.op() as u16, acc));
-            if let (Some(field), Some(left)) = (field, left)
-                && store.a() == combine.a()
-                && serves(records[pc + 2].handler, opc::WasmI32Store, ACC_A)
-                && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
-            {
-                records[pc].handler = fused as *const ();
             }
         }
         // A load whose value the next record stores runs with that store as
