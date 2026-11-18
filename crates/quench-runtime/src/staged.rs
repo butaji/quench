@@ -41,6 +41,7 @@ mod spread;
 mod admission;
 mod delete;
 mod decode;
+pub(crate) mod meaning_fast;
 mod captures;
 pub(crate) mod compare;
 pub(crate) mod meaning_dispatch;

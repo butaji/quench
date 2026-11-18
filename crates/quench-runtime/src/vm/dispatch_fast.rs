@@ -21893,7 +21893,7 @@ fn lane_operand(
         // A case selector reads its run of constants from the context by index, as a constant
         // array reads its elements' (`lane_make_const_array`).
         ImmediateRole::ConstantIndex
-            if instruction.op().is_string_case_index() || instruction.op().class() == Class::MakeConstArray =>
+            if crate::staged::meaning_fast::case_or_constant_array(instruction) =>
         {
             let start = instruction.imm() as usize;
             constants.get(start..start.checked_add(usize::from(instruction.b()))?)?;
@@ -21932,9 +21932,8 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
         _ if decoded_field_read(instruction) => lane_returns(instruction) || lane_sinks_field(instruction),
-        Class::Unary | Class::MakeObject2 | Class::SuperConstArrayObject2 | Class::MakeObjectLiteral => {
-            lane_returns(instruction)
-        }
+        Class::Unary => lane_returns(instruction),
+        _ if crate::staged::meaning_fast::returning_literal(instruction) => lane_returns(instruction),
         Class::Binary if instruction.returns_from_frame() => lane_returns(instruction),
         _ if spreads_rest_view(instruction) => lane_returns(instruction),
         _ => true,
@@ -22007,7 +22006,7 @@ fn lane_iteration_step(decoded: &[WideInstruction], pc: usize) -> bool {
     call.result_flags() == 0
         && ImmediateLayout::argument_count(call.imm()) == 0
         && decoded.get(pc + 1).is_some_and(|next| {
-            next.op().is_require_iterator_result() && next.register_b() == call.result_register()
+            crate::staged::meaning_fast::require_iterator_result_operand(*next) == Some(call.result_register())
         })
 }
 
@@ -22062,7 +22061,7 @@ fn lane_for_of_step(decoded: &[WideInstruction], pc: usize) -> Option<ForOfTest>
     let reads_result = |offset: usize| {
         record(offset).is_some_and(|read| decoded_field_read(read) && read.result_flags() == 0 && read.b() == result)
     };
-    record(FOR_OF_REQUIRE_RESULT).filter(|require| require.op().class() == Class::RequireIteratorResult)?;
+    record(FOR_OF_REQUIRE_RESULT).filter(|require| crate::staged::meaning_fast::require_iterator_result_operand(*require).is_some())?;
     let done = record(FOR_OF_DONE_READ).filter(|_| reads_result(FOR_OF_DONE_READ))?.result_register();
     let test = record(FOR_OF_DONE_TEST).filter(|test| test.a() == done)?;
     let form = match crate::vm::compiled::decoded(test) {
@@ -22368,7 +22367,8 @@ fn derive_lane_view<'live, H: Host>(
             {
                 tables[usize::from(backward_jump)][usize::from(acc)].get(op as usize).copied().flatten()
                     .and_then(|_| LaneHandler::producer(handler))
-            } else if (matches!(op.class(), Class::LoadLocal | Class::ArgumentsLength | Class::ArgumentGet)
+            } else if (matches!(op.class(), Class::ArgumentsLength)
+                || crate::staged::meaning_fast::local_load_or_argument_get(instruction)
                 || decoded_local_plain_load(instruction))
                 && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
                 && let Some(kept) = *kept_arguments.get_or_init(|| function.kept_arguments())
@@ -22380,7 +22380,7 @@ fn derive_lane_view<'live, H: Host>(
                 Some(LaneHandler {
                     handler: match op.class() {
                         Class::ArgumentsLength => lane_arguments_length::<H> as Handler,
-                        Class::ArgumentGet => lane_argument_get::<H> as Handler,
+                        _ if crate::staged::meaning_fast::argument_get(instruction) => lane_argument_get::<H> as Handler,
                         _ if kept == crate::bytecode::KeptArguments::Passes && !forwards => {
                             lane_load_kept_arguments_object::<H> as Handler
                         }

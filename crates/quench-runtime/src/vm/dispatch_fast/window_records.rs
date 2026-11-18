@@ -1,6 +1,7 @@
 //! How an environment window specializes the records that read its locals or make its closures
 //! (`specialize_environment_window`): which records it takes and the handler each gets.
 use super::*;
+use crate::staged::meaning_fast;
 
 /// The handlers derivation gives the records an environment window specializes, which no other
 /// pass changed, beside the local rows' generated handlers (`is_row`).
@@ -34,14 +35,22 @@ pub(super) fn window_record(function: &Function, instruction: WideInstruction) -
     if op.class().eq(Class::Call) && instruction.direct_eval() {
         return WindowRecord::Eval;
     }
+    if let Some(closure) = meaning_fast::closure_function(instruction) {
+        return WindowRecord::Local(closure);
+    }
+    if meaning_fast::clone_env(instruction) {
+        return WindowRecord::Local(0);
+    }
+    if let Some(slot) = meaning_fast::owned_local_slot(instruction) {
+        return WindowRecord::Local(slot as u32);
+    }
+    // A function's Annex B store to its `var` binding is a store to the slot
+    // (`Function::window_reads_locals`).
+    if function.parent.is_some() && let Some(slot) = meaning_fast::var_binding_store_slot(instruction) {
+        return WindowRecord::Local(slot as u32);
+    }
     WindowRecord::Local(match op.class() {
-        Class::MakeClosure => instruction.imm(),
-        Class::CloneEnv => 0,
-        Class::LoadLocal | Class::LoadEnvLocal | Class::StoreLocal
-        | Class::StoreEnvLocal | Class::InitializeTdz => instruction.local_slot() as u32,
-        // A function's Annex B store to its `var` binding is a store to the slot
-        // (`Function::window_reads_locals`).
-        Class::StoreVarBinding if function.parent.is_some() => instruction.local_slot() as u32,
+        Class::LoadEnvLocal | Class::StoreEnvLocal => instruction.local_slot() as u32,
         _ if is_plain_local(instruction) => instruction.local_slot() as u32,
         _ => return WindowRecord::Keeps,
     })
@@ -100,8 +109,10 @@ pub(super) fn window_local_handler<H: Host>(function: &Function, instruction: Wi
 
 /// The handler a function that resolves names at run time gives a closure or an environment store.
 fn scoped_window_handler<H: Host>(instruction: WideInstruction, environment: bool) -> Option<Handler> {
+    if meaning_fast::closure_function(instruction).is_some() {
+        return Some(scoped_names::scoped_closure::<H>());
+    }
     match (instruction.op().class(), environment) {
-        (Class::MakeClosure, _) => Some(scoped_names::scoped_closure::<H>()),
         (Class::StoreEnvLocal, true) => Some(scoped_names::scoped_store_local::<H, true>()),
         (Class::StoreEnvLocal, false) => Some(scoped_names::scoped_store_local::<H, false>()),
         _ => None,
@@ -111,14 +122,23 @@ fn scoped_window_handler<H: Host>(instruction: WideInstruction, environment: boo
 /// The handler of an environment window's record `instruction`, `environment` where the local lives
 /// in the window's environment once a closure made one.
 fn plain_window_handler<H: Host>(instruction: WideInstruction, environment: bool) -> Handler {
-    match instruction.op().class() {
-        Class::MakeClosure => lane_make_window_closure::<H>,
-        Class::CloneEnv => lane_clone_window_env::<H>,
-        _ if is_local_load(instruction) && environment => lane_load_window_local::<H, true>,
-        _ if is_local_load(instruction) => lane_load_window_local::<H, false>,
-        Class::InitializeTdz if environment => lane_initialize_window_tdz::<H, true>,
-        Class::InitializeTdz => lane_initialize_window_tdz::<H, false>,
-        _ if environment => lane_store_window_local::<H, true>,
-        _ => lane_store_window_local::<H, false>,
+    if meaning_fast::closure_function(instruction).is_some() {
+        return lane_make_window_closure::<H>;
     }
+    if meaning_fast::clone_env(instruction) {
+        return lane_clone_window_env::<H>;
+    }
+    if is_local_load(instruction) && environment {
+        return lane_load_window_local::<H, true>;
+    }
+    if is_local_load(instruction) {
+        return lane_load_window_local::<H, false>;
+    }
+    if meaning_fast::initialize_tdz(instruction) && environment {
+        return lane_initialize_window_tdz::<H, true>;
+    }
+    if meaning_fast::initialize_tdz(instruction) {
+        return lane_initialize_window_tdz::<H, false>;
+    }
+    if environment { lane_store_window_local::<H, true> } else { lane_store_window_local::<H, false> }
 }
