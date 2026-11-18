@@ -653,11 +653,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn anonymous_function_definition(expression: &Expression<'_>) -> bool {
-        match expression {
+        // TypeScript's type-only wrappers name as parentheses do: `const f = (() => {}) as T`.
+        match super::binding_time::evaluated(expression) {
             Expression::FunctionExpression(function) => function.id.is_none(),
             Expression::ArrowFunctionExpression(_) => true,
             Expression::ClassExpression(class) => class.id.is_none(),
-            Expression::ParenthesizedExpression(expression) => Self::anonymous_function_definition(&expression.expression),
             _ => false,
         }
     }

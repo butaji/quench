@@ -204,6 +204,30 @@ mod tests {
     }
 
     #[test]
+    fn type_only_wrappers_keep_references_and_names() {
+        // TypeScript erases `!`, `as`, `satisfies` and `<T>` at run time: a call through one
+        // keeps `this`, `typeof` through one tolerates a missing name, and an anonymous
+        // function under one takes its binding's name.
+        let source = r#"
+            const obj = { v: 7, m() { return this?.v; } };
+            console.log(obj.m!(), (obj.m as any)(), (<any>obj.m)(), (obj.m satisfies Function)(), obj['m']!());
+            console.log(typeof (missingName as any), typeof missingName!, typeof (<any>missingName));
+            const f = (() => 1) as () => number;
+            const g = (function () {}) satisfies Function;
+            console.log(f.name, g.name);
+        "#;
+        for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled] {
+            let program = Engine::specialize_typescript(source, "wrappers.cts").unwrap();
+            let host = TestHost::default();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.set_execution_mode(mode);
+            runtime.execute(&program).unwrap();
+            assert_eq!(&*view.lines(), &["7 7 7 7 7", "undefined undefined undefined", "f g"]);
+        }
+    }
+
+    #[test]
     fn declared_parameter_types_are_kept_as_facts() {
         let source = "function add(a: number, c: Shape, d: number | bigint, e, b?: string) { return a; }\nconst f = (x: boolean) => x;\nfunction g(p, q) { return p; }";
         let program = Engine::specialize_typescript(source, "declared.cts").unwrap();
