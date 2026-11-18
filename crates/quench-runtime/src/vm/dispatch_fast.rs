@@ -4634,67 +4634,6 @@ script_handler! {
     }
 }
 
-/// How the run of a fused capture update (`lane_update_capture_int32`) ends, which records it
-/// covers after the store (`specialize_capture_updates`).
-type UpdateForm = u8;
-/// The store alone (`lane_store_capture`).
-const UPDATE_STORES: UpdateForm = 0;
-/// The store and its read of the capture (`lane_store_capture_load`).
-const UPDATE_LOADS: UpdateForm = 1;
-/// The records an `UPDATE_LOADS` run covers: the read, the operator, its truncation, the store
-/// and the store's read.
-const UPDATE_LOADS_RUN: usize = 5;
-
-/// The int32 update a fused record `update` (`lane_update_capture_int32`) makes of its capture
-/// in the dense slots `capture` (`LaneContext::capture`, `ScriptCallTarget::capture`): the old
-/// value and the stored one; `None` where the slots do not admit the store directly
-/// (`CAPTURE_STORES`) or the capture holds no integer, which stores nothing.
-#[inline(always)]
-fn capture_int32_update<const OP: u32>(capture: *const usize, update: &LaneInstruction) -> Option<(Value, Value)> {
-    let slots = capture_stores(capture)?;
-    // SAFETY: the operator record follows the read in the fused run (`specialize_capture_updates`).
-    let right = unsafe { &*following(update) }.imm() as i32;
-    // SAFETY: the dense capture slots of a running function or resolved target, which admit
-    // this write (`CAPTURE_STORES`); an integer needs no barrier and no collection runs in the
-    // lane.
-    unsafe {
-        crate::heap::EnvironmentSlots::update_storage(slots, usize::from(ImmediateLayout::capture_slot(update.imm())), |value| {
-            let value = value.as_int()?;
-            Some(Value::integer(if OP == super::operations::SUBTRACTION {
-                value.wrapping_sub(right)
-            } else {
-                value.wrapping_add(right)
-            }))
-        })
-    }
-}
-
-script_handler! {
-    /// `lane_load_capture`, `lane_operator_int32` of its value and an integer constant, and the
-    /// store of the truncated result to the same capture, ended as `FORM` says (`UpdateForm`),
-    /// the `c = (c + 1) | 0` of compiled code (`specialize_capture_updates`), as one record:
-    /// one proof of the slots and one bounds test serve the read and the write
-    /// (`capture_int32_update`). Slots that do not admit the store directly, or a value other
-    /// than an integer, run the read's own record, then the others.
-    fn lane_update_capture_int32<OP: u32, FORM: u8>(cx, r, ip, i, view) {
-        let Some((old, value)) = capture_int32_update::<OP>(unsafe { (*cx).registers }.capture(), i) else {
-            sibling!(lane_row::<H, CAPTURE_READ, ACC_NONE, FLAG_UNREAD>, r, ip, view)
-        };
-        // SAFETY: the run is the read, the operator, its truncation and the store, then the
-        // store's read past `UPDATE_STORES` (`specialize_capture_updates`).
-        let truncation = unsafe { &*following(following(ip)) };
-        let store = following(following(following(ip)));
-        r.set(i.a, old);
-        r.set(truncation.a, value);
-        if FORM == UPDATE_STORES {
-            next!(cx, r, following(store), view)
-        }
-        // SAFETY: as above.
-        r.set(unsafe { &*following(store) }.a, value);
-        next!(cx, r, following(following(store)), view)
-    }
-}
-
 /// The running lane activation's dense capture slots, the view a lane body's reads take
 /// (`EnvironmentSlots::native_storage_view`), and whether they admit every direct store
 /// (`capture_stores`): a frame run finds them as its first store does (`lane_capture_store`).
@@ -9645,10 +9584,6 @@ script_handler! {
             Some(_) => lane_script_call_full::<H>,
             None => sibling!(lane_script_call_resolve::<H>, r, ip, Carried::script_in(cx, view)),
         };
-        // A capture leaf whose body is a capture's update takes the call that answers it.
-        let handler = target
-            .and_then(|target| capture_update_call_handler::<H>(unsafe { &*target }, i))
-            .unwrap_or(handler);
         requicken::<H>(ip, handler);
         sibling!(handler, r, ip, Carried::script_in(cx, view))
     }
@@ -11307,8 +11242,6 @@ fn lane_promise_native_call<H: Host>(cx: *mut LaneContext<H>, ip: Ip, native: Na
 mod named_keys;
 mod denoted;
 mod wasm_calls;
-mod capture_update_calls;
-use capture_update_calls::capture_update_call_handler;
 use wasm_calls::{known_call_handler, reference_call_handler};
 use denoted::lane_unary;
 use named_keys::{lane_named_key_element, lane_string_index_element};
@@ -18091,7 +18024,7 @@ fn specialize_captures<H: Host>(records: &mut [LaneInstruction]) {
 }
 
 /// Whether `record` is a `LoadCapture` row of the running function's own scope, whose dense slots
-/// the passes that fuse a read with its consumer (`capture_int32_update`, `specialize_load_branch_pairs`)
+/// the passes that fuse a read with its consumer (`specialize_load_branch_pairs`)
 /// read; an outer read is not one.
 fn is_own_capture_read<H: Host>(record: &LaneInstruction) -> bool {
     is_row::<H, CAPTURE_READ>(record.handler) && ImmediateLayout::capture_depth(record.imm()) == 0

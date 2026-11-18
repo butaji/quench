@@ -1556,11 +1556,10 @@ fn for_each_of_one_element_with_a_dead_result_keeps_callback_semantics() {
 
 #[test]
 fn capture_update_calls_keep_closure_semantics() {
-    // A capture's int32 update by a constant is one record (`lane_update_capture_int32`), and a
-    // plain call of a capture leaf whose body is that update and its return is answered in
-    // place (`lane_script_call_update_capture`): the int32 wrap both ways, extra values and a
-    // receiver, a returned call, shared captures, recreated closures, captures holding other
-    // values, a call in the binding's TDZ, a const binding and an arrow keep closure semantics.
+    // A capture's int32 update by a constant runs its generated rows, and a plain call of a capture
+    // leaf whose body is that update and its return runs the call: the int32 wrap both ways, extra
+    // values and a receiver, a returned call, shared captures, recreated closures, captures holding
+    // other values, a call in the binding's TDZ, a const binding and an arrow keep closure semantics.
     // Expected value is Node's (v22).
     let source = r#"
       var out = [];
