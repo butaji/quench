@@ -1,7 +1,7 @@
 # Derivation debt: each place a tier decides an opcode's meaning outside its staged row
 # (`staged/coverage_tests.rs`, `tiers_derive_opcode_meaning_from_the_interpreter`). Lines are
 # `file token count`; counts may only shrink, and a new line fails. Goal: an empty file.
-# total 2103
+# total 2005
 <catalog> unstaged:ArgumentGet 1
 <catalog> unstaged:Await 1
 <catalog> unstaged:CacheTemplateObject 1
@@ -344,44 +344,6 @@ vm/compiled/lane_unit/static_hints.rs Class:Move 2
 vm/compiled/lane_unit/static_hints.rs is:is_call 1
 vm/compiled/osr_compile.rs is:is_get_index 1
 vm/compiled/osr_compile.rs op:Nop 1
-vm/compiled/osr_loop.rs is:is_binary 3
-vm/compiled/osr_loop.rs is:is_binary_arithmetic 1
-vm/compiled/osr_loop.rs is:is_call 2
-vm/compiled/osr_loop.rs is:is_call_array 1
-vm/compiled/osr_loop.rs is:is_define_array_element 1
-vm/compiled/osr_loop.rs is:is_get_field 15
-vm/compiled/osr_loop.rs is:is_get_index 7
-vm/compiled/osr_loop.rs is:is_inc_dec 1
-vm/compiled/osr_loop.rs is:is_indexed_access 7
-vm/compiled/osr_loop.rs is:is_jump 1
-vm/compiled/osr_loop.rs is:is_jump_binary_false 6
-vm/compiled/osr_loop.rs is:is_load_capture 2
-vm/compiled/osr_loop.rs is:is_load_const 4
-vm/compiled/osr_loop.rs is:is_load_env_local 1
-vm/compiled/osr_loop.rs is:is_load_name 1
-vm/compiled/osr_loop.rs is:is_move 7
-vm/compiled/osr_loop.rs is:is_ordinary_call 4
-vm/compiled/osr_loop.rs is:is_require_object_coercible 1
-vm/compiled/osr_loop.rs is:is_return 2
-vm/compiled/osr_loop.rs is:is_set_index 1
-vm/compiled/osr_loop.rs is:is_store_capture 2
-vm/compiled/osr_loop.rs is:is_to_numeric 1
-vm/compiled/osr_loop.rs is:is_truthiness_jump 3
-vm/compiled/osr_loop.rs is:is_unary 4
-vm/compiled/osr_loop.rs op:Call 1
-vm/compiled/osr_loop.rs op:GetField 4
-vm/compiled/osr_loop.rs op:SetThisField 1
-vm/compiled/osr_loop/inlining.rs Class:GetField 1
-vm/compiled/osr_loop/inlining.rs is:is_get_field 1
-vm/compiled/osr_loop/inlining.rs is:is_load_capture 1
-vm/compiled/osr_loop/inlining.rs is:is_move 1
-vm/compiled/osr_loop/inlining.rs is:is_return 2
-vm/compiled/osr_loop/inlining.rs is:is_set_this_field 1
-vm/compiled/osr_loop/inlining.rs op:Jump 1
-vm/compiled/osr_loop/inlining.rs op:LoadCapture 1
-vm/compiled/osr_loop/inlining.rs op:Move 2
-vm/compiled/osr_loop/inlining.rs op:SetField 2
-vm/compiled/osr_loop/iteration.rs is:is_ordinary_call 1
 vm/compiled/residuals.rs is:is_call 1
 vm/compiled/static_loops.rs Class:IncDec 2
 vm/compiled/static_loops.rs Class:LoadConst 2

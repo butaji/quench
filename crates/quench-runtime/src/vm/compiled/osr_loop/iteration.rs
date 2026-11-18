@@ -14,7 +14,7 @@ pub(super) fn iterates_natively(instructions: &[WideInstruction], header: u32, m
         if !seen.insert(offset) {
             continue;
         }
-        if exits_before_effects(instruction) && !(method_calls == MethodCalls::Inliner && instruction.op().is_ordinary_call()) {
+        if exits_before_effects(instruction) && !(method_calls == MethodCalls::Inliner && crate::staged::calls_ordinary(instruction.op())) {
             blocked = blocked.min(offset);
             continue;
         }

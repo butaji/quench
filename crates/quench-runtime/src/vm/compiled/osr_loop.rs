@@ -186,7 +186,7 @@ impl LoopRegion {
         self.instructions
             .iter()
             .enumerate()
-            .filter(|(_, instruction)| instruction.op().is_ordinary_call())
+            .filter(|(_, instruction)| crate::staged::calls_ordinary(instruction.op()))
             .map(|(offset, _)| self.header.saturating_add(offset as u32))
             .collect()
     }
@@ -236,7 +236,7 @@ impl MethodCalls {
 
 impl RegionAnalysisFailure {
     /// The region stops only at a call, which may run inlined once the site is hot.
-    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(crate::bytecode::index::Call) }
+    pub(crate) fn is_call_boundary(self) -> bool { self.reason == RegionRejection::UnsupportedInstruction(crate::staged::CALL_ROW) }
 
     fn at(reason: RegionRejection, header: u32, offset: usize) -> Self {
         Self { reason, pc: header.saturating_add(u32::try_from(offset).unwrap_or(u32::MAX)) }
@@ -285,7 +285,7 @@ fn field_path(
     sites: &[FieldSite],
     held: &std::collections::BTreeMap<Register, FieldPath>,
 ) -> Option<FieldPath> {
-    (instruction.op().is_get_field() && instruction.result_flags() == 0).then_some(())?;
+    (crate::staged::reads_named_field(instruction.op()) && instruction.result_flags() == 0).then_some(())?;
     let from = |base: FieldBase| -> Option<FieldPath> {
         if base == FieldBase::THIS {
             return Some(FieldPath { root: FieldReceiver::This, steps: Vec::new() });
@@ -359,7 +359,7 @@ fn held_registers(
         .filter(|register| {
             !crate::compile::liveness::register_in(header_live, usize::from(*register))
                 && definitions(*register).next().is_some()
-                && definitions(*register).all(|instruction| instruction.op().is_get_field())
+                && definitions(*register).all(|instruction| crate::staged::reads_named_field(instruction.op()))
         })
         .collect();
     // A path through a register still pending waits for it; a register whose definitions
@@ -426,7 +426,7 @@ struct IdentityBranch {
 /// identity compares one constant. Loose equality against null or undefined matches either
 /// nullish value; Abstract Equality does not coerce an object when the other operand is null.
 fn identity_branch(instruction: WideInstruction, constants: &[Value]) -> Option<IdentityBranch> {
-    if !instruction.op().is_jump_binary_false() {
+    if !crate::staged::compare_jump(instruction.op()) {
         return None;
     }
     super::super::operations::equality_operator(instruction.binary_operator_field())?;
@@ -453,12 +453,12 @@ fn loads_alone_define(instructions: &[WideInstruction], register: Register, load
 }
 
 fn field_reads_alone_define(instructions: &[WideInstruction], register: Register) -> bool {
-    loads_alone_define(instructions, register, Op::is_get_field)
+    loads_alone_define(instructions, register, crate::staged::reads_named_field)
 }
 
 /// A field read or an element read: the loads whose result a field read may take as its receiver.
 fn is_receiver_load(op: Op) -> bool {
-    op.is_get_field() || op.is_get_index()
+    crate::staged::reads_named_field(op) || crate::staged::reads_element(op)
 }
 
 /// Traces a tagged-register rejection at `offset` (`QUENCH_TRACE=osr-reject`).
@@ -500,7 +500,7 @@ fn tagged_registers_with_failure(
             .filter(|register| !dynamic_arrays.contains(register)))
         .chain(instructions.iter().enumerate().flat_map(|(offset, instruction)| call_window_tagged(instructions, &numeric_uses, offset, instruction)))
         .chain(instructions.iter().filter_map(|instruction| {
-            if !instruction.op().is_load_const() {
+            if !crate::staged::loads_constant(instruction.op()) {
                 return None;
             }
             constants
@@ -511,7 +511,7 @@ fn tagged_registers_with_failure(
         }))
         .chain(held.iter().copied())
         // A field receiver the region's field or element reads give holds an object.
-        .chain(instructions.iter().filter(|instruction| instruction.op().is_get_field()).filter_map(|instruction| {
+        .chain(instructions.iter().filter(|instruction| crate::staged::reads_named_field(instruction.op())).filter_map(|instruction| {
             let receiver = object_reads(*instruction)?;
             loads_alone_define(instructions, receiver, is_receiver_load).then_some(receiver)
         }))
@@ -583,7 +583,7 @@ fn tag_definition(instruction: WideInstruction, offset: usize, (constants, heade
 /// reason it cannot be admitted: only a definition that may carry a boxed value can be tagged.
 fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<Option<Register>, String> {
     let op = instruction.op();
-    if op.is_load_const() {
+    if crate::staged::loads_constant(op) {
         return constants.get(instruction.constant_index()).map(|_| None).ok_or_else(|| "missing_constant".to_owned());
     }
     if carries_boxed(instruction) {
@@ -591,7 +591,7 @@ fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<O
     }
     // A type test reads its operand's tag, and the VM's cell of a heap value
     // (the type-name index exits for one instead).
-    if op.is_unary() && reads_type(instruction) {
+    if crate::staged::computes_unary(op) && reads_type(instruction) {
         return Ok(Some(instruction.register_b()));
     }
     Err(format!("unsupported_tagged_definition op={op:?}"))
@@ -601,7 +601,7 @@ fn tagged_operand(instruction: WideInstruction, constants: &[Value]) -> Result<O
 /// capture, a cached field, a global binding, an element, a fresh allocation or a comparison.
 fn carries_boxed(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    op.boxes_result() || op.allocates() || (op.is_binary() && number_comparison(instruction).is_some())
+    op.boxes_result() || op.allocates() || (crate::staged::computes_binary(op) && number_comparison(instruction).is_some())
 }
 
 /// The registers of an ordinary call at `offset` that stay boxed: its callee and the arguments
@@ -610,11 +610,11 @@ fn carries_boxed(instruction: WideInstruction) -> bool {
 /// direct calls leave at this exact PC, so their input window must remain boxed through
 /// preceding Moves.
 fn call_window_tagged(instructions: &[WideInstruction], numeric_uses: &std::collections::BTreeSet<Register>, offset: usize, instruction: &WideInstruction) -> Vec<Register> {
-    if !instruction.op().is_ordinary_call() || callee_read_by_field(instructions, offset, instruction) {
+    if !crate::staged::calls_ordinary(instruction.op()) || callee_read_by_field(instructions, offset, instruction) {
         return Vec::new();
     }
     let base = ImmediateLayout::call_window_base(instruction.imm());
-    let count = if instruction.op().is_call_array() {
+    let count = if crate::staged::calls_array(instruction.op()) {
         1
     } else {
         usize::from(ImmediateLayout::argument_count(instruction.imm()))
@@ -632,7 +632,7 @@ fn callee_read_by_field(instructions: &[WideInstruction], offset: usize, call: &
         .iter()
         .rev()
         .find(|candidate| candidate.defined_register() == Some(call.register_b()))
-        .is_some_and(|definition| definition.op().is_get_field())
+        .is_some_and(|definition| crate::staged::reads_named_field(definition.op()))
 }
 
 /// Whether `argument` of the call at `offset` is the end of a chain of moves none of whose registers a
@@ -764,19 +764,19 @@ pub(crate) struct InlineCallee<'a> {
 /// fused: the read of the site's path into the result register, then the `SetThisField`.
 /// `None` for any other instruction.
 fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option<Vec<WideInstruction>> {
-    (instruction.op().is_get_field() && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER)
+    (crate::staged::reads_named_field(instruction.op()) && instruction.result_flags() == crate::bytecode::SET_THIS_REGISTER)
         .then_some(())?;
     // A site's base names a register of the callee in the site table, which renaming does not
     // reach: the read runs as one named read per step from the renamed base.
     let FieldLookup::Site(index) = instruction.field_lookup()? else { return None };
     let site = *sites.get(index)?;
     let result = instruction.result_register();
-    let mut parts = vec![WideInstruction::new(Op::GetField, result, site.base.0, site.first.1, site.first.0)];
+    let mut parts = vec![WideInstruction::new(crate::staged::row_op(crate::staged::GET_FIELD_ROW), result, site.base.0, site.first.1, site.first.0)];
     if let Some((atom, cache_site)) = site.second {
-        parts.push(WideInstruction::new(Op::GetField, result, FieldBase::register(result).0, cache_site, atom));
+        parts.push(WideInstruction::new(crate::staged::row_op(crate::staged::GET_FIELD_ROW), result, FieldBase::register(result).0, cache_site, atom));
     }
     let (sink_atom, sink_site) = site.sink?;
-    parts.push(WideInstruction::new(Op::SetThisField, result, 0, sink_site, sink_atom));
+    parts.push(WideInstruction::new(crate::staged::row_op(crate::staged::SET_THIS_FIELD_ROW), result, 0, sink_site, sink_atom));
     Some(parts)
 }
 
@@ -785,7 +785,7 @@ fn inlined_set_this(instruction: WideInstruction, sites: &[FieldSite]) -> Option
 /// the computation and the `Return` it makes.
 pub(super) fn inlined_returning(instruction: WideInstruction) -> bool {
     instruction.result_flags() == crate::bytecode::RETURN_REGISTER
-        && !instruction.op().is_return()
+        && !crate::staged::returns(instruction.op())
         && instruction.op().field_layout(InstructionField::A) == FieldLayout::ResultRegister
         && instruction.defined_register().is_some()
 }
@@ -847,7 +847,7 @@ pub(super) fn renamed(
         ImmediateRole::JumpTarget => target(instruction.imm())?,
         // A call's argument window renames as one block: each of its registers to the one
         // after the base's rename.
-        _ if op.is_call() => {
+        _ if crate::staged::calls(op) => {
             let imm = instruction.imm();
             let base = ImmediateLayout::call_window_base(imm);
             let count = ImmediateLayout::argument_count(imm);
@@ -864,7 +864,7 @@ pub(super) fn renamed(
 /// access's array.
 fn object_reads(instruction: WideInstruction) -> Option<Register> {
     match instruction.op() {
-        opcode if opcode.is_get_field() => match instruction.field_lookup()? {
+        opcode if crate::staged::reads_named_field(opcode) => match instruction.field_lookup()? {
             FieldLookup::Atom { base, .. } => base.register_index(),
             _ => None,
         },
@@ -876,8 +876,8 @@ fn object_reads(instruction: WideInstruction) -> Option<Register> {
 /// The register an indexed access, or the coercibility check before one, reads as its array.
 fn array_read(instruction: WideInstruction) -> Option<Register> {
     match instruction.op() {
-        opcode if opcode.is_get_index() => instruction.operand_b().register_index(),
-        opcode if opcode.is_indexed_access() => Some(instruction.register_b()),
+        opcode if crate::staged::reads_element(opcode) => instruction.operand_b().register_index(),
+        opcode if crate::staged::indexes_receiver(opcode) => Some(instruction.register_b()),
         _ => None,
     }
 }
@@ -892,7 +892,7 @@ fn admitted_store(op: Op) -> bool {
 /// cannot rename names every register.
 fn mentions(instruction: WideInstruction, register: Register, sites: &[FieldSite]) -> bool {
     // Only a GetField carries a field lookup immediate, so the op is checked first.
-    if instruction.op().is_get_field() && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
+    if crate::staged::reads_named_field(instruction.op()) && matches!(instruction.field_lookup(), Some(FieldLookup::Site(_))) {
         return instruction.result_register() == register
             || field_base(instruction, sites).is_none_or(|base| base.register_index() == Some(register));
     }
@@ -980,7 +980,7 @@ pub(super) fn inline_region<'a>(
     let mut checked_reads = inlining::PcMap::new(header, caller.len());
     let captured = receivers::captured(caller, mask(header)?);
     for (offset, instruction) in caller.iter().copied().enumerate() {
-        if !instruction.op().is_call() {
+        if !crate::staged::calls(instruction.op()) {
             continue;
         }
         let pc = header + offset as u32;
@@ -1029,7 +1029,7 @@ pub(super) fn inline_region<'a>(
             .then_some(())?;
             let fresh = Register::try_from(total).ok()?;
             total += 1;
-            rewritten.insert(header + own as u32, WideInstruction::new(Op::GetField, fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
+            rewritten.insert(header + own as u32, WideInstruction::new(crate::staged::row_op(crate::staged::GET_FIELD_ROW), fresh, caller[own].b(), caller[own].c(), caller[own].imm()));
             callee_path.root = receiver_path.root;
             callee_path.steps.splice(0..0, receiver_path.steps);
             receiver = fresh;
@@ -1326,7 +1326,7 @@ enum Arithmetic {
 }
 
 fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
-    if instruction.is_binary() && operator == super::super::operations::REMAINDER {
+    if crate::staged::computes_binary(instruction) && operator == super::super::operations::REMAINDER {
         return Some(Arithmetic::Remainder);
     }
     if let Some(operation) = NumberArithmetic::from_js_instruction(instruction, operator) {
@@ -1339,13 +1339,13 @@ fn arithmetic(instruction: Op, operator: u32) -> Option<Arithmetic> {
 /// Fused numeric mask truthiness. Other arithmetic/heap truthiness stays on its
 /// existing path; both operands must satisfy the region's Number guards.
 fn bitwise_condition(instruction: WideInstruction) -> Option<NumberBitwise> {
-    (instruction.op().is_jump_binary_false()).then_some(())?;
+    (crate::staged::compare_jump(instruction.op())).then_some(())?;
     NumberBitwise::from_operator(instruction.binary_operator_field())
         .filter(|operation| *operation == NumberBitwise::And)
 }
 
 fn number_comparison(instruction: WideInstruction) -> Option<super::super::operations::NumberRelation> {
-    (instruction.op().is_binary())
+    (crate::staged::computes_binary(instruction.op()))
         .then(|| super::super::operations::NumberRelation::from_operator(instruction.binary_operator()))
         .flatten()
 }
@@ -1362,7 +1362,7 @@ fn unary(instruction: Op, operator: u32) -> Option<Unary> {
     if let Some(operation) = NumberUnary::from_js_instruction(instruction, operator) {
         return Some(Unary::Number(operation));
     }
-    (instruction.is_unary() && operator == UnaryOperator::BitwiseNot as u32)
+    (crate::staged::computes_unary(instruction) && operator == UnaryOperator::BitwiseNot as u32)
         .then_some(Unary::BitwiseNot)
 }
 
@@ -1554,7 +1554,7 @@ fn admit_region(
 fn lifetime_instruction(instruction: WideInstruction) -> bool {
     instruction.op().traits().has(crate::bytecode::Traits::LIFETIME_SAFE)
         || instruction.field_store_register().is_some()
-        || (instruction.op().is_get_field()
+        || (crate::staged::reads_named_field(instruction.op())
             && matches!(instruction.field_lookup(), Some(FieldLookup::Atom { base, .. })
                 if base == FieldBase::THIS || base.register_index().is_some()))
 }
@@ -1622,23 +1622,23 @@ fn admit_lifetime_roles(
     for (offset, instruction) in canonical.iter_mut().enumerate() {
         // Field receivers rename as values do; only array accesses read through an entry
         // array's root.
-        if !instruction.op().is_indexed_access() {
+        if !crate::staged::indexes_receiver(instruction.op()) {
             continue;
         }
         if let Some(receiver) = object_reads(*instruction) {
             let root = match array_root(&flow, &values, header + offset as u32, receiver, &mut BTreeSet::new()) {
                 Some(root) => root,
-                None if instruction.op().is_get_index()
+                None if crate::staged::reads_element(instruction.op())
                     && values.reaching[offset].get(&receiver).is_some_and(|definitions| {
                         !definitions.is_empty() && definitions.iter().all(|definition| {
                             definition.checked_sub(flow.entry_count())
                                 .and_then(|index| flow.instructions.get(index))
-                                .is_some_and(|definition| definition.op().is_get_index())
+                                .is_some_and(|definition| crate::staged::reads_element(definition.op()))
                         })
                     }) => continue,
                 None => return None,
             };
-            let base = if instruction.op().is_get_index() { Operand::register(root).0 } else { root };
+            let base = if crate::staged::reads_element(instruction.op()) { Operand::register(root).0 } else { root };
             *instruction = WideInstruction::new(instruction.op(), instruction.a(), base, instruction.c(), instruction.imm());
         }
     }
@@ -1740,7 +1740,7 @@ fn redefinition(instructions: &[WideInstruction], register: Register,
         .filter(|(_, instruction)| native_definition(**instruction) == Some(register)).map(|(offset, _)| offset).collect();
     if definitions.is_empty() { return None; }
     let accesses = instructions.iter().enumerate()
-        .filter(|(_, instruction)| instruction.op().is_indexed_access() && object_reads(**instruction) == Some(register))
+        .filter(|(_, instruction)| crate::staged::indexes_receiver(instruction.op()) && object_reads(**instruction) == Some(register))
         .map(|(offset, _)| offset);
     let mut reaching = std::collections::BTreeSet::new();
     for access in accesses {
@@ -1768,7 +1768,7 @@ fn dynamic_arrays(instructions: &[WideInstruction], paths: &std::collections::BT
     let block_starts = block_starts(instructions, header);
     for register in instructions
         .iter()
-        .filter(|instruction| instruction.op().is_indexed_access())
+        .filter(|instruction| crate::staged::indexes_receiver(instruction.op()))
         .filter_map(|instruction| object_reads(*instruction))
         .filter(|register| !paths.contains_key(register))
         .collect::<std::collections::BTreeSet<_>>()
@@ -1820,7 +1820,7 @@ fn admit_register_roles(
         Err(failure_offset) => {
             if crate::trace::Channel::OsrReject.on() {
                 for (offset, instruction) in instructions.iter().copied().enumerate().filter(|(_, instruction)| {
-                    instruction.op().is_jump_binary_false()
+                    crate::staged::compare_jump(instruction.op())
                 }) {
                     let operand = |operand: Operand| {
                         let constant = (operand.kind() == Some(OperandKind::Constant))
@@ -1872,7 +1872,7 @@ fn admit_register_roles(
         .collect();
     // A call the region continues past may write any field, so a read through a receiver the
     // region never rewrites reads its current slot, as one of the region's own stored names does.
-    let calls = instructions.iter().any(|instruction| instruction.op().is_ordinary_call());
+    let calls = instructions.iter().any(|instruction| crate::staged::calls_ordinary(instruction.op()));
     let mut dynamic_field_stores = std::collections::BTreeMap::new();
     let mut field_store_sites = Vec::new();
     let defined_registers: std::collections::BTreeSet<Register> = instructions
@@ -1880,10 +1880,10 @@ fn admit_register_roles(
         .filter_map(|instruction| instruction.defined_register())
         .collect();
     for (offset, instruction) in instructions.iter().copied().enumerate() {
-        if instruction.op().is_get_field() {
+        if crate::staged::reads_named_field(instruction.op()) {
             let path = field_path(instruction, sites, &rooted).ok_or_else(|| {
                 RegionAnalysisFailure::at(
-                    RegionRejection::UnsupportedInstruction(crate::bytecode::index::GetField),
+                    RegionRejection::UnsupportedInstruction(crate::staged::GET_FIELD_ROW),
                     header,
                     offset,
                 )
@@ -1896,7 +1896,7 @@ fn admit_register_roles(
                 // A field result used as an array base is entry-pinned separately by the
                 // array lowering, so leave that combination on the conservative path.
                 && !instructions.iter().any(|candidate| {
-                    candidate.op().is_indexed_access()
+                    crate::staged::indexes_receiver(candidate.op())
                         && object_reads(*candidate) == Some(instruction.result_register())
                 })
             {
@@ -1931,7 +1931,7 @@ fn admit_register_roles(
                     })
                 };
                 if instructions.iter().any(|candidate| {
-                    candidate.op().is_get_field()
+                    crate::staged::reads_named_field(candidate.op())
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
                         && !current(candidate)
                 }) {
@@ -1943,7 +1943,7 @@ fn admit_register_roles(
                 // rewrites. A read of the name through that receiver reads the current slot
                 // (`stored_fixed`); any other read of it could alias and keep a stale value.
                 if instructions.iter().any(|candidate| {
-                    candidate.op().is_get_field()
+                    crate::staged::reads_named_field(candidate.op())
                         && matches!(candidate.field_lookup(), Some(FieldLookup::Atom { atom: read, .. }) if read == atom)
                         && !field_path(*candidate, sites, &rooted)
                             .is_some_and(|path| path.steps.len() == 1 && path.root == receiver)
@@ -1960,13 +1960,13 @@ fn admit_register_roles(
         }
         // A field-resolved method call is the inliner's (`MethodCalls::inlined`), unless the
         // inliner declined it. Dynamic/direct calls have no such owner.
-        if method_calls.inlined(objects) && instruction.op().is_ordinary_call() {
+        if method_calls.inlined(objects) && crate::staged::calls_ordinary(instruction.op()) {
             let callee_register = instruction.register_b();
             if instructions[..offset]
                 .iter()
                 .rev()
                 .find(|candidate| candidate.defined_register() == Some(callee_register))
-                .is_some_and(|definition| definition.op().is_get_field())
+                .is_some_and(|definition| crate::staged::reads_named_field(definition.op()))
             {
                 return Err(RegionAnalysisFailure::at(
                     RegionRejection::UnsupportedInstruction(instruction.op() as u16),
@@ -1980,7 +1980,7 @@ fn admit_register_roles(
         }
         if admit(&mut admission, instruction, constants, &tagged, &defined_registers, &dynamic_arrays).is_none() {
             if crate::trace::Channel::OsrReject.on() {
-                let constant = (instruction.op().is_load_const())
+                let constant = (crate::staged::loads_constant(instruction.op()))
                     .then(|| constants.get(instruction.constant_index()).copied());
                 let result = instruction.defined_register();
                 eprintln!(
@@ -2089,7 +2089,7 @@ fn admit_register_roles(
             Role::Array { written } | Role::TaggedArray { written }
                 if !dynamic_arrays.contains(register)
                     && instructions.iter().any(|instruction| {
-                    instruction.op().is_indexed_access()
+                    crate::staged::indexes_receiver(instruction.op())
                         && object_reads(*instruction) == Some(*register)
                 }) => Some(ArrayUse { register: *register, written: *written, field: None }),
             Role::Number | Role::Tagged => None,
@@ -2099,7 +2099,7 @@ fn admit_register_roles(
     for (register, written) in &admission.field_arrays {
         // A held register read as an object only by field reads indexes nothing.
         if !instructions.iter().any(|instruction| {
-            instruction.op().is_indexed_access()
+            crate::staged::indexes_receiver(instruction.op())
                 && object_reads(*instruction) == Some(*register)
         }) {
             continue;
@@ -2163,7 +2163,7 @@ fn admit(
     dynamic_arrays: &std::collections::BTreeSet<Register>,
 ) -> Option<()> {
     match instruction.op() {
-        opcode if opcode.is_load_const() => {
+        opcode if crate::staged::loads_constant(opcode) => {
             let index = instruction.constant_index();
             if tagged.contains(&instruction.result_register()) {
                 admission.any_constant(index)?;
@@ -2182,7 +2182,7 @@ fn admit(
                 admission.number(instruction.register_b())?;
             }
         }
-        opcode if opcode.is_load_capture() => {
+        opcode if crate::staged::reads_capture(opcode) => {
             (instruction.capture_depth() == 0 && instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;
             let slot = instruction.capture_slot();
@@ -2190,7 +2190,7 @@ fn admit(
                 admission.captures.push(slot);
             }
         }
-        opcode if opcode.is_binary_arithmetic() => {
+        opcode if crate::staged::computes_arithmetic(opcode) => {
             if number_comparison(instruction).is_some() {
                 (instruction.result_flags() == 0).then_some(())?;
                 admission.tagged(instruction.result_register())?;
@@ -2201,16 +2201,16 @@ fn admit(
             admission.source(instruction.operand_b())?;
             admission.source(instruction.operand_c())?;
         }
-        opcode if opcode.is_to_numeric() => {
+        opcode if crate::staged::converts_numeric(opcode) => {
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        opcode if opcode.is_inc_dec() => {
+        opcode if crate::staged::increments(opcode) => {
             instruction.boolean_flag()?;
             admission.result(instruction)?;
             admission.number(instruction.register_b())?;
         }
-        opcode if opcode.is_unary() => {
+        opcode if crate::staged::computes_unary(opcode) => {
             if reads_type(instruction) && tagged.contains(&instruction.result_register())
             {
                 admission.tagged(instruction.result_register())?;
@@ -2222,12 +2222,12 @@ fn admit(
             }
         }
         // An array the entry guard proved is an object passes.
-        opcode if opcode.is_require_object_coercible() => {
+        opcode if crate::staged::requires_object_coercible(opcode) => {
             if !dynamic_arrays.contains(&instruction.register_b()) {
                 admission.array(instruction.register_b(), false)?;
             }
         }
-        opcode if opcode.is_get_index() => {
+        opcode if crate::staged::reads_element(opcode) => {
             admit_loaded(admission, instruction, tagged)?;
             let base = instruction.operand_b().register_index()?;
             // A dynamic array takes no register role (`LoopRegion::dynamic_arrays`).
@@ -2237,11 +2237,11 @@ fn admit(
             admission.source(instruction.operand_c())?;
         }
         // Its field is the region's (`LoopRegion::field_reads`).
-        opcode if opcode.is_get_field() => {
+        opcode if crate::staged::reads_named_field(opcode) => {
             admit_loaded(admission, instruction, tagged)?;
         }
         // A tagged value is stored as the lane's element store takes it.
-        opcode if opcode.is_set_index() => {
+        opcode if crate::staged::writes_element(opcode) => {
             if tagged.contains(&instruction.register_a()) {
                 admission.tagged(instruction.register_a())?;
             } else {
@@ -2268,7 +2268,7 @@ fn admit(
             admit_stored(admission, value, tagged, defined_registers)?;
         }
         // A global binding's read (`Vm::lane_global_reads`), a Number where arithmetic reads it.
-        opcode if opcode.is_load_name() => {
+        opcode if crate::staged::reads_name(opcode) => {
             (instruction.result_flags() == 0).then_some(())?;
             admit_loaded(admission, instruction, tagged)?;
         }
@@ -2279,8 +2279,8 @@ fn admit(
             admission.tagged(instruction.result_register())?;
         }
         // Its literal's allocation writes it (`Allocation::ArrayOf`).
-        opcode if opcode.is_define_array_element() => {}
-        opcode if opcode.is_load_env_local() => {
+        opcode if crate::staged::defines_array_element(opcode) => {}
+        opcode if crate::staged::reads_environment_slot(opcode) => {
             if instruction.result_flags() != 0
                 || instruction.returns_from_frame()
                 || instruction.numeric_local_target().is_some()
@@ -2294,8 +2294,8 @@ fn admit(
         _ if exits_before_effects(instruction) => {}
         // A return leaves the loop: the lane resumes at it with the state written back, and
         // runs it.
-        opcode if opcode.is_return() || opcode.is_jump() => {}
-        opcode if opcode.is_jump_binary_false() => {
+        opcode if crate::staged::returns(opcode) || crate::staged::jumps(opcode) => {}
+        opcode if crate::staged::compare_jump(opcode) => {
             if let Some(branch) = identity_branch(instruction, constants) {
                 admission.tagged(branch.register)?;
             } else if let Some((register, constant)) = match (
@@ -2462,7 +2462,7 @@ pub(super) fn number_reads(instruction: WideInstruction) -> Vec<Register> {
 fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     let instruction = region.instructions[offset];
     let pc = region.header + offset as u32;
-    let strict_number_test = instruction.op().is_jump_binary_false()
+    let strict_number_test = crate::staged::compare_jump(instruction.op())
         && super::super::operations::equality_operator(instruction.binary_operator_field()).is_some_and(|(strict, _)| strict)
         && [instruction.operand_b(), instruction.operand_c()].iter().any(|operand|
             operand.kind() == Some(OperandKind::Constant) && region.constants.contains_key(&usize::from(operand.payload())));
@@ -2478,8 +2478,8 @@ fn value_reads(region: &LoopRegion, offset: usize) -> Vec<(Register, Type)> {
     }
     if let Some(register) = object_reads(instruction) {
         let dynamic = match instruction.op() {
-            opcode if opcode.is_get_field() => region.dynamic_field_reads.contains_key(&(offset as u32)),
-            opcode if opcode.is_get_index() => region.dynamic_arrays.contains(&register)
+            opcode if crate::staged::reads_named_field(opcode) => region.dynamic_field_reads.contains_key(&(offset as u32)),
+            opcode if crate::staged::reads_element(opcode) => region.dynamic_arrays.contains(&register)
                 || !region.arrays.iter().any(|array| array.register == register),
             _ if instruction.field_store_register().is_some() => region.dynamic_field_stores.contains_key(&(offset as u32)),
             _ => region.dynamic_arrays.contains(&register),
@@ -2526,7 +2526,7 @@ fn number_definition(instruction: WideInstruction) -> Option<Register> {
 /// definition, so the tier covers every opcode; analysis and emission keep that boundary.
 fn lowered_natively(instruction: WideInstruction) -> bool {
     let op = instruction.op();
-    admitted_store(op) || if op.is_jump_binary_false() {
+    admitted_store(op) || if crate::staged::compare_jump(op) {
         // A conditional jump only on a relation or a bitwise and, so one on `in` or
         // `instanceof` is an exit.
         super::super::operations::NumberRelation::from_operator(instruction.binary_operator_field())
@@ -2544,7 +2544,7 @@ fn boxed(instructions: &[WideInstruction]) -> std::collections::BTreeSet<Registe
 
 /// A `typeof` of its operand: the type-name index or a fused test (`bytecode::typeof_test`).
 fn reads_type(instruction: WideInstruction) -> bool {
-    instruction.op().is_unary() && (instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
+    crate::staged::computes_unary(instruction.op()) && (instruction.unary_operator() == crate::bytecode::UNARY_TYPEOF_INDEX
         || crate::bytecode::typeof_test(instruction.unary_operator()).is_some())
 }
 
