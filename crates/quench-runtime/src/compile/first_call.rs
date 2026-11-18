@@ -349,6 +349,7 @@ impl Stubs<'_> {
         self.direct = stubbing.arrows;
         self.free_names = free_names;
         self.call_only_found = call_only_found;
+        super::call_only::deferred::normalize_spans(&mut self.call_only_found);
     }
 
     /// Whether a program keeps a replay: it has functions a replay compiles (unless

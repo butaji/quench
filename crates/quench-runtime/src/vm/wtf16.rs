@@ -98,11 +98,28 @@ fn wide_units(text: &str, length: usize) -> Rc<[u16]> {
 /// is), and a high surrogate followed by a low one is a four-byte character, not two of three.
 /// Both sums vectorize (a bundle's source: 31 Ir per unit through `decode_utf16`).
 fn wide_utf8_len(units: &[u16]) -> usize {
-    let sized: usize = units.iter().map(|&unit| 1 + usize::from(unit >= 0x80) + usize::from(unit >= 0x800)).sum();
-    let pairs = units.windows(2)
-        .filter(|pair| (0xD800..0xDC00).contains(&pair[0]) && (0xDC00..0xE000).contains(&pair[1]))
-        .count();
-    sized - 2 * pairs
+    // Summed per block in 16-bit lanes, which vectorize, with surrogates only noted: the pair
+    // scan runs only for text that has any (a 5.6 MB bundle: 99.7M Ir as one scalar pass
+    // plus a pair window per unit).
+    const BLOCK: usize = 256;
+    let mut extra = 0usize;
+    let mut surrogates = 0u16;
+    for block in units.chunks(BLOCK) {
+        let mut sum = 0u16;
+        for &unit in block {
+            sum += u16::from(unit >= 0x80) + u16::from(unit >= 0x800);
+            surrogates |= u16::from(unit & 0xF800 == 0xD800);
+        }
+        extra += usize::from(sum);
+    }
+    let pairs = if surrogates == 0 {
+        0
+    } else {
+        units.windows(2)
+            .filter(|pair| (0xD800..0xDC00).contains(&pair[0]) && (0xDC00..0xE000).contains(&pair[1]))
+            .count()
+    };
+    units.len() + extra - 2 * pairs
 }
 
 /// Text made on demand and not yet charged, which the caller now charges.
