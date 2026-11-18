@@ -82,8 +82,8 @@ fn store_value<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base
             let at = (Owner::of(base)?, base_word(stage, frame, base, miss)?);
             let tagged = value;
             frame.stored(stage, at.0, miss,
-                |stage, frame, miss| layout_store(stage, frame, at, (id, slot), tagged?, miss),
-                move |stage: &mut S, frame: &mut F, miss: S::Miss| {
+                #[inline(always)] |stage, frame, miss| layout_store(stage, frame, at, (id, slot), tagged?, miss),
+                #[inline(always)] move |stage: &mut S, frame: &mut F, miss: S::Miss| {
                     let value = source.tagged(stage, frame);
                     vm_store(stage, frame, join, at, (atom, site), (value, fact), miss)
                 })?;
